@@ -113,4 +113,29 @@ Assignment requires a Slack user to GitHub handle mapping. A self-service slash 
 
 ## Stack
 
-To be decided before implementation starts. Leading option: TypeScript, because Slack's Bolt framework and the MCP SDK are both first-class there and the major agent CLIs ship through npm. Python with Bolt and FastMCP is a close second. The deciding criterion is a clean separation so an adapter for a new agent can be added without touching the orchestrator.
+Python 3.12 or newer.
+
+| Concern | Choice | Why |
+|---|---|---|
+| Slack | slack-bolt (AsyncApp, Socket Mode) | Maintained by Slack. Socket Mode means no public URL for self-hosted installs. |
+| MCP | the official `mcp` package, FastMCP server over Streamable HTTP | Tool schemas derive from the same Pydantic models used everywhere else. |
+| GitHub | githubkit | Async, typed, first-class GitHub App installation auth. |
+| State | SQLite via aiosqlite | Pointers only. Postgres stays possible behind the same interface. |
+| Tooling | uv, ruff, mypy strict, pytest | Locked dependencies, one formatter, typed contracts. |
+
+The Pydantic models in `src/upshot/models.py` are the single source of truth for the MCP tool contract, the validation applied before any GitHub write, and the shape rendered into Slack approval cards.
+
+Package layout:
+
+```
+src/upshot/
+  models.py       shared contracts: proposals, classifications, topics, channel modes
+  config.py       environment-driven settings, no secrets in the repo
+  cli.py          entry point
+  orchestrator/   event ingest, debouncing, topic index, proposal lifecycle, approval cards
+  whiteboard/     the MCP server
+  adapters/       agent runners; generic command template first
+  github/         GitHub App writer with allowlists
+```
+
+The major agent CLIs install through npm, so the container that runs the adapter needs Node present regardless of the orchestrator's language. For v1 a single image carries both. The agent runner can later move to its own container that reaches the MCP server over HTTP.
