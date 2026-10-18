@@ -11,7 +11,8 @@ capped at the same constant (``MAX_RUN_TIMEOUT_SECONDS`` in the store), so no
 run outlives its token; a run at the full two hours gets no grace.
 
 An execution run's proposal moves from approved to executing as the run
-starts, which is the state the agent's ``record_result`` requires.
+starts, which is the state the agent's ``record_result`` requires. If the run
+ends with the proposal still executing, it moves on to reconciling.
 
 Tokens are never stored or logged. The registry keeps only digests,
 :class:`StartedRun` hides the token from ``repr``, and this module logs run ids
@@ -127,13 +128,32 @@ class RunLifecycle:
     ) -> Run | None:
         """End a run: revoke its token first, so it can act no more, then record the end.
 
+        An execution run whose proposal is still executing did not record a
+        result, whatever its exit, so the write may or may not have happened.
+        Its proposal moves to reconciling, so the next attempt checks for the
+        hidden marker before writing. Queuing that attempt is #30's.
+
         Returns None if the run had already ended.
         """
         self._registry.revoke(run_id)
         ended = await self._store.finish_run(run_id, status, error=error)
         if ended is not None:
             log.info("run %s ended (%s)", run_id, status.value)
+            if ended.kind is RunKind.EXECUTION and ended.proposal_id:
+                await self._settle_proposal(ended.proposal_id, run_id)
         return ended
+
+    async def _settle_proposal(self, proposal_id: str, run_id: str) -> None:
+        moved = await try_transition(
+            self._store,
+            proposal_id,
+            ProposalState.RECONCILING,
+            expected={ProposalState.EXECUTING},
+        )
+        if moved is not None:
+            log.warning(
+                "run %s ended without a result; proposal %s is reconciling", run_id, proposal_id
+            )
 
     async def expire_overdue(self) -> list[str]:
         """Time out every running run past its deadline. Returns their ids."""

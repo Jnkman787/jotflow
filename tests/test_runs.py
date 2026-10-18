@@ -413,3 +413,69 @@ async def test_a_stop_between_claim_and_move_is_recovered_once(
     # A second stop, now mid-execution, again queues exactly one run for it.
     again = await lifecycle.recover()
     assert len(again.requeued) == 1
+
+
+# --- an execution run that ends without a result leaves its proposal reconciling
+
+
+@pytest.mark.parametrize("status", [RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.TIMED_OUT])
+async def test_an_execution_run_ending_without_a_result_reconciles(
+    store: Store, lifecycle: RunLifecycle, status: RunStatus
+) -> None:
+    await _approved(store)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    assert await lifecycle.finish(started.run.id, status) is not None
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.RECONCILING
+
+
+async def test_an_overdue_execution_run_reconciles(
+    store: Store, lifecycle: RunLifecycle, clock: Clock
+) -> None:
+    await _approved(store)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    clock.advance(MAX_RUN_TIMEOUT_SECONDS + 1)
+    assert await lifecycle.expire_overdue() == [started.run.id]
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.RECONCILING
+
+
+async def test_a_recorded_result_is_kept_when_the_run_ends(
+    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle, clock: Clock
+) -> None:
+    await _approved(store)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    grant = registry.check(started.token)
+    assert grant is not None
+    tools = WriteTools(store, POLICY, _NoPoster(), clock=clock)
+    await tools.record_result(grant, RecordResultArgs(issue_url=ISSUE_URL))
+    await lifecycle.finish(started.run.id, RunStatus.FAILED, error="exited 1 after writing")
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.APPLIED
+
+
+async def test_a_reconciling_run_that_fails_stays_reconciling(
+    store: Store, lifecycle: RunLifecycle
+) -> None:
+    await _approved(store)
+    await store.transition("p1", ProposalState.EXECUTING)
+    await store.transition("p1", ProposalState.RECONCILING)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    await lifecycle.finish(started.run.id, RunStatus.FAILED)
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.RECONCILING
+
+
+async def test_a_drafting_run_ending_touches_no_proposal(
+    store: Store, lifecycle: RunLifecycle
+) -> None:
+    await _approved(store)
+    await store.transition("p1", ProposalState.EXECUTING)
+    started = await _started(store, lifecycle)
+    await lifecycle.finish(started.run.id, RunStatus.FAILED)
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.EXECUTING

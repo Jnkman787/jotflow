@@ -16,7 +16,7 @@ from pydantic import SecretStr, ValidationError
 
 from jotflow.adapters.runner import Runner, RunnerConfig, build_runner_app
 from jotflow.config import Settings
-from jotflow.models import RunKind, RunStatus
+from jotflow.models import ProposalState, RunKind, RunStatus
 from jotflow.orchestrator.launch import (
     FAILED_NOTICE,
     LOST,
@@ -36,11 +36,12 @@ from jotflow.orchestrator.launch import (
 )
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.store import MemoryStore
+from jotflow.store.base import MAX_RUN_TIMEOUT_SECONDS
 from jotflow.whiteboard.server import McpServer, build_app
 from jotflow.whiteboard.tokens import TokenRegistry
-from jotflow.whiteboard.write_tools import PostError
+from jotflow.whiteboard.write_tools import PostError, RecordResultArgs, WriteTools
 from tests.test_runner import ENVIRON, SECRET, _free_port, config, recorded
-from tests.test_runs import CH, THREAD, Clock, _approved
+from tests.test_runs import CH, ISSUE_URL, POLICY, THREAD, Clock, _approved
 
 EXEC_SECRET = "e" * 40
 TOKEN = "jfr_" + "t" * 43
@@ -412,12 +413,15 @@ class FakeRunner:
         self.states: dict[str, list[Any]] = {}
         self.calls: list[tuple[str, str]] = []
         self.unreachable = False
+        self.tokens: dict[str, str] = {}
 
     def __call__(self, request: httpx2.Request) -> httpx2.Response:
         self.calls.append((request.method, request.url.path))
         if self.unreachable:
             raise httpx2.ConnectError("down")
         if request.method == "POST":
+            body = json.loads(request.content)
+            self.tokens[body["run_id"]] = body["token"]
             return httpx2.Response(self.launch_status, json={})
         run_id = request.url.path.rsplit("/", 1)[1]
         if request.method == "DELETE":
@@ -731,3 +735,60 @@ async def test_a_supervised_run_reaches_mcp_and_succeeds(tmp_path: Path) -> None
 def test_the_runner_secret_field_is_secret() -> None:
     made = settings(runner_secret=SECRET)
     assert isinstance(made.runner_secret, SecretStr)
+
+
+# An execution run that ends without a result leaves its proposal reconciling
+
+
+async def _execution(rig: Rig) -> str:
+    await _approved(rig.store)
+    run = await rig.store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    return run.id
+
+
+async def _proposal_state(rig: Rig) -> ProposalState:
+    proposal = await rig.store.get_proposal("p1")
+    assert proposal is not None
+    return proposal.state
+
+
+@pytest.mark.parametrize("path", ["exit 0", "exit 3", "lost", "runner timeout", "refused", "down"])
+async def test_an_execution_run_that_ends_without_a_result_reconciles(rig: Rig, path: str) -> None:
+    run_id = await _execution(rig)
+    rig.runner.states[run_id] = {
+        "exit 0": ["exited:0"],
+        "exit 3": ["exited:3"],
+        "lost": [404],
+        "runner timeout": ["timed_out:-9"],
+    }.get(path, ["running"])
+    if path == "refused":
+        rig.runner.launch_status = 503
+    rig.runner.unreachable = path == "down"
+    await rig.supervisor.tick()
+    await rig.supervisor.tick()
+    assert await rig.status(run_id) is not RunStatus.RUNNING
+    assert await _proposal_state(rig) is ProposalState.RECONCILING
+
+
+async def test_an_overdue_execution_run_reconciles(rig: Rig) -> None:
+    run_id = await _execution(rig)
+    await rig.supervisor.tick()
+    assert await _proposal_state(rig) is ProposalState.EXECUTING
+    rig.clock.advance(MAX_RUN_TIMEOUT_SECONDS + 1)
+    await rig.supervisor.tick()
+    assert await rig.status(run_id) is RunStatus.TIMED_OUT
+    assert await _proposal_state(rig) is ProposalState.RECONCILING
+
+
+async def test_an_execution_run_that_recorded_its_result_stays_applied(rig: Rig) -> None:
+    run_id = await _execution(rig)
+    rig.runner.states[run_id] = ["running", "exited:0"]
+    await rig.supervisor.tick()
+    grant = rig.registry.check(rig.runner.tokens[run_id])
+    assert grant is not None
+    tools = WriteTools(rig.store, POLICY, Poster(), clock=rig.clock)
+    await tools.record_result(grant, RecordResultArgs(issue_url=ISSUE_URL))
+    await rig.supervisor.tick()
+    await rig.supervisor.tick()
+    assert await rig.status(run_id) is RunStatus.SUCCEEDED
+    assert await _proposal_state(rig) is ProposalState.APPLIED

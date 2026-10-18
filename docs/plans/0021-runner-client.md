@@ -6,7 +6,7 @@
 - Also serves: #54, whose open box "JotFlow can launch a run in the agent container" needs this side
 - Draft PR: #131
 - Status: ready for review
-- Last verified: `make check` green, 1438 tests, 98.5% coverage, on 2026-10-18
+- Last verified: `make check` green, 1460 tests, 98.5% coverage, on 2026-10-18
 - Next safe action: reviewer reviews #131. #55 wires `RunSupervisor` into `jotflow run`
 
 ## Objective and done-when
@@ -60,7 +60,9 @@ More done-when, from the lead's brief and the #54 handoff:
    - A network error leaves the run alone. Its deadline still bounds it.
 3. **Launch.** It calls `start_next(max_running=policy cap)` until it gets None. Each run is launched on its kind's runner. Any launch error finishes the run `failed` with the fixed reason, revoking the token, and posts the failure notice.
 
-Notices go out only when `finish` returns a run, so a run is never noticed twice. Store errors use only fixed strings, such as "agent exited with a non-zero code", "the runner refused the run (429)", or "the runner lost the run".
+Notices go out only when `finish` returns a run, so a run is never noticed twice.
+
+**Review change: execution runs that end without a result.** `RunLifecycle.finish` now moves an execution run's proposal from executing to reconciling, with `expected={EXECUTING}`, whenever the run ends. That covers a timeout, a non-zero exit, a lost run, a launch refusal, an unreachable runner, and a clean exit with no `record_result`. A recorded result has already moved the proposal on, so it is untouched. Doing it in `finish` covers `expire_overdue` too. Queuing the next attempt is #30's. Store errors use only fixed strings, such as "agent exited with a non-zero code", "the runner refused the run (429)", or "the runner lost the run".
 
 **Shutdown.** `close()` sends `DELETE` to every tracked run. It leaves them running in the store, so startup recovery settles them as it does after a crash, and the in-memory tokens die with the process.
 
