@@ -183,3 +183,48 @@ def test_dot_repo_urls_are_rejected() -> None:
 def test_repo_names_are_ascii_only() -> None:
     with pytest.raises(ValidationError):
         IssueProposal(repo="acmé/web", title="x", body="", confidence=0.5)
+
+
+# The overruled hint (#23, D10)
+
+
+def test_an_unset_hint_overruled_keeps_hashes_from_before_it_existed() -> None:
+    from jotflow.models import IssueChanges, IssueProposal, UpdateProposal
+    from jotflow.store.hashing import content_hash
+
+    # Hashes computed on main before the field was added.
+    issue = IssueProposal(
+        repo="acme-co/web",
+        title="Progress bar",
+        body="Show progress.",
+        labels=["enhancement"],
+        confidence=0.9,
+    )
+    update = UpdateProposal(
+        topic_id="t1",
+        repo="acme-co/web",
+        issue_number=42,
+        changes=IssueChanges(comment="More detail."),
+        confidence=0.8,
+    )
+    assert content_hash(issue) == (
+        "sha256:23ba7c39abb81950ceab0080d9dbc154cdedba4c6fe2c0de1711b21ec1bf154c"
+    )
+    assert content_hash(update) == (
+        "sha256:ab8dc602273e0b8be672a788c96e6426904a0b1b14d76b2a55b0fd90ba53c82a"
+    )
+    overruled = issue.model_copy(update={"hint_overruled": "It is a bug, not an idea"})
+    assert content_hash(overruled) != content_hash(issue)  # approval locks it too
+
+
+def test_hint_overruled_is_one_short_line_or_nothing() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from jotflow.models import IssueProposal
+
+    base = {"repo": "acme-co/web", "title": "t", "body": "b", "confidence": 0.5}
+    assert IssueProposal.model_validate(base).hint_overruled is None
+    for bad in ("", "x" * 201, "two\nlines"):
+        with pytest.raises(ValidationError):
+            IssueProposal.model_validate({**base, "hint_overruled": bad})

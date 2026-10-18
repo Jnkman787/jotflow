@@ -116,6 +116,12 @@ class MessageRef(BaseModel):
     permalink: str | None = None
 
 
+HINT_OVERRULED_DESCRIPTION = (
+    "Only when you overrule the author's idea: or bug: hint: a one-line reason. "
+    "Agent-written, so untrusted"
+)
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -135,6 +141,13 @@ class IssueProposal(BaseModel):
         default_factory=list, description="Slack messages this proposal was drawn from"
     )
     confidence: float = Field(ge=0.0, le=1.0)
+    hint_overruled: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        pattern=r"^[^\r\n]*$",
+        description=HINT_OVERRULED_DESCRIPTION,
+    )
 
 
 class IssueChanges(BaseModel):
@@ -158,6 +171,13 @@ class UpdateProposal(BaseModel):
     changes: IssueChanges
     sources: list[MessageRef] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
+    hint_overruled: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        pattern=r"^[^\r\n]*$",
+        description=HINT_OVERRULED_DESCRIPTION,
+    )
 
 
 Proposal = Annotated[IssueProposal | UpdateProposal, Field(discriminator="kind")]

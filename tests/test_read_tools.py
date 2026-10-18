@@ -245,6 +245,103 @@ async def test_drafting_work_is_the_thread_topics_and_related(
     assert work.conversation.related[0].excerpt.untrusted is True
 
 
+async def test_drafting_work_carries_the_instructions_repos_and_people(
+    store: MemoryStore, clock: Clock
+) -> None:
+    from jotflow.whiteboard.read_tools import DRAFTING_INSTRUCTIONS, Mention
+
+    class WithMentions(FakeSource):
+        async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
+            base = await super().thread(channel_id, thread_ts)
+            reply = ThreadMessage(
+                ts="1760781700.000200",
+                user_id="U0ALEX",
+                author=UntrustedText(text="Alex"),
+                text=UntrustedText(text="@Sam @Bob agreed"),
+                mentions=[
+                    Mention(user_id="U0SAM", display_name=UntrustedText(text="Sam")),
+                    Mention(user_id="U0BOB", display_name=UntrustedText(text="Bob")),
+                ],
+            )
+            note = ThreadMessage(
+                ts="1760781800.000300",
+                user_id="U0JOTFLOW",
+                author=UntrustedText(text="JotFlow"),
+                text=UntrustedText(text="Who should own this?"),
+                from_jotflow=True,
+            )
+            return base.model_copy(update={"messages": [*base.messages, reply, note]})
+
+    await store.link_identity("U0BOB", "acme-bob")
+    grant = await running(store)
+    work: Work = await call(tools(store, clock, WithMentions())["get_work"], grant)
+    conversation = work.conversation
+    assert conversation is not None
+    assert conversation.instructions == DRAFTING_INSTRUCTIONS
+    assert conversation.channel is not None
+    [repo] = conversation.channel.repos
+    assert (repo.repo, repo.nickname, repo.labels) == ("acme-co/web", "web", None)
+    assert repo.description == "The customer-facing website"
+    assert conversation.channel.issue_links == "permalinks"
+    # Authors first, then mentions; JotFlow's own messages are not people.
+    assert [(p.user_id, p.display_name.text, p.github_login) for p in conversation.people] == [
+        ("U0SAM", "Sam", None),
+        ("U0ALEX", "Alex", None),
+        ("U0BOB", "Bob", "acme-bob"),
+    ]
+    assert all(p.display_name.untrusted for p in conversation.people)
+
+
+async def test_question_runs_get_no_drafting_instructions(store: MemoryStore, clock: Clock) -> None:
+    grant = await running(store, RunKind.QUESTION)
+    work: Work = await call(tools(store, clock)["get_work"], grant)
+    assert work.conversation is not None
+    assert work.conversation.instructions == ""
+    assert work.conversation.channel is not None
+
+
+async def test_label_lists_reach_the_brief(store: MemoryStore, clock: Clock) -> None:
+    policy = parse_policy(
+        f"""
+issue_links = "none"
+
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+labels = ["bug", "enhancement"]
+"""
+    )
+    by_name = checked_registry(read_tools(store, policy, FakeSource(), clock=clock))
+    work: Work = await call(by_name["get_work"], await running(store))
+    assert work.conversation is not None and work.conversation.channel is not None
+    assert work.conversation.channel.repos[0].labels == ["bug", "enhancement"]
+    assert work.conversation.channel.issue_links == "none"
+
+
+async def test_people_are_capped(store: MemoryStore, clock: Clock) -> None:
+    from jotflow.whiteboard import read_tools as module
+
+    class Crowd(FakeSource):
+        async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
+            messages = [
+                ThreadMessage(
+                    ts=f"1760781600.{i:06d}",
+                    user_id=f"U0P{i:04d}",
+                    author=UntrustedText(text=f"P{i}"),
+                    text=UntrustedText(text="hi"),
+                )
+                for i in range(module.MAX_PEOPLE + 5)
+            ]
+            return WorkThread(channel_id=channel_id, thread_ts=thread_ts, messages=messages)
+
+    work: Work = await call(tools(store, clock, Crowd())["get_work"], await running(store))
+    assert work.conversation is not None
+    assert len(work.conversation.people) == module.MAX_PEOPLE
+
+
 async def test_drafting_work_before_20_fails_clearly(store: MemoryStore, clock: Clock) -> None:
     grant = await running(store)
     spec = tools(store, clock, NoWorkSource())["get_work"]

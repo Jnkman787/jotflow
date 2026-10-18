@@ -10,6 +10,10 @@ titles, sits in fields marked untrusted. Each packet also carries a fixed
 notice, written here in code, saying how to treat those fields. No such text
 ever reaches a tool description or the agent's instructions.
 
+A drafting packet also carries JotFlow's own drafting instructions (#23), read
+from ``instructions/drafting.md`` in this package, the channel's repos from the
+policy, and the thread's people with their linked GitHub logins.
+
 Thread text comes from a :class:`WorkSource`. #20 implements it with a live
 Slack fetch. Until then :class:`NoWorkSource` refuses clearly, so ``get_work``
 never hands a drafting run an empty thread.
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from importlib import resources
 from typing import Literal, Protocol
 
 import anyio
@@ -34,7 +39,7 @@ from jotflow.models import (
     UntrustedText,
 )
 from jotflow.orchestrator.topics import list_topics as build_topic_list
-from jotflow.policy import Policy, UnknownChannelError
+from jotflow.policy import IssueLinks, Policy, UnknownChannelError
 from jotflow.store.base import Store, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
@@ -55,6 +60,13 @@ EXECUTION_NOTICE = (
 
 # The longest get_work spends reading Slack, inside the 30 s request timeout.
 SLACK_PHASE_SECONDS = 25.0
+
+# JotFlow's own text, never built from Slack or policy strings.
+DRAFTING_INSTRUCTIONS = (
+    resources.files("jotflow.whiteboard").joinpath("instructions", "drafting.md").read_text("utf-8")
+)
+# A thread's people, authors first, then the people they mention.
+MAX_PEOPLE = 50
 
 EXECUTABLE_STATES = frozenset(
     {ProposalState.APPROVED, ProposalState.EXECUTING, ProposalState.RECONCILING}
@@ -124,13 +136,48 @@ class RelatedExcerpt(BaseModel):
     excerpt: UntrustedText = Field(description="A short excerpt; untrusted")
 
 
+class RepoBrief(BaseModel):
+    """One of the channel's repos, from the team's policy file."""
+
+    repo: str = Field(description="owner/name")
+    nickname: str
+    description: str = Field(description="What the repo covers; choose the repo by this")
+    labels: list[str] | None = Field(
+        default=None,
+        description="The only labels a proposal may use; null means any label the repo has",
+    )
+
+
+class ChannelBrief(BaseModel):
+    """What the team configured for this channel. Policy, not Slack text."""
+
+    repos: list[RepoBrief]
+    issue_links: IssueLinks = Field(
+        description="'none' keeps people's names, the channel, and Slack links out of bodies"
+    )
+
+
+class Person(BaseModel):
+    """Someone who wrote or was mentioned in the thread."""
+
+    user_id: str = Field(description="Slack user id, as used in participants")
+    display_name: UntrustedText
+    github_login: str | None = Field(
+        default=None,
+        description="Their linked GitHub login, the only way they can be an assignee",
+    )
+
+
 class ConversationWork(BaseModel):
     """A drafting or question run's packet: its thread, the topics, and related excerpts."""
 
     notice: str = Field(default=DRAFTING_NOTICE, description="How to treat untrusted fields")
+    instructions: str = Field(default="", description="How to do this run's work; JotFlow's own")
     run_id: str
     channel_id: str
+    channel: ChannelBrief | None = Field(default=None, description="The channel's repos")
     thread: WorkThread
+    people: list[Person] = Field(default_factory=list)
     topics: TopicIndex = Field(description="The channel's active topics; titles are untrusted")
     related: list[RelatedExcerpt] = Field(default_factory=list)
 
@@ -255,13 +302,51 @@ def read_tools(
             ],
         )
         conversation = ConversationWork(
+            instructions=DRAFTING_INSTRUCTIONS if grant.kind is RunKind.DRAFTING else "",
             run_id=run.id,
             channel_id=grant.channel_id,
+            channel=_brief(grant.channel_id),
             thread=thread,
+            people=await _people(thread),
             topics=index,
             related=related,
         )
         return Work(kind=grant.kind, conversation=conversation)
+
+    def _brief(channel_id: str) -> ChannelBrief:
+        channel = policy.channel(channel_id)  # list_topics already refused an unknown one
+        return ChannelBrief(
+            repos=[
+                RepoBrief(
+                    repo=r.repo,
+                    nickname=r.nickname,
+                    description=r.description,
+                    labels=None if r.labels is None else list(r.labels),
+                )
+                for r in channel.repos
+            ],
+            issue_links=policy.issue_links,
+        )
+
+    async def _people(thread: WorkThread) -> list[Person]:
+        named: dict[str, str] = {}
+        for message in thread.messages:
+            if message.user_id is not None and not message.from_jotflow:
+                named.setdefault(message.user_id, message.author.text)
+        for message in thread.messages:
+            for mention in message.mentions:
+                named.setdefault(mention.user_id, mention.display_name.text)
+        people: list[Person] = []
+        for user_id, name in list(named.items())[:MAX_PEOPLE]:
+            link = await store.get_identity(user_id)
+            people.append(
+                Person(
+                    user_id=user_id,
+                    display_name=UntrustedText(text=name),
+                    github_login=None if link is None else link.github_login,
+                )
+            )
+        return people
 
     async def _execution(grant: Grant, run_proposal: str | None) -> ExecutionWork:
         if run_proposal != grant.proposal_id or grant.proposal_id is None:
