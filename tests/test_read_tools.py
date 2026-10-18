@@ -477,3 +477,29 @@ async def test_advertised_schemas_validate_real_results(store: MemoryStore, cloc
         schema = by_name[name].output_schema()
         assert schema == type(result).model_json_schema(mode="serialization")
         jsonschema.validate(result.model_dump(mode="json"), schema)
+
+
+async def test_a_hanging_slack_call_is_a_clean_error_with_nothing_recorded(
+    store: MemoryStore, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import anyio
+
+    import jotflow.whiteboard.read_tools as read_tools_module
+
+    class Hangs(FakeSource):
+        async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
+            await anyio.sleep_forever()
+            raise AssertionError("unreachable")
+
+    monkeypatch.setattr(read_tools_module, "SLACK_PHASE_SECONDS", 0.05)
+    grant = await running(store)
+    with pytest.raises(ToolError, match="Slack took too long"):
+        await call(tools(store, clock, Hangs())["get_work"], grant)
+    assert await store.packet_ref(grant.run_id, CH, POST) is None
+
+
+def test_the_slack_phase_fits_inside_the_request_timeout() -> None:
+    from jotflow.whiteboard.read_tools import SLACK_PHASE_SECONDS
+    from jotflow.whiteboard.server import REQUEST_TIMEOUT_SECONDS
+
+    assert SLACK_PHASE_SECONDS < REQUEST_TIMEOUT_SECONDS

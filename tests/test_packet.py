@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from slack_sdk.errors import SlackApiError
+from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.models import MessageRef, RunKind, TopicIndex, TopicSummary, UntrustedText
 from jotflow.orchestrator import packet
@@ -545,9 +546,12 @@ class FakeWebClient:
         return FakeSlackResponse(self.data)
 
 
-async def test_the_bolt_reader_asks_for_one_thread_and_one_user() -> None:
+async def test_the_bolt_reader_asks_for_one_thread_and_one_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = FakeWebClient()
-    reader = packet.BoltSlackReader(client)  # type: ignore[arg-type]
+    reader = packet.BoltSlackReader(AsyncWebClient(token="xoxb-test"))
+    monkeypatch.setattr(reader, "_client", client)
     assert await reader.replies(CH, ROOT, cursor="c1", limit=50) == client.data
     assert await reader.user("U0SAM") == client.data
     assert client.calls == [
@@ -559,8 +563,17 @@ async def test_the_bolt_reader_asks_for_one_thread_and_one_user() -> None:
     ]
 
 
+def test_the_bolt_reader_uses_a_short_request_timeout() -> None:
+    original = AsyncWebClient(token="xoxb-test", timeout=30)
+    reader = packet.BoltSlackReader(original)
+    assert reader._client.timeout == packet.READER_TIMEOUT_SECONDS
+    assert reader._client.token == "xoxb-test"
+    assert original.timeout == 30  # the caller's client is left alone
+
+
 async def test_the_bolt_reader_tolerates_a_non_dict_body() -> None:
-    reader = packet.BoltSlackReader(FakeWebClient(data=b"raw"))  # type: ignore[arg-type]
+    reader = packet.BoltSlackReader(AsyncWebClient(token="xoxb-test"))
+    reader._client = FakeWebClient(data=b"raw")  # type: ignore[assignment]
     assert await reader.replies(CH, ROOT, cursor=None, limit=1) == {}
     assert await reader.user("U0SAM") == {}
 

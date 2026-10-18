@@ -58,6 +58,10 @@ RETRY_CAP_SECONDS = 10.0
 # Total waiting across retries stays well inside the MCP server's 30 s request timeout.
 RETRY_BUDGET_SECONDS = 20.0
 
+# Each Slack request's own timeout, so one slow answer cannot use up get_work's
+# time. slack-sdk's default is 30 s, the whole MCP request timeout.
+READER_TIMEOUT_SECONDS = 8
+
 NAME_CACHE_SECONDS = 600.0
 NAME_CACHE_SIZE = 1_000
 
@@ -145,8 +149,15 @@ class SlackReader(Protocol):
 class BoltSlackReader:
     """:class:`SlackReader` over slack-sdk's client, with the bot token's scopes."""
 
-    def __init__(self, client: AsyncWebClient) -> None:
-        self._client = client
+    def __init__(self, client: AsyncWebClient, *, timeout: int = READER_TIMEOUT_SECONDS) -> None:
+        # A copy with a short per-request timeout, leaving the caller's client alone.
+        self._client = AsyncWebClient(
+            token=client.token,
+            base_url=client.base_url,
+            timeout=timeout,
+            proxy=client.proxy,
+            headers=client.headers,
+        )
 
     async def replies(
         self, channel: str, ts: str, *, cursor: str | None, limit: int
