@@ -86,6 +86,11 @@ class RunKind(StrEnum):
     QUESTION = "question"  # answers a read-only question in the thread (M5, D12)
 
 
+# The longest a run may run, and so the longest its MCP token lives: a run must
+# not outlive its token. whiteboard.tokens and the store both read it from here.
+MAX_RUN_SECONDS = 2 * 60 * 60
+
+
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -270,9 +275,7 @@ class Run(BaseModel):
     timeout_seconds: int = Field(
         default=600,
         gt=0,
-        # The same 2 hours as whiteboard.tokens.MAX_TOKEN_TTL_SECONDS, which
-        # cannot be imported here; tests/test_store_runs.py checks they agree.
-        le=7_200,
+        le=MAX_RUN_SECONDS,
         description="How long the run may run once started; at most the token lifetime",
     )
     created_at: AwareDatetime

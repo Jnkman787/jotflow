@@ -92,7 +92,12 @@ def build_server(tools: Sequence[ToolSpec] = TOOLS) -> Server[Any]:
     listings = {
         kind: ListToolsResult(
             tools=[
-                Tool(name=t.name, description=t.description, input_schema=t.input_schema())
+                Tool(
+                    name=t.name,
+                    description=t.description,
+                    input_schema=t.input_schema(),
+                    output_schema=t.output_schema(),
+                )
                 for t in registry.values()
                 if kind in t.kinds
             ]

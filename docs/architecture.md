@@ -33,12 +33,14 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 |---|---|
 | `list_topics` | Active topics for a channel with ids, titles, linked issues |
 | `get_topic` | A topic's linked Slack messages and issue state |
-| `get_work` | The run's packet: new thread text, the active topic index, and related-thread excerpts for a drafting run; only the approved structured proposal for an execution run |
+| `get_work` | The run's packet: thread text, the active topic index, and related-thread excerpts for a drafting or question run; only the approved structured proposal for an execution run |
 | `propose_issue` | Structured draft: repo, title, body, labels, assignees, size |
 | `propose_update` | Structured change to an existing issue: body edit, comment, label or assignee change |
 | `link_message` | Associate a Slack message with a topic, or mark it as chatter |
 | `ask_channel` | Post a clarifying question into the source thread only |
 | `record_result` | Report the issue URL, or the error, after executing an approved proposal |
+
+Every tool reads its channel, thread, run, and proposal from the caller's token, never from its arguments. A topic in another channel is reported exactly like a missing one. Text written in Slack, and anything an earlier run wrote, such as topic titles, sits in fields marked untrusted, and each packet carries a fixed notice saying how to treat them. No such text reaches a tool description. A failure the agent should act on, such as a finished run or an unknown topic, comes back as a tool result with `isError` set and a short reason. Tools also advertise an output schema, so those labels show in what the agent reads.
 
 Every call carries a token, and what a token may do depends on who holds it:
 

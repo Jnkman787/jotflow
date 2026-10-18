@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from jotflow.models import RunKind
+from jotflow.models import MAX_RUN_SECONDS, RunKind
 
 # Longer than any token JotFlow mints; anything bigger is refused unread.
 MAX_TOKEN_LENGTH = 512
@@ -29,7 +29,7 @@ MAX_TOKEN_LENGTH = 512
 TOKEN_PREFIX = "jfr_"
 # The longest a token lives. A run must not outlive its token, so run timeouts
 # are capped to match, and the runner issues with ttl = deadline - now + grace.
-MAX_TOKEN_TTL_SECONDS = 2 * 60 * 60
+MAX_TOKEN_TTL_SECONDS = MAX_RUN_SECONDS
 MAX_LIVE_TOKENS = 1024
 
 Clock = Callable[[], float]

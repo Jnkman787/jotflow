@@ -34,7 +34,7 @@ from jotflow.whiteboard.server import (
     build_app,
 )
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, Grant, RejectAllTokens, TokenRegistry
-from jotflow.whiteboard.tools import TOOLS, RegistryError, ToolSpec, checked_registry
+from jotflow.whiteboard.tools import TOOLS, RegistryError, ToolError, ToolSpec, checked_registry
 
 PORT = 8765
 BASE = f"http://127.0.0.1:{PORT}"
@@ -635,3 +635,44 @@ async def test_a_revoked_or_expired_token_is_401(caplog: pytest.LogCaptureFixtur
     for token in (revoked, expiring):
         assert token not in log
         assert token not in first.text + second.text
+
+
+# #14: tool errors and output schemas
+
+
+async def failing(grant: Grant, arguments: Any) -> BaseModel:
+    raise ToolError("run run-1 is finished")
+
+
+FAILING = ToolSpec(
+    name="failing",
+    description="Always fails. For tests only.",
+    input_model=EchoIn,
+    handler=failing,
+    kinds=DRAFTING,
+)
+TYPED = ToolSpec(
+    name="typed",
+    description="Echo with an output schema. For tests only.",
+    input_model=EchoIn,
+    output_model=EchoOut,
+    handler=echo,
+    kinds=DRAFTING,
+)
+
+
+async def test_a_tool_error_is_a_result_the_model_sees() -> None:
+    async with client_for(tokens=OneToken(), tools=[FAILING]) as http:
+        response = await post(http, "tools/call", {"name": "failing", "arguments": {"text": "x"}})
+    body = response.json()
+    assert "error" not in body
+    assert body["result"]["isError"] is True
+    assert body["result"]["content"] == [{"type": "text", "text": "run run-1 is finished"}]
+
+
+async def test_an_output_model_is_advertised_as_the_output_schema() -> None:
+    async with client_for(tokens=OneToken(), tools=[TYPED, ECHO]) as http:
+        response = await post(http, "tools/list")
+    tools = {t["name"]: t for t in response.json()["result"]["tools"]}
+    assert tools["typed"]["outputSchema"] == EchoOut.model_json_schema()
+    assert "outputSchema" not in tools["echo"] or tools["echo"]["outputSchema"] is None

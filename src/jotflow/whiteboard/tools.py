@@ -40,9 +40,14 @@ class ToolSpec:
     handler: Handler
     # Run kinds that may call this tool; see the token table in architecture.md.
     kinds: frozenset[RunKind] = frozenset()
+    # The result's model, advertised as the tool's outputSchema when set.
+    output_model: type[BaseModel] | None = None
 
     def input_schema(self) -> dict[str, Any]:
         return self.input_model.model_json_schema()
+
+    def output_schema(self) -> dict[str, Any] | None:
+        return None if self.output_model is None else self.output_model.model_json_schema()
 
 
 TOOLS: tuple[ToolSpec, ...] = ()

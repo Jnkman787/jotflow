@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
 from jotflow.models import (
+    MAX_RUN_SECONDS,
     ChannelMode,
     ExecutionResult,
     IssueProposal,
@@ -39,10 +40,9 @@ from jotflow.models import (
     UpdateProposal,
 )
 from jotflow.store.hashing import content_hash
-from jotflow.whiteboard.tokens import MAX_TOKEN_TTL_SECONDS
 
-# A run must not outlive its MCP token, which lasts at most this long (#105).
-MAX_RUN_TIMEOUT_SECONDS = MAX_TOKEN_TTL_SECONDS
+# A run must not outlive its MCP token; both caps are models.MAX_RUN_SECONDS.
+MAX_RUN_TIMEOUT_SECONDS = MAX_RUN_SECONDS
 
 LinkSource = Literal["agent", "person"]
 Clock = Callable[[], datetime]
