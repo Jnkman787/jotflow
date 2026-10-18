@@ -21,6 +21,14 @@ from jotflow.store import MAX_TITLE_LENGTH, clean_title
         ("\uff26\uff55\uff4c\uff4c\uff57\uff49\uff44\uff54\uff48", "Fullwidth"),
         ("web#42 follow-up: dark mode", "web#42 follow-up: dark mode"),
         ("- leading and trailing punctuation. ", "leading and trailing punctuation"),
+        ("&lt;!channel&gt; now", "now"),
+        ("&lt;https://evil.example|docs&gt; then", "then"),
+        ("&amp;lt;!here&amp;gt; twice escaped", "twice escaped"),
+        ("open evil.example/login please", "open please"),
+        ("pay at evil.example now", "pay at now"),
+        ("acme-co.com:8080/x rocks", "rocks"),
+        ("Node.js support", "Node.js support"),
+        ("R&amp;D budget", "R D budget"),
     ],
 )
 def test_clean_title(raw: str, clean: str) -> None:

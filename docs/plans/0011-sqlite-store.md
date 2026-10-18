@@ -6,7 +6,7 @@
 - Also serves: #53 (run records build on this schema), #12 (topic titles are bounded and sanitised here)
 - Draft PR: #96
 - Status: ready for review
-- Last verified: `make check` green locally on 2026-10-18: 646 tests, 98% total coverage, every store module at 100%
+- Last verified: `make check` green locally on 2026-10-18 after the security review: 660 tests, 98% total coverage, every store module at 100%
 - Next safe action: review; then #53 adds the runs table as migration 2
 
 ## Objective and done-when
@@ -85,6 +85,12 @@ Runs: `proposals.run_id` is text with no foreign key, so a proposal does not nee
 - `tests/test_store_schema.py` reads the live schema: every column must have a comment, and none may be named or documented as a message's body, text, or content. A second test feeds it bad columns and checks it catches each one. Migrations: a fresh file reaches the latest version in WAL mode, reopening keeps data, a newer database is refused, a failing migration rolls back to the previous version, and versions must be numbered without gaps.
 - `tests/test_store_titles.py` covers markup, Slack tokens, URLs, mentions, invisible and bidi characters, full-width letters, length cuts, and injection-style titles.
 - Architect review of the design: agreed. Added `try_transition`, which returns None instead of raising when another run won the race or the state doesn't allow the change, so a run can just stop. `transition` still raises with the current state for callers that want the reason.
+- Security review of #96: 5 items. Fixed in this PR, with the team lead lifting the earlier hold:
+  1. A new database file is created with mode 0600 before SQLite opens it, so its -wal and -shm files follow. Outside Docker the umask would otherwise leave drafts and identity links readable by other local users. Tested on a fresh file; an existing file keeps its mode.
+  2. `clean_title` unescapes HTML entities first, twice, so `&lt;!channel&gt;` from Slack is caught as a token, and strips bare domains: any host followed by a path, and any host with a common top-level domain. `Node.js` survives. A dated note on #26 asks cards to render titles as plain_text as a second layer.
+  3. A person's approval now requires `expected_hash`, the hash the card showed; only `auto` may omit it. The D7 guarantee no longer rests on drafts being immutable.
+  5. The read-back `assert`s are now `StoreError`s, so `python -O` keeps the check.
+  Item 4, clearing drafts once final, is #102.
 - CodeRabbit: skipped. The local CLI was rate-limited.
 - Found by the tests: a single word longer than the title limit was kept at 81 characters, because the word-boundary cut found no space. Fixed.
 - Also found: writing the title tests turned the `\u200b` and `\u202e` escapes into the invisible characters themselves, which put a bidi override in the source. Restored as escapes; the store code and its tests are ASCII only.

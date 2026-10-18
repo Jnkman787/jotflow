@@ -207,6 +207,9 @@ def plan_transition(
         if not approved_by:
             raise ValueError("approving needs approved_by: a Slack user id or 'auto'")
         check_id(approved_by, "approver")
+        if approved_by != AUTO_APPROVER and expected_hash is None:
+            # D7: a person approves what their card showed, so the card's hash is required.
+            raise ValueError("a person's approval needs expected_hash, the hash the card showed")
         locked = content_hash(record.proposal)
         if expected_hash is not None and expected_hash != locked:
             raise ContentChangedError(

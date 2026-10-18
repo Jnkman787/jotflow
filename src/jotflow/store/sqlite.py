@@ -10,6 +10,7 @@ and a busy timeout absorbs short waits for the lock.
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
@@ -52,11 +53,35 @@ from jotflow.store.migrations import MIGRATIONS, Migration
 from jotflow.store.titles import clean_title
 
 _PROPOSAL = TypeAdapter[Proposal](Proposal)
+DB_FILE_MODE = 0o600
 BUSY_TIMEOUT_MS = 5000
 
 
 class SchemaVersionError(StoreError):
     """The database was written by a newer JotFlow."""
+
+
+def _found[T](value: T | None) -> T:
+    """A row just written must be readable; raise rather than assert, so -O keeps the check."""
+    if value is None:  # pragma: no cover - would mean SQLite lost a committed row
+        raise StoreError("a row written in this transaction could not be read back")
+    return value
+
+
+def _create_private(path: str | Path) -> None:
+    """Create the database file readable only by its owner, before SQLite opens it.
+
+    SQLite gives the -wal and -shm files the main file's permissions, so they
+    follow. Outside Docker the process umask is often 022, which would leave
+    drafts and identity links readable by other local users.
+    """
+    if str(path) == ":memory:" or str(path).startswith("file:"):
+        return
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, DB_FILE_MODE)
+    except FileExistsError:
+        return
+    os.close(fd)
 
 
 class SqliteStore:
@@ -73,7 +98,11 @@ class SqliteStore:
         clock: Clock = utc_now,
         migrations: Sequence[Migration] = MIGRATIONS,
     ) -> Self:
-        """Open or create the database at ``path`` and bring its schema up to date."""
+        """Open or create the database at ``path`` and bring its schema up to date.
+
+        A new file is created with mode 0600.
+        """
+        _create_private(path)
         db = await aiosqlite.connect(str(path), isolation_level=None)
         try:
             db.row_factory = aiosqlite.Row
@@ -174,8 +203,7 @@ class SqliteStore:
         row = await self._one(
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
-        assert row is not None
-        return self._link(row)
+        return self._link(_found(row))
 
     async def link_message(
         self, ref: MessageRef, topic_id: str, *, by: LinkSource = "agent"
@@ -231,8 +259,7 @@ class SqliteStore:
                 (topic_id, channel_id, cleaned, now, now),
             )
             record = await self._get_topic(topic_id)
-        assert record is not None
-        return record
+        return _found(record)
 
     async def get_topic(self, topic_id: str) -> TopicRecord | None:
         async with self._lock:
@@ -244,8 +271,7 @@ class SqliteStore:
             if cursor.rowcount == 0:
                 raise NotFoundError(f"no topic {topic_id}")
             record = await self._get_topic(topic_id)
-        assert record is not None
-        return record
+        return _found(record)
 
     async def rename_topic(self, topic_id: str, title: str) -> TopicRecord:
         cleaned = clean_title(title)
@@ -349,8 +375,7 @@ class SqliteStore:
                 [(record.id, user) for user in sorted(set(record.participants))],
             )
             stored = await self._get_proposal(record.id)
-        assert stored is not None
-        return stored
+        return _found(stored)
 
     async def get_proposal(self, proposal_id: str) -> ProposalRecord | None:
         async with self._lock:
@@ -410,8 +435,7 @@ class SqliteStore:
             if cursor.rowcount != 1:  # pragma: no cover - the write lock rules this out
                 raise StoreError(f"proposal {proposal_id} changed during the transition")
             updated = await self._get_proposal(proposal_id)
-        assert updated is not None
-        return updated
+        return _found(updated)
 
     async def supersede_pending(
         self, channel_id: str, thread_ts: str | None, *, keep_id: str
@@ -466,8 +490,7 @@ class SqliteStore:
             row = await self._one(
                 "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
             )
-        assert row is not None
-        return self._identity(row)
+        return self._identity(_found(row))
 
     async def get_identity(self, slack_user_id: str) -> IdentityLink | None:
         async with self._lock:
@@ -512,8 +535,7 @@ class SqliteStore:
                 (channel_id, ChannelMode(mode).value, changed_by, to_text(self._clock())),
             )
             row = await self._one("SELECT * FROM channel_modes WHERE channel_id = ?", (channel_id,))
-        assert row is not None
-        return self._mode(row)
+        return self._mode(_found(row))
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         async with self._lock:

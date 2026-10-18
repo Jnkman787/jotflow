@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import stat
 from pathlib import Path
 
 import pytest
@@ -164,3 +165,24 @@ async def test_in_memory_sqlite_works() -> None:
     store = await SqliteStore.open(":memory:")
     async with store:
         assert (await store.create_topic("C0IDEAS01", "Progress bar")).topic.title == "Progress bar"
+
+
+async def test_a_new_database_is_private(tmp_path: Path) -> None:
+    path = tmp_path / "jotflow.db"
+    store = await SqliteStore.open(path)
+    await store.create_topic("C0IDEAS01", "Progress bar")
+    try:
+        for name in ("jotflow.db", "jotflow.db-wal", "jotflow.db-shm"):
+            mode = stat.S_IMODE((tmp_path / name).stat().st_mode)
+            assert mode & 0o077 == 0, (name, oct(mode))
+    finally:
+        await store.close()
+
+
+async def test_an_existing_database_keeps_its_mode(tmp_path: Path) -> None:
+    path = tmp_path / "jotflow.db"
+    path.touch(mode=0o640)
+    path.chmod(0o640)
+    store = await SqliteStore.open(path)
+    await store.close()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640

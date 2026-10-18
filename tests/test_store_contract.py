@@ -105,11 +105,14 @@ def record(
 
 
 ISSUE_URL = "https://github.com/acme-co/web/issues/42"
+SHOWN = content_hash(draft())  # what the card showed
 
 
 async def approved(store: Store, proposal_id: str = "p1") -> ProposalRecord:
     await store.add_proposal(record(proposal_id))
-    return await store.transition(proposal_id, S.APPROVED, approved_by="U0CAROL")
+    return await store.transition(
+        proposal_id, S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN
+    )
 
 
 # --- topics ------------------------------------------------------------------
@@ -306,6 +309,14 @@ async def test_approving_needs_an_approver(store: Store) -> None:
         await store.transition("p1", S.APPROVED)
 
 
+async def test_a_person_must_approve_what_the_card_showed(store: Store) -> None:
+    await store.add_proposal(record())
+    with pytest.raises(ValueError, match="expected_hash"):
+        await store.transition("p1", S.APPROVED, approved_by="U0CAROL")
+    still = await store.get_proposal("p1")
+    assert still is not None and still.state is S.PENDING
+
+
 async def test_full_happy_path(store: Store) -> None:
     await approved(store)
     await store.transition("p1", S.EXECUTING)
@@ -340,7 +351,7 @@ async def test_reconcile_and_retry(store: Store) -> None:
     await store.transition("p1", S.EXECUTING)
     failed = await store.transition("p1", S.FAILED, result=ExecutionResult(error="GitHub said no"))
     assert failed.result is not None and failed.result.error == "GitHub said no"
-    again = await store.transition("p1", S.APPROVED, approved_by="U0DAVE")
+    again = await store.transition("p1", S.APPROVED, approved_by="U0DAVE", expected_hash=SHOWN)
     assert again.approved_by == "U0DAVE"
 
 
@@ -362,6 +373,7 @@ async def test_only_diagram_edges_are_allowed(
     kwargs: dict[str, object] = {}
     if target is S.APPROVED:
         kwargs["approved_by"] = "U0CAROL"
+        kwargs["expected_hash"] = SHOWN
     if target is S.APPLIED:
         kwargs["result"] = ExecutionResult(issue_url=ISSUE_URL)
     if target in ALLOWED_TRANSITIONS[start]:
@@ -390,6 +402,7 @@ async def _reach(store: Store, state: ProposalState) -> None:
         kwargs: dict[str, object] = {}
         if step is S.APPROVED:
             kwargs["approved_by"] = "U0CAROL"
+            kwargs["expected_hash"] = SHOWN
         if step is S.APPLIED:
             kwargs["result"] = ExecutionResult(issue_url=ISSUE_URL)
         await store.transition("p1", step, **kwargs)  # type: ignore[arg-type]
@@ -405,7 +418,7 @@ async def test_expected_states_guard(store: Store) -> None:
 async def test_misplaced_arguments_are_refused(store: Store) -> None:
     await store.add_proposal(record())
     with pytest.raises(ValueError):
-        await store.transition("p1", S.REJECTED, approved_by="U0CAROL")
+        await store.transition("p1", S.REJECTED, approved_by="U0CAROL", expected_hash=SHOWN)
     with pytest.raises(ValueError):
         await store.transition("p1", S.REJECTED, result=ExecutionResult(error="x"))
     with pytest.raises(NotFoundError):
@@ -414,7 +427,7 @@ async def test_misplaced_arguments_are_refused(store: Store) -> None:
 
 async def test_concurrent_approvals_only_one_wins(store: Store) -> None:
     await store.add_proposal(record())
-    await store.transition("p1", S.APPROVED, approved_by="U0CAROL")
+    await store.transition("p1", S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
     outcomes = await asyncio.gather(
         *(store.transition("p1", S.EXECUTING) for _ in range(10)), return_exceptions=True
     )
@@ -428,7 +441,7 @@ async def test_supersede_pending(store: Store) -> None:
         await store.add_proposal(record(proposal_id))
     await store.add_proposal(record("elsewhere", thread="1760781700.000100"))
     await store.add_proposal(record("done"))
-    await store.transition("done", S.APPROVED, approved_by="U0CAROL")
+    await store.transition("done", S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
     assert await store.supersede_pending(CH, "1760781600.000100", keep_id="new") == ["old1", "old2"]
     states = {p.id: p.state for p in await store.thread_proposals(CH, "1760781600.000100")}
     assert states == {
@@ -492,7 +505,7 @@ async def test_two_connections_to_one_file_never_both_win(tmp_path: Path, clock:
     second = await SqliteStore.open(path, clock=clock)
     try:
         await first.add_proposal(record())
-        await first.transition("p1", S.APPROVED, approved_by="U0CAROL")
+        await first.transition("p1", S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
         outcomes = await asyncio.gather(
             *(s.transition("p1", S.EXECUTING) for s in (first, second, first, second)),
             return_exceptions=True,
