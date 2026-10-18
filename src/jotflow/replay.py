@@ -128,7 +128,7 @@ class _FixtureSource:
         ]
         return WorkThread(channel_id=channel_id, thread_ts=thread_ts, messages=messages)
 
-    async def related(self, channel_id: str, thread_ts: str, topics: Any) -> list[RelatedExcerpt]:
+    async def related(self, thread: WorkThread, topics: Any) -> list[RelatedExcerpt]:
         return []
 
     def _name(self, user: str | None) -> str:
