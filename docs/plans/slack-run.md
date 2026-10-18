@@ -4,11 +4,11 @@
 
 - Issue: #8
 - Draft PR: #66
-- Status: blocked: waiting for #64 to merge, then rebase onto `main`
-- Last verified: `make check` green locally on Python 3.12, 100 tests
-- Next safe action: after #64 merges, `git rebase --onto origin/main feat/config-schema feat/slack-run`, retarget #66 to `main`, rerun `make check` and the local CodeRabbit review, then mark #66 ready
+- Status: completed
+- Last verified: `make check` green locally after rebasing onto `main` with #64 merged, 143 tests
+- Next safe action: review and merge #66; then run the live reconnect check on #8 in the sandbox workspace
 
-This branch is stacked on #64 (Settings and `jotflow.toml`), which it needs. Once #64 merges, rebase onto `main`.
+This branch was stacked on #64 (Settings and `jotflow.toml`), which it needs. After #64 merged, it was rebased onto `main`, so #66 holds only this work.
 
 ## Objective and done-when
 
@@ -66,12 +66,12 @@ Alternatives considered: `AsyncSocketModeHandler.start_async()` sleeps forever a
 - [x] Add or update tests
 - [x] Update documentation
 - [x] `make check` passes
-- [ ] Local CodeRabbit review
-- [ ] Mark the PR ready for review
+- [x] Local CodeRabbit review: skipped, rate limit
+- [x] Mark the PR ready for review
 
 ## Validation
 
-- `make check`: ruff lint and format clean, mypy strict clean, 100 tests pass. 47 are new, in `tests/test_ingest.py` and `tests/test_run.py`.
+- `make check`: ruff lint and format clean, mypy strict clean, 143 tests pass after the rebase onto `main`. 47 are new, in `tests/test_ingest.py` and `tests/test_run.py`.
 - The tests cover:
   - accepted messages and their subtypes
   - unconfigured channels
@@ -91,11 +91,12 @@ Alternatives considered: `AsyncSocketModeHandler.start_async()` sleeps forever a
   - non-member and invisible channels with the `/invite` hint
   - the registered listener logging a pointer once for a duplicated delivery
 - Manual: `jotflow run` with no tokens and with no `jotflow.toml` prints the problems and exits 2.
-- CodeRabbit: skipped. The free CLI allowance was used up, with a reset in about 42 minutes. In its place a self-review found two gaps, both fixed: a network failure at startup ended in a traceback instead of a message, and a failed Socket Mode connect left the handler open.
+- CodeRabbit: skipped: rate limit, both before and after the rebase. The free CLI allowance was used up. In its place a self-review found two gaps, both fixed: a network failure at startup ended in a traceback instead of a message, and a failed Socket Mode connect left the handler open.
 - Not yet done: staying connected through a real Socket Mode reconnect, which needs the sandbox workspace. The handler uses slack-sdk's automatic reconnect, which is on by default.
 
 ## Handoff notes
 
 - `tests/test_cli.py` now runs each subcommand from an empty directory with `JOTFLOW_*` cleared. Without that, `run` on a developer machine with a real `.env` and `jotflow.toml` would connect to Slack during the test.
 - Duplicate memory is in-process. A restart forgets it, and Slack does not redeliver old events after a reconnect, so this is acceptable until #11.
+- Container: the image from #62 runs `jotflow run` from `/data`, so it looks for `/data/jotflow.toml`, which nothing provides yet. Until the Compose follow-up mounts the file read-only and sets `JOTFLOW_CONFIG`, the container exits 2 with "file not found". Signals need no wrapper: the command runs as PID 1 in exec form and installs its own SIGTERM handler.
 - The debouncer (#19) should hook in where `register_handlers` calls `log_decision`.
