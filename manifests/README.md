@@ -11,7 +11,7 @@
 5. Set an icon under **Basic Information** if you like. Slack does not take icons from a manifest.
 6. Invite the bot to each channel JotFlow should watch with `/invite @YourBotName`. The bot never joins channels by itself, and `jotflow run` reports configured channels it has not been invited to.
 
-JotFlow needs both tokens. Keep them secret and out of the repository. Token rotation is off, so a leaked token stays valid until you revoke it. If one leaks, choose **Revoke All OAuth Tokens** on **OAuth & Permissions**, regenerate the app-level token under **Basic Information**, and reinstall the app. `jotflow init` (#7) will wrap these steps, validate the tokens, and write them to your `.env`.
+JotFlow needs both tokens. Keep them secret and out of the repository. Token rotation is off, so a leaked token stays valid until you revoke it. If one leaks, choose **Revoke All OAuth Tokens** on **OAuth & Permissions**, regenerate the app-level token under **Basic Information**, and reinstall the app. `jotflow init` wraps these steps: it renders the manifest with your bot name, prints a link that opens Slack's create-app dialog with it filled in, checks both tokens, and writes them to your `.env`.
 
 ## Use a different bot name
 

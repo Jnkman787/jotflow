@@ -171,3 +171,8 @@ htmlcov/
 
 # Local policy file: holds workspace channel ids; only the example is committed
 jotflow.toml
+# Backup `jotflow init` keeps when it rewrites the policy; same channel ids
+jotflow.toml.bak
+
+# Manifest rendered by `jotflow init`; the checked-in default is manifests/slack-app.json
+/slack-app-manifest.json
