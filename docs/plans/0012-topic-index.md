@@ -56,6 +56,7 @@ Done when:
 ## Validation
 
 - `make check` green: 768 tests, 98% coverage. `tests/test_topic_index.py` runs against MemoryStore and SqliteStore. It covers only topics within the window, an inclusive window edge, a linked message bringing an old topic back, summary fields with the thread cap and order, other channels hidden, the 50-topic cap and the count of topics left out, a bad window or limit, the compact JSON form and its untrusted-data note, titles cleaned again even when a bad title reached the store some other way, `list_topics` taking the window from the policy and refusing an unconfigured channel, and `topic_window_days` defaulting, validating 1 to 365, and round-tripping through the writer.
+- CodeRabbit: skipped, rate-limited.
 - Docs: the architecture's Correlation section describes the index and the Configuration table lists the topic window. `jotflow.example.toml` documents `topic_window_days`. AGENTS.md's layout already lists the topic index under `orchestrator/`.
 
 ## Handoff notes
