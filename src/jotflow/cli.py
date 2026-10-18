@@ -17,6 +17,7 @@ from jotflow.commands import check as check_command
 from jotflow.commands import init as init_command
 from jotflow.commands import replay as replay_command
 from jotflow.commands import run as run_command
+from jotflow.commands import runner as runner_command
 
 COMMANDS: dict[str, tuple[ModuleType, str]] = {
     "init": (init_command, "Guided setup: write jotflow.toml and connect the Slack app"),
@@ -29,6 +30,7 @@ COMMANDS: dict[str, tuple[ModuleType, str]] = {
         replay_command,
         "Run a saved thread through JotFlow offline and compare it with its expected outcome",
     ),
+    "runner": (runner_command, "Inside the agent container: start agent runs for JotFlow"),
 }
 
 

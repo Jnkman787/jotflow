@@ -41,7 +41,7 @@ src/jotflow/
   replay.py       runs a saved thread through the real pipeline with a scripted agent (`jotflow replay`)
   orchestrator/   event ingest, debouncing, topic index, run lifecycle and tokens, proposal lifecycle, approval cards
   whiteboard/     the MCP server: gate (transport rules, audit), token interface, fixed tool registry
-  adapters/       agent runners and presets
+  adapters/       agent runners and presets; runner.py is the agent container's runner
   execution/      execution runs: hands approved proposals back to the agent, checks results
 tests/            pytest suite
 docs/             architecture, roadmap, plans

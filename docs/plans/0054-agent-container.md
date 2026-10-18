@@ -4,10 +4,10 @@
 
 - Issue: #54
 - Also serves: #21, which calls this runner from JotFlow's side
-- Draft PR: pending
-- Status: planning
-- Last verified: plan written on 2026-10-18, nothing built yet
-- Next safe action: commit this plan, push, open the draft PR
+- Draft PR: #123
+- Status: implementing
+- Last verified: `make check` green, 1281 tests, 98.3% coverage; the agent image was built and smoke-tested locally
+- Next safe action: CodeRabbit or skip, CI on #123, mark ready
 
 ## Objective and done-when
 
@@ -15,20 +15,20 @@ Run the team's agent in its own container (D6). The container sees its own model
 
 The issue's boxes:
 
-- [ ] `docker compose up` starts both containers
-- [ ] A test proves Slack tokens are not visible inside the agent container
-- [ ] JotFlow can launch a run in the agent container, and the agent reaches the MCP port
-- [ ] Docs explain how to provide the agent's model login and GitHub tokens
+- [x] `docker compose up` starts both containers, once `COMPOSE_PROFILES=agent` is set; see Design
+- [x] A test proves Slack tokens are not visible inside the agent container
+- [ ] JotFlow can launch a run in the agent container, and the agent reaches the MCP port. In process this is proven, with the runner launching a stub agent that calls the real MCP server with its token. JotFlow's side of the call is #21, and the cross-container live step is #55.
+- [x] Docs explain how to provide the agent's model login and GitHub tokens
 
 From the dated notes on #54 and #21:
 
-- [ ] The runner listens only on the internal `agents` network, with no published port and no Docker socket
-- [ ] The runner accepts exactly run id, run kind, and per-run token, never a command. It authenticates JotFlow with a shared secret that is compared in constant time and never given to the agent.
-- [ ] The read-only GitHub token goes to drafting and question runs, and the write token only to execution runs. A missing token refuses the run, and drafting never falls back to the write token.
-- [ ] Each run gets a private temporary directory (0700) holding its MCP config (0600), with the MCP URL and the token as an `Authorization` header. The directory is deleted when the run ends, including on timeout, kill, or a runner restart.
-- [ ] The agent process gets an explicit environment allowlist: base variables, the model-login variables the team names, and the one GitHub token for its kind. Nothing else, so not the runner secret either.
-- [ ] A run past its time limit is killed with its whole process group
-- [ ] JotFlow's MCP server listens on the internal network inside Compose, with `JOTFLOW_MCP_HOST=0.0.0.0` and `JOTFLOW_MCP_ALLOWED_HOSTS=jotflow`
+- [x] The runner listens only on the internal `agents` network, with no published port and no Docker socket
+- [x] The runner accepts exactly run id, run kind, and per-run token, never a command. It authenticates JotFlow with a shared secret that is compared in constant time and never given to the agent.
+- [x] The read-only GitHub token goes to drafting and question runs, and the write token only to execution runs. A missing token refuses the run, and drafting never falls back to the write token.
+- [x] Each run gets a private temporary directory (0700) holding its MCP config (0600), with the MCP URL and the token as an `Authorization` header. The directory is deleted when the run ends, including on timeout, kill, or a runner restart.
+- [x] The agent process gets an explicit environment allowlist: base variables, the model-login variables the team names, and the one GitHub token for its kind. Nothing else, so not the runner secret either.
+- [x] A run past its time limit is killed with its whole process group
+- [x] JotFlow's MCP server listens on the internal network inside Compose, with `JOTFLOW_MCP_HOST=0.0.0.0` and `JOTFLOW_MCP_ALLOWED_HOSTS=jotflow`
 
 **Split with #21.** This PR is the agent side: the container, the runner, and how a run's process is started, scoped, and ended. #21 is the JotFlow side: it asks the runner to start a run, follows the run to its end, finishes it through `RunLifecycle`, and posts a short notice in Slack on failure.
 
@@ -64,8 +64,10 @@ See Deployment, How runs start, Network, and GitHub tokens in [architecture.md](
 
 **Compose:**
 
+- The agent service is behind the profile `agent`. Without `agent.env` the runner can only fail, and its restart policy would loop, so plain `docker compose up -d` keeps starting JotFlow alone until a team adds `COMPOSE_PROFILES=agent` to `.env`. That is how both containers start, and it keeps today's setup unchanged.
+
 - The `agent` service builds `Dockerfile.agent` and reads `agent.env`, never `.env`. It joins `agents` and a new `agent-egress` network, for the model API and GitHub. It publishes no ports.
-- `jotflow` gets `JOTFLOW_MCP_HOST=0.0.0.0`, `JOTFLOW_MCP_ALLOWED_HOSTS=jotflow`, and `JOTFLOW_RUNNER_URL=http://agent:8766`.
+- `jotflow` gets `JOTFLOW_MCP_HOST=0.0.0.0` and `JOTFLOW_MCP_ALLOWED_HOSTS=jotflow`. #21 adds `JOTFLOW_RUNNER_URL=http://agent:8766` along with the client that reads it.
 - The runner secret lives in both `.env` and `agent.env`, as `JOTFLOW_RUNNER_SECRET`.
 
 **Docs:** an "Agent container" part of Deployment. It covers the two env files, generating the runner secret, the model login (an API key in `agent.env`, or a one-time interactive login into the `agent-home` volume), and two fine-grained GitHub tokens: read-only for contents and issues, and write for issues only on the channel's repos.
@@ -85,22 +87,37 @@ Alternatives considered:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Runner app: gate, routes, run table, cap
-- [ ] Launch: private directory, 0600 config, environment allowlist, token by kind, argv template, process group kill, cleanup
-- [ ] `jotflow runner` subcommand and settings
-- [ ] `Dockerfile.agent`, Compose service and networks, JotFlow's MCP env in Compose
-- [ ] Tests: gate, body, secret, token by kind, environment, file modes, cleanup, timeout kill, a stub agent reaching the real MCP app
-- [ ] CI: build the agent image, prove no Slack variable inside it
-- [ ] Update documentation: Deployment, README setup for `agent.env`
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] Runner app: gate, routes, run table, cap
+- [x] Launch: private directory, 0600 config, environment allowlist, token by kind, argv template, process group kill, cleanup
+- [x] `jotflow runner` subcommand and settings
+- [x] `Dockerfile.agent`, Compose service and networks, JotFlow's MCP env in Compose
+- [x] Tests: gate, body, secret, token by kind, environment, file modes, cleanup, timeout kill, a stub agent reaching the real MCP app
+- [x] CI: build the agent image, prove no Slack variable inside it
+- [x] Update documentation: Deployment, README setup for `agent.env`
+- [x] `make check` passes
 - [ ] CodeRabbit local review, or skipped
 - [ ] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
-To be filled in.
+- `make check` passes: 1281 tests, 98.3% total coverage. `adapters/runner.py` is at 96%. `commands/runner.py`'s uvicorn loop is not covered; the CI job starts the real runner.
+- `tests/test_runner.py`, 47 tests:
+  - configuration: a short secret, an empty command, a non-HTTP MCP URL, a bad env name, and allowlisting any JotFlow, Slack, GitHub, or `*_TOKEN` name all fail at startup. The config's `repr` hides its secrets. The command must be a JSON list of strings, and only `{mcp_config}` and `{run_id}` are filled.
+  - the launch request is exactly run id, kind, and a `jfr_` token. An extra field, a spaced run id, an unknown kind, a non-JotFlow token, and a spaced token are refused. The run-id pattern is anchored, because Pydantic's `pattern` searches rather than matches.
+  - the child environment holds exactly the allowlist, with the read token for drafting and question runs and the write token for execution. Slack sentinels, the runner secret, the other GitHub token, and unlisted variables are absent.
+  - real launches with a stand-in agent: the MCP config is 0600 in a 0700 directory, the agent runs in that directory, and the token is in neither argv nor env. The directory is gone afterwards.
+  - exit codes are reported. A missing token refuses the run without fallback. One launch per run id, and the live-run cap holds.
+  - a timeout kills the whole process group, grandchild included. DELETE kills the run. An agent that cannot start fails cleanly. Leftover directories are removed at start.
+  - the HTTP gate: an `Origin`, a bad `Host`, a query, and a missing or wrong secret are refused before anything starts, and an oversized body is refused. Launch, status, and stop work over HTTP.
+  - a launched stand-in agent reads its MCP config and calls JotFlow's real MCP server on loopback with its issued token: HTTP 200, with tools-only capabilities.
+  - the subcommand and its settings, and configuration problems exit 2 naming the variable
+- Local Docker, Docker 28.3: the agent image builds with Node 20 and runs as uid 10002. With Slack sentinels in `.env`, neither `docker compose run agent env` nor the runner process's own environment holds them. The runner answers 401 without the secret and 404 with it. CI's `agent-image` job repeats this.
+- `docker compose config --services` lists only `jotflow` by default, and both with `COMPOSE_PROFILES=agent`.
 
 ## Handoff notes
 
-None yet.
+- #21: the JotFlow-side client posts `{run_id, kind, token}` to `JOTFLOW_RUNNER_URL` with `Authorization: Bearer <JOTFLOW_RUNNER_SECRET>`. A 202 means started; then poll `GET /runs/{id}` for `exited`, `timed_out`, `killed`, or `failed` and the exit code. Call `DELETE /runs/{id}` on JotFlow's timeout or shutdown. The responses are 409 for an already-launched run, 429 at the live cap, and 503 when no GitHub token is set for the kind. Add `JOTFLOW_RUNNER_URL` and `JOTFLOW_RUNNER_SECRET` to JotFlow's `Settings`.
+- #22: set `AGENT_NPM_PACKAGES` with pinned versions, and replace `JOTFLOW_AGENT_COMMAND` with named presets that use `{mcp_config}`. Turn off session transcripts where the CLI allows it, since `HOME` is the persistent `agent-home` volume.
+- #7: `jotflow init` should generate `JOTFLOW_RUNNER_SECRET` and write it to both `.env` and `agent.env`, with mode 0600, and add `COMPOSE_PROFILES=agent` once the agent is set up.
+- #55: the live step is `COMPOSE_PROFILES=agent docker compose up -d` with real tokens, a run started from JotFlow, and its `record_result`.

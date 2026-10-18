@@ -124,3 +124,54 @@ jobs:
           fi
           cat live.out
           grep -q "run the live check on the host" live.out
+
+  agent-image:
+    name: Build agent image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: docker build --file Dockerfile.agent --tag jotflow-agent:local .
+
+      - name: Smoke test
+        run: |
+          test "$(docker run --rm jotflow-agent:local id -u)" = "10002"
+          docker run --rm jotflow-agent:local node --version
+          docker run --rm jotflow-agent:local jotflow --version
+
+      # D6: Slack tokens in JotFlow's .env never reach the agent container. The
+      # values are dummy sentinels, never real tokens.
+      - name: No Slack variable inside the agent container
+        run: |
+          printf 'JOTFLOW_SLACK_BOT_TOKEN=ci-sentinel-bot\nJOTFLOW_SLACK_APP_TOKEN=ci-sentinel-app\n' > .env
+          secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' "$secret" > agent.env
+          if docker compose run --rm --no-deps agent env | grep -q ci-sentinel; then
+            echo "::error::The agent container can see JotFlow's Slack tokens"
+            exit 1
+          fi
+          docker compose up -d --no-deps agent
+          for _ in $(seq 1 30); do
+            if docker compose exec -T agent python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if docker compose exec -T agent sh -c 'tr "\0" "\n" < /proc/1/environ' | grep -q ci-sentinel; then
+            echo "::error::The runner process can see JotFlow's Slack tokens"
+            exit 1
+          fi
+          docker compose exec -T -e SECRET="$secret" agent python -c '
+          import os, urllib.error, urllib.request
+          def status(auth):
+              headers = {"Authorization": auth} if auth else {}
+              request = urllib.request.Request("http://127.0.0.1:8766/runs/none", headers=headers)
+              try:
+                  return urllib.request.urlopen(request).status
+              except urllib.error.HTTPError as exc:
+                  return exc.code
+          assert status(None) == 401, "the runner must refuse calls without its secret"
+          assert status("Bearer " + os.environ["SECRET"]) == 404
+          print("runner gate ok")'
+          docker compose --profile agent down

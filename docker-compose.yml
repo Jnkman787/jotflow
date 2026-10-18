@@ -1,8 +1,9 @@
 # JotFlow deployment. See the Deployment section of docs/architecture.md.
 #
-# Today this runs the JotFlow container only. In M3 the agent container joins
-# the internal `agents` network as a second service (D6, #54). JotFlow never
-# mounts the Docker socket, and no ports are published to the host.
+# Two containers (D6): JotFlow, with Slack's tokens in .env, and the team's
+# agent, with its own agent.env and never JotFlow's. They meet only on the
+# internal `agents` network. JotFlow never mounts the Docker socket, and no
+# ports are published to the host.
 
 name: jotflow
 
@@ -14,6 +15,11 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # Listen on the internal network too, so the agent can reach MCP, and
+      # answer only to the Compose service name besides loopback.
+      JOTFLOW_MCP_HOST: 0.0.0.0
+      JOTFLOW_MCP_ALLOWED_HOSTS: jotflow
     volumes:
       - jotflow-data:/data
     networks:
@@ -27,13 +33,44 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  agent:
+    # Off until the team sets it up: add COMPOSE_PROFILES=agent to .env once
+    # agent.env is filled in. Without agent.env the runner would only fail.
+    profiles: [agent]
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: jotflow-agent:local
+    restart: unless-stopped
+    # The agent's own environment. Never .env: Slack tokens stay with JotFlow.
+    env_file:
+      - path: agent.env
+        required: false
+    volumes:
+      # The CLI's model login, kept between restarts.
+      - agent-home:/home/agent
+    networks:
+      - agents
+      - agent-egress
+    read_only: true
+    tmpfs:
+      # Each run's private directory and MCP config live here, never on disk.
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   jotflow-data:
+  agent-home:
 
 networks:
   # Outbound access, for Slack's Socket Mode connection.
   egress:
-  # No route out of the host. The M3 agent runner and JotFlow's MCP server
+  # No route out of the host. The agent's runner and JotFlow's MCP server
   # meet here; nothing on this network is published.
   agents:
     internal: true
+  # The agent's own way out, for its model API and GitHub.
+  agent-egress:

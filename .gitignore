@@ -176,3 +176,6 @@ jotflow.toml.bak
 
 # Manifest rendered by `jotflow init`; the checked-in default is manifests/slack-app.json
 /slack-app-manifest.json
+
+# The agent container's own secrets; only the example is committed
+agent.env
