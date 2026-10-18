@@ -586,3 +586,12 @@ async def test_serve_logs_the_startup_line(
         )
         assert await runner_command.serve(settings, cfg) == 0
     assert "runner serving drafting, question with command" in caplog.text
+
+
+def test_the_startup_line_names_a_preset(tmp_path: Path) -> None:
+    from jotflow.adapters.presets import CLAUDE_CODE
+
+    cfg = config(tmp_path, command=(), preset=CLAUDE_CODE, read_token="ghp_readtoken")
+    assert runner_command.startup_line(cfg) == (
+        "runner serving drafting, question with preset claude-code"
+    )
