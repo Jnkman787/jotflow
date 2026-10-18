@@ -133,8 +133,8 @@ The plan stays in the repository after merge as the record of what was built and
 A fresh-eyes review is a new agent with no project context that reads only the user-facing setup text as a non-engineer newcomer. It marks each finding BLOCKER (a newcomer cannot continue without outside help), CONTRADICTION (two places disagree), or MINOR. The review is capped so that it ends:
 
 - **Three passes at most per gate.** Only the first pass is a full review. Each later pass is a verification pass: it gets the gating findings from the previous pass, checks whether each is fixed in the merged text, and reports only new BLOCKERs. It does not hunt for new minor findings.
-- **Only BLOCKERs and contradictions gate.** A fix round fixes those. It also fixes MINOR findings that take a sentence or two. It moves every other MINOR finding to #114, which never gates the issue that triggered the review.
-- **Hard stop.** If the third pass still reports a gating finding, the lead fixes it directly. The gate then closes on the reviewer's approval of that fix, with no further pass. The maintainer's unguided timed run is the final check.
+- **Only BLOCKERs and contradictions gate.** A fix round fixes those. It also fixes MINOR findings that take a sentence or two. It moves every other MINOR finding to #114, which never gates the issue that triggered the review (M5's release gate in #41 is the exception: #114 must be cleared before it).
+- **Hard stop.** If the third pass still reports a gating finding, the lead fixes it directly. The gate then closes on the PR reviewer's approval of that fix, with no further pass. The maintainer's unguided timed run is the final check.
 
 ## Security
 
