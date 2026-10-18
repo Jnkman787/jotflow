@@ -12,8 +12,10 @@ and refuses if ``.env`` contains it. That does not stop every way of leaving
 it on: Compose's ``env_file`` turns ``.env`` lines into the container's
 environment, and a shell profile can export it. So the live check refuses
 inside JotFlow's own image, which sets ``JOTFLOW_IMAGE``, and runs on the host
-instead; plain ``jotflow check`` still works in the image. The opt-in belongs
-on the command line, and an interactive run also asks before it posts.
+instead; plain ``jotflow check`` still works in the image. The marker is a
+guard against accidents, not a hard boundary: ``env_file`` or ``-e`` can set
+it to a false value. The opt-in belongs on the command line, and an
+interactive run also asks before it posts.
 """
 
 from __future__ import annotations

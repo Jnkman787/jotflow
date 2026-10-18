@@ -283,3 +283,23 @@ def test_ctrl_c_at_the_prompt_cancels_cleanly(
     assert check_command.run(live_args()) == check_command.EXIT_CANCELLED
     assert "cancelled, nothing posted" in capsys.readouterr().err
     assert no_slack == []
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "No"])
+def test_a_plainly_false_image_marker_does_not_refuse(
+    workspace: Path, no_slack: list[Any], monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("JOTFLOW_IMAGE", value)
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    assert check_command.run(live_args(yes=True)) == 0
+    assert no_slack == [("C0TEST1", 30.0)]
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "anything"])
+def test_any_other_image_marker_refuses(
+    workspace: Path, no_slack: list[Any], monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("JOTFLOW_IMAGE", value)
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    assert check_command.run(live_args(yes=True)) == 2
+    assert no_slack == []
