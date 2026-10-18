@@ -23,6 +23,7 @@ _BOT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
 
 # v1 bot scopes, from the Permissions section of docs/architecture.md.
 # app_mentions:read arrives with questions in M5 (D12).
+# No channels:join: a team member invites the bot to each channel with /invite.
 BOT_SCOPES: tuple[str, ...] = (
     "channels:history",  # read messages and threads in public channels the bot is in
     "groups:history",  # read messages and threads in private channels the bot is in
@@ -79,6 +80,12 @@ def render_manifest(bot_name: str = DEFAULT_BOT_NAME) -> dict[str, Any]:
         },
         "features": {
             "bot_user": {"display_name": name, "always_online": True},
+            # No DM or Home tab: the app has no im scopes, so DMs would vanish unread.
+            "app_home": {
+                "home_tab_enabled": False,
+                "messages_tab_enabled": False,
+                "messages_tab_read_only_enabled": False,
+            },
             "slash_commands": [
                 {
                     "command": SLASH_COMMAND,

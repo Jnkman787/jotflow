@@ -12,6 +12,11 @@
       "display_name": "JotFlow",
       "always_online": true
     },
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": false,
+      "messages_tab_read_only_enabled": false
+    },
     "slash_commands": [
       {
         "command": "/jotflow",

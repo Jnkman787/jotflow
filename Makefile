@@ -29,7 +29,9 @@ run: ## Run the jotflow CLI
 	uv run jotflow
 
 manifest: ## Regenerate manifests/slack-app.json from the renderer
-	uv run python -m jotflow.slack_manifest > manifests/slack-app.json
+	uv run python -m jotflow.slack_manifest > manifests/slack-app.json.tmp \
+		&& mv manifests/slack-app.json.tmp manifests/slack-app.json \
+		|| { rm -f manifests/slack-app.json.tmp; exit 1; }
 
 clean: ## Remove caches and build output
 	rm -rf .pytest_cache .mypy_cache .ruff_cache dist build

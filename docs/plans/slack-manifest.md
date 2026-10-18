@@ -5,7 +5,7 @@
 - Issue: #5
 - Draft PR: #61
 - Status: completed
-- Last verified: `make check` green locally on 2026-10-18 after the review changes (ruff, mypy strict, 35 tests); CI on #61
+- Last verified: `make check` green locally on 2026-10-18 after the review changes (ruff, mypy strict, 37 tests); CI on #61
 - Next safe action: in the sandbox workspace, create an app from `manifests/slack-app.json` and check the two live criteria on #5
 
 ## Objective and done-when
@@ -43,6 +43,8 @@ Stays open on #5 after this PR, because it needs the live sandbox workspace:
 
 ## Risks and open questions
 
+- Invite-only (team lead decision): the manifest has no `channels:join`. A team member invites the bot to each configured channel, and #8 must report configured channels the bot is not a member of instead of joining them.
+
 - Slack's exact rules for bot names are not fully documented. The validation is deliberately conservative; loosening it later is safe, tightening it would break existing configs.
 - Slack has no manifest field that turns public distribution on, so "not distributable" is guaranteed by declaring `org_deploy_enabled: false` and no distribution settings. The live check on #5 confirms the app installs as internal.
 
@@ -60,10 +62,11 @@ Stays open on #5 after this PR, because it needs the live sandbox workspace:
 
 ## Validation
 
-- `make check`: ruff lint and format, mypy strict, and pytest all pass; 35 tests, 28 of them new in `tests/test_slack_manifest.py`.
+- `make check`: ruff lint and format, mypy strict, and pytest all pass; 37 tests, 30 of them new in `tests/test_slack_manifest.py`.
 - `make manifest` regenerates `manifests/slack-app.json`; `test_checked_in_manifest_matches_renderer` guards against drift.
 - CodeRabbit (local CLI 0.7.6, free allowance, `--committed --base main -c AGENTS.md`): 1 finding, 1 fixed. `manifests/README.md` now explains generating the app-level token with `connections:write` for Socket Mode and copying the bot token.
 - CodeRabbit re-run after the review changes (scopes, AGENTS.md layout): skipped. The CLI hit its free-allowance rate limit, with a reset in about 55 minutes. `make check` and CI cover the change.
+- Security review: 5 findings. Taken: App Home tabs off, a token-leak note in the README, and an atomic `make manifest`. channels:join was decided by the team lead as invite-only and not added. The two notes for later issues, edit and delete events and slash-command channel checks, belong to those issues.
 - Not yet done: creating an app from the manifest in the sandbox workspace and reading a private channel. Both stay open on #5.
 
 Deviations from the issue text: the manifest is JSON from a Python renderer instead of `manifests/slack.yaml.j2`, which the issue allowed as "or equivalent". Interactivity is turned on, which the issue did not list, because the Approve and Request Changes buttons and the dialog need it.

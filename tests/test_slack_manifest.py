@@ -44,6 +44,19 @@ def test_no_user_scopes_and_no_mentions_before_m5() -> None:
     assert "app_mention" not in manifest["settings"]["event_subscriptions"]["bot_events"]
 
 
+def test_bot_cannot_join_channels_by_itself() -> None:
+    assert "channels:join" not in render_manifest()["oauth_config"]["scopes"]["bot"]
+
+
+def test_app_home_tabs_are_off() -> None:
+    app_home = render_manifest()["features"]["app_home"]
+    assert app_home == {
+        "home_tab_enabled": False,
+        "messages_tab_enabled": False,
+        "messages_tab_read_only_enabled": False,
+    }
+
+
 def test_event_subscriptions() -> None:
     events = render_manifest()["settings"]["event_subscriptions"]["bot_events"]
     assert sorted(events) == ["message.channels", "message.groups", "reaction_added"]

@@ -9,8 +9,9 @@
 3. Create the app. Under **Basic Information**, in **App-Level Tokens**, generate a token with the `connections:write` scope. It starts with `xapp-`, and Socket Mode uses it to connect.
 4. Choose **Install to Workspace** and click **Allow**. Then copy the **Bot User OAuth Token** from **OAuth & Permissions**. It starts with `xoxb-`.
 5. Set an icon under **Basic Information** if you like. Slack does not take icons from a manifest.
+6. Invite the bot to each channel JotFlow should watch with `/invite @YourBotName`. The bot never joins channels by itself, and `jotflow run` reports configured channels it has not been invited to.
 
-JotFlow needs both tokens. Keep them secret and out of the repository. `jotflow init` (#7) will wrap these steps, validate the tokens, and write them to your `.env`.
+JotFlow needs both tokens. Keep them secret and out of the repository. Token rotation is off, so a leaked token stays valid until you revoke it. If one leaks, choose **Revoke All OAuth Tokens** on **OAuth & Permissions**, regenerate the app-level token under **Basic Information**, and reinstall the app. `jotflow init` (#7) will wrap these steps, validate the tokens, and write them to your `.env`.
 
 ## Use a different bot name
 
@@ -36,9 +37,10 @@ A name has at most 35 characters: letters, digits, spaces, `.`, `-` and `_`, sta
 | Events | `message.channels`, `message.groups`, `reaction_added` | Wake JotFlow when someone posts or reacts |
 | Socket Mode | on | No public URL is needed for a self-hosted install |
 | Interactivity | on | Approve and Request Changes buttons and dialogs |
+| App Home tabs | off | The app has no DM scopes, so messages sent to it would never be read |
 | Org-wide deploy | off | The app is internal to one workspace |
 
-Questions to the bot by @-mention arrive in M5 and will add `app_mentions:read`.
+There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Questions to the bot by @-mention arrive in M5 and will add `app_mentions:read`.
 
 ## Changing the manifest
 
