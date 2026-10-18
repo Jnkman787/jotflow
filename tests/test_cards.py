@@ -23,6 +23,7 @@ from jotflow.orchestrator.cards import (
     ACTION_REPO,
     ACTION_REQUEST_CHANGES,
     ACTION_UNASSIGN,
+    FAILED_LINE,
     MAX_BLOCKS,
     MAX_BUTTON_TEXT,
     MAX_HEADER_TEXT,
@@ -371,10 +372,14 @@ def test_applied_links_the_issue() -> None:
     )
 
 
-def test_failed_shows_the_agents_reason_as_plain_text() -> None:
-    card = _state(ProposalState.FAILED, content_hash="x", result=ExecutionResult(error=INJECTION))
-    assert f"The write failed. The agent said: {INJECTION}" in texts(card, "plain_text")
-    assert all("<!channel>" not in t for t in texts(card, "mrkdwn"))
+def test_failed_does_not_show_the_agents_reason() -> None:
+    card = _state(
+        ProposalState.FAILED,
+        content_hash="x",
+        result=ExecutionResult(error="private-repo-secret " + INJECTION),
+    )
+    assert FAILED_LINE in texts(card, "plain_text")
+    assert "private-repo-secret" not in all_text(card)
 
 
 def test_a_cleared_draft_shows_no_text() -> None:

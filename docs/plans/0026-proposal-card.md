@@ -79,6 +79,7 @@ Done when:
   - a repo the channel does not list
   - publishing once and then updating in place, against both stores, with `set_card_ts` rules and the Slack poster's calls
 - Migration 5 adds `proposals.card_ts`, and the schema test checks its comment.
+- Reviewer approved, with one nit, taken: the failed-state line no longer shows the agent's error text, which could quote private repo content into a channel with guests. It says the reason is stored with the proposal.
 - CodeRabbit: 3 findings, 3 fixed.
   1. The plan described `CardPoster` with the old signatures; it now says `post(channel_id, thread_ts, card)` and `update(channel_id, ts, card)`.
   2. Many participants could still overflow the 50-block limit with the body left out. The renderer now tries three layouts in order: the full body with a row per person, then people compacted to one line per group, then the body left out as well. Tests cover 60 participants, which stay approvable with people compacted, and a huge body with many people.
