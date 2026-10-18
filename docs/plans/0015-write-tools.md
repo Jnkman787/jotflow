@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #15
-- Draft PR: pending
-- Status: blocked: waiting for #104 (run records) and #105 (per-run tokens and `ToolSpec.kinds`) to merge; split with #14 agreed
-- Last verified: plan written on 2026-10-18 on main at 2b03ef2, no code yet
-- Next safe action: once #104 and #105 are on `main`, rebase this branch and build `whiteboard/write_tools.py`
+- Draft PR: #109
+- Status: implementing
+- Last verified: `make check` green on main at c1f456d, 908 tests, 98.3% coverage
+- Next safe action: run CodeRabbit or skip it, wait for CI, mark ready; renumber migration 3 if #104 lands first
 
 ## Objective and done-when
 
@@ -14,19 +14,19 @@ The agent's only way to act. Each call is checked against the run's grant, recor
 
 The issue's boxes:
 
-- [ ] Every call is persisted before the tool returns
-- [ ] Proposals outside the run's channel or the channel's repo and label policy are rejected with a reason
-- [ ] `record_result` is accepted only for the run's own approved proposal
+- [x] Every call is persisted before the tool returns
+- [x] Proposals outside the run's channel or the channel's repo and label policy are rejected with a reason
+- [x] `record_result` is accepted only for the run's own approved proposal
 
 From the dated notes on #15:
 
-- [ ] **Idempotent.** A call repeated after a timeout returns the first call's result and writes nothing new. A store write is never cancelled halfway.
-- [ ] **Participants** on `propose_*` are separate from assignees. They are informational and never written to GitHub as assignees.
-- [ ] **`link_message`** touches only messages that were in the run's own packet
-- [ ] **Per-run caps** on `propose_*` and `ask_channel`
-- [ ] **`record_result`** applies only to the grant's own proposal, needs an issue URL that matches the approved repo and issue, and works once. A second call is refused, and a repeat of the same call returns the first result.
-- [ ] **`ask_channel`** posts only into the run's own thread, strips broadcast mentions, and is rate-limited
-- [ ] Each tool is available only to the run kinds the token table allows
+- [x] **Idempotent.** A call repeated after a timeout returns the first call's result and writes nothing new. A store write is never cancelled halfway.
+- [x] **Participants** on `propose_*` are separate from assignees. They are informational and never written to GitHub as assignees.
+- [x] **`link_message`** touches only messages that were in the run's own packet
+- [x] **Per-run caps** on `propose_*` and `ask_channel`
+- [x] **`record_result`** applies only to the grant's own proposal, needs an issue URL that matches the approved repo and issue, and works once. A second call is refused, and a repeat of the same call returns the first result.
+- [x] **`ask_channel`** posts only into the run's own thread, strips broadcast mentions, and is rate-limited
+- [x] Each tool is available only to the run kinds the token table allows
 
 **Out of scope:** the read tools and `get_work` (#14), fetching threads (#20), cards and approval (#26 and later), the execution run's GitHub write itself (#30).
 
@@ -78,28 +78,44 @@ Alternatives considered:
 
 ## Risks and open questions
 
+- #104 is not merged yet. This PR's migration is number 3 on today's `main`. If #104 lands first, its runs migration takes 3, and this one becomes 4 in a rebase.
+- Wiring is left to #107. `jotflow run` does not open the store yet, so `write_tools(...)` and `SlackThreadPoster` ship tested but are not passed to the server. #107 opens the store, issues tokens, and passes `(*read_tools(...), *write_tools(...))` to `build_app`. Until then no token exists, so production behaviour does not change.
+- `record_result` requires the proposal to be executing. The run lifecycle (#107) moves it from approved to executing when it claims the execution run.
+
 - Packet membership needs #14's `get_work` to record what it served. Until both land, `link_message` refuses everything, so it fails closed.
 - The caps (3 proposals, 2 questions, 200 links per run, one question per 30 seconds per thread) are first guesses, in one constants block.
 
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Rebase on `main` once #104 and #105 merge
-- [ ] Migration: `tool_calls` and packet membership; store methods on both stores
-- [ ] Ledger with shielded commit and argument-hash idempotency
-- [ ] The five tools with kinds, scoping, caps, and policy checks
-- [ ] `ThreadPoster` with the Slack implementation in `jotflow run`, and broadcast stripping
-- [ ] Tests for every rule, through the real endpoint where the rule is about the wire
-- [ ] Update documentation: architecture tool table and write-tool rules
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] Rebase on `main` once #105 merged (#104 is still open; see Risks)
+- [x] Migration: `tool_calls` and packet membership; store methods on both stores
+- [x] Ledger with shielded commit and argument-hash idempotency
+- [x] The five tools with kinds, scoping, caps, and policy checks
+- [x] `ThreadPoster` with the Slack implementation in `jotflow run`, and broadcast stripping
+- [x] Tests for every rule, through the real endpoint where the rule is about the wire
+- [x] Update documentation: architecture tool table and write-tool rules
+- [x] `make check` passes
 - [ ] CodeRabbit local review, or skipped
 - [ ] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
-To be filled in.
+- `make check` passes: ruff, mypy strict, and 908 tests with 98.3% total coverage. `write_tools.py` is at 98%.
+- Store, in `tests/test_store_contract.py` for both stores: calls numbered per run and found by hash, a duplicate record refused, counts per run and per thread over time, and packet refs per run with their own thread. `test_store_schema.py` covers the two new tables, and no column holds message text.
+- `tests/test_write_tools.py`, 55 tests:
+  - `link_message`: new, existing, and chatter decisions. A message outside the run's packet, or in another channel, is refused. A person's decision stands with no orphan topic left behind. A topic in another channel reads as missing. A title that cleans to nothing is refused, argument shapes per decision are checked, and the cap holds.
+  - idempotency: an identical repeat returns the first result with one ledger entry, and another run's identical call is new. Five concurrent identical calls write once. A timeout during a slow post still finishes the post and its ledger entry, and the retry returns that result without posting again.
+  - `propose_issue`: the grant's channel, thread, and run. The policy's repo and label spelling. Sources rewritten from the packet. Participants deduplicated, and the older pending proposal superseded. Refused: a missing or other-channel topic, a disallowed repo or label, a source outside the packet, an assignee who is not a linked participant, a topic that already has an issue, and the cap.
+  - `propose_update`: only the topic's own repo and issue, and the same assignee rule
+  - `ask_channel`: posts only to the grant's thread. Broadcasts stripped, markup escaped, and control characters dropped. Refused: an empty question, a second question within 30 seconds from another run, the per-run cap, and a failed post, which records nothing so it can be retried.
+  - `record_result`: a matching URL applies and links the topic, and an identical repeat returns the first result. A second, different result is refused. Another repo or a comment URL is refused, an error result fails the proposal, a non-executing proposal is refused, and a proposal outside the grant reads as missing.
+  - the registry kinds, and the Slack poster's flags and error mapping
+  - over the wire: a drafting token lists the four drafting tools, an execution token lists only `record_result`, and a refusal arrives as `isError: true` with the code-written reason.
 
 ## Handoff notes
 
-None yet.
+- #107: pass `write_tools(store, policy, SlackThreadPoster(app.client))` alongside the read tools into `build_app(tools=...)`. Move a proposal to executing when claiming its execution run, and revoke the run's token when it ends.
+- #14: `get_work` for drafting calls `store.record_packet(run_id, refs)`, with each ref's own `thread_ts`. Related-thread excerpts included only if linking them should be allowed. `ToolError` and its result path are now in `tools.py` and `server.py` in the shape the #14 plan described, so rebase onto them.
+- The caps are constants at the top of `write_tools.py`.

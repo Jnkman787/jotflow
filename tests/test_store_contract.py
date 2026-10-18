@@ -31,6 +31,7 @@ from jotflow.store import (
     NotFoundError,
     SqliteStore,
     Store,
+    ToolCallRecord,
     TransitionError,
     content_hash,
     try_transition,
@@ -699,3 +700,70 @@ async def test_an_in_memory_database_has_no_log_to_scrub(clock: Clock) -> None:
         await memory_db.add_proposal(record())
         rejected = await memory_db.transition("p1", S.REJECTED)
     assert rejected.draft_cleared_at == clock.now
+
+
+# Write-tool ledger and packet membership (#15)
+
+
+def call(clock: Clock, **overrides: object) -> ToolCallRecord:
+    fields: dict[str, object] = {
+        "run_id": "run-1",
+        "tool": "propose_issue",
+        "args_hash": "sha256:aa",
+        "channel_id": CH,
+        "thread_ts": "1.000100",
+        "result_json": '{"proposal_id": "p1"}',
+        "called_at": clock(),
+    }
+    fields.update(overrides)
+    return ToolCallRecord(**fields)  # type: ignore[arg-type]
+
+
+async def test_tool_calls_are_numbered_per_run_and_found_by_hash(
+    store: Store, clock: Clock
+) -> None:
+    assert await store.find_tool_call("run-1", "propose_issue", "sha256:aa") is None
+    assert await store.record_tool_call(call(clock)) == 1
+    assert await store.record_tool_call(call(clock, args_hash="sha256:bb")) == 2
+    assert await store.record_tool_call(call(clock, run_id="run-2")) == 1
+    assert await store.find_tool_call("run-1", "propose_issue", "sha256:aa") == (
+        '{"proposal_id": "p1"}'
+    )
+    assert await store.find_tool_call("run-1", "ask_channel", "sha256:aa") is None
+
+
+async def test_the_same_call_cannot_be_recorded_twice(store: Store, clock: Clock) -> None:
+    await store.record_tool_call(call(clock))
+    with pytest.raises(ConflictError, match="already recorded"):
+        await store.record_tool_call(call(clock, result_json="{}"))
+
+
+async def test_tool_calls_are_counted_per_run_and_per_thread(store: Store, clock: Clock) -> None:
+    start = clock()
+    await store.record_tool_call(call(clock))
+    await store.record_tool_call(call(clock, tool="ask_channel", args_hash="sha256:q1"))
+    clock.tick(60)
+    await store.record_tool_call(
+        call(clock, run_id="run-2", tool="ask_channel", args_hash="sha256:q2")
+    )
+    assert await store.count_tool_calls("run-1", ["propose_issue", "propose_update"]) == 1
+    assert await store.count_tool_calls("run-1", ["ask_channel"]) == 1
+    assert await store.count_tool_calls("run-1", []) == 0
+    assert await store.count_thread_calls(CH, "1.000100", "ask_channel", since=start) == 2
+    assert (
+        await store.count_thread_calls(
+            CH, "1.000100", "ask_channel", since=start + timedelta(seconds=30)
+        )
+        == 1
+    )
+    assert await store.count_thread_calls(CH, "9.000100", "ask_channel", since=start) == 0
+
+
+async def test_packet_membership_is_per_run(store: Store) -> None:
+    await store.record_packet("run-1", [ref("1.000100"), ref("1.000200", thread="1.000100")])
+    await store.record_packet("run-1", [ref("1.000100")])  # recording again is harmless
+    assert await store.packet_ref("run-1", CH, "1.000200") == ref("1.000200", thread="1.000100")
+    assert await store.packet_ref("run-1", CH, "1.000100") == ref("1.000100")
+    assert await store.packet_ref("run-2", CH, "1.000200") is None
+    assert await store.packet_ref("run-1", OTHER, "1.000200") is None
+    assert await store.packet_ref("run-1", CH, "9.000100") is None

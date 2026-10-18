@@ -53,6 +53,18 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 
 **Run tokens.** The run lifecycle issues one token per run from an in-memory registry and revokes it when the run ends; a time limit, at most two hours, ends it otherwise. A token is `jfr_` followed by 32 random bytes, so secret scanners can recognise a leaked one. The registry keeps only its SHA-256 digest, looks tokens up by that digest so timing reveals nothing about stored tokens, does no I/O, and never logs or prints it. Tokens are not persisted: a restart ends every run, and re-queued runs get fresh tokens. A token's grant names its run, run kind, and channel, plus the thread for a drafting or question run and the one approved proposal for an execution run. A run for a top-level post uses the post's own timestamp as its thread, as Slack does for a thread's parent, so a drafting or question grant always names one thread and tools compare it exactly. Each tool declares the run kinds that may call it, matching the table above. A run lists only its kind's tools, and a call to another kind's tool gets the same error as a tool that does not exist.
 
+**Write tools.** The five write tools are the agent's only way to act, and each one is bounded by the run's grant:
+
+| Tool | Rules |
+|---|---|
+| `propose_issue` | Needs a topic in the run's channel with no issue yet. Uses only the channel's repos and allowed labels. Sources must come from the run's packet. An assignee must be the linked GitHub login of a participant. Participants are recorded but never become assignees. The new proposal supersedes the thread's older pending ones. At most 3 proposals per run. |
+| `propose_update` | Only for the issue the topic is already linked to, with the same repo, label, source, and assignee rules |
+| `link_message` | Only messages the run's `get_work` packet served. A person's earlier decision always stands. At most 200 per run. |
+| `ask_channel` | Posts only into the run's own thread, with broadcast mentions removed and Slack markup escaped. Never unfurls or turns names into mentions. At most 2 per run, and one per thread every 30 seconds across runs. |
+| `record_result` | Execution runs only, for the grant's own proposal while it is executing. An issue URL must match the approved repo and issue. A result is recorded once. |
+
+Every call is idempotent. A repeat with the same arguments returns the first result and writes nothing, so a retry after the request timeout cannot duplicate a proposal or a question. The write and its ledger entry run in a cancellation-shielded scope, so the timeout cannot cut them apart. The ledger holds ids and states, never message text. A refusal, such as a cap or a topic outside the channel, comes back as a tool result marked as an error, with a reason written in code.
+
 **Transport rules.** `jotflow run` serves the endpoint at `/mcp` on `JOTFLOW_MCP_HOST:JOTFLOW_MCP_PORT`, and a gate in front of the MCP SDK applies these rules to every request before the SDK sees it:
 
 | Request | Answer |

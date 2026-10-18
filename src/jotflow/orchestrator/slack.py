@@ -94,3 +94,35 @@ def register_handlers(app: AsyncApp, events: EventFilter) -> None:
 
     app.event("message")(on_event)
     app.event("reaction_added")(on_event)
+
+
+class SlackThreadPoster:
+    """Posts the agent's clarifying questions as thread replies (``ask_channel``, #15).
+
+    The text arrives cleaned of broadcast mentions and escaped. Links and media
+    never unfurl, and names are never turned into mentions.
+    """
+
+    def __init__(self, client: AsyncWebClient) -> None:
+        self._client = client
+
+    async def post(self, channel_id: str, thread_ts: str, text: str) -> str:
+        from jotflow.whiteboard.write_tools import PostError
+
+        try:
+            response = await self._client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=text,
+                link_names=False,
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+        except SlackApiError as exc:
+            raise PostError(str(exc.response.get("error", "unknown_error"))) from None
+        except NETWORK_ERRORS as exc:
+            raise PostError(f"unreachable: {type(exc).__name__}") from None
+        ts = response.get("ts")
+        if not isinstance(ts, str):
+            raise PostError("no ts in Slack's reply")
+        return ts
