@@ -6,7 +6,7 @@
 - Also serves: #56, for the strict keyword prefix only; #14's `WorkSource` interface
 - Draft PR: #125
 - Status: completed
-- Last verified: `make check` green locally after the review nits and the shared budget: 1318 tests, `packet.py` at 99%, `keywords.py` at 100%
+- Last verified: `make check` green locally after the review nits and the shared budget: 1319 tests, `packet.py` at 99%, `keywords.py` at 100%
 - Next safe action: review and merge #125. #55 wires `SlackWorkSource(BoltSlackReader(app.client), store, bot=identity)` into `read_tools`
 
 ## Objective and done-when
@@ -131,11 +131,13 @@ Alternatives considered:
 
 - **One wait budget per `get_work` call**, from the team lead and security. Each Slack call used to get its own 20 s retry budget, so one `get_work` could wait through several.
   - A `Budget` of 20 s is now shared by the thread's pages, every `users.info` lookup, and the related excerpts. `thread()` creates it and hands the remainder to `related()`; it holds only a number of seconds.
+  - A wait that does not fit in what is left is not shortened to fit. Slack's `Retry-After` says how long to wait, and retrying sooner only earns another 429, so `with_backoff` stops at once instead. That way the total wait is always at most the budget, which is what the request timeout needs.
   - Out of budget on the thread: a clean `ToolError`, and nothing recorded. Out of budget on a name: the user id. Out of budget on an excerpt: it is left out.
   - Tests:
     - a rate-limited thread with five uncached mentions waits 16 s in total and shows every mention as its id
     - `related()` gets no fresh budget after the thread used it all
     - an exhausted budget through `get_work` gives a clean error, and `packet_ref` finds nothing
+    - the reviewer's case: a reader that always answers 429 with `Retry-After: 10` makes a whole `get_work` wait at most the budget, then fail cleanly with nothing recorded
 
 ## Handoff notes
 

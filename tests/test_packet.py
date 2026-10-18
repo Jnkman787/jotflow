@@ -703,3 +703,40 @@ description = "The customer-facing website"
     with pytest.raises(ToolError, match="rate limiting"):
         await tools["get_work"].handler(grant, NoArguments())
     assert await store.packet_ref(run.id, CH, ROOT) is None
+
+
+async def test_a_whole_get_work_under_endless_rate_limits_waits_at_most_the_budget() -> None:
+    from jotflow.models import RunKind as Kind
+
+    class AlwaysLimited(FakeReader):
+        async def replies(
+            self, channel: str, ts: str, *, cursor: str | None, limit: int
+        ) -> Mapping[str, Any]:
+            self.calls.append(("replies", ts))
+            raise slack_error(429, "ratelimited", retry_after="10")
+
+        async def user(self, user_id: str) -> Mapping[str, Any]:
+            self.calls.append(("user", user_id))
+            raise slack_error(429, "ratelimited", retry_after="10")
+
+    store = MemoryStore()
+    policy = parse_policy(
+        f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+"""
+    )
+    sleeps = Sleeps()
+    work_source = SlackWorkSource(AlwaysLimited(), store, sleep=sleeps)
+    run = await store.enqueue_run(Kind.DRAFTING, CH, ROOT)
+    await store.claim_next_run(max_running=1)
+    tools = checked_registry(read_tools(store, policy, work_source))
+    grant = Grant(run.id, Kind.DRAFTING, CH, thread_ts=ROOT)
+    with pytest.raises(ToolError, match="rate limiting"):
+        await tools["get_work"].handler(grant, NoArguments())
+    assert sum(sleeps.waits) <= packet.RETRY_BUDGET_SECONDS
+    assert await store.packet_ref(run.id, CH, ROOT) is None
