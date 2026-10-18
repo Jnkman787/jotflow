@@ -10,7 +10,7 @@ import anyio
 import pytest
 from slack_sdk.errors import SlackApiError
 
-from jotflow.models import MessageRef, ProposalState, RunKind
+from jotflow.models import MessageRef, ProposalState, Run, RunKind, RunStatus
 from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.policy import parse_policy
 from jotflow.store import MemoryStore
@@ -102,9 +102,40 @@ def clock() -> Clock:
     return Clock()
 
 
+class LiveStore(MemoryStore):
+    """A store where every run these tests name is running, unless ended."""
+
+    def __init__(self, clock: Clock) -> None:
+        super().__init__(clock=clock)
+        self.ended: set[str] = set()
+        self.kinds: dict[str, tuple[RunKind, str]] = {}
+
+    async def get_run(self, run_id: str) -> Run | None:
+        real = await super().get_run(run_id)
+        if real is not None:
+            return real
+        kind, channel = self.kinds.get(run_id, (_KIND_BY_PREFIX(run_id), CH))
+        return Run(
+            id=run_id,
+            kind=kind,
+            status=RunStatus.SUCCEEDED if run_id in self.ended else RunStatus.RUNNING,
+            channel_id=OTHER if run_id == "run-9" else channel,  # ELSEWHERE's run
+            thread_ts=ROOT,
+            proposal_id="prop-x" if kind is RunKind.EXECUTION else None,
+            created_at=datetime(2026, 10, 18, 11, 0, tzinfo=UTC),
+            deadline=datetime(2026, 10, 18, 11, 30, tzinfo=UTC),
+            started_at=datetime(2026, 10, 18, 11, 0, tzinfo=UTC),
+            finished_at=datetime(2026, 10, 18, 11, 5, tzinfo=UTC) if run_id in self.ended else None,
+        )
+
+
+def _KIND_BY_PREFIX(run_id: str) -> RunKind:
+    return RunKind.EXECUTION if run_id == "run-x" else RunKind.DRAFTING
+
+
 @pytest.fixture
-def store(clock: Clock) -> MemoryStore:
-    return MemoryStore(clock=clock)
+def store(clock: Clock) -> LiveStore:
+    return LiveStore(clock)
 
 
 @pytest.fixture
@@ -591,10 +622,11 @@ async def test_only_an_executing_proposal_takes_a_result(
 
 
 async def test_a_proposal_outside_the_grant_reads_as_missing(
-    tools: WriteTools, store: MemoryStore
+    tools: WriteTools, store: LiveStore
 ) -> None:
     _, proposal_id, _ = await executing(tools, store)
-    elsewhere = Grant("run-x", RunKind.EXECUTION, OTHER, proposal_id=proposal_id)
+    store.kinds["run-y"] = (RunKind.EXECUTION, OTHER)
+    elsewhere = Grant("run-y", RunKind.EXECUTION, OTHER, proposal_id=proposal_id)
     missing = Grant("run-x", RunKind.EXECUTION, CH, proposal_id="prop-none")
     for grant, pid in ((elsewhere, proposal_id), (missing, "prop-none")):
         with pytest.raises(ToolError, match=f"no proposal {pid}"):
@@ -691,3 +723,32 @@ async def test_over_the_wire_a_refusal_is_a_tool_result_and_kinds_list_their_too
     result = refused.json()["result"]
     assert result["isError"] is True
     assert result["content"][0]["text"] == "message 9.000100 is not in this run's packet"
+
+
+# The second guard: a run that is no longer running cannot write.
+
+
+async def test_a_finished_run_cannot_write_even_with_its_token(
+    tools: WriteTools, store: LiveStore
+) -> None:
+    store.ended.add("run-1")
+    with pytest.raises(ToolError, match="run run-1 is not running"):
+        await tools.link_message(DRAFT, link())
+
+
+async def test_an_unknown_run_cannot_write(poster: Poster, clock: Clock) -> None:
+    plain = MemoryStore(clock=clock)
+    tools = WriteTools(plain, POLICY, poster, clock=clock)
+    with pytest.raises(ToolError, match="run run-1 is not running"):
+        await tools.ask_channel(DRAFT, AskChannelArgs(text="Which repo?"))
+
+
+async def test_a_run_past_its_deadline_but_still_running_may_finish(
+    tools: WriteTools, store: LiveStore, clock: Clock
+) -> None:
+    # The run's deadline (11:30) has passed, but the sweep has not timed it
+    # out yet; its last call, here the result of a write, still lands.
+    _, _, grant = await executing(tools, store)
+    assert clock() > datetime(2026, 10, 18, 11, 30, tzinfo=UTC)
+    result: Any = await tools.record_result(grant, RecordResultArgs(issue_url=URL))
+    assert result.state is ProposalState.APPLIED

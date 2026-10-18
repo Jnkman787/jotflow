@@ -38,6 +38,7 @@ from jotflow.models import (
     ProposalRecord,
     ProposalState,
     RunKind,
+    RunStatus,
     UpdateProposal,
 )
 from jotflow.policy import Policy, PolicyViolation, label_problem
@@ -262,6 +263,7 @@ class WriteTools:
     ) -> R:
         key = args_hash(tool, arguments)
         async with self._locks.hold(grant.run_id):
+            await self._check_running(grant)
             earlier = await self._store.find_tool_call(grant.run_id, tool, key)
             if earlier is not None:
                 return result_type.model_validate_json(earlier)
@@ -279,6 +281,19 @@ class WriteTools:
                     )
                 )
             return result
+
+    async def _check_running(self, grant: Grant) -> None:
+        # The token is revoked when a run ends; this is the second guard, in
+        # case a revoke is ever missed. The deadline is not checked: the token's
+        # short grace lets a run's last call land, such as the result of a
+        # write that already happened, while the overdue sweep times it out.
+        run = await self._store.get_run(grant.run_id)
+        if (
+            run is None
+            or run.status is not RunStatus.RUNNING
+            or (run.kind, run.channel_id) != (grant.kind, grant.channel_id)
+        ):
+            raise ToolError(f"run {grant.run_id} is not running")
 
     async def _cap(self, grant: Grant, tools: tuple[str, ...], limit: int, what: str) -> None:
         if await self._store.count_tool_calls(grant.run_id, tools) >= limit:
