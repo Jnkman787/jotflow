@@ -280,6 +280,17 @@ In each `message` line, `ts` is the message's id in Slack, which is also the tim
 
 To run JotFlow without Docker, use `uv run jotflow run` from the same folder instead of steps 5 and 6. It prints the same lines in that terminal, rather than to `docker compose logs`; press Ctrl-C to stop it.
 
+### See it work without Slack
+
+`jotflow replay` runs one of JotFlow's saved example conversations through the same steps a real channel goes through: reading messages, grouping them into topics, and drafting proposals. A scripted stand-in plays the agent. Nothing connects to Slack, GitHub, or the internet.
+
+```
+uv run jotflow replay --list
+uv run jotflow replay feature-request
+```
+
+It prints what happened at each step, `ok` or `FAIL`, and whether the result matches what the example expects. The examples, and the format for saving your own, are described in [src/jotflow/testing/threads/README.md](src/jotflow/testing/threads/README.md).
+
 ## Troubleshooting
 
 **Check a fresh install** with the live check. It posts one marked test message to a channel in `jotflow.toml`, checks that JotFlow receives it without logging its text, then deletes it.

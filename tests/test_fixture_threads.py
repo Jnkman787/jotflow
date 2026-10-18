@@ -402,3 +402,24 @@ def test_message_helpers() -> None:
     assert (top.is_reply, top.root) == (False, "1.000100")
     assert (reply.is_reply, reply.root) == (True, "1.000100")
     assert (own_root.is_reply, own_root.root) == (False, "1.000100")
+
+
+def test_a_new_topic_link_needs_a_title_and_only_it_takes_one() -> None:
+    data = _base()
+    call = next(
+        c
+        for run in data["agent"]
+        for c in run["calls"]
+        if c["tool"] == "link_message" and c["arguments"]["decision"] == "new_topic"
+    )
+    del call["title"]
+    assert "needs a title" in _problem(data)
+    data = _base()
+    other = next(
+        c
+        for run in data["agent"]
+        for c in run["calls"]
+        if c["tool"] == "link_message" and c["arguments"]["decision"] != "new_topic"
+    )
+    other["title"] = "Not allowed"
+    assert "only a link_message that starts a topic" in _problem(data)

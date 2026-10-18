@@ -113,7 +113,8 @@
             "decision": "new_topic",
             "confidence": 0.9
           },
-          "topic_key": "login-spinner"
+          "topic_key": "login-spinner",
+          "title": "Login spinner never stops"
         },
         {
           "tool": "link_message",

@@ -1,6 +1,6 @@
 # Saved threads
 
-Each `.json` file here is a saved Slack thread in the `jotflow-thread/1` format. Tests run every file through JotFlow's real ingest filter. `jotflow replay` (#17) will feed them through the store and the tool layer with a scripted fake agent. They ship with the package, so they also work as demos without a clone.
+Each `.json` file here is a saved Slack thread in the `jotflow-thread/1` format. Tests run every file through JotFlow's real ingest filter. `jotflow replay` feeds them through the store and the tool layer with a scripted fake agent. They ship with the package, so they also work as demos without a clone.
 
 Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel, the `acme-co` repos, and the people. A test fails if a file contains a real-looking Slack id, a URL or email outside the fictional domains, a repo owner other than `acme-co`, or anything shaped like a token.
 
@@ -57,7 +57,7 @@ Each run has the `channel` and top-level `thread_ts` it drafts, and the `calls` 
 | `propose_update` | `jotflow.models.UpdateProposal` |
 | `ask_channel` | `{"text": ...}` |
 
-Real topic ids are assigned by JotFlow at replay time, so a `link_message` that starts a new topic also carries a `topic_key`, and later calls refer to that topic as `key:<topic_key>`. A proposal always names its topic, either `key:<name>` or an existing topic id. Proposals must target a repo the channel lists, use labels from its label list when it has one, and assign only linked GitHub logins.
+Real topic ids are assigned by JotFlow at replay time, so a `link_message` that starts a new topic also carries a `topic_key`, and later calls refer to that topic as `key:<topic_key>`. It also carries the new topic's `title`, which the real `link_message` tool needs; only a call that starts a topic takes one. A proposal always names its topic, either `key:<name>` or an existing topic id. Proposals must target a repo the channel lists, use labels from its label list when it has one, and assign only linked GitHub logins.
 
 ### Expected outcome
 

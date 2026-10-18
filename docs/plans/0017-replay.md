@@ -5,9 +5,9 @@
 - Issue: #17
 - Also serves: #18 (its last box, "used by the replay tests")
 - Draft PR: #111
-- Status: blocked on #106 (read tools); #104, #105, and #109 have merged
-- Last verified: design re-checked against merged #109 on 2026-10-18, no code yet
-- Next safe action: once those merge, write `src/jotflow/replay.py` against their merged interfaces and check this design still matches
+- Status: ready for review
+- Last verified: `make check` green locally on 2026-10-18 on main with #106: 1268 tests, `replay.py` and the command at 100%
+- Next safe action: review; when #20's keyword parser lands, switch the keyword check from not run to real
 
 ## Objective and done-when
 
@@ -15,11 +15,11 @@
 
 Done when:
 
-- [ ] Replaying each built-in fixture produces exactly its expected topics, chatter, proposals, and asks, compared against `expected` in the fixture
-- [ ] Runs in CI with no network access: a test replays every fixture with sockets blocked
-- [ ] Usable as a demo from the README: `uv run jotflow replay feature-request` prints a short, readable report
-- [ ] The fixtures are used by the replay tests (#18's last box)
-- [ ] `make check` passes, including the coverage floor
+- [x] Replaying each built-in fixture produces exactly its expected topics, chatter, proposals, and asks, compared against `expected` in the fixture
+- [x] Runs in CI with no network access: a test replays every fixture with sockets blocked
+- [x] Usable as a demo from the README: `uv run jotflow replay feature-request` prints a short, readable report
+- [x] The fixtures are used by the replay tests (#18's last box)
+- [x] `make check` passes, including the coverage floor
 
 **Out of scope:** a terminal agent listing the replayed topics over MCP. That half of M2's done-when needs a token a person can hold, which is the operator token in M5 (D12). This PR leaves a SQLite file a later step can serve. Debounce timing (#19): replay starts each scripted run directly, in script order.
 
@@ -65,19 +65,38 @@ Proposals take `ProposeIssueArgs` and `ProposeUpdateArgs`, the fixture models pl
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
 - [x] Commit this plan and open the draft PR
-- [ ] Wait for #104, #105, #106, #109; re-check this design against them
-- [ ] Pipeline and report in `replay.py`
-- [ ] CLI command
-- [ ] Tests: every fixture, sockets blocked, CLI output
-- [ ] README demo section
-- [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Wait for #104, #105, #106, #109; re-check this design against them
+- [x] Pipeline and report in `replay.py`
+- [x] CLI command
+- [x] Tests: every fixture, sockets blocked, CLI output
+- [x] README demo section
+- [x] CodeRabbit once, or skipped: see Validation
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+Built as designed, with these specifics:
+
+- Each scripted run goes through `RunLifecycle.start_next`, which issues its token. Its grant comes from `TokenRegistry.check`, and tools are called through their `ToolSpec`, refusing a tool the run's kind may not call. Then `finish` ends the run.
+- Existing topics are seeded with store-assigned ids and mapped from the fixture's ids.
+- Topic comparisons count only the replayed thread's messages, because an existing topic already holds older ones.
+- A refused scripted call fails the `script` check, and the comparison still runs, so the report shows what differs.
+
+Tests:
+
+- `tests/test_replay.py`: every built-in fixture matches its expected outcome, with sockets blocked. Also covered:
+  - the keyword check reported as not run on `keywords.json` only
+  - the real SQLite store holding the proposal and a succeeded run
+  - a mismatch from a reply ingest drops
+  - a refused tool call
+  - the report never containing message text
+  - the command's exit codes, `--list`, `--db`, and usage errors
+  - the internal error paths
+- `tests/test_fixture_threads.py`: a new-topic link needs a title, and only it takes one.
+
+The fixture format gains `LinkMessageCall.title`, and the seven new-topic link calls across six fixtures carry one. The README gains "See it work without Slack".
 
 ## Handoff notes
 
-Blocked as above. Nothing is implemented yet, so another agent can pick this up from the plan.
+When #20 adds `orchestrator/keywords.py`, apply `split_keyword` in replay's ingest step for `re:` and `skip:`, then turn the keyword check from not run into a real comparison. Do not write a second parser.

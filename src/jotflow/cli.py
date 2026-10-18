@@ -15,6 +15,7 @@ from types import ModuleType
 from jotflow import __version__
 from jotflow.commands import check as check_command
 from jotflow.commands import init as init_command
+from jotflow.commands import replay as replay_command
 from jotflow.commands import run as run_command
 
 COMMANDS: dict[str, tuple[ModuleType, str]] = {
@@ -23,6 +24,10 @@ COMMANDS: dict[str, tuple[ModuleType, str]] = {
     "check": (
         check_command,
         "Check configuration; with --live, verify a real Slack round trip",
+    ),
+    "replay": (
+        replay_command,
+        "Run a saved thread through JotFlow offline and compare it with its expected outcome",
     ),
 }
 

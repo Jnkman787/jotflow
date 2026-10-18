@@ -87,7 +87,8 @@
             "decision": "new_topic",
             "confidence": 0.9
           },
-          "topic_key": "invoice-date"
+          "topic_key": "invoice-date",
+          "title": "Wrong date on invoices"
         },
         {
           "tool": "link_message",

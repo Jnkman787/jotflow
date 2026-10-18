@@ -132,7 +132,8 @@
             "decision": "new_topic",
             "confidence": 0.9
           },
-          "topic_key": "pin-reports"
+          "topic_key": "pin-reports",
+          "title": "Pin reports to the dashboard"
         },
         {
           "tool": "propose_issue",
@@ -194,7 +195,8 @@
             "decision": "new_topic",
             "confidence": 0.9
           },
-          "topic_key": "onboarding-skip"
+          "topic_key": "onboarding-skip",
+          "title": "Skip button in onboarding"
         },
         {
           "tool": "propose_issue",

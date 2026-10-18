@@ -109,6 +109,20 @@ class LinkMessageCall(_Strict):
         default=None,
         description="Names a topic this call starts, so later calls can use key:<name>",
     )
+    title: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="The new topic's title; required when the decision is new_topic",
+    )
+
+    @model_validator(mode="after")
+    def _title_for_new_topics(self) -> LinkMessageCall:
+        if self.arguments.decision == "new_topic" and self.title is None:
+            raise ValueError("a link_message that starts a topic needs a title")
+        if self.arguments.decision != "new_topic" and self.title is not None:
+            raise ValueError("only a link_message that starts a topic takes a title")
+        return self
 
 
 class ProposeIssueCall(_Strict):
