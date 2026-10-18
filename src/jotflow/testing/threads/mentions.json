@@ -1,0 +1,158 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "mentions",
+  "description": "A bug report that mentions people and broadcasts with <!here>, and a reply where the mentioned person takes it. The agent picks acme-co/api by its description and assigns Bob through his linked GitHub login. Mentions stay Slack user ids in the text.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792315800.000100",
+      "user": "U0CAROL",
+      "text": "<!here> heads up: the invoice PDF shows last month's date. <@U0BOB> can you take this one?"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792315980.000100",
+      "user": "U0BOB",
+      "text": "Sure, assign it to me. <@U0ALICE> I might need your help with the template.",
+      "thread_ts": "1792315800.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792315800.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792315800.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "invoice-date"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792315980.000100",
+              "thread_ts": "1792315800.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:invoice-date"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:invoice-date",
+            "repo": "acme-co/api",
+            "title": "Invoice PDF shows last month's date",
+            "body": "Generated invoice PDFs carry the previous month's date.",
+            "labels": [
+              "bug"
+            ],
+            "assignees": [
+              "acme-bob"
+            ],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792315800.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792315980.000100",
+                "thread_ts": "1792315800.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One topic with both messages and one create_issue proposal for acme-co/api, labelled bug and assigned to acme-bob.",
+    "accepted": [
+      "1792315800.000100",
+      "1792315980.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:invoice-date",
+        "messages": [
+          "1792315800.000100",
+          "1792315980.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/api",
+        "topic": "key:invoice-date"
+      }
+    ]
+  }
+}

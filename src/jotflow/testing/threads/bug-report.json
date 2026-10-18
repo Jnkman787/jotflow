@@ -1,0 +1,218 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "bug-report",
+  "description": "A bug report followed by a confirmation, a likely cause, and a thank-you, with a :bug: reaction on the report. All four messages join one topic and the agent proposes one bug issue in acme-co/web.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311000.000100",
+      "user": "U0CAROL",
+      "text": "Since this morning the login page spins forever after I enter my password. Chrome on Windows."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311120.000100",
+      "user": "U0ALICE",
+      "text": "Same here on Firefox. It works in a private window though.",
+      "thread_ts": "1792311000.000100"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311300.000100",
+      "user": "U0BOB",
+      "text": "Looks like the old session cookie survives the deploy. Clearing site data fixes it.",
+      "thread_ts": "1792311000.000100"
+    },
+    {
+      "type": "reaction_added",
+      "user": "U0ALICE",
+      "reaction": "bug",
+      "item": {
+        "type": "message",
+        "channel": "C0EXAMPLE1",
+        "ts": "1792311000.000100"
+      }
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311480.000100",
+      "user": "U0CAROL",
+      "text": "Thanks, that worked for me too.",
+      "thread_ts": "1792311000.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792311000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792311000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "login-spinner"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792311120.000100",
+              "thread_ts": "1792311000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:login-spinner"
+          }
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792311300.000100",
+              "thread_ts": "1792311000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:login-spinner"
+          }
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792311480.000100",
+              "thread_ts": "1792311000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:login-spinner"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:login-spinner",
+            "repo": "acme-co/web",
+            "title": "Login spins forever after a deploy until site data is cleared",
+            "body": "After this morning's deploy the login page never finishes on Chrome and Firefox. A private window works, and clearing site data fixes it, which points at a stale session cookie.",
+            "labels": [
+              "bug"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792311000.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792311120.000100",
+                "thread_ts": "1792311000.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792311300.000100",
+                "thread_ts": "1792311000.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One topic with all four messages, the :bug: reaction accepted, and one create_issue proposal for acme-co/web labelled bug.",
+    "accepted": [
+      "1792311000.000100",
+      "1792311120.000100",
+      "1792311300.000100",
+      "1792311000.000100:bug",
+      "1792311480.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:login-spinner",
+        "messages": [
+          "1792311000.000100",
+          "1792311120.000100",
+          "1792311300.000100",
+          "1792311480.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:login-spinner"
+      }
+    ]
+  }
+}

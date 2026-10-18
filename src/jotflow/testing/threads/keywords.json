@@ -1,0 +1,278 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "keywords",
+  "description": "The intent keywords. idea: is a hint the agent follows. re: web#42 is handled by JotFlow, which attaches the message to topic-csv-export; the agent then proposes an update to #42. skip: keeps a top-level message and its reply out of every agent run. \"Skip button is broken\" has no colon, so it is an ordinary bug report. The bot's own confirmation reaction is ignored.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [
+    {
+      "id": "topic-csv-export",
+      "channel_id": "C0EXAMPLE1",
+      "title": "Export the dashboard table as CSV",
+      "repo": "acme-co/web",
+      "issue_number": 42,
+      "messages": [
+        {
+          "channel_id": "C0EXAMPLE1",
+          "ts": "1792224000.000100"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792315200.000100",
+      "user": "U0ALICE",
+      "text": "idea: let people pin a favourite report to the top of the sidebar"
+    },
+    {
+      "type": "reaction_added",
+      "user": "U0JOTBOT",
+      "reaction": "white_check_mark",
+      "item": {
+        "type": "message",
+        "channel": "C0EXAMPLE1",
+        "ts": "1792315200.000100"
+      }
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792315320.000100",
+      "user": "U0BOB",
+      "text": "re: web#42 the export should keep the column order from the screen"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792315440.000100",
+      "user": "U0CAROL",
+      "text": "skip: just testing whether the bot reacts to this"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792315500.000100",
+      "user": "U0BOB",
+      "text": "it did not, nice",
+      "thread_ts": "1792315440.000100"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792315680.000100",
+      "user": "U0CAROL",
+      "text": "Skip button is broken on the onboarding screen, it does nothing."
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792315200.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792315200.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "pin-reports"
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:pin-reports",
+            "repo": "acme-co/web",
+            "title": "Pin a favourite report to the top of the sidebar",
+            "body": "Let each person pin one report so it stays at the top of the sidebar.",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792315200.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792315320.000100",
+      "calls": [
+        {
+          "tool": "propose_update",
+          "arguments": {
+            "topic_id": "topic-csv-export",
+            "repo": "acme-co/web",
+            "issue_number": 42,
+            "changes": {
+              "comment": "The export should keep the column order shown on screen."
+            },
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792315320.000100"
+              }
+            ],
+            "confidence": 0.9
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792315680.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792315680.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "onboarding-skip"
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:onboarding-skip",
+            "repo": "acme-co/web",
+            "title": "Skip button on the onboarding screen does nothing",
+            "body": "Clicking Skip on the onboarding screen has no effect.",
+            "labels": [
+              "bug"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792315680.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "idea: and the colon-less Skip message each start a topic with a create_issue proposal; re: web#42 joins topic-csv-export with an update_issue proposal; the skip: message and its reply reach no agent run.",
+    "accepted": [
+      "1792315200.000100",
+      "1792315320.000100",
+      "1792315440.000100",
+      "1792315500.000100",
+      "1792315680.000100"
+    ],
+    "ignored": {
+      "1792315200.000100:white_check_mark": "own reaction"
+    },
+    "keywords": {
+      "1792315200.000100": "idea",
+      "1792315320.000100": "re",
+      "1792315440.000100": "skip"
+    },
+    "topics": [
+      {
+        "topic": "key:pin-reports",
+        "messages": [
+          "1792315200.000100"
+        ]
+      },
+      {
+        "topic": "topic-csv-export",
+        "messages": [
+          "1792315320.000100"
+        ]
+      },
+      {
+        "topic": "key:onboarding-skip",
+        "messages": [
+          "1792315680.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:pin-reports"
+      },
+      {
+        "kind": "update_issue",
+        "repo": "acme-co/web",
+        "topic": "topic-csv-export",
+        "issue_number": 42
+      },
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:onboarding-skip"
+      }
+    ]
+  }
+}

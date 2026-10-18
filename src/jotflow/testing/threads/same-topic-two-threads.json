@@ -1,0 +1,206 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "same-topic-two-threads",
+  "description": "Two separate threads, half an hour apart, both asking for a dark mode. The first starts a topic and a proposal; the second joins the same topic, so it yields no second issue.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792312200.000100",
+      "user": "U0ALICE",
+      "text": "Could we get a dark mode? The white background is rough at night."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792312380.000100",
+      "user": "U0CAROL",
+      "text": "+1, my eyes would thank you.",
+      "thread_ts": "1792312200.000100"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792314000.000100",
+      "user": "U0BOB",
+      "text": "Is there any plan for a dark theme? The support team works late shifts."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792314120.000100",
+      "user": "U0ALICE",
+      "text": "I asked for the same thing earlier today.",
+      "thread_ts": "1792314000.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792312200.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792312200.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "dark-mode"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792312380.000100",
+              "thread_ts": "1792312200.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:dark-mode"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:dark-mode",
+            "repo": "acme-co/web",
+            "title": "Add a dark mode",
+            "body": "People working in the evening find the white background hard on the eyes and ask for a dark theme.",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792312200.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792312380.000100",
+                "thread_ts": "1792312200.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792314000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792314000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.88,
+            "topic_id": "key:dark-mode"
+          }
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792314120.000100",
+              "thread_ts": "1792314000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.92,
+            "topic_id": "key:dark-mode"
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One topic spanning both threads, four messages, and a single create_issue proposal from the first thread.",
+    "accepted": [
+      "1792312200.000100",
+      "1792312380.000100",
+      "1792314000.000100",
+      "1792314120.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:dark-mode",
+        "messages": [
+          "1792312200.000100",
+          "1792312380.000100",
+          "1792314000.000100",
+          "1792314120.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:dark-mode"
+      }
+    ]
+  }
+}
