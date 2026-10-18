@@ -168,3 +168,6 @@ htmlcov/
 
 # Agent CLI local settings
 .claude/settings.local.json
+
+# Local policy file: holds workspace channel ids; only the example is committed
+jotflow.toml

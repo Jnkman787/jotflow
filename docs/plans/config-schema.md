@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #6
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then rename `src/jotflow/github/` to `src/jotflow/execution/`
+- Draft PR: #64
+- Status: completed
+- Last verified: `make check` green locally on Python 3.12, 48 tests
+- Next safe action: review and merge PR #64
 
 ## Objective and done-when
 
@@ -14,15 +14,15 @@ Split configuration into the two tiers of D2, remove every GitHub credential fro
 
 Done when:
 
-- [ ] `Settings` holds no GitHub credentials and no policy values
-- [ ] A Pydantic model for `jotflow.toml` covers each channel's repos with nickname and description (D11), label allowlists, an optional approver list off by default and reaction approval off by default (D7), `issue_links`, the debounce window, and the agent preset name
-- [ ] Validation errors name the offending key, for example `channels.C0EXAMPLE1.repos[0].nickname`
-- [ ] A loader reads the file with the standard library `tomllib` and reports syntax errors, a missing file, and schema errors in one exception type
-- [ ] `jotflow.example.toml` exists with made-up values only, and the test suite loads it
-- [ ] `src/jotflow/execution/` replaces `src/jotflow/github/`
-- [ ] `models.py` gains a proposal record with id, channel, run link and the full state set, a run model, and a result model for `record_result`; a new-topic proposal needs no pre-existing topic id; the stale docstring is fixed
-- [ ] Tests cover a valid file, an unknown key, an unknown channel, a repo outside the channel's allowlist, a label outside a repo's allowlist, and the issue URL check
-- [ ] `make check` passes
+- [x] `Settings` holds no GitHub credentials and no policy values
+- [x] A Pydantic model for `jotflow.toml` covers each channel's repos with nickname and description (D11), label allowlists, an optional approver list off by default and reaction approval off by default (D7), `issue_links`, the debounce window, and the agent preset name
+- [x] Validation errors name the offending key, for example `channels.C0EXAMPLE1.repos[0].nickname`
+- [x] A loader reads the file with the standard library `tomllib` and reports syntax errors, a missing file, and schema errors in one exception type
+- [x] `jotflow.example.toml` exists with made-up values only, and the test suite loads it
+- [x] `src/jotflow/execution/` replaces `src/jotflow/github/`
+- [x] `models.py` gains a proposal record with id, channel, run link and the full state set, a run model, and a result model for `record_result`; a new-topic proposal needs no pre-existing topic id; the stale docstring is fixed
+- [x] Tests cover a valid file, an unknown key, an unknown channel, a repo outside the channel's allowlist, a label outside a repo's allowlist, and the issue URL check
+- [x] `make check` passes
 
 **Out of scope:** `jotflow init` (#7), proposal validation before a card is posted (#29, which will use the lookups added here), the store (#11), approver enforcement (#34), keyword hints on classifications (M3), and any new dependency.
 
@@ -60,7 +60,7 @@ labels = ["bug", "enhancement"]
 - Label allowlists are per repo, because labels are a per-repo concept on GitHub. An empty list allows no labels.
 - The approver list and reaction approval are global in v1. Per-channel overrides wait until someone needs them.
 - The preset name is a slug. Whether a preset exists is checked by the adapter work in #21 and #22, not here.
-- Lookups: `Policy.channel(id)` raises `UnknownChannelError`; `ChannelPolicy.repo(name_or_nickname)` raises `RepoNotAllowedError`; `ChannelPolicy.check_labels(repo, labels)` raises `LabelNotAllowedError`. These are what #29 will call.
+- Lookups: `Policy.channel(id)` raises `UnknownChannelError`; `Policy.repo(channel_id, name_or_nickname)` raises `RepoNotAllowedError`; `RepoPolicy.check_labels(labels)` raises `LabelNotAllowedError`. All three ignore case, as GitHub does, and share the base `PolicyViolation`. These are what #29 will call.
 
 **Loader.** `load_policy(path)` reads bytes, parses with `tomllib`, validates, and raises `PolicyError` whose message lists one line per problem in the form `key.path: message`.
 
@@ -80,26 +80,44 @@ Alternatives considered: a list of channel tables (`[[channels]] id = ...`) give
 
 - Removing `agent_command` from `Settings` assumes #21 reads the command from the preset in the agent container. If #21 needs JotFlow to know it, it can come back as policy.
 - The `githubkit` dependency is now unused by design. Removing it touches the lock file and is left for a separate change.
+- `ExecutionResult` accepts only `https://github.com/...` issue URLs. GitHub Enterprise Server hosts would need a configurable host later.
 - No open decisions.
 
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Rename `github/` to `execution/`
-- [ ] `Settings` without GitHub fields or policy values
-- [ ] Policy schema, lookups, and loader
-- [ ] `jotflow.example.toml`
-- [ ] Models: proposal record, states, run, result, optional topic id, docstring
-- [ ] Add or update tests
-- [ ] Update documentation: AGENTS.md layout, architecture.md configuration
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] Rename `github/` to `execution/`
+- [x] `Settings` without GitHub fields or policy values
+- [x] Policy schema, lookups, and loader
+- [x] `jotflow.example.toml`
+- [x] Models: proposal record, states, run, result, optional topic id, docstring
+- [x] Add or update tests
+- [x] Update documentation: AGENTS.md layout, architecture.md configuration
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check`: ruff lint and format clean, mypy strict clean, 48 tests pass.
+- Tests cover the example file, defaults, unknown top-level and nested keys, a missing key, a bad channel id, invalid values, every problem reported at once, invalid TOML with its line, a missing file, an unknown channel, a repo outside the channel's list, labels inside and outside a repo's allowlist, the new proposal states, a proposal record round trip, the execution-run rule, and issue URL checks.
+- A sample error from a deliberately broken file:
+
+```
+jotflow.toml:
+  debounce_seconds: Input should be greater than or equal to 1
+  approval.approvers[0]: 'bob' is not a Slack user id such as U0123ABCD
+  channels.general: 'general' is not a Slack channel id such as C0123ABCD
+  channels.general.repos[0].nickname: 'Web' is not a nickname of lowercase letters, digits, - or _, up to 32 characters
+  issue_link: unknown key
+```
 
 ## Handoff notes
 
-None yet.
+Deviations from the plan, all small:
+
+- Label checks live on `RepoPolicy`, not `ChannelPolicy`, because the allowlist is per repo.
+- `jotflow.toml` is added to `.gitignore`. A team's real file names its workspace's channel ids, and only the example belongs in the repository.
+- The old model tests used this repository's name and a channel name as sample values; they now use made-up ones.
+
+Follow-ups for other issues: #29 calls the lookups in `policy.py`; #11 stores `ProposalRecord` and `Run`; `githubkit` can be dropped from the dependencies in a separate change.

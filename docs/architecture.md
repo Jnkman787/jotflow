@@ -251,6 +251,8 @@ Two tiers, because every team supplies every value and the two kinds change at d
 | Policy | `jotflow.toml`, deployed with the service | An admin editing the file | Each channel's repos with nickname and description, label allowlists, optional approver list, reaction approval, `issue_links`, debounce window, agent preset |
 | Runtime | The local database | Slack slash commands | Channel mode (`propose`, `auto`, `paused`), Slack to GitHub identity links |
 
+The policy file is validated in full at startup. An unknown or misspelt key is an error, and every error names its key, such as `channels.C0123ABCD.repos[0].nickname`. Channels are keyed by Slack channel id; each lists its repos, and each repo carries its own label allowlist, since labels are per repo on GitHub. An empty approver list means approvers are off. [`jotflow.example.toml`](../jotflow.example.toml) is a complete, commented example. The environment tier holds only the Slack tokens, the MCP host and port, the database path, and `JOTFLOW_CONFIG`, the path to the policy file.
+
 Setup is a first-class feature: `jotflow init` asks a few questions and writes `jotflow.toml` plus a `.env` template, and the Slack app manifest installs in a couple of clicks. A team should go from clone to connected bot without reading source.
 
 ## Identity
@@ -294,6 +296,7 @@ Package layout:
 src/jotflow/
   models.py       shared contracts: proposals, runs, classifications, topics, channel modes
   config.py       environment-driven settings, no secrets in the repo
+  policy.py       jotflow.toml schema, loader, and allowlist lookups
   cli.py          entry point
   orchestrator/   event ingest, keywords, debouncing, topic index, run lifecycle, approval cards
   whiteboard/     the MCP server and token scoping
