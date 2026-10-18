@@ -376,3 +376,38 @@ POLICY = Policy.model_validate(
         }
     }
 )
+
+
+async def test_a_stop_between_claim_and_move_is_recovered_once(
+    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle
+) -> None:
+    """JotFlow stops after claiming an execution run but before moving its proposal."""
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    claimed = await store.claim_next_run(max_running=2)  # the claim, then the stop
+    assert claimed is not None
+    # Even had a token been issued before the stop, recovery must revoke it.
+    token = registry.issue(grant_for(claimed), 600)
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.APPROVED
+
+    recovery = await lifecycle.recover()
+    assert recovery.interrupted == (claimed.id,)
+    assert registry.check(token) is None
+    interrupted = await store.get_run(claimed.id)
+    assert interrupted is not None and interrupted.status is RunStatus.INTERRUPTED
+    queued = [
+        r
+        for r in await store.thread_runs(CH, THREAD)
+        if r.status is RunStatus.QUEUED and r.proposal_id == "p1"
+    ]
+    assert len(queued) == 1 and list(recovery.requeued) == [queued[0].id]
+
+    # The fresh run starts normally and moves the proposal to executing.
+    started = await lifecycle.start_next(max_running=2)
+    assert started is not None and started.run.id == queued[0].id
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.EXECUTING
+    # A second stop, now mid-execution, again queues exactly one run for it.
+    again = await lifecycle.recover()
+    assert len(again.requeued) == 1

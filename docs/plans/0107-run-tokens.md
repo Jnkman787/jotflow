@@ -64,6 +64,7 @@ No token is stored or logged. The registry keeps only digests (#105). `StartedRu
   - anything else, a missing proposal, or losing the move to another run fails the run with a fixed reason and issues no token
 - The claim and the move are two store calls, because the `Store` protocol has no call that does both in one transaction. A stop between them leaves the proposal approved and the run running; startup recovery (#104) marks the run interrupted and queues a fresh execution run for the approved proposal, so nothing is lost.
 - Tests: one per case, a lost race issuing no token, and an end-to-end test where the real `WriteTools.record_result` applies the proposal after `start_next`.
+- Team lead accepted claim-then-move and asked for a test of a stop between the two: the run is claimed, the proposal still approved; recovery ends the run as interrupted, revokes any token, queues exactly one fresh execution run, and that run then moves the proposal to executing. Added, for both stores.
 - Reviewer's nit, taken: the module docstring and the architecture say a run at the full two hours gets no grace.
 - Follow-up to raise, outside this PR: `record_result` accepts only an executing proposal, so an execution run for a reconciling proposal that finds its marker cannot record the URL.
 - CodeRabbit: skipped. The CLI failed to connect ("Provider identity could not be verified").
