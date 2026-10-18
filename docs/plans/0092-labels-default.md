@@ -5,7 +5,7 @@
 - Issue: #92
 - Draft PR: #94
 - Status: completed
-- Last verified: `make check` green locally on Python 3.12 after the review changes: 341 tests, 96.94% coverage
+- Last verified: `make check` green locally on Python 3.12 after the review changes and rebasing onto #95: 417 tests, 97.36% coverage
 - Next safe action: review and merge #94; #93 (product's init wording) rebases over it, or the other way round
 
 ## Objective and done-when
@@ -88,7 +88,7 @@ Alternatives considered:
   2. Unsafe label text: taken. One rule, `label_problem`, now applies both to labels in `jotflow.toml` and to labels a proposal sets. It rejects control characters, line breaks, Unicode line and paragraph separators, bidirectional overrides and isolates, and leading or trailing spaces, as well as the length limit. Emoji, including zero-width joiner sequences, stay allowed.
   3. Wording: taken. The docs and example state "never invent a label" as an explicit rule for the agent, which its instructions carry and JotFlow cannot enforce. The team lead asked for it to be stated as a rule. The architecture doc says the execution run checks each label exists before applying it, because GitHub would otherwise create a missing one.
 - The team lead posts the dated notes security asked for: for #26, escape labels as plain text and mark unrestricted ones; for #31, check that each label exists and fail rather than create one. The lead also updates #92's text for the empty-list decision.
-- After the review changes: 341 tests pass, with total coverage at 96.94%.
+- After the review changes and the rebase onto #95, the fixture threads: 417 tests pass, with total coverage at 97.36%. #95's fixture test and README were updated for the "label list" wording.
 - Product was told the exact `init.py` changes, for its #93 rewording of init prompts.
 
 ## Handoff notes

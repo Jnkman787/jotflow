@@ -32,7 +32,7 @@ A file is one JSON object. Unknown fields are rejected everywhere, so a typo fai
 | `description` | What the thread is and what should happen. |
 | `workspace` | `team`, `team_id`, and the `bot`'s `user_id`, `bot_id`, and handle `name`. |
 | `users` | Slack user id to `name`, an optional linked `github` login, and `guest` and `external` flags. |
-| `policy` | The same structure as `jotflow.toml`: channels, their repos, and label allowlists. |
+| `policy` | The same structure as `jotflow.toml`: channels, their repos, and optional label lists. |
 | `existing_topics` | Topics that exist before the thread starts, as `jotflow.models.Topic`. |
 | `events` | Slack events in delivery order. See below. |
 | `agent` | The scripted fake agent: one entry per drafting run. See below. |
@@ -57,7 +57,7 @@ Each run has the `channel` and top-level `thread_ts` it drafts, and the `calls` 
 | `propose_update` | `jotflow.models.UpdateProposal` |
 | `ask_channel` | `{"text": ...}` |
 
-Real topic ids are assigned by JotFlow at replay time, so a `link_message` that starts a new topic also carries a `topic_key`, and later calls refer to that topic as `key:<topic_key>`. A proposal always names its topic, either `key:<name>` or an existing topic id. Proposals must target a repo the channel lists, use labels from its allowlist, and assign only linked GitHub logins.
+Real topic ids are assigned by JotFlow at replay time, so a `link_message` that starts a new topic also carries a `topic_key`, and later calls refer to that topic as `key:<topic_key>`. A proposal always names its topic, either `key:<name>` or an existing topic id. Proposals must target a repo the channel lists, use labels from its label list when it has one, and assign only linked GitHub logins.
 
 ### Expected outcome
 
