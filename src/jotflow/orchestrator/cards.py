@@ -53,6 +53,7 @@ _PERMALINK = re.compile(
     r"https://[a-z0-9-]+\.slack\.com/archives/[A-Za-z0-9]+/p[0-9]+(\?[A-Za-z0-9=&._-]*)?"
 )
 
+FAILED_LINE = "The write failed. The agent's reason is stored with the proposal."
 _STATE_LINES = {
     ProposalState.EXECUTING: "Creating it on GitHub now.",
     ProposalState.RECONCILING: "The write was interrupted; checking whether it already happened.",
@@ -325,9 +326,8 @@ def _state_block(record: ProposalRecord) -> Block | None:
             "elements": [{"type": "mrkdwn", "text": f"Done: <{url}|{_issue_label(url)}>"}],
         }
     if state is ProposalState.FAILED:
-        reason = record.result.error if record.result and record.result.error else None
-        line = "The write failed." + (f" The agent said: {reason}" if reason else "")
-        return _context(line + suffix)
+        # The agent's reason can quote private repo content, so it stays in the store.
+        return _context(FAILED_LINE + suffix)
     return _context(_STATE_LINES.get(state, state.value) + suffix)
 
 
