@@ -147,6 +147,13 @@ class TokenRegistry:
         self._by_digest.pop(digest, None)
         return True
 
+    def revoke_all(self) -> int:
+        """Drop every token, for shutdown. Returns how many were live."""
+        live = len(self._by_digest)
+        self._by_digest.clear()
+        self._by_run.clear()
+        return live
+
     def active(self) -> int:
         """How many tokens are live, after dropping expired ones."""
         self._purge()

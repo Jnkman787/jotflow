@@ -92,7 +92,7 @@ The pieces:
 
 ## Quickstart
 
-**What works today:** JotFlow connects to Slack and logs each message in the channels you choose. It posts nothing in Slack yet, and creates no GitHub issues; both arrive in later milestones.
+**What works today:** JotFlow connects to Slack and logs each message in the channels you choose. With `[agent] preset` set in `jotflow.toml` and the agent containers set up, it also starts an agent run on each thread once the thread goes quiet. The agent can ask a clarifying question in the thread, and a run that fails posts a short notice there. Proposal cards and GitHub issues arrive in later milestones. Without a preset, JotFlow posts nothing.
 
 Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages. It can take longer the first time Docker builds JotFlow, or if your workspace needs an admin to approve new apps. Every name and id below is made up; use your own.
 
@@ -268,6 +268,8 @@ This starts JotFlow. The agent containers, where your team's agent will draft is
 3. Give both files mode 0600 and fill them in as their comments describe. Each gets its own runner secret, and `.env` holds both, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. Then add `COMPOSE_PROFILES=agent` to `.env`.
 
 Neither file holds Slack tokens, and neither agent sees `.env`.
+
+Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 
 The first start builds JotFlow's image, which takes a minute or two.
 

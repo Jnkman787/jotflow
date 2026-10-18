@@ -538,11 +538,14 @@ class Store(Protocol):
         """
         ...
 
-    async def claim_next_run(self, *, max_running: int) -> Run | None:
+    async def claim_next_run(
+        self, *, max_running: int, kinds: Collection[RunKind] | None = None
+    ) -> Run | None:
         """Start the oldest queued run whose thread has no running run.
 
         Atomic, and only while fewer than ``max_running`` runs are running.
-        The claimed run's deadline becomes its start plus its timeout.
+        The claimed run's deadline becomes its start plus its timeout. With
+        ``kinds``, only runs of those kinds are claimed; the rest stay queued.
         """
         ...
 

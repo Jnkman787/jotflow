@@ -12,6 +12,7 @@ import pytest
 from slack_sdk.errors import SlackApiError
 
 from jotflow.commands import run as run_command
+from jotflow.orchestrator import service as service_module
 from jotflow.orchestrator.ingest import BotIdentity, EventFilter
 from jotflow.orchestrator.slack import (
     SlackSetupError,
@@ -316,6 +317,8 @@ class ServeHarness:
         self.mcp_calls: list[str] = []
         self.mcp_start_error: BaseException | None = None
         monkeypatch.setattr(run_command, "AsyncApp", lambda **_: self.app)
+        # The packet reader copies the real client's settings; the fake has none.
+        monkeypatch.setattr(service_module, "BoltSlackReader", lambda client: client)
         monkeypatch.setattr(
             run_command, "make_mcp_server", lambda *_: FakeMcp(self.mcp_calls, self.mcp_start_error)
         )
@@ -337,6 +340,12 @@ class ServeHarness:
             self.signals_removed = True
 
         return remove
+
+
+@pytest.fixture(autouse=True)
+def _private_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # serve() opens the database at its default relative path.
+    monkeypatch.chdir(tmp_path)
 
 
 def serve_inputs() -> tuple[Any, Any]:
@@ -444,3 +453,26 @@ def test_ctrl_c_before_signals_are_installed_exits_130(
 
     monkeypatch.setattr(run_command, "serve", interrupted)
     assert run_command.run(args()) == 130
+
+
+async def test_serve_stops_when_the_database_cannot_open(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    harness = ServeHarness(monkeypatch, member_client())
+    settings, policy = serve_inputs()
+    settings = settings.model_copy(update={"database_path": str(tmp_path / "missing" / "j.db")})
+    assert await run_command.serve(settings, policy) == run_command.EXIT_STORE
+    assert "could not open the database" in caplog.text
+    assert "JOTFLOW_DATABASE_PATH" in caplog.text
+    assert harness.handlers == [] and harness.mcp_calls == []
+
+
+async def test_serve_opens_the_store_and_closes_it_after_slack(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    harness = ServeHarness(monkeypatch, member_client())
+    assert await run_command.serve(*serve_inputs()) == 0
+    assert (tmp_path / "jotflow.db").exists()
+    [handler] = harness.handlers
+    assert handler.calls == ["connect", "close"]
+    assert harness.mcp_calls == ["mcp start", "mcp stop"]

@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import logging
 import os
 import sys
+from pathlib import PurePosixPath
 
 import uvicorn
 from pydantic import Field, SecretStr, ValidationError
@@ -32,6 +34,8 @@ from jotflow.logs import configure_logging
 from jotflow.models import RunKind
 
 EXIT_CONFIG = 2
+
+log = logging.getLogger("jotflow.runner")
 
 
 class RunnerSettings(BaseSettings):
@@ -117,6 +121,18 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
     )
 
 
+def startup_line(config: RunnerConfig) -> str:
+    """What the runner serves, for its log: kinds and the preset, or the program alone.
+
+    ``[agent] preset`` in JotFlow's jotflow.toml must name the same agent.
+    """
+    kinds = ", ".join(k.value for k in RunKind if k in config.kinds)
+    if config.preset is not None:
+        return f"runner serving {kinds} with preset {config.preset.name}"
+    program = PurePosixPath(config.command[0]).name if config.command else "?"
+    return f"runner serving {kinds} with command {program}"
+
+
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--log-level",
@@ -130,6 +146,7 @@ async def serve(settings: RunnerSettings, config: RunnerConfig) -> int:
     removed = remove_stale(config.workdir)
     if removed:
         print(f"jotflow runner: removed {removed} leftover run directories", file=sys.stderr)
+    log.info("%s", startup_line(config))
     runner = Runner(config)
     server = uvicorn.Server(
         uvicorn.Config(
