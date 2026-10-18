@@ -590,7 +590,7 @@ async def test_launches_stop_at_the_cap(rig: Rig) -> None:
     assert ids[2] in rig.supervisor.tracked()
 
 
-async def test_an_execution_run_goes_to_the_exec_runner(rig: Rig) -> None:
+async def test_an_execution_run_goes_to_agent_exec(rig: Rig) -> None:
     await _approved(rig.store)
     hosts: list[str] = []
     original = rig.runner.__call__
