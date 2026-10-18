@@ -342,7 +342,7 @@ It prints the proposal id and the run id. Within a few seconds the log shows the
 4. Check that the run ends `succeeded` and the repo still has one such issue.
 5. Remove the `.env` line, restart, and delete the test issue.
 
-The command refuses in CI, refuses without `--confirm`, and checks the repo and labels against `jotflow.toml` as a drafted proposal would be checked.
+The command refuses in CI, refuses without `--confirm`, and checks the repo and labels against `jotflow.toml` as a drafted proposal would be checked. It bypasses the approver list in `jotflow.toml`: `approved_by` is whatever user id the fixture names, and no one in Slack approves anything. It is an operator check that needs a shell in JotFlow's container, not a way around approvers, so keep that access to the people who run JotFlow.
 
 ## Troubleshooting
 
