@@ -51,7 +51,7 @@ class Settings(BaseSettings):
         default="http://agent:8766",
         description="Runner for drafting and question runs",
     )
-    exec_runner_url: str = Field(
+    runner_exec_url: str = Field(
         default="http://agent-exec:8766",
         description="Runner for execution runs",
     )
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
         default=None,
         description="Shared secret of the drafting runner; matches agent.env",
     )
-    exec_runner_secret: SecretStr | None = Field(
+    runner_exec_secret: SecretStr | None = Field(
         default=None,
         description="Shared secret of the execution runner; matches agent-exec.env",
     )
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
                     raise ValueError("each entry must be a host name, optionally with :port")
         return value
 
-    @field_validator("runner_url", "exec_runner_url")
+    @field_validator("runner_url", "runner_exec_url")
     @classmethod
     def _runner_url(cls, value: str) -> str:
         parts = urlsplit(value)
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
             raise ValueError("must be an http or https URL with only a host and port")
         return value.rstrip("/")
 
-    @field_validator("runner_secret", "exec_runner_secret", mode="before")
+    @field_validator("runner_secret", "runner_exec_secret", mode="before")
     @classmethod
     def _empty_secret(cls, value: object) -> object:
         # An empty line in .env means unset, not an empty secret.
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _distinct_runner_secrets(self) -> Settings:
-        drafting, execution = self.runner_secret, self.exec_runner_secret
+        drafting, execution = self.runner_secret, self.runner_exec_secret
         if (
             drafting is not None
             and execution is not None
@@ -110,7 +110,7 @@ class Settings(BaseSettings):
         ):
             # The execution runner's isolation rests on a drafting run, which
             # can read its own runner's secret, not holding the other one.
-            raise ValueError("JOTFLOW_RUNNER_SECRET and JOTFLOW_EXEC_RUNNER_SECRET must differ")
+            raise ValueError("JOTFLOW_RUNNER_SECRET and JOTFLOW_RUNNER_EXEC_SECRET must differ")
         return self
 
     # Admin policy file; see jotflow.example.toml

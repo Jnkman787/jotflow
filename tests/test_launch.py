@@ -56,33 +56,33 @@ def settings(**overrides: Any) -> Settings:
 
 def test_runner_settings_default_to_the_compose_names_and_no_secrets() -> None:
     made = settings()
-    assert (made.runner_url, made.exec_runner_url) == (
+    assert (made.runner_url, made.runner_exec_url) == (
         "http://agent:8766",
         "http://agent-exec:8766",
     )
-    assert made.runner_secret is None and made.exec_runner_secret is None
+    assert made.runner_secret is None and made.runner_exec_secret is None
 
 
 def test_runner_settings_read_their_environment_names(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JOTFLOW_RUNNER_SECRET", SECRET)
-    monkeypatch.setenv("JOTFLOW_EXEC_RUNNER_SECRET", EXEC_SECRET)
-    monkeypatch.setenv("JOTFLOW_EXEC_RUNNER_URL", "http://runner-exec:9000/")
+    monkeypatch.setenv("JOTFLOW_RUNNER_EXEC_SECRET", EXEC_SECRET)
+    monkeypatch.setenv("JOTFLOW_RUNNER_EXEC_URL", "http://runner-exec:9000/")
     made = settings()
     assert made.runner_secret is not None and made.runner_secret.get_secret_value() == SECRET
-    assert made.exec_runner_secret is not None
-    assert made.exec_runner_secret.get_secret_value() == EXEC_SECRET
-    assert made.exec_runner_url == "http://runner-exec:9000"
+    assert made.runner_exec_secret is not None
+    assert made.runner_exec_secret.get_secret_value() == EXEC_SECRET
+    assert made.runner_exec_url == "http://runner-exec:9000"
     assert SECRET not in repr(made) and EXEC_SECRET not in repr(made)
 
 
 def test_an_empty_secret_means_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JOTFLOW_EXEC_RUNNER_SECRET", "")
-    assert settings().exec_runner_secret is None
+    monkeypatch.setenv("JOTFLOW_RUNNER_EXEC_SECRET", "")
+    assert settings().runner_exec_secret is None
 
 
 def test_the_two_runner_secrets_must_differ() -> None:
     with pytest.raises(ValidationError, match="must differ") as caught:
-        settings(runner_secret=SECRET, exec_runner_secret=SECRET)
+        settings(runner_secret=SECRET, runner_exec_secret=SECRET)
     assert SECRET not in str(caught.value)
 
 
@@ -172,7 +172,7 @@ async def test_a_kind_without_a_secret_sends_nothing_and_never_falls_back() -> N
 
 def test_from_settings_pairs_each_url_with_its_secret() -> None:
     client = RunnerClient.from_settings(
-        settings(runner_secret=SECRET, exec_runner_secret=EXEC_SECRET)
+        settings(runner_secret=SECRET, runner_exec_secret=EXEC_SECRET)
     )
     assert client.endpoint_for(RunKind.DRAFTING) == RunnerEndpoint("http://agent:8766", SECRET)
     assert client.endpoint_for(RunKind.EXECUTION) == RunnerEndpoint(

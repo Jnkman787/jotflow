@@ -7,7 +7,7 @@ stops it with ``DELETE``. Runs are routed by kind, with no fallback:
 - drafting and question runs go to the ``agent`` runner, with
   ``JOTFLOW_RUNNER_SECRET``
 - execution runs go to the ``agent-exec`` runner, with
-  ``JOTFLOW_EXEC_RUNNER_SECRET``
+  ``JOTFLOW_RUNNER_EXEC_SECRET``
 
 A secret is only ever sent to its own runner. The client never follows a
 redirect and ignores proxy settings from the environment, so neither the secret
@@ -137,7 +137,7 @@ class RunnerClient:
 
         return cls(
             conversation=endpoint(settings.runner_url, settings.runner_secret),
-            execution=endpoint(settings.exec_runner_url, settings.exec_runner_secret),
+            execution=endpoint(settings.runner_exec_url, settings.runner_exec_secret),
             transport=transport,
         )
 

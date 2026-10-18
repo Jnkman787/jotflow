@@ -7,7 +7,7 @@
 - Draft PR: #131
 - Status: ready for review
 - Last verified: `make check` green, 1438 tests, 98.5% coverage, on 2026-10-18
-- Next safe action: reviewer reviews #131. The first issue that enqueues live runs wires `RunSupervisor` into `jotflow run`
+- Next safe action: reviewer reviews #131. #55 wires `RunSupervisor` into `jotflow run`
 
 ## Objective and done-when
 
@@ -22,23 +22,23 @@ The issue's boxes, refined by its dated notes and the #54 split:
 
 More done-when, from the lead's brief and the #54 handoff:
 
-- [x] Routing by kind, with no fallback. Drafting and question runs go to `JOTFLOW_RUNNER_URL` (default `http://agent:8766`) with `JOTFLOW_RUNNER_SECRET`. Execution runs go to `JOTFLOW_EXEC_RUNNER_URL` (default `http://agent-exec:8766`) with `JOTFLOW_EXEC_RUNNER_SECRET`. A secret is only ever sent to its own runner. A test asserts each request's URL and `Authorization` header by kind.
+- [x] Routing by kind, with no fallback. Drafting and question runs go to `JOTFLOW_RUNNER_URL` (default `http://agent:8766`) with `JOTFLOW_RUNNER_SECRET`. Execution runs go to `JOTFLOW_RUNNER_EXEC_URL` (default `http://agent-exec:8766`) with `JOTFLOW_RUNNER_EXEC_SECRET`. A secret is only ever sent to its own runner. A test asserts each request's URL and `Authorization` header by kind.
 - [x] Missing secret for a kind means that kind's runs fail with a fixed reason. JotFlow never sends one runner's secret to the other.
 - [x] `Settings` refuses identical runner secrets, since the exec runner's isolation rests on them differing.
 - [x] Every run reaches a final status on every path: success, non-zero exit, a launch refusal, a lost run, a timeout, and runner unreachable at launch.
 
 **Out of scope:**
 
-- Wiring the supervisor into `jotflow run`. Nothing in the live path enqueues runs yet, and `serve` has no store. The first issue that enqueues live runs wires it in, likely #55 or #22's presets.
+- Wiring the supervisor into `jotflow run`. Nothing in the live path enqueues runs yet, and `serve` has no store. #55 wires it in, as the lead decided.
 - Presets and prompts (#22, #31). Writing the secrets from `jotflow init` (#126). The cross-container live step (#55).
 
 ## Design
 
 **Settings** in `config.py`, all optional so `jotflow run` works without agents:
 
-- `runner_url` and `exec_runner_url`, http or https only, with no user info, query, or fragment. Defaults are the Compose names.
-- `runner_secret` and `exec_runner_secret` as `SecretStr | None`. They are never logged or put in `repr`. A validator refuses them when they are equal.
-- The env names follow #128's rename: `JOTFLOW_EXEC_RUNNER_SECRET`, not `JOTFLOW_RUNNER_EXEC_SECRET`.
+- `runner_url` and `runner_exec_url`, http or https only, with no user info, query, or fragment. Defaults are the Compose names.
+- `runner_secret` and `runner_exec_secret` as `SecretStr | None`. They are never logged or put in `repr`. A validator refuses them when they are equal.
+- The env names are `JOTFLOW_RUNNER_URL`, `JOTFLOW_RUNNER_SECRET`, `JOTFLOW_RUNNER_EXEC_URL`, and `JOTFLOW_RUNNER_EXEC_SECRET`, as on main and in the #54 handoff.
 
 **`RunnerClient`** in `src/jotflow/orchestrator/launch.py`, on `httpx2`. It moves from a dev dependency to a runtime one. It is already locked through the MCP SDK.
 
@@ -83,7 +83,6 @@ A failed post is logged with Slack's error code and never raised.
 
 - **429 after a JotFlow-side timeout.** If a DELETE fails, the runner may still hold a live slot JotFlow counts as free. The next launch then gets 429 and fails with a notice. That is visible and bounded by the runner's own limit. Requeueing instead needs a store method, so it is left out.
 - **Polling, not callbacks.** A callback would need an endpoint on JotFlow that the agent network can reach. Polling every 2 s keeps the runner's API one-way.
-- **Secret name.** I assume `JOTFLOW_EXEC_RUNNER_SECRET`, as #128 renames the docs. If the lead prefers the other name, it is one field alias.
 - CodeRabbit was rate-limited on 2026-10-18 and was skipped, per the team rule.
 
 ## Progress checklist
@@ -94,7 +93,7 @@ A failed post is logged with Slack's error code and never raised.
 - [x] `RunnerClient` with routing, strict replies, and fixed errors
 - [x] `RunSupervisor` with timeouts, polling, launch, notices, and close
 - [x] Tests, including the real runner app in process
-- [x] Docs: architecture's How runs start and its environment-tier list. README and the #54 handoff are left alone, because #128 renames the secret there
+- [x] Docs: architecture's How runs start and its environment-tier list. README and the #54 handoff already use these names
 - [x] `make check` passes
 - [ ] Mark the PR ready for review
 
