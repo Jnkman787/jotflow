@@ -84,7 +84,7 @@ A failed post is logged with Slack's error code and never raised.
 - **429 after a JotFlow-side timeout.** If a DELETE fails, the runner may still hold a live slot JotFlow counts as free. The next launch then gets 429 and fails with a notice. That is visible and bounded by the runner's own limit. Requeueing instead needs a store method, so it is left out.
 - **Polling, not callbacks.** A callback would need an endpoint on JotFlow that the agent network can reach. Polling every 2 s keeps the runner's API one-way.
 - **Secret name.** I assume `JOTFLOW_EXEC_RUNNER_SECRET`, as #128 renames the docs. If the lead prefers the other name, it is one field alias.
-- CodeRabbit runs once if it is not rate-limited, and is skipped otherwise.
+- CodeRabbit was rate-limited on 2026-10-18 and was skipped, per the team rule.
 
 ## Progress checklist
 
