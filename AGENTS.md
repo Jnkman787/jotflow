@@ -48,7 +48,8 @@ docs/             architecture, roadmap, plans
 | Command | Does |
 |---|---|
 | `make install` | Create the environment with uv, including dev tools |
-| `make check` | Lint, format check, type check, and tests: what CI runs |
+| `make check` | Line endings, lint, format check, type check, and tests: what CI runs |
+| `make eol` | Fail if any file has CRLF line endings |
 | `make test` | Tests only |
 | `make format` | Apply ruff formatting and safe fixes |
 | `make run` | Run the `jotflow` CLI |
@@ -107,6 +108,7 @@ The plan stays in the repository after merge as the record of what was built and
 - Use `Fixes #N` only in the PR that completes issue N. Use `Refs #N` for partial work, epics, and issues delivered across several PRs.
 - One concern per PR. Design changes go in `docs/architecture.md` or `docs/roadmap.md` in the same PR as the code that depends on them.
 - Squash merge is the only merge method on `main`. Force pushes to `main` are blocked.
+- Every file uses LF line endings. `.gitattributes` enforces it in Git, `.editorconfig` in editors, ruff in Python files, and the required `Line endings` CI check rejects anything else; `make eol` runs the same check locally. Never commit CRLF and never override the attributes. If `git status` shows files that differ only in line endings, restore them with `git checkout -- <path>` instead of committing them.
 - Do not add AI attribution to commits, PRs, or issues: no `Co-Authored-By` trailers naming an agent, no "Generated with" footers.
 
 ## Testing

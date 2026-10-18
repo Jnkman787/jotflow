@@ -47,6 +47,23 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
+  eol:
+    name: Line endings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Checks what is committed, not the runner's checkout, so a CRLF file
+      # is caught whatever the attributes or the runner's Git settings say.
+      - name: Every committed file uses LF
+        run: |
+          if git ls-files --eol | grep -E '^i/(crlf|mixed)'; then
+            echo "::error::The files above are committed with CRLF line endings. All files must use LF; see AGENTS.md."
+            exit 1
+          fi
+
   image:
     name: Build container image
     runs-on: ubuntu-latest
