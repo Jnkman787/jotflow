@@ -58,6 +58,7 @@ Stays open on #10, because it needs the live sandbox workspace:
 - Every prompt, message, and log line the README quotes was checked against the code on main: init's prompts and closing lines in `commands/init.py`, the token errors in `slack_auth.py`, `jotflow run`'s configuration errors in `commands/run.py`, and the startup and event log lines in `orchestrator/slack.py` and `orchestrator/ingest.py`. The transcript was produced by running init against the fake Slack client.
 - Corrections made during that check: the transcript gained init's `COMPOSE_FILE` line, the log lines gained their timestamp prefix, `/invite` uses the bot's handle rather than its display name, and the file-not-found message uses the code's backticks.
 - `make check` green; the change is docs only.
+- Security review of #71: 4 items, all taken. A troubleshooting row for the directory Docker Desktop creates when `jotflow.toml` is missing; a note that `.env`'s owner-only mode is not enforced on Windows drives, with the advice to clone into the Linux home directory in WSL; a reminder to remove channel ids and workspace names before pasting logs publicly; and a pointer to revoking leaked tokens.
 
 ## Handoff notes
 
