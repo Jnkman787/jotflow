@@ -4,10 +4,10 @@
 
 - Issue: #100
 - Also serves: #7, #10, #90
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then make the init prompt changes in `src/jotflow/commands/init.py`
+- Draft PR: #101
+- Status: completed
+- Last verified: `make check` green locally on Python 3.12: 438 tests, 97.43% coverage
+- Next safe action: review and merge #101; then the team lead runs the second fresh-eyes review on the merged text
 
 ## Objective and done-when
 
@@ -15,9 +15,9 @@ A newcomer who is not an engineer can set up JotFlow from the README and the set
 
 Done when:
 
-- [ ] Every item in #100 is fixed in README.md, manifests/README.md, or the prompt text, or declined in this plan and the PR with a reason
-- [ ] No example names a real organisation, workspace, channel, or repo
-- [ ] `make check` passes
+- [x] Every item in #100 is fixed in README.md, manifests/README.md, or the prompt text, or declined in this plan and the PR with a reason
+- [x] No example names a real organisation, workspace, channel, or repo
+- [x] `make check` passes
 
 The second fresh-eyes review is the team lead's, on the merged text, so the PR says `Refs #100`.
 
@@ -29,7 +29,7 @@ The steps are numbered 1 to 6 in the README, and setup prints the same numbers, 
 
 | # | Finding | Fix |
 |---|---|---|
-| 1 | Token order differs between steps and prompts | Setup already asks for the app-level token before the bot token, matching the README. Two gaps remain. On a re-run it checked the saved bot token before the app token; that order is now matched. Setup also prints "Step N of 6" headings that match the README's numbered steps. |
+| 1 | Token order differs between steps and prompts | Setup already asks for the app-level token before the bot token, matching the README. Two gaps remain. On a re-run it checked the saved bot token before the app token; that order is now matched. Setup also prints "Setup step N of 6" headings that match the README's numbered setup steps. They say "Setup step", not "Step", because the Quickstart has its own numbered sections, 1 to 6, and "Step 3" would be ambiguous. |
 | 2 | Bot token location: Install App or OAuth & Permissions | Both pages show it. Install App, where you click **Install to Workspace**, shows the token right after install, so all three texts use that page and mention OAuth & Permissions as the other place it appears. |
 | 3 | `slack-app-manifest.json` or `slack-app.json` | Both docs explain the two. Setup writes `slack-app-manifest.json` with your bot name, so use that one. `manifests/slack-app.json` is the checked-in default, named JotFlow, for creating the app without setup. |
 | 4 | "Only your user can read that file" on a Windows drive | Setup checks where `.env` lives. On Windows, or under `/mnt/<letter>/` in WSL, it says the file's Windows permissions decide who can read it, and advises a private folder. |
@@ -66,19 +66,32 @@ None is declined.
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Init prompts: items 1, 4 to 7, 14, 15, 17 to 20, 25
-- [ ] README: items 1 to 3, 7 to 13, 15 to 25
-- [ ] manifests/README.md: items 2, 3, 23
-- [ ] Add or update tests
-- [ ] `make check` passes
-- [ ] Local CodeRabbit review, or skipped
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] Init prompts: items 1, 4 to 7, 14, 15, 17 to 20, 25
+- [x] README: items 1 to 3, 7 to 13, 15 to 25
+- [x] manifests/README.md: items 2, 3, 23
+- [x] Add or update tests
+- [x] `make check` passes
+- [x] Local CodeRabbit review, or skipped
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes, with 438 tests and total coverage at 97.43%. The #90 tests still check that every prompt is explained just before it is asked, and their scripted sessions now answer the new "already created the app?" question. New tests cover:
+  - "Setup step N of 6" headings in order, each matching a numbered step title in the README
+  - an existing app skipping the create link and the manifest
+  - Request to Install and both token pages being explained
+  - the paste hint before each token
+  - a `#channel` answer getting the id message
+  - the preset defaulting to `none` and naming the first preset
+  - the intro stating the tries and no fixed time
+  - Windows-drive detection, for `/mnt/c`, `/mnt/d`, a Linux home, and a `/mnt/data` path that is not a drive
+  - both forms of the saved-tokens message
+- A scripted session was printed and read end to end. The README transcript is a shortened copy of it.
+- Fictional names only: the new text names `acme-co`, `Acme Co`, `#ideas`, `C0IDEAS01`, and `Idea Bot`. A scan of the diff found no other organisation, workspace, or repo.
+- CodeRabbit: skipped, rate limit. A self-review softened one claim, that Slack always notifies you of an approval, to "usually".
 
 ## Handoff notes
 
-None yet.
+- `init.py` constants `STEP_TITLES` and the README's numbered setup list must stay in step; `test_steps_are_numbered_like_the_readme` fails if they drift.
+- The preset default is `none` until milestone 3. When presets ship, #22 should change `DEFAULT_PRESET` and the README's setup step 6 together.

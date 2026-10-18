@@ -225,7 +225,7 @@ Running `uv run jotflow init` again is safe. It offers to keep tokens that still
 If Slack shows **Request to Install** instead of **Install to Workspace**, an admin must approve the app before you get the bot token.
 
 1. Click **Request to Install**, then press Ctrl-D in the terminal to stop setup. Nothing is saved, so this is safe.
-2. Wait for the admin to approve the app. Slack tells you when they do.
+2. Wait for the admin to approve the app. Slack usually notifies you when they do.
 3. Run `uv run jotflow init` again. When it asks `Have you already created the JotFlow app in Slack?`, answer `y`. It then skips the create link, so you don't make a second app. Open your existing app at <https://api.slack.com/apps>, under **Your Apps**, and continue from setup step 3. You can copy the app-level token again from **Basic Information**.
 
 ### 4. Invite the bot
