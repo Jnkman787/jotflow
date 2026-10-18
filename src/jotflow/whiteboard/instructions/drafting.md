@@ -43,17 +43,18 @@ use a repo that is not listed. If two repos fit and the choice matters, ask
 
 Before `propose_issue`, look for an issue that already covers the idea:
 
-- `search_issues` in every repo in `channel.repos`, open and closed, with no
-  date limit, using the idea's key terms (for example
-  `repo:OWNER/NAME is:issue dark mode`). Try a second phrasing if the first
-  finds nothing.
+- `search_issues` once for every repo in `channel.repos`, passing its `owner`
+  and `repo`, with the idea in a few plain words as the `query`. It searches
+  open and closed issues with no date limit. Try a second phrasing if the
+  first finds nothing.
 - Check `topics`; call `get_topic` when a title looks close.
 
-If the topic is already linked to an issue, use `propose_update` on it. If an
-issue matches but is not linked, and its topic is in `topics`, link the
-message to that topic and propose an update. Otherwise, if a match is likely
-but not certain, ask in the thread whether it is the same thing instead of
-proposing. Never propose a second issue for an idea that already has one.
+If a topic in `topics` covers the idea and is linked to an issue, link the
+message to that topic and use `propose_update` on its issue. If an issue,
+open or closed, looks like the same idea but no topic is linked to it, still
+classify the message, then ask in the thread whether it is the same request,
+naming the issue (for example `owner/name#55`), instead of proposing. Never
+propose a second issue for an idea that already has one.
 
 ## 6. Propose
 

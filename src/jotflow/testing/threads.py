@@ -184,6 +184,23 @@ class Expected(_Strict):
     )
 
 
+class GithubIssue(_Strict):
+    """An issue the fake GitHub MCP server serves (#23)."""
+
+    number: int = Field(gt=0)
+    title: str = Field(min_length=1)
+    state: Literal["open", "closed"] = "open"
+    body: str = ""
+    labels: tuple[str, ...] = ()
+
+
+class GithubRepo(_Strict):
+    """A repo's labels and issues, for the fake GitHub MCP server."""
+
+    labels: tuple[str, ...] = ()
+    issues: tuple[GithubIssue, ...] = ()
+
+
 class SavedThread(_Strict):
     format: Literal["jotflow-thread/1"]
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
@@ -194,6 +211,10 @@ class SavedThread(_Strict):
     existing_topics: tuple[Topic, ...] = ()
     events: tuple[Event, ...] = Field(min_length=1)
     agent: tuple[AgentRun, ...] = ()
+    github: dict[str, GithubRepo] = Field(
+        default_factory=dict,
+        description="What a real agent's GitHub read tools see, by owner/name; replay --agent",
+    )
     expected: Expected
 
     @property
@@ -213,6 +234,7 @@ def _problems(thread: SavedThread) -> list[str]:
     problems: list[str] = []
     problems += _event_problems(thread)
     problems += _script_problems(thread)
+    problems += _github_problems(thread)
     if not problems:
         problems += _expected_problems(thread)
     return problems
@@ -247,6 +269,23 @@ def _event_problems(thread: SavedThread) -> list[str]:
                 problems.append(f"{where}: user {event.user} is not listed in users")
             if event.item.ts not in seen:
                 problems.append(f"{where}: reacts to {event.item.ts}, not an earlier message")
+    return problems
+
+
+def _github_problems(thread: SavedThread) -> list[str]:
+    problems: list[str] = []
+    repos = {r.repo.casefold() for c in thread.policy.channels.values() for r in c.repos}
+    for name, repo in thread.github.items():
+        where = f"github.{name}"
+        if name.casefold() not in repos:
+            problems.append(f"{where}: not a repo in policy")
+        numbers = [issue.number for issue in repo.issues]
+        if len(numbers) != len(set(numbers)):
+            problems.append(f"{where}: two issues share a number")
+        for issue in repo.issues:
+            unknown = sorted(set(issue.labels) - set(repo.labels))
+            if unknown:
+                problems.append(f"{where}: issue {issue.number} has unlisted labels {unknown}")
     return problems
 
 

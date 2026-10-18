@@ -12,7 +12,7 @@ The report names messages by ``ts`` only, never by what they say.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -239,32 +239,35 @@ async def _run_script(
         await lifecycle.finish(started.run.id, RunStatus.SUCCEEDED)
 
 
-async def _make_call(replay: _Replay, grant: Grant, call: Any, participants: list[str]) -> None:
+def scripted_call(
+    call: Any, resolve: Callable[[str | None], str | None], participants: list[str]
+) -> tuple[str, dict[str, Any]]:
+    """A fixture's scripted call as the tool name and arguments a client sends."""
     if isinstance(call, LinkMessageCall):
         decision = call.arguments
-        result = await replay.call(
-            grant,
-            "link_message",
-            {
-                "ts": decision.message.ts,
-                "decision": decision.decision,
-                "topic_id": replay.resolve(decision.topic_id),
-                "title": call.title,
-                "confidence": decision.confidence,
-            },
-        )
-        if call.topic_key:
-            replay.topics[TOPIC_KEY_PREFIX + call.topic_key] = result.model_dump()["topic_id"]
-    elif isinstance(call, ProposeIssueCall | ProposeUpdateCall):
+        return "link_message", {
+            "ts": decision.message.ts,
+            "decision": decision.decision,
+            "topic_id": resolve(decision.topic_id),
+            "title": call.title,
+            "confidence": decision.confidence,
+        }
+    if isinstance(call, ProposeIssueCall | ProposeUpdateCall):
         tool = "propose_issue" if isinstance(call, ProposeIssueCall) else "propose_update"
-        arguments = call.arguments.model_dump(mode="json")
-        arguments["topic_id"] = replay.resolve(call.arguments.topic_id)
+        arguments = call.arguments.model_dump(mode="json", exclude_none=True)
+        arguments["topic_id"] = resolve(call.arguments.topic_id)
         arguments["participants"] = participants
-        await replay.call(grant, tool, arguments)
-    elif isinstance(call, AskChannelCall):
-        await replay.call(grant, "ask_channel", call.arguments.model_dump())
-    else:  # pragma: no cover - the fixture model admits only the four call types
-        raise ReplayError(f"unknown scripted call {call!r}")
+        return tool, arguments
+    if isinstance(call, AskChannelCall):
+        return "ask_channel", call.arguments.model_dump()
+    raise ReplayError(f"unknown scripted call {call!r}")  # pragma: no cover - four types only
+
+
+async def _make_call(replay: _Replay, grant: Grant, call: Any, participants: list[str]) -> None:
+    tool, arguments = scripted_call(call, replay.resolve, participants)
+    result = await replay.call(grant, tool, arguments)
+    if isinstance(call, LinkMessageCall) and call.topic_key:
+        replay.topics[TOPIC_KEY_PREFIX + call.topic_key] = result.model_dump()["topic_id"]
 
 
 async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]) -> list[Check]:
@@ -352,8 +355,20 @@ def _counted(name: str, got: Counter[Any], want: Counter[Any]) -> Check:
     return Check(name, False, f"missing {missing}, unexpected {extra}")
 
 
-async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayReport:
-    """Run ``thread`` through the pipeline and compare it with its expected outcome."""
+@dataclass
+class Prepared:
+    """A fixture ingested and seeded, with its tools, ready for runs."""
+
+    state: _Replay
+    lifecycle: RunLifecycle
+    registry: TokenRegistry
+    report: ReplayReport
+    accepted: list[str]
+    ignored: dict[str, str]
+
+
+async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepared:
+    """Ingest ``thread``, seed the store, and build the real tools over it."""
     clock = _Clock()
     active = store or MemoryStore(clock=clock)
     poster = _Poster()
@@ -374,12 +389,57 @@ async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayRe
     lifecycle = RunLifecycle(active, registry, clock=clock)
     report = ReplayReport(thread.name, thread.description)
     await _seed(state)
+    return Prepared(state, lifecycle, registry, report, accepted, ignored)
+
+
+async def finish(prepared: Prepared) -> ReplayReport:
+    """Compare the store with the fixture's expected outcome, and add the invariants."""
+    state = prepared.state
+    prepared.report.checks += await _compare(state, prepared.accepted, prepared.ignored)
+    prepared.report.checks += await invariants(state)
+    return prepared.report
+
+
+async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayReport:
+    """Run ``thread`` through the pipeline and compare it with its expected outcome."""
+    prepared = await prepare(thread, store=store)
+    state, report = prepared.state, prepared.report
     try:
-        await _run_script(state, lifecycle, registry, messages)
+        await _run_script(state, prepared.lifecycle, prepared.registry, state.accepted)
     except ReplayError as exc:
         report.checks.append(Check("script", False, str(exc)))
     else:
         report.checks.append(Check("script", True, f"{len(thread.agent)} run(s) completed"))
     # Compare even after a refused call, so the report shows what differs.
-    report.checks += await _compare(state, accepted, ignored)
-    return report
+    return await finish(prepared)
+
+
+async def invariants(replay: _Replay) -> list[Check]:
+    """Rules every run must keep, whatever the fixture expects (#23)."""
+    channel = _channel(replay.thread)
+    logins = {u.github.casefold() for u in replay.thread.users.values() if u.github}
+    from_chatter: list[str] = []
+    unlinked: list[str] = []
+    for root in sorted({run.thread_ts for run in replay.thread.agent}):
+        for record in await replay.store.thread_proposals(channel, root):
+            draft = record.proposal
+            for source in draft.sources:
+                link = await replay.store.get_message(channel, source.ts)
+                if link is not None and link.chatter:
+                    from_chatter.append(source.ts)
+            assignees = (
+                draft.assignees if draft.kind == "create_issue" else draft.changes.add_assignees
+            )
+            unlinked += [a for a in assignees if a.casefold() not in logins]
+    return [
+        Check(
+            "no proposal from chatter",
+            not from_chatter,
+            f"chatter used as a source: {', '.join(from_chatter)}" if from_chatter else "none",
+        ),
+        Check(
+            "assignees are linked",
+            not unlinked,
+            f"not linked: {', '.join(unlinked)}" if unlinked else "all linked",
+        ),
+    ]
