@@ -1,23 +1,28 @@
 # Contributing to Upshot
 
-Thanks for your interest. Upshot is in its design phase, so the most useful contributions right now are design feedback and discussion on the architecture in `docs/architecture.md`.
+Thanks for your interest. Upshot is early, so design feedback on [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/roadmap.md) is as useful as code.
+
+The full working rules, for people and coding agents alike, are in [AGENTS.md](AGENTS.md). This page is the short version.
+
+## How work flows
+
+1. **Find or open an issue.** Search open issues first; most planned work already has one, attached to a milestone and its epic. Open a new issue only for work nobody owns yet. Titles take a type prefix such as `feat(slack): ...` or `fix: ...`.
+2. **Branch and plan.** Create a branch like `feat/short-topic`. For anything beyond a small fix, copy [docs/plans/TEMPLATE.md](docs/plans/TEMPLATE.md) to `docs/plans/<short-topic>.md`, fill it in, and commit it before writing code.
+3. **Open a draft PR early.** Link the issue with `Fixes #N` if the PR completes it, or `Refs #N` if it is partial work.
+4. **Keep the plan current** as you go, then mark the PR ready for review.
 
 ## Ground rules
 
-- All changes land through pull requests. Direct pushes to `main` are blocked.
-- Pull requests require review from a code owner before merging. Maintainers listed in `.github/CODEOWNERS` are the only people who can merge.
-- Keep pull requests focused. One concern per PR.
-- Design changes go through `docs/architecture.md` in the same PR as the code that depends on them.
-
-## Before opening a PR
-
-- Open an issue first for anything beyond a small fix so the approach can be agreed on.
-- Do not commit secrets, tokens, or workspace identifiers. Configuration is by environment variables only.
+- All changes land through pull requests. Direct pushes and force pushes to `main` are blocked, and only maintainers listed in `.github/CODEOWNERS` can merge.
+- PR titles follow [Conventional Commits](https://www.conventionalcommits.org/). CI checks this.
+- One concern per PR. Design changes go in the docs in the same PR as the code that depends on them.
+- `make check` must pass. It runs lint, format check, type check, and tests, exactly as CI does.
+- Do not commit secrets, tokens, workspace identifiers, local databases, or agent CLI local settings.
 - Never add a workflow that uses `pull_request_target` to check out fork code.
 
 ## Principles that are not up for debate
 
-These are in the README and architecture document. Contributions that violate them will not be merged:
+Contributions that violate these will not be merged:
 
 - Upshot never holds GitHub credentials. The team's agent performs every GitHub write, and only when Upshot hands it an approved proposal.
 - Upshot stores pointers, not message content.
