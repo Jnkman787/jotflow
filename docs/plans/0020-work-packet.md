@@ -143,7 +143,7 @@ Alternatives considered:
 
 The shared `Budget` bounds rate-limit waits, but not how long one Slack request takes to answer. Security and the reviewer pointed out that slack-sdk's default 30 s request timeout lets one slow call reach the MCP server's 30 s limit, giving a 504 instead of a `ToolError`. Two fixes:
 
-- **Per-request timeout.** `BoltSlackReader` uses its own copy of the client with an 8 s per-request timeout, `READER_TIMEOUT_SECONDS`. The caller's client is left unchanged.
+- **Per-request timeout.** `BoltSlackReader` uses its own copy of the client with an 8 s per-request timeout, `READER_TIMEOUT_SECONDS`. The caller's client is left unchanged. The copy keeps the original's TLS context, proxy, base URL, headers, team and retry handlers, so a custom CA still applies. `with_backoff` turns a request timeout or a dropped connection into `SlackFetchError` at once, without retrying, so the existing fallbacks apply. A slow name falls back to the user id, a slow related excerpt is dropped, and a slow thread is a clean `ToolError` with nothing recorded. Each path has a test.
 - **A cap on the whole Slack phase.** `get_work` runs its Slack phase (thread, topics, related) inside `anyio.fail_after(25)`, `SLACK_PHASE_SECONDS`. A timeout is a clean `ToolError` with nothing recorded. A test with a hanging source shows this, and another checks 25 s is under the request timeout.
 - The endless-rate-limit `get_work` test, pushed after #125 had merged, is carried over here.
 

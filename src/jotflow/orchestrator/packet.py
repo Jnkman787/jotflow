@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Protocol
 
+import aiohttp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
@@ -113,12 +114,17 @@ async def with_backoff[T](
     It waits ``Retry-After`` when Slack sends it, otherwise 1, 2, 4… seconds,
     each capped. It stops when the next wait would overspend ``budget``, which
     is shared across calls, so a slow retry never outlasts the request. Then it
-    raises :class:`SlackFetchError`. Any other Slack error raises at once.
+    raises :class:`SlackFetchError`. Any other Slack error raises at once, and so
+    does a request that times out or loses its connection, without a retry, so
+    the caller's fallbacks apply: a name falls back to the user id, a related
+    excerpt is dropped, and an unreadable thread is a clean tool error.
     """
     budget = budget if budget is not None else Budget()
     for attempt in range(attempts):
         try:
             return await call()
+        except (TimeoutError, aiohttp.ClientError):
+            raise SlackFetchError(f"Slack did not answer {what}") from None
         except SlackApiError as error:
             status = getattr(error.response, "status_code", None)
             if status != 429:
@@ -150,13 +156,19 @@ class BoltSlackReader:
     """:class:`SlackReader` over slack-sdk's client, with the bot token's scopes."""
 
     def __init__(self, client: AsyncWebClient, *, timeout: int = READER_TIMEOUT_SECONDS) -> None:
-        # A copy with a short per-request timeout, leaving the caller's client alone.
+        # A copy with a short per-request timeout, leaving the caller's client
+        # alone. It keeps everything else, so a custom CA or proxy still applies.
         self._client = AsyncWebClient(
             token=client.token,
             base_url=client.base_url,
             timeout=timeout,
+            ssl=client.ssl,
             proxy=client.proxy,
+            trust_env_in_session=client.trust_env_in_session,
             headers=client.headers,
+            team_id=client.default_params.get("team_id"),
+            logger=client.logger,
+            retry_handlers=client.retry_handlers,
         )
 
     async def replies(
