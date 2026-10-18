@@ -263,3 +263,37 @@ jobs:
           assert launch(os.environ["SECRET"], "drafting") == 403
           print("execution runner refuses drafting ok")'
           docker compose --profile agent down
+
+      # Separate networks: the drafting agent cannot even open a connection to
+      # agent-exec, while JotFlow, on both networks, can reach each runner.
+      - name: Drafting agent cannot reach agent-exec
+        run: |
+          printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" > agent.env
+          printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" > agent-exec.env
+          docker compose up -d --no-deps agent agent-exec
+          for service in agent agent-exec; do
+            for _ in $(seq 1 30); do
+              if docker compose exec -T "$service" python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
+              sleep 1
+            done
+          done
+          docker compose exec -T agent python -c '
+          import socket
+          for host in ("agent-exec", "jotflow-agent-exec-1"):
+              try:
+                  socket.create_connection((host, 8766), 3).close()
+              except OSError:
+                  continue
+              raise SystemExit(f"the drafting agent reached {host}:8766")
+          print("agent cannot reach agent-exec ok")'
+          # The check above is not vacuous: from the agents-exec network, where
+          # JotFlow sits, agent-exec is reachable.
+          # Compose prefixes network names with the project name; ask it.
+          exec_net="$(docker compose --profile agent config --format json \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["networks"]["agents-exec"]["name"])')"
+          docker run --rm --network "$exec_net" jotflow-agent:local python -c '
+          import socket
+          socket.create_connection(("agent-exec", 8766), 3).close()
+          print("agents-exec reaches agent-exec ok")'
+          docker compose --profile agent down
+          rm -f .env agent.env agent-exec.env

@@ -108,7 +108,7 @@ Alternatives considered:
 
 ## Validation
 
-- Second review change: distinct runner secrets and separate networks. CI asserts the two runners' secrets differ, that the agent services share no network while JotFlow is on both, and that `agent-exec` answers 401 to the drafting runner's secret and 403 to a drafting run. Both passed locally.
+- Second review change: distinct runner secrets and separate networks. A CI step starts both agent services and shows `agent` cannot open a connection to `agent-exec:8766`. As a positive control, a container on `agents-exec` can. CI asserts the two runners' secrets differ, that the agent services share no network while JotFlow is on both, and that `agent-exec` answers 401 to the drafting runner's secret and 403 to a drafting run. Both passed locally.
 - Two-service review change: 58 runner tests cover a conversation runner refusing the write token, an execution runner refusing the read token, mixed kinds refused, each runner refusing the other's kinds with 403, one execution run at a time, and a chunked body capped while it is read. CI's Compose policy asserts no ports, no host network, no privileged mode, and no docker.sock on any service. It also asserts that each agent service's environment is exactly its own env file, so `agent` has no write token and `agent-exec` no read token, with no bind mounts and separate homes. A CI step starts `agent-exec` and shows it refuses a drafting run with 403 and cannot see the `.env` sentinel. Both passed locally.
 - `make check` passes: 1281 tests, 98.3% total coverage. `adapters/runner.py` is at 96%. `commands/runner.py`'s uvicorn loop is not covered; the CI job starts the real runner.
 - `tests/test_runner.py`, 47 tests:
