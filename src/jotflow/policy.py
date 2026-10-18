@@ -21,7 +21,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 
 _CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{2,}")
 _USER_ID = re.compile(r"[UW][A-Z0-9]{2,}")
-_REPO = re.compile(r"[\w.-]+/[\w.-]+")
+_REPO = re.compile(r"[\w.-]+/[\w.-]+", re.ASCII)
 _NICKNAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 _PRESET = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 

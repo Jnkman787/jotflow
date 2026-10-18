@@ -187,3 +187,8 @@ def test_policy_is_immutable() -> None:
     policy = parse_policy(MINIMAL)
     with pytest.raises(ValueError):
         policy.debounce_seconds = 5  # type: ignore[misc]
+
+
+def test_repo_names_are_ascii_only() -> None:
+    [problem] = problems(MINIMAL.replace('repo = "acme/api"', 'repo = "acmé/api"'))
+    assert problem.startswith("channels.C0TEST1.repos[1].repo: ")

@@ -24,11 +24,12 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
-REPO_PATTERN = r"^[\w.-]+/[\w.-]+$"
+REPO_PATTERN = r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
 
 _ISSUE_URL = re.compile(
     r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/issues/(?P<number>[1-9]\d*)"
-    r"(?:#issuecomment-\d+)?"
+    r"(?:#issuecomment-\d+)?",
+    re.ASCII,
 )
 
 

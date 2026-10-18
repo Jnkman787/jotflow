@@ -120,6 +120,8 @@ def test_result_needs_exactly_one_outcome() -> None:
         "https://github.com/acme/web/issues/0",
         "https://example.com/acme/web/issues/1",
         "https://github.com/acme/web/issues/1/../../other/issues/2",
+        "https://github.com/acmé/web/issues/1",
+        "https://github.com/acme/web/issues/\u0661",
     ],
 )
 def test_result_rejects_non_issue_urls(url: str) -> None:
@@ -139,3 +141,8 @@ def test_result_url_must_point_at_the_approved_repo() -> None:
 def test_result_accepts_a_comment_url_for_updates() -> None:
     result = ExecutionResult(issue_url="https://github.com/acme/web/issues/7#issuecomment-123")
     assert result.points_at("acme/web", 7)
+
+
+def test_repo_names_are_ascii_only() -> None:
+    with pytest.raises(ValidationError):
+        IssueProposal(repo="acmé/web", title="x", body="", confidence=0.5)

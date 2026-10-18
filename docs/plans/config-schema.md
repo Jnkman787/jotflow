@@ -5,7 +5,7 @@
 - Issue: #6
 - Draft PR: #64
 - Status: completed
-- Last verified: `make check` green locally on Python 3.12 after merging main, 51 tests
+- Last verified: `make check` green locally on Python 3.12 after merging main, 55 tests
 - Next safe action: review and merge PR #64
 
 ## Objective and done-when
@@ -101,6 +101,7 @@ Alternatives considered: a list of channel tables (`[[channels]] id = ...`) give
 
 - `make check`: ruff lint and format clean, mypy strict clean, all tests pass.
 - Tests cover the example file, defaults, unknown top-level and nested keys, a missing key, a bad channel id, invalid values, every problem reported at once, invalid TOML with its line, a missing file, an unknown channel, a repo outside the channel's list, labels inside and outside a repo's allowlist, the new proposal states, a proposal record round trip, the execution-run rule, and issue URL checks.
+- CodeRabbit (local, free CLI allowance): 1 finding, 1 fixed. Repo and issue URL patterns used Unicode `\w` and `\d`; they are now ASCII-only, with tests. The same fix was applied to the repo patterns in `policy.py` and `models.py`.
 - A sample error from a deliberately broken file:
 
 ```
