@@ -121,6 +121,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "channel_modes",
             "tool_calls",
             "packet_messages",
+            "pending_threads",
         }
         for table in tables:
             (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()

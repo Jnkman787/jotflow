@@ -21,7 +21,11 @@ out of the index comes back for the run (D9). The agent can still move it.
 
 The debouncer only queues runs, through the store, which coalesces a burst
 that lands while the thread's run is still running into one queued run.
-``RunLifecycle.start_next`` starts them (#107). Timers live in memory.
+``RunLifecycle.start_next`` starts them (#107).
+
+Due times live in memory and, as pointers and a time only, in the store
+(#130). At startup :meth:`Debouncer.restore` re-arms every thread still
+waiting, except one whose top-level message a person marked as chatter.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from jotflow.models import MessageRef, RunKind
+from jotflow.models import MessageRef
 from jotflow.orchestrator.ingest import Accepted, Decision
 from jotflow.policy import Policy
 from jotflow.store.base import Clock, Store, utc_now
@@ -71,7 +75,10 @@ class Debouncer:
             return None
         thread = thread_of(ref)
         window = timedelta(seconds=self._policy.debounce_for(ref.channel_id))
-        self._due[thread] = self._clock() + window
+        due = self._clock() + window
+        self._due[thread] = due
+        # The durable copy, so a restart forgets no waiting thread (#130).
+        await self._store.arm_thread(thread.channel_id, thread.thread_ts, due)
         if ref.thread_ts and ref.thread_ts != ref.ts:
             await self._join_parents_topic(ref)
         return thread
@@ -99,6 +106,22 @@ class Debouncer:
 
         await self._store.link_message(reply, parent.topic_id, by="agent")
 
+    async def restore(self) -> int:
+        """At startup: wait out the windows the store kept. Returns how many.
+
+        A thread whose top-level message a person marked as chatter, with
+        ``skip:`` or the skip reaction (#56), is forgotten instead.
+        """
+        restored = 0
+        for pending in await self._store.pending_threads():
+            root = await self._store.get_message(pending.channel_id, pending.thread_ts)
+            if root is not None and root.chatter and root.linked_by == "person":
+                await self._store.drop_pending(pending.channel_id, pending.thread_ts)
+                continue
+            self._due[Thread(pending.channel_id, pending.thread_ts)] = pending.due_at
+            restored += 1
+        return restored
+
     def next_due(self) -> datetime | None:
         """When the next thread falls due, so a loop can sleep exactly that long."""
         return min(self._due.values(), default=None)
@@ -111,7 +134,9 @@ class Debouncer:
             key=lambda t: (self._due[t], t.channel_id, t.thread_ts),
         )
         for thread in ready:
-            await self._store.enqueue_run(RunKind.DRAFTING, thread.channel_id, thread.thread_ts)
+            # Queues the run and forgets the thread in one step, so a crash
+            # between the two cannot queue it twice after a restart.
+            await self._store.queue_pending(thread.channel_id, thread.thread_ts)
             del self._due[thread]
             log.info(
                 "thread %s in %s is quiet; drafting run queued", thread.thread_ts, thread.channel_id

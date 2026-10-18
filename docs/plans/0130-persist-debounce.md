@@ -4,10 +4,10 @@
 
 - Issue: #130
 - Also serves: #19, the debouncer this extends
-- Draft PR: pending
-- Status: planning
-- Last verified: plan only
-- Next safe action: the lead confirms the plan, then implement
+- Draft PR: #145
+- Status: ready for review
+- Last verified: `make check` green, 1598 tests, 98.8% coverage, on 2026-10-18
+- Next safe action: reviewer reviews #145
 
 ## Objective and done-when
 
@@ -15,14 +15,14 @@ The debouncer (#19) keeps each thread's due time in memory. A thread waiting out
 
 The issue's boxes, refined:
 
-- [ ] A thread pending at shutdown is queued for its drafting run after a restart, once its due time has passed. A thread whose due time passed while JotFlow was down is queued on the first flush.
-- [ ] Pending entries hold no message text: only the channel id, the thread ts, and the due time. The schema test covers the new table.
-- [ ] A thread flushed or run before the restart is not queued twice. Flushing queues the drafting run and deletes the pending row in one store transaction, so a crash can't leave both.
+- [x] A thread pending at shutdown is queued for its drafting run after a restart, once its due time has passed. A thread whose due time passed while JotFlow was down is queued on the first flush.
+- [x] Pending entries hold no message text: only the channel id, the thread ts, and the due time. The schema test covers the new table.
+- [x] A thread flushed or run before the restart is not queued twice. Flushing queues the drafting run and deletes the pending row in one store transaction, so a crash can't leave both.
 
 From the lead:
 
-- [ ] Startup re-arms pending threads after `RunLifecycle.recover()` and before the first flush, and only when drafting runs are on.
-- [ ] A thread whose root a person marked as chatter, by `skip:` or the skip reaction (#56), is never re-armed. Its row is dropped at startup.
+- [x] Startup re-arms pending threads after `RunLifecycle.recover()` and before the first flush, and only when drafting runs are on.
+- [x] A thread whose root a person marked as chatter, by `skip:` or the skip reaction (#56), is never re-armed. Its row is dropped at startup.
 
 **Out of scope:**
 
@@ -60,17 +60,22 @@ From the lead:
 ## Progress checklist
 
 - [x] Confirm the issue is ready
-- [ ] Commit this plan and open the draft PR
-- [ ] Migration 6 and the store contract, with contract and schema tests
-- [ ] Debouncer `note`, `flush`, and `restore`, with tests
-- [ ] Orchestrator startup wiring, with a restart test
-- [ ] Docs: the debouncer's docstring, and architecture's state section
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] Migration 6 and the store contract, with contract and schema tests
+- [x] Debouncer `note`, `flush`, and `restore`, with tests
+- [x] Orchestrator startup wiring, with a restart test
+- [x] Docs: the debouncer's docstring, and architecture's state section
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-Pending.
+`make check` is green, with 1598 tests. `debounce.py` and `service.py` are at 100% coverage.
+
+- The store contract tests run against both stores. They cover arm, push back, ordering, `queue_pending` queuing once and coalescing with a queued run, drop, input checks, and rows surviving a reopen.
+- The debouncer tests cover a waiting thread kept in the store, a restart re-arming it, a window that ended while down, a thread flushed before the restart not queued again, a person's skip dropped, and the agent's chatter still re-armed.
+- The orchestrator test checks that a thread waiting at shutdown is drafted after start, and that a person-skipped one is not.
+- The schema test covers `pending_threads`.
 
 ## Handoff notes
 

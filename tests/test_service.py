@@ -244,7 +244,7 @@ async def test_a_debouncer_error_is_logged_not_raised(
     # Arm a thread while the store works, so the flush below has one to queue.
     await rig.orchestrator.note(accepted("1760781900.000100"))
     monkeypatch.setattr(rig.store, "get_message", broken)
-    monkeypatch.setattr(rig.store, "enqueue_run", broken)
+    monkeypatch.setattr(rig.store, "queue_pending", broken)
     with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
         reply = Accepted(kind="message", ref=MessageRef(channel_id=CH, ts="2.0", thread_ts="1.0"))
         await rig.orchestrator.note(reply)
@@ -705,3 +705,23 @@ async def test_an_re_reply_joins_the_named_issues_topic_through_the_app() -> Non
     assert link.topic_id == export.topic.id != parent.topic.id
     assert agent_links == []  # the debouncer never joined it to the parent's topic
     assert rig.slack.reactions == [(CH, REPLY, "white_check_mark")]
+
+
+async def test_a_thread_waiting_at_shutdown_is_drafted_after_a_restart() -> None:
+    from jotflow.store.base import utc_now
+
+    rig = Rig()
+    await rig.store.arm_thread(CH, THREAD, utc_now())
+    await rig.store.arm_thread(CH, "1760781700.000100", utc_now())
+    await rig.store.mark_chatter(MessageRef(channel_id=CH, ts="1760781700.000100"), by="person")
+    await rig.orchestrator.start()
+
+    async def launched() -> bool:
+        return ("POST", "agent", "/runs") in rig.calls
+
+    await until(launched)
+    (run,) = await rig.store.thread_runs(CH, THREAD)
+    assert run.kind is RunKind.DRAFTING
+    assert await rig.store.thread_runs(CH, "1760781700.000100") == []
+    assert await rig.store.pending_threads() == []
+    await rig.orchestrator.stop()

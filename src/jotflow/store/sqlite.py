@@ -45,6 +45,7 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    PendingThread,
     Recovery,
     StoreError,
     ToolCallRecord,
@@ -781,6 +782,53 @@ class SqliteStore:
     async def get_run(self, run_id: str) -> Run | None:
         async with self._lock:
             return await self._get_run(run_id)
+
+    async def arm_thread(self, channel_id: str, thread_ts: str, due_at: datetime) -> None:
+        check_id(channel_id, "channel id")
+        check_id(thread_ts, "thread ts")
+        if due_at.tzinfo is None:
+            raise ValueError("due_at must be timezone-aware")
+        async with self._write():
+            await self._db.execute(
+                "INSERT INTO pending_threads (channel_id, thread_ts, due_at) VALUES (?, ?, ?)"
+                " ON CONFLICT (channel_id, thread_ts) DO UPDATE SET due_at = excluded.due_at",
+                (channel_id, thread_ts, to_text(due_at)),
+            )
+
+    async def pending_threads(self) -> list[PendingThread]:
+        rows = await self._all(
+            "SELECT channel_id, thread_ts, due_at FROM pending_threads"
+            " ORDER BY due_at, channel_id, thread_ts"
+        )
+        return [
+            PendingThread(row["channel_id"], row["thread_ts"], from_text(row["due_at"]))
+            for row in rows
+        ]
+
+    async def queue_pending(self, channel_id: str, thread_ts: str) -> Run | None:
+        seconds = check_run_request(
+            RunKind.DRAFTING, channel_id, thread_ts, None, DEFAULT_RUN_TIMEOUTS[RunKind.DRAFTING]
+        )
+        async with self._write():
+            cursor = await self._db.execute(
+                "DELETE FROM pending_threads WHERE channel_id = ? AND thread_ts = ?",
+                (channel_id, thread_ts),
+            )
+            if cursor.rowcount == 0:
+                return None
+            existing = await self._active_run_for(RunKind.DRAFTING, channel_id, thread_ts, None)
+            if existing is not None:
+                return existing
+            run_id = await self._insert_run(RunKind.DRAFTING, channel_id, thread_ts, None, seconds)
+            run = await self._get_run(run_id)
+        return _found(run)
+
+    async def drop_pending(self, channel_id: str, thread_ts: str) -> None:
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM pending_threads WHERE channel_id = ? AND thread_ts = ?",
+                (channel_id, thread_ts),
+            )
 
     async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
         async with self._lock:

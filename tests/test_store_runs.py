@@ -478,3 +478,63 @@ async def test_claim_can_be_limited_to_some_kinds(store: Store) -> None:
     assert await store.claim_next_run(max_running=4, kinds=()) is None
     later = await store.claim_next_run(max_running=4, kinds={E})
     assert later is not None and later.id == execution.id
+
+
+# Threads waiting out their quiet window (#130)
+
+
+async def test_an_armed_thread_is_pending_until_queued(store: Store, clock: Clock) -> None:
+    due = clock.now + timedelta(seconds=120)
+    await store.arm_thread(CH, T2, due + timedelta(seconds=5))
+    await store.arm_thread(CH, T1, due)
+    await store.arm_thread(CH, T2, due + timedelta(seconds=60))  # a later message pushes back
+    pending = await store.pending_threads()
+    assert [(p.channel_id, p.thread_ts, p.due_at) for p in pending] == [
+        (CH, T1, due),
+        (CH, T2, due + timedelta(seconds=60)),
+    ]
+    run = await store.queue_pending(CH, T1)
+    assert run is not None and (run.kind, run.thread_ts, run.status) == (D, T1, RunStatus.QUEUED)
+    assert [p.thread_ts for p in await store.pending_threads()] == [T2]
+    # A second flush of the same thread queues nothing.
+    assert await store.queue_pending(CH, T1) is None
+    assert len(await store.thread_runs(CH, T1)) == 1
+
+
+async def test_queue_pending_coalesces_with_a_queued_drafting_run(
+    store: Store, clock: Clock
+) -> None:
+    queued = await store.enqueue_run(D, CH, T1)
+    await store.arm_thread(CH, T1, clock.now)
+    again = await store.queue_pending(CH, T1)
+    assert again is not None and again.id == queued.id
+    assert await store.pending_threads() == []
+
+
+async def test_drop_pending_forgets_without_queuing(store: Store, clock: Clock) -> None:
+    await store.arm_thread(CH, T1, clock.now)
+    await store.drop_pending(CH, T1)
+    await store.drop_pending(CH, T1)
+    assert await store.pending_threads() == []
+    assert await store.thread_runs(CH, T1) == []
+
+
+async def test_arm_thread_checks_its_input(store: Store, clock: Clock) -> None:
+    with pytest.raises(ValueError):
+        await store.arm_thread("", T1, clock.now)
+    with pytest.raises(ValueError):
+        await store.arm_thread(CH, T1, clock.now.replace(tzinfo=None))
+
+
+async def test_pending_threads_survive_reopening(tmp_path: Path, clock: Clock) -> None:
+    path = tmp_path / "jotflow.db"
+    first = await SqliteStore.open(path, clock=clock)
+    await first.arm_thread(CH, T1, clock.now)
+    await first.close()
+    second = await SqliteStore.open(path, clock=clock)
+    try:
+        assert [(p.thread_ts, p.due_at) for p in await second.pending_threads()] == [
+            (T1, clock.now)
+        ]
+    finally:
+        await second.close()

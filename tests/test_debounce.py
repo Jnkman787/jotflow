@@ -238,3 +238,72 @@ async def test_a_skipped_reply_leaves_its_thread_alone(debouncer: Debouncer, sto
 async def test_the_agents_chatter_still_arms_the_thread(debouncer: Debouncer, store: Store) -> None:
     await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT))
     assert await debouncer.note(message(ROOT)) is not None
+
+
+# Across a restart (#130)
+
+
+async def test_a_waiting_thread_is_kept_in_the_store(
+    store: Store, debouncer: Debouncer, clock: Clock
+) -> None:
+    await debouncer.note(message(ROOT))
+    clock.advance(30)
+    await debouncer.note(message("1760781630.000200", ROOT))
+    (pending,) = await store.pending_threads()
+    assert (pending.channel_id, pending.thread_ts) == (CH, ROOT)
+    assert pending.due_at == clock.now + timedelta(seconds=120)
+    clock.advance(121)
+    assert await debouncer.flush() == [Thread(CH, ROOT)]
+    assert await store.pending_threads() == []
+
+
+async def test_a_restart_re_arms_the_waiting_thread(store: Store, clock: Clock) -> None:
+    before = Debouncer(store, POLICY, clock=clock)
+    await before.note(message(ROOT))
+    clock.advance(60)
+    # JotFlow stops and starts again: a new debouncer with an empty memory.
+    after = Debouncer(store, POLICY, clock=clock)
+    assert await after.restore() == 1
+    assert await after.flush() == []
+    clock.advance(61)
+    assert await after.flush() == [Thread(CH, ROOT)]
+    (run,) = await store.thread_runs(CH, ROOT)
+    assert (run.kind, run.status) == (RunKind.DRAFTING, RunStatus.QUEUED)
+
+
+async def test_a_window_that_ended_while_down_flushes_at_once(store: Store, clock: Clock) -> None:
+    await Debouncer(store, POLICY, clock=clock).note(message(ROOT))
+    clock.advance(3600)
+    after = Debouncer(store, POLICY, clock=clock)
+    await after.restore()
+    assert await after.flush() == [Thread(CH, ROOT)]
+
+
+async def test_a_thread_flushed_before_the_restart_is_not_queued_again(
+    store: Store, clock: Clock
+) -> None:
+    before = Debouncer(store, POLICY, clock=clock)
+    await before.note(message(ROOT))
+    clock.advance(121)
+    await before.flush()
+    after = Debouncer(store, POLICY, clock=clock)
+    assert await after.restore() == 0
+    assert await after.flush() == []
+    assert len(await store.thread_runs(CH, ROOT)) == 1
+
+
+async def test_a_root_a_person_skipped_is_not_re_armed(store: Store, clock: Clock) -> None:
+    await Debouncer(store, POLICY, clock=clock).note(message(ROOT))
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT), by="person")
+    after = Debouncer(store, POLICY, clock=clock)
+    assert await after.restore() == 0
+    assert await store.pending_threads() == []
+    clock.advance(3600)
+    assert await after.flush() == []
+
+
+async def test_a_root_only_the_agent_called_chatter_is_re_armed(store: Store, clock: Clock) -> None:
+    # The agent's call is a guess a later message may overturn; a person's is final.
+    await Debouncer(store, POLICY, clock=clock).note(message(ROOT))
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT), by="agent")
+    assert await Debouncer(store, POLICY, clock=clock).restore() == 1
