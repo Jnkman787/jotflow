@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -145,3 +146,74 @@ def test_a_failed_repeat_prints_the_failing_report(
 def test_the_model_reaches_drafting_runs_only() -> None:
     options = AgentOptions("claude-code", "x", models={RunKind.DRAFTING: "haiku"})
     assert options.models == {RunKind.DRAFTING: "haiku"}
+
+
+def test_a_real_agent_needs_yes_and_shows_the_cost_first(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = replay_command.run(args(all=True, agent="claude-code", repeat=3))
+    assert code == replay_command.EXIT_USAGE
+    err = capsys.readouterr().err
+    runs = sum(len(builtin_thread(p.stem).agent) for p in builtin_paths()) * 3
+    assert f"{runs} claude-code drafting run(s) on sonnet" in err
+    assert "add --yes" in err
+    assert replay_command.estimate([], "scripted", 1, None) == "0 scripted agent run(s); no model"
+    one = [("chatter", builtin_thread("chatter"))]
+    assert "on haiku" in replay_command.estimate(one, "claude-code", 1, "haiku")
+
+
+def test_the_usage_wrapper_keeps_only_numbers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    import subprocess
+
+    from jotflow.replay_agent import _usage_wrapper, usage_totals
+
+    real = tmp_path / "real"
+    real.mkdir()
+    claude = real / "claude"
+    claude.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "assert sys.argv[-2:] == ['--output-format', 'json'], sys.argv\n"
+        "print(json.dumps({'result': 'SECRET thread text', 'num_turns': 4, 'total_cost_usd': 0.25,"
+        " 'usage': {'input_tokens': 100, 'output_tokens': 20, 'note': 'SECRET'}}))\n"
+        "sys.exit(0)\n"
+    )
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{real}:{os.environ['PATH']}")
+    usage = tmp_path / "usage.jsonl"
+    root = tmp_path / "root"
+    root.mkdir()
+    folder = _usage_wrapper(root, usage)
+    for _ in range(2):
+        subprocess.run([str(folder / "claude"), "-p", "x"], check=True, timeout=30)
+    assert "SECRET" not in usage.read_text()
+    assert json.loads(usage.read_text().splitlines()[0]) == {
+        "exit": 0,
+        "num_turns": 4,
+        "total_cost_usd": 0.25,
+        "input_tokens": 100,
+        "output_tokens": 20,
+    }
+    totals = usage_totals(usage)
+    assert (totals["runs"], totals["num_turns"], totals["input_tokens"]) == (2, 8, 200)
+    assert usage_totals(tmp_path / "missing.jsonl")["runs"] == 0
+    monkeypatch.setenv("PATH", "/nonexistent")
+    with pytest.raises(ReplayError, match="not on PATH"):
+        _usage_wrapper(tmp_path / "other", usage)
+
+
+def test_usage_is_rendered_after_a_real_run() -> None:
+    totals = {
+        "runs": 2,
+        "num_turns": 8,
+        "input_tokens": 200,
+        "output_tokens": 40,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 10,
+        "total_cost_usd": 0.5,
+    }
+    line = replay_command._render_usage(totals)
+    assert line.startswith("Agent runs: 2, turns: 8") and line.endswith("cost: $0.50")

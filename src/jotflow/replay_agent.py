@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import socket
 import stat
 import sys
@@ -48,6 +49,41 @@ FIXTURE_GITHUB_TOKEN = "github_pat_fixture"
 DEFAULT_ENV_ALLOW = ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "HTTPS_PROXY", "NO_PROXY")
 
 
+# Wraps the claude CLI during replay to keep its result's numbers, nothing else:
+# no text, so nothing the agent read or wrote is kept.
+_USAGE_WRAPPER = """#!{python}
+import json, subprocess, sys
+done = subprocess.run([{claude!r}, *sys.argv[1:], "--output-format", "json"],
+                      stdin=subprocess.DEVNULL, capture_output=True, text=True)
+keep = {{"exit": done.returncode}}
+try:
+    result = json.loads(done.stdout)
+except ValueError:
+    result = {{}}
+if isinstance(result, dict):
+    for key in ("num_turns", "duration_ms", "total_cost_usd"):
+        if isinstance(result.get(key), (int, float)):
+            keep[key] = result[key]
+    usage = result.get("usage")
+    if isinstance(usage, dict):
+        for key in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                    "cache_read_input_tokens"):
+            if isinstance(usage.get(key), int):
+                keep[key] = usage[key]
+with open({usage!r}, "a") as out:
+    out.write(json.dumps(keep) + "\\n")
+sys.exit(done.returncode)
+"""
+USAGE_FIELDS = (
+    "num_turns",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "total_cost_usd",
+)
+
+
 @dataclass(frozen=True)
 class AgentOptions:
     agent: str
@@ -55,6 +91,7 @@ class AgentOptions:
     env_allow: tuple[str, ...] = DEFAULT_ENV_ALLOW
     time_limit: float = DEFAULT_TIME_LIMIT
     models: Mapping[RunKind, str] = field(default_factory=dict)
+    usage_file: Path | None = None  # claude-code: where its result's numbers are appended
 
 
 def _preset(options: AgentOptions, index: int) -> Preset:
@@ -100,6 +137,35 @@ def _fake_github(thread: SavedThread, root: Path) -> Path:
     return wrapper
 
 
+def _usage_wrapper(root: Path, usage: Path) -> Path:
+    """A ``claude`` ahead of the real one on PATH that records its result's numbers."""
+    real = shutil.which("claude")
+    if real is None:
+        raise ReplayError("the claude CLI is not on PATH")
+    folder = root / "bin"
+    folder.mkdir(mode=0o700)
+    wrapper = folder / "claude"
+    wrapper.write_text(
+        _USAGE_WRAPPER.format(python=sys.executable, claude=real, usage=str(usage)),
+        encoding="utf-8",
+    )
+    wrapper.chmod(stat.S_IRWXU)
+    return folder
+
+
+def usage_totals(path: Path) -> dict[str, float]:
+    """Sum the numbers the wrapper recorded, plus how many agent runs it saw."""
+    totals: dict[str, float] = {"runs": 0, **dict.fromkeys(USAGE_FIELDS, 0)}
+    if not path.exists():
+        return totals
+    for line in path.read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        totals["runs"] += 1
+        for key in USAGE_FIELDS:
+            totals[key] += record.get(key, 0)
+    return totals
+
+
 async def _wait(runner: Runner, run_id: str) -> dict[str, object]:
     while True:
         view = runner.get(run_id)
@@ -113,6 +179,10 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
     github = _fake_github(state.thread, root)
     environ = dict(os.environ)
     environ.setdefault("HOME", str(root))
+    if options.agent == "claude-code" and options.usage_file is not None:
+        environ["PATH"] = (
+            f"{_usage_wrapper(root, options.usage_file)}{os.pathsep}{environ.get('PATH', '')}"
+        )
     failed: list[str] = []
     max_running = state.thread.policy.agent.max_concurrent_runs
     for index, run in enumerate(state.thread.agent):

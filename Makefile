@@ -40,8 +40,8 @@ run: ## Run the jotflow CLI
 live-check: ## Post and delete one test message in your workspace; needs JOTFLOW_LIVE_CHECK=1
 	uv run jotflow check --live
 
-eval-agent: ## Run Claude Code against every fixture, 3 times each; uses your model login and costs tokens
-	uv run jotflow replay --all --agent claude-code --repeat 3
+eval-agent: ## Claude Code against every fixture, 3 times each; costs model tokens. Prints the run count; start with YES=1
+	uv run jotflow replay --all --agent claude-code --repeat 3 $(if $(YES),--yes,)
 
 manifest: ## Regenerate manifests/slack-app.json from the renderer
 	uv run python -m jotflow.slack_manifest > manifests/slack-app.json.tmp \

@@ -19,11 +19,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import tempfile
 from pathlib import Path
 
+from jotflow.adapters.presets import PRESETS
 from jotflow.models import RunKind
 from jotflow.replay import replay
-from jotflow.replay_agent import AGENTS, DEFAULT_TIME_LIMIT, AgentOptions, repeat
+from jotflow.replay_agent import (
+    AGENTS,
+    DEFAULT_TIME_LIMIT,
+    SCRIPTED,
+    AgentOptions,
+    repeat,
+    usage_totals,
+)
 from jotflow.store import SqliteStore, Store
 from jotflow.testing.threads import (
     SavedThread,
@@ -60,6 +69,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--repeat", type=int, default=1, help="with --agent: run each fixture this many times"
     )
     parser.add_argument("--model", default=None, help="with --agent: the model for drafting runs")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="with a real --agent: start without asking; each run costs model tokens",
+    )
     parser.add_argument(
         "--time-limit",
         type=float,
@@ -119,26 +133,65 @@ async def _replay_all(threads: list[tuple[str, SavedThread]]) -> int:
     return EXIT_MATCH if ok else EXIT_MISMATCH
 
 
+def estimate(
+    threads: list[tuple[str, SavedThread]], agent: str, times: int, model: str | None
+) -> str:
+    runs = sum(len(thread.agent) for _, thread in threads) * times
+    if agent == SCRIPTED:
+        return f"{runs} scripted agent run(s); no model"
+    chosen = model or PRESETS[agent].default_models.get(RunKind.DRAFTING, "the CLI's default")
+    return (
+        f"{len(threads)} fixture(s) x {times}: {runs} {agent} drafting run(s) on {chosen}, "
+        "using your model login. Each run costs model tokens."
+    )
+
+
 async def _with_agent(threads: list[tuple[str, SavedThread]], args: argparse.Namespace) -> int:
     model = getattr(args, "model", None)
+    times = getattr(args, "repeat", 1)
+    print(estimate(threads, args.agent, times, model), file=sys.stderr)
+    if args.agent != SCRIPTED and not getattr(args, "yes", False):
+        print("jotflow replay: add --yes to start them", file=sys.stderr)
+        return EXIT_USAGE
     ok = True
-    for ref, thread in threads:
-        options = AgentOptions(
-            agent=args.agent,
-            thread_ref=ref,
-            time_limit=getattr(args, "time_limit", DEFAULT_TIME_LIMIT),
-            models={RunKind.DRAFTING: model} if model else {},
-        )
-        tally, reports = await repeat(thread, options, getattr(args, "repeat", 1))
-        if len(reports) == 1:
-            print(reports[0].render(), end="\n\n")
-        else:
-            for report in reports:
-                if not report.ok:
-                    print(report.render(), end="\n\n")
-            print(tally.render(), end="\n\n")
-        ok = ok and tally.passed == tally.runs
+    with tempfile.TemporaryDirectory(prefix="jotflow-usage-") as tmp:
+        usage = Path(tmp) / "usage.jsonl"
+        for ref, thread in threads:
+            ok = await _one_with_agent(ref, thread, args, model, usage) and ok
+        if args.agent != SCRIPTED:
+            print(_render_usage(usage_totals(usage)))
     return EXIT_MATCH if ok else EXIT_MISMATCH
+
+
+def _render_usage(totals: dict[str, float]) -> str:
+    return (
+        f"Agent runs: {totals['runs']:g}, turns: {totals['num_turns']:g}, "
+        f"input tokens: {totals['input_tokens']:g}, output tokens: {totals['output_tokens']:g}, "
+        f"cache write: {totals['cache_creation_input_tokens']:g}, "
+        f"cache read: {totals['cache_read_input_tokens']:g}, "
+        f"cost: ${totals['total_cost_usd']:.2f}"
+    )
+
+
+async def _one_with_agent(
+    ref: str, thread: SavedThread, args: argparse.Namespace, model: str | None, usage: Path
+) -> bool:
+    options = AgentOptions(
+        agent=args.agent,
+        thread_ref=ref,
+        time_limit=getattr(args, "time_limit", DEFAULT_TIME_LIMIT),
+        models={RunKind.DRAFTING: model} if model else {},
+        usage_file=usage,
+    )
+    tally, reports = await repeat(thread, options, getattr(args, "repeat", 1))
+    if len(reports) == 1:
+        print(reports[0].render(), end="\n\n")
+    else:
+        for report in reports:
+            if not report.ok:
+                print(report.render(), end="\n\n")
+        print(tally.render(), end="\n\n")
+    return tally.passed == tally.runs
 
 
 async def _replay(thread: SavedThread, db: Path | None) -> int:
