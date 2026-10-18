@@ -17,6 +17,7 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 **Orchestrator.** A long-running service.
 
 - Subscribes to Slack events for configured channels over Socket Mode. Ignores its own messages and drops events Slack delivers twice.
+- Is invite-only: at startup it checks that it is a member of each configured channel and names any it is not in, with the `/invite` instruction, rather than joining. Message edits and deletes are ignored in v1, since editing a message never changes what is approved.
 - Parses intent keywords at the start of messages and applies the ones JotFlow handles itself (see Intent keywords).
 - Debounces: a thread or loose message is not acted on until it has been quiet for a configurable window, so the first draft already reflects a burst of replies.
 - Maintains the **topic index**: a per-channel set of active topics within a rolling window, each with a short generated title and its linked repo and issue number.
