@@ -114,9 +114,11 @@ Smaller decisions deferred until their milestone: the topic expiry window, and i
 - Documentation: deployment guide, agent adapter guide, threat model
 - First tagged release
 
-**Done when** someone outside the maintainer's team installs from the README alone and files an issue through Slack.
+**Done when** a fresh-eyes review (a new agent with no project context reading only the README and setup prompts as a non-engineer) finds no unresolved stumbling points, and the maintainer, unguided, completes the no-clone install from an empty folder and files an issue through Slack. JotFlow has a single maintainer until v1, so outside testers are not a gate; feedback from the first real adopters is the first post-v1 task.
 
 ## Post-v1
+
+- Collect and act on feedback from the first outside adopters: a fresh install by someone who has never seen JotFlow
 
 - Projects v2 board placement (D3)
 - Keywords `hold:`, `go:`, and `new:` (D10)
