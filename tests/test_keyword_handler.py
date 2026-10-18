@@ -96,7 +96,16 @@ def reaction(user: str, author: str | None, name: str = "no_entry_sign") -> dict
     [
         ("skpi: a typo", "skip"),
         ("idae: a typo", "idea"),
-        ("Ifea: one wrong letter", "idea"),
+        ("sikp: a typo", "skip"),
+        ("ksip: a typo", "skip"),
+        ("ieda: a typo", "idea"),
+        ("iead: a letter moved two places", None),
+        ("Ship: v2 on Friday", None),
+        ("Skin: dark mode looks off", None),
+        ("Slip: the date moved", None),
+        ("Skid: x", None),
+        ("ideal: a word", None),
+        ("Ifea: one wrong letter", None),
         ("sk1p: not a letter", None),
         ("ideas: longer", None),
         ("ide: shorter", None),
@@ -108,7 +117,7 @@ def reaction(user: str, author: str | None, name: str = "no_entry_sign") -> dict
         ("skip without a colon", None),
     ],
 )
-def test_typos_only_on_long_keywords_and_only_at_the_same_length(
+def test_typos_are_only_swaps_of_neighbouring_letters_on_long_keywords(
     text: str, keyword: str | None
 ) -> None:
     assert split_keyword(text)[0] == keyword

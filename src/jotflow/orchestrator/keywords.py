@@ -7,10 +7,12 @@ the keyword handler (#56), and replay can never disagree about what counts as
 a keyword.
 
 Typos are tolerated only on keywords of four or more letters, ``idea`` and
-``skip``, and only when the word keeps its length: one wrong letter, or two
-neighbouring letters swapped, as in ``skpi:`` or ``idae:``. A longer or shorter
-word, such as ``ideas:``, is ordinary text, and ``re:`` and ``bug:`` must be
-exact.
+``skip``, and only one kind: two neighbouring letters swapped, as in ``skpi:``
+or ``idae:``. That is the common keyboard slip, and no English word is one
+swap away from either keyword. A wrong letter is not tolerated, because
+``Ship:``, ``Skin:``, and ``Slip:`` are ordinary words that would silently keep
+a thread out of drafting. A longer or shorter word, such as ``ideas:``, is
+ordinary text too, and ``re:`` and ``bug:`` must be exact.
 
 ``re:`` takes an issue reference, resolved against the channel's repos (D11):
 ``42`` when the channel has one repo, ``web#42`` or ``owner/name#42`` otherwise.
@@ -37,13 +39,11 @@ _PREFIX = re.compile(r"\s*([A-Za-z]+):[ \t]*")
 _REFERENCE = re.compile(r"(?:(?P<repo>[A-Za-z0-9][\w./-]*)#)?(?P<number>[0-9]+)")
 
 
-def _one_typo(word: str, keyword: str) -> bool:
-    """Same length, and one letter wrong or two neighbouring letters swapped."""
+def _one_swap(word: str, keyword: str) -> bool:
+    """``keyword`` with two neighbouring letters swapped, and nothing else changed."""
     if len(word) != len(keyword):
         return False
     diffs = [i for i, (a, b) in enumerate(zip(word, keyword, strict=True)) if a != b]
-    if len(diffs) == 1:
-        return True
     if len(diffs) == 2 and diffs[1] == diffs[0] + 1:
         i, j = diffs
         return word[i] == keyword[j] and word[j] == keyword[i]
@@ -55,7 +55,7 @@ def _keyword_for(word: str) -> Keyword | None:
         if word == keyword:
             return keyword
     for keyword in TYPO_TOLERANT:
-        if _one_typo(word, keyword):
+        if _one_swap(word, keyword):
             return keyword
     return None
 

@@ -196,7 +196,7 @@ Post-v1: `hold:` and `go:` to lengthen or shorten the wait before drafting, and 
 
 Rules:
 
-- The colon is required, so sentences like "Skip button is broken" are never read as commands. Typos are tolerated only on keywords of four or more letters.
+- The colon is required, so sentences like "Skip button is broken" are never read as commands. Typos are tolerated only on keywords of four or more letters, and only as two neighbouring letters swapped, such as `skpi:`. A wrong letter is not, because `Ship:` or `Skin:` would then drop a thread.
 - JotFlow confirms a recognised keyword with a reaction on the message, so the poster knows it was understood. Reactions never restart the wait before drafting.
 - Keywords can have an equivalent reaction, for people who forget or prefer clicking. Today only `skip:` has one, :no_entry_sign:. `re:` cannot, because it needs an issue number. Reactions from guests and external users are ignored.
 - A `re:` that names an issue outside the channel's repos is refused, with a thread reply that says why. One that names an issue with no topic yet starts a topic for it.

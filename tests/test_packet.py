@@ -201,10 +201,17 @@ async def test_skip_messages_are_left_out() -> None:
     assert SECRET not in thread.model_dump_json()
 
 
-async def test_a_skip_root_skips_the_whole_thread() -> None:
-    reader = FakeReader({ROOT: [msg(ROOT, "skip: just chatting"), msg("1.2", "ok")]})
+@pytest.mark.parametrize("root", ["skip: just chatting", "skpi: a swapped typo"])
+async def test_a_skip_root_skips_the_whole_thread(root: str) -> None:
+    reader = FakeReader({ROOT: [msg(ROOT, root), msg("1.2", "ok")]})
     with pytest.raises(ToolError, match="says skip:"):
         await source(reader).thread(CH, ROOT)
+
+
+async def test_a_ship_root_is_an_ordinary_thread() -> None:
+    reader = FakeReader({ROOT: [msg(ROOT, "Ship: v2 on Friday"), msg("1.2", "ok")]})
+    thread = await source(reader).thread(CH, ROOT)
+    assert [m.ts for m in thread.messages] == [ROOT, "1.2"]
 
 
 async def test_a_persons_chatter_mark_leaves_a_message_out() -> None:

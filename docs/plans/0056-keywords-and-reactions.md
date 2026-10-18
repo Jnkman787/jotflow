@@ -33,7 +33,7 @@ Done when:
 ## Design
 
 - **`keywords.py`**, extended, never a second parser:
-  - `split_keyword` keeps its signature and result, `(keyword, rest)`. It gains D10's typo tolerance: the first word, with its colon, may be one wrong letter or one swap of two neighbouring letters away from a keyword of four or more letters (`idea`, `skip`). The word must keep its length, so `ideas:` stays ordinary text, as #20's pinned test requires. `re` and `bug` must be exact.
+  - `split_keyword` keeps its signature and result, `(keyword, rest)`. It gains D10's typo tolerance: the first word, with its colon, may be one swap of two neighbouring letters away from a keyword of four or more letters (`idea`, `skip`). A wrong letter is not tolerated, after review: `Ship:`, `Skin:`, `Slip:`, and `Skid:` would be read as `skip:` and silently drop a thread. `ideas:` stays ordinary text, as #20's pinned test requires. `re` and `bug` must be exact.
   - `parse_reference(text, channel) -> IssueReference`, or `ReferenceError` with a reason. It accepts `42` when the channel has one repo, and `nickname#42` or `owner/name#42` otherwise. A repo the channel does not list, or a missing or zero number, is refused.
   - `REACTIONS`: `no_entry_sign` means skip. `re:` has no reaction, because it needs an issue number.
 - **`KeywordHandler(store, policy, slack)`**, in `orchestrator/keyword_handler.py`:
@@ -56,7 +56,7 @@ Done when:
 ## Risks and open questions
 
 - Typo tolerance inside `split_keyword` changes what the live packet strips and hints, so the packet and the handler agree. I asked the architect, who wrote the module, and kept insertions and deletions out so #20's tests hold unchanged.
-- A real word one letter away, like `ship:` or `skin:`, becomes `skip`. D10 accepts that trade for four-letter keywords, and the confirmation reaction shows the poster what happened.
+- A real word one letter away, like `ship:` or `skin:`, would become `skip` under substitution tolerance, so only swaps are tolerated. No English word is one swap from `skip` or `idea`.
 
 ## Progress checklist
 
