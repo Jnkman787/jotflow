@@ -16,21 +16,28 @@ Upshot is a self-hosted, agent-agnostic bridge between a shared Slack channel an
 
 ```
 Slack channel  ──events──▶  Upshot orchestrator  ──MCP──▶  your agent (Claude Code, Codex, Gemini CLI, ...)
-      ▲                           │       ▲                        │
-      │                           │       └── structured proposals ┘
-      └── approval cards ─────────┤
-                                  └──GitHub App──▶  issues, comments, labels, assignees
+      ▲                              ▲                              │             │
+      │                              └──── proposals, results ──────┘             │ your agent's own GitHub access
+      └── approval cards, replies                                                 ▼
+                                                                          issues, comments, labels, assignees
 ```
 
 1. **Orchestrator.** A long-running service that subscribes to Slack events, debounces a burst of messages until the thread goes quiet, and hands the agent a compact packet: the new messages plus an index of currently active topics.
 2. **Whiteboard MCP server.** The orchestrator exposes its state and actions as Model Context Protocol tools: list active topics, read a topic's history, search for duplicate issues, propose an issue, propose an update, link a message to a topic, ask the channel a question. Any MCP-capable agent can drive it.
 3. **Agent adapters.** Thin runners that launch the team's agent in headless mode with the MCP server attached. The first adapter is a generic command template with presets for the major agent CLIs.
-4. **Approval gate.** Each channel runs in `propose` mode (the bot posts a card with repo, title, assignees, labels, and project, and waits for Approve or Request Changes) or `auto` mode (the bot writes immediately and posts a summary). The mode applies to the full lifecycle: creation, description edits, comments, assignment, and labels.
+4. **Approval gate.** Each channel runs in `propose` mode (the bot posts a card with repo, title, assignees, labels, and size, and waits for Approve or Request Changes) or `auto` mode (the write happens immediately and a summary card follows). Once a proposal is approved, Upshot hands it back to your agent, which creates or updates the issue with its own GitHub access and reports the result. The mode applies to the full lifecycle: creation, description edits, comments, assignment, and labels.
+
+## What a team needs
+
+| Component | Needs | Does not need |
+|---|---|---|
+| Upshot | A Slack app in your workspace, created from the included manifest: read channel history, post messages, reactions, slash commands, Socket Mode | Any GitHub access |
+| Your agent | Whatever GitHub access you already gave it, for example GitHub's MCP server or the `gh` CLI | Any Slack access |
 
 ## Principles
 
 - **Bring your own agent.** Upshot never calls an LLM itself. You supply the agent and its credentials.
-- **The orchestrator owns all GitHub writes.** The agent emits structured proposals; only the orchestrator, acting through a GitHub App you install, writes to your repos. The approval gate is enforced in code, not in a prompt, and channel content can never talk an agent into closing issues.
+- **Upshot holds no GitHub credentials.** Your agent emits structured proposals through Upshot's tools. Once a proposal is approved, Upshot hands it back to your agent, which performs the write with the GitHub access you already gave it and reports the issue URL back. Upshot never asks the agent to write anything a human has not approved, unless the channel is in `auto` mode.
 - **Store pointers, not messages.** Upshot keeps Slack message timestamps, topic links, issue numbers, and proposal state. It does not store message bodies. Thread text is fetched from Slack on demand, passed to the agent, and discarded. Logs redact message content by default.
 - **The local store is a rebuildable cache.** Every issue carries the Slack permalinks it came from; every linked Slack message gets a reply with the issue URL. Delete the database and the correlation map can be rebuilt from Slack and GitHub.
 - **No hosted component, no telemetry.** Nothing phones home.

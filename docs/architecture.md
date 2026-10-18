@@ -30,11 +30,12 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 |---|---|
 | `list_topics` | Active topics for a channel with ids, titles, linked issues |
 | `get_topic` | A topic's linked Slack messages and issue state |
-| `search_issues` | Search the target repo for likely duplicates |
+| `get_work` | The run's packet: new thread text plus the active topic index, or an approved proposal to execute |
 | `propose_issue` | Structured draft: repo, title, body, labels, assignees, project, size |
 | `propose_update` | Structured change to an existing issue: body edit, comment, label or assignee change |
 | `link_message` | Associate a Slack message with a topic, or mark it as chatter |
 | `ask_channel` | Post a clarifying question into the thread |
+| `record_result` | Report the issue URL, or the error, after executing an approved proposal |
 
 The same server is useful on its own: an engineer can point a terminal agent at it to query the whiteboard.
 
@@ -45,7 +46,7 @@ The same server is useful on its own: an engineer can point a terminal agent at 
 
 **Agent output contract.** The agent acts only by calling the whiteboard MCP tools. Upshot records each `propose_*`, `link_message`, and `ask_channel` call as it happens; the agent's stdout is ignored. The prompt handed to the agent is minimal: a run id and the instruction to call `get_work` and then act. Each run receives a short-lived bearer token so no other local process can call the server.
 
-**GitHub writer.** A GitHub App the team installs on the repositories they choose. All writes go through it. The agent never holds GitHub write credentials. The agent may be given read-only GitHub access by the team if they want richer drafts that reference code or plan files.
+**Execution runs.** Upshot holds no GitHub credentials. When a proposal is approved, or immediately in `auto` mode, Upshot launches the agent again with the approved proposal as its work packet and the instruction to perform the write using the GitHub access the team already gave it, typically GitHub's MCP server or the `gh` CLI, then call `record_result` with the issue URL. Upshot stores the URL, replies in the Slack thread, and posts the summary card. The agent may also use its GitHub access while drafting, for example to search for duplicates or to reference code and plan files.
 
 ## Approval gate
 
@@ -59,7 +60,7 @@ The mode applies uniformly to creation, description edits, comments, assignment,
 
 Who may approve is configurable: anyone in the channel by default, or an approver list mapped through identity links. A reaction emoji may optionally count as approval.
 
-Because the orchestrator is the only component with write access, the mode is a rule enforced in code, not a request in a prompt.
+Upshot enforces the mode in its own flow: it never hands the agent a proposal to execute until the mode or a human allows it, and proposals are validated against the configured repo and label allowlists before a card is posted. Because the agent holds the team's GitHub credentials, a misbehaving or prompt-injected agent could still write on its own. Teams should scope the agent's GitHub access to the repositories they intend Upshot to touch.
 
 ## Correlation
 
@@ -69,7 +70,7 @@ This is the novel and risky piece. The agent, not the orchestrator, decides wher
 - The agent classifies each new message as: new topic, belongs to topic X, or chatter.
 - Below a confidence threshold the agent uses `ask_channel` rather than guessing.
 - Humans override with a reaction or reply; overrides are recorded so the index stays correct.
-- Before proposing a new issue the agent must call `search_issues` for duplicates.
+- Before proposing a new issue the agent must search the target repository for duplicates with its own GitHub access and cite any candidates in the proposal.
 
 ## Data and privacy
 
@@ -90,11 +91,20 @@ Not stored:
 
 Thread text is fetched from Slack when building a packet, passed to the agent, and discarded. Logs redact message bodies by default.
 
-The local store (SQLite by default) is a **rebuildable cache**. Each issue created by Upshot carries the Slack permalinks it came from; each linked Slack message receives a reply with the issue URL. The correlation map can be reconstructed from Slack and GitHub alone. Slack's own retention policies therefore apply automatically.
+The local store (SQLite by default) is a **rebuildable cache**. Each issue the agent creates carries the Slack permalinks it came from, because Upshot puts them in the proposal body; each linked Slack message receives a reply with the issue URL. The correlation map can be reconstructed from Slack alone. Slack's own retention policies therefore apply automatically.
 
 Content leaves the team's control in exactly one place: the agent they chose. If that agent uses a hosted model, thread text goes to that vendor under the team's own agreement. Upshot sends only the thread in question, never channel history, and documents this clearly.
 
 There is no hosted component and no telemetry.
+
+## Permissions
+
+| Component | Needs | Does not need |
+|---|---|---|
+| Upshot | A Slack app installed in the team's workspace: `channels:history`, `groups:history`, `chat:write`, `reactions:read`, `reactions:write`, `users:read`, `commands`, plus an app-level token for Socket Mode | Any GitHub access |
+| Team's agent | Whatever GitHub access the team already gave it | Any Slack access |
+
+Upshot must be a Slack app because something has to be woken when a message is posted. Slack's MCP server is pull-only: an agent that is already running can read, search, or post through it, but nothing in it fires on a new message. Only an installed app can subscribe to events. The agent needs no Slack access because Upshot fetches thread text, hands it over through `get_work`, and does all posting itself.
 
 ## Configuration
 
@@ -105,7 +115,7 @@ Two tiers, because every team supplies every value and the two kinds change at d
 | Policy | `upshot.toml`, deployed with the service | An admin editing the file | Channel to default repo mapping, repo and label allowlists, approver list, debounce window |
 | Runtime | The local database | Slack slash commands | Channel mode (`propose`, `auto`, `paused`), Slack to GitHub identity links |
 
-Setup is a first-class feature: `upshot init` asks a few questions and writes `upshot.toml` plus a `.env` template, and the Slack and GitHub App manifests install in a couple of clicks. A team should go from clone to connected bot without reading source.
+Setup is a first-class feature: `upshot init` asks a few questions and writes `upshot.toml` plus a `.env` template, and the Slack app manifest installs in a couple of clicks. A team should go from clone to connected bot without reading source.
 
 ## Identity
 
@@ -113,9 +123,9 @@ Assignment requires a Slack user to GitHub handle mapping. A self-service slash 
 
 ## Security posture
 
-- Channel content is untrusted input reaching an agent. Only the orchestrator writes to GitHub, against a fixed allowlist of repos, labels, and projects.
-- Issues and comments are attributed to the Upshot GitHub App, with the proposing Slack user named in the body.
-- No secrets in the repository. Configuration is by environment variables. Slack and GitHub App manifests are provided for installation.
+- Channel content is untrusted input reaching an agent that holds GitHub credentials. Upshot limits what it asks for: proposals are validated against the configured repo and label allowlists before they can be approved, and the agent is only ever instructed to execute approved proposals. The team scopes the agent's GitHub token to the intended repositories.
+- Issues and comments are created by the team's agent under whatever identity its GitHub credentials carry, with the proposing Slack user named in the body.
+- No secrets in the repository. Configuration is by environment variables. A Slack app manifest is provided for installation. Upshot itself requires no GitHub credentials.
 - Continuous integration runs on forked pull requests with a read-only token. The `pull_request_target` trigger is never used to check out fork code.
 
 ## Deferred
@@ -132,7 +142,7 @@ Python 3.12 or newer.
 |---|---|---|
 | Slack | slack-bolt (AsyncApp, Socket Mode) | Maintained by Slack. Socket Mode means no public URL for self-hosted installs. |
 | MCP | the official `mcp` package, FastMCP server over Streamable HTTP | Tool schemas derive from the same Pydantic models used everywhere else. |
-| GitHub | githubkit | Async, typed, first-class GitHub App installation auth. |
+| GitHub | none | Upshot holds no GitHub credentials. The team's agent performs writes with its own tooling. |
 | State | SQLite via aiosqlite | Pointers only. Postgres stays possible behind the same interface. |
 | Tooling | uv, ruff, mypy strict, pytest | Locked dependencies, one formatter, typed contracts. |
 
@@ -148,7 +158,7 @@ src/upshot/
   orchestrator/   event ingest, debouncing, topic index, proposal lifecycle, approval cards
   whiteboard/     the MCP server
   adapters/       agent runners; generic command template first
-  github/         GitHub App writer with allowlists
+  execution/      hands approved proposals back to the agent and records results
 ```
 
 The major agent CLIs install through npm, so the container that runs the adapter needs Node present regardless of the orchestrator's language. For v1 a single image carries both. The agent runner can later move to its own container that reaches the MCP server over HTTP.

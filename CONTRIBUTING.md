@@ -19,7 +19,7 @@ Thanks for your interest. Upshot is in its design phase, so the most useful cont
 
 These are in the README and architecture document. Contributions that violate them will not be merged:
 
-- The orchestrator is the only component that writes to GitHub.
+- Upshot never holds GitHub credentials. The team's agent performs every GitHub write, and only when Upshot hands it an approved proposal.
 - Upshot stores pointers, not message content.
 - Upshot never calls an LLM itself; the team supplies the agent.
 - No hosted component, no telemetry.
