@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from jotflow.policy import (
+    InvalidLabelError,
     LabelNotAllowedError,
     Policy,
     PolicyError,
@@ -164,23 +165,55 @@ def test_repo_outside_allowlist() -> None:
     assert exc.value.repo == "acme/secret"
 
 
-def test_labels_inside_allowlist_ignore_case() -> None:
+def test_labels_inside_the_list_ignore_case() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "web")
     assert repo.check_labels(["BUG", "enhancement", "bug"]) == ["bug", "Enhancement"]
 
 
-def test_label_outside_allowlist() -> None:
+def test_a_label_list_narrows() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "web")
     with pytest.raises(LabelNotAllowedError) as exc:
         repo.check_labels(["bug", "wontfix"])
     assert exc.value.labels == ["wontfix"]
 
 
-def test_empty_label_allowlist_allows_none() -> None:
+def test_a_repo_without_labels_allows_any_label() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
+    assert repo.labels == ()
+    assert not repo.restricts_labels
     assert repo.check_labels([]) == []
-    with pytest.raises(LabelNotAllowedError):
-        repo.check_labels(["bug"])
+    assert repo.check_labels(["bug", "Needs Design", "size:m"]) == ["bug", "Needs Design", "size:m"]
+
+
+def test_an_empty_label_list_also_allows_any_label() -> None:
+    text = MINIMAL.replace('description = "The API"', 'description = "The API"\nlabels = []')
+    repo = parse_policy(text).repo("C0TEST1", "api")
+    assert not repo.restricts_labels
+    assert repo.check_labels(["wontfix"]) == ["wontfix"]
+
+
+def test_unrestricted_labels_drop_duplicates_ignoring_case() -> None:
+    repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
+    assert repo.check_labels(["Bug", "bug", "BUG", "docs"]) == ["Bug", "docs"]
+
+
+def test_a_listed_repo_restricts_labels() -> None:
+    assert parse_policy(MINIMAL).repo("C0TEST1", "web").restricts_labels
+
+
+@pytest.mark.parametrize("repo_ref", ["web", "api"])
+@pytest.mark.parametrize("bad", ["", "x" * 51])
+def test_impossible_label_names_are_rejected_either_way(repo_ref: str, bad: str) -> None:
+    repo = parse_policy(MINIMAL).repo("C0TEST1", repo_ref)
+    with pytest.raises(InvalidLabelError) as exc:
+        repo.check_labels(["bug", bad])
+    assert exc.value.labels == [bad]
+
+
+def test_label_list_error_names_the_list() -> None:
+    repo = parse_policy(MINIMAL).repo("C0TEST1", "web")
+    with pytest.raises(LabelNotAllowedError, match="not in acme/web's label list: 'wontfix'"):
+        repo.check_labels(["wontfix"])
 
 
 def test_policy_is_immutable() -> None:
@@ -212,3 +245,8 @@ def test_rejected_values_are_cut_short() -> None:
     [problem] = problems(f"[approval]\napprovers = ['{token}']\n" + MINIMAL)
     assert token not in problem
     assert token[:40] in problem
+
+
+def test_a_label_listed_twice_is_rejected_ignoring_case() -> None:
+    text = MINIMAL.replace('labels = ["bug", "Enhancement"]', 'labels = ["bug", "Bug"]')
+    assert problems(text) == ["channels.C0TEST1.repos[0]: labels listed more than once: Bug"]

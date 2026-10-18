@@ -88,3 +88,24 @@ def test_output_has_a_header_and_no_secrets_hint() -> None:
     text = render_policy(_policy())
     assert text.startswith("# jotflow.toml")
     assert "xoxb" not in text
+
+
+def test_an_unrestricted_repo_is_written_without_a_labels_line() -> None:
+    text = render_policy(_policy())
+    assert "labels" not in text.split("[[channels.C0ONE.repos]]", 1)[1]
+    assert parse_policy(text) == _policy()
+
+
+def test_a_label_list_is_written() -> None:
+    policy = _policy(
+        channels={
+            "C0ONE": {
+                "repos": [
+                    {"repo": "acme/web", "nickname": "web", "description": "Web", "labels": ["bug"]}
+                ]
+            }
+        }
+    )
+    text = render_policy(policy)
+    assert 'labels = ["bug"]' in text
+    assert parse_policy(text) == policy

@@ -29,7 +29,9 @@ reactions = false
 debounce_seconds = 60
 
 # The repos this channel may feed. The agent picks one by its description.
-# Labels are the only labels a proposal for that repo may set.
+# labels is optional. Without it, a proposal may use any label that already
+# exists on the repo; the agent never invents labels. A list narrows that to
+# only the labels listed.
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"
@@ -40,7 +42,7 @@ labels = ["bug", "enhancement", "size:s", "size:m", "size:l"]
 repo = "example-org/api"
 nickname = "api"
 description = "The public REST API and its background jobs"
-labels = ["bug", "enhancement"]
+# No labels line: any label that exists on example-org/api.
 
 [channels.G0EXAMPLE2]
 

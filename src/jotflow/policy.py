@@ -43,7 +43,8 @@ Nickname = Annotated[
     _matching(_NICKNAME, "a nickname of lowercase letters, digits, - or _, up to 32 characters"),
 ]
 PresetName = Annotated[str, _matching(_PRESET, "a preset name of lowercase letters, digits and -")]
-Label = Annotated[str, Field(min_length=1, max_length=50)]
+MAX_LABEL_LENGTH = 50  # GitHub's limit on a label name
+Label = Annotated[str, Field(min_length=1, max_length=MAX_LABEL_LENGTH)]
 
 IssueLinks = Literal["permalinks", "none"]
 
@@ -83,7 +84,17 @@ class RepoNotAllowedError(PolicyViolation):
 class LabelNotAllowedError(PolicyViolation):
     def __init__(self, repo: str, labels: list[str]) -> None:
         listed = ", ".join(repr(label) for label in labels)
-        super().__init__(f"labels not in {repo}'s allowlist: {listed}")
+        super().__init__(f"labels not in {repo}'s label list: {listed}")
+        self.repo = repo
+        self.labels = labels
+
+
+class InvalidLabelError(PolicyViolation):
+    def __init__(self, repo: str, labels: list[str]) -> None:
+        listed = ", ".join(repr(label) for label in labels)
+        super().__init__(
+            f"not valid label names for {repo} (1 to {MAX_LABEL_LENGTH} characters): {listed}"
+        )
         self.repo = repo
         self.labels = labels
 
@@ -97,7 +108,11 @@ class RepoPolicy(_Strict):
         min_length=1, max_length=200, description="What the repo covers; the agent picks by this"
     )
     labels: tuple[Label, ...] = Field(
-        default=(), description="Labels a proposal may set; empty allows none"
+        default=(),
+        description=(
+            "Optional. Narrows the labels a proposal may set to this list. Missing or empty "
+            "means any label that already exists on the repo"
+        ),
     )
 
     @model_validator(mode="after")
@@ -106,13 +121,33 @@ class RepoPolicy(_Strict):
             raise ValueError(f"labels listed more than once: {', '.join(dupes)}")
         return self
 
-    def check_labels(self, labels: Iterable[str]) -> list[str]:
-        """The labels in the allowlist's own spelling, matched without case.
+    @property
+    def restricts_labels(self) -> bool:
+        """Whether a label list narrows what proposals may set."""
+        return bool(self.labels)
 
-        Raises :class:`LabelNotAllowedError` if any label is outside the allowlist.
+    def check_labels(self, labels: Iterable[str]) -> list[str]:
+        """The labels a proposal may set, without duplicates.
+
+        With no label list, any label is allowed: JotFlow cannot see which labels
+        exist on the repo, so the agent chooses only existing ones (#23, #31).
+        With a list, labels must be on it, matched without case, and come back in
+        the list's own spelling. Raises :class:`LabelNotAllowedError` for a label
+        outside the list, and :class:`InvalidLabelError` for one no repo could have.
         """
-        allowed = {label.casefold(): label for label in self.labels}
         wanted = list(labels)
+        invalid = [label for label in wanted if not 0 < len(label) <= MAX_LABEL_LENGTH]
+        if invalid:
+            raise InvalidLabelError(self.repo, invalid)
+        if not self.restricts_labels:
+            unique: list[str] = []
+            seen: set[str] = set()
+            for label in wanted:
+                if label.casefold() not in seen:
+                    seen.add(label.casefold())
+                    unique.append(label)
+            return unique
+        allowed = {label.casefold(): label for label in self.labels}
         rejected = [label for label in wanted if label.casefold() not in allowed]
         if rejected:
             raise LabelNotAllowedError(self.repo, rejected)

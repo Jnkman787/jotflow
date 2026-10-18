@@ -68,7 +68,7 @@ CREATE_APP_URL = "https://api.slack.com/apps"
 DEFAULT_MANIFEST_OUT = "slack-app-manifest.json"
 MAX_ATTEMPTS = 5
 DEFAULT_PRESET = "claude-code"
-DEFAULT_LABELS = ("bug", "enhancement")
+ANY_LABEL = "any"
 MAX_CHANNELS = 50
 MAX_REPOS_PER_CHANNEL = 20
 
@@ -292,9 +292,13 @@ def _description(value: str) -> str:
 
 
 def _labels(value: str) -> str:
-    """Validate a comma-separated label list. ``none`` means no labels."""
+    """Validate the labels answer: ``any``, or a comma-separated list that narrows it."""
+    if value.strip().lower() in {"", ANY_LABEL}:
+        return ANY_LABEL
     if value.strip().lower() == "none":
-        return "none"
+        raise ValueError(
+            "Type any to allow every label the repo already has, or list the labels to allow."
+        )
     labels = [part.strip() for part in value.split(",") if part.strip()]
     seen: set[str] = set()
     for label in labels:
@@ -302,11 +306,11 @@ def _labels(value: str) -> str:
         if label.casefold() in seen:
             raise ValueError(f"{label!r} is listed twice.")
         seen.add(label.casefold())
-    return ", ".join(labels) if labels else "none"
+    return ", ".join(labels) if labels else ANY_LABEL
 
 
 def _split_labels(answer: str) -> tuple[str, ...]:
-    if answer == "none":
+    if answer == ANY_LABEL:
         return ()
     return tuple(part.strip() for part in answer.split(","))
 
@@ -344,8 +348,8 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
         "  What does it cover? The agent picks a repo by this", validate=_description
     )
     labels = console.ask(
-        "  Labels a proposal may set, comma-separated, or none",
-        ", ".join(DEFAULT_LABELS),
+        "  Labels a proposal may use: any existing label, or a comma-separated list to narrow it",
+        ANY_LABEL,
         _labels,
     )
     return RepoPolicy(
