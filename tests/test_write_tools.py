@@ -103,34 +103,40 @@ def clock() -> Clock:
 
 
 class LiveStore(MemoryStore):
-    """A store where every run these tests name is running, unless ended."""
+    """A store where each run is running, built from the grant registered for it.
+
+    Unregistered runs are drafting runs in CH on ROOT, except ELSEWHERE's run-9.
+    """
 
     def __init__(self, clock: Clock) -> None:
         super().__init__(clock=clock)
         self.ended: set[str] = set()
-        self.kinds: dict[str, tuple[RunKind, str]] = {}
+        self.grants: dict[str, Grant] = {}
+
+    def register(self, grant: Grant) -> Grant:
+        self.grants[grant.run_id] = grant
+        return grant
 
     async def get_run(self, run_id: str) -> Run | None:
         real = await super().get_run(run_id)
         if real is not None:
             return real
-        kind, channel = self.kinds.get(run_id, (_KIND_BY_PREFIX(run_id), CH))
+        grant = self.grants.get(run_id) or Grant(
+            run_id, RunKind.DRAFTING, OTHER if run_id == "run-9" else CH, thread_ts=ROOT
+        )
+        ended = run_id in self.ended
         return Run(
             id=run_id,
-            kind=kind,
-            status=RunStatus.SUCCEEDED if run_id in self.ended else RunStatus.RUNNING,
-            channel_id=OTHER if run_id == "run-9" else channel,  # ELSEWHERE's run
-            thread_ts=ROOT,
-            proposal_id="prop-x" if kind is RunKind.EXECUTION else None,
+            kind=grant.kind,
+            status=RunStatus.SUCCEEDED if ended else RunStatus.RUNNING,
+            channel_id=grant.channel_id,
+            thread_ts=grant.thread_ts or ROOT,
+            proposal_id=grant.proposal_id,
             created_at=datetime(2026, 10, 18, 11, 0, tzinfo=UTC),
             deadline=datetime(2026, 10, 18, 11, 30, tzinfo=UTC),
             started_at=datetime(2026, 10, 18, 11, 0, tzinfo=UTC),
-            finished_at=datetime(2026, 10, 18, 11, 5, tzinfo=UTC) if run_id in self.ended else None,
+            finished_at=datetime(2026, 10, 18, 11, 5, tzinfo=UTC) if ended else None,
         )
-
-
-def _KIND_BY_PREFIX(run_id: str) -> RunKind:
-    return RunKind.EXECUTION if run_id == "run-x" else RunKind.DRAFTING
 
 
 @pytest.fixture
@@ -533,13 +539,18 @@ async def test_a_failed_post_records_nothing_so_it_can_be_retried(
 # record_result
 
 
-async def executing(tools: WriteTools, store: MemoryStore) -> tuple[str, str, Grant]:
+async def executing(tools: WriteTools, store: LiveStore) -> tuple[str, str, Grant]:
     topic_id = await new_topic(tools)
     proposed: Any = await tools.propose_issue(DRAFT, issue(topic_id))
     await store.transition(proposed.proposal_id, ProposalState.APPROVED, approved_by="auto")
     await store.transition(proposed.proposal_id, ProposalState.EXECUTING)
-    grant = Grant(
-        run_id="run-x", kind=RunKind.EXECUTION, channel_id=CH, proposal_id=proposed.proposal_id
+    grant = store.register(
+        Grant(
+            run_id="run-x",
+            kind=RunKind.EXECUTION,
+            channel_id=CH,
+            proposal_id=proposed.proposal_id,
+        )
     )
     return topic_id, proposed.proposal_id, grant
 
@@ -588,7 +599,7 @@ async def test_an_error_result_fails_the_proposal(tools: WriteTools, store: Memo
     assert result.state is ProposalState.FAILED
 
 
-async def reconciling(tools: WriteTools, store: MemoryStore) -> tuple[str, Grant]:
+async def reconciling(tools: WriteTools, store: LiveStore) -> tuple[str, Grant]:
     topic_id, proposal_id, grant = await executing(tools, store)
     # A restart interrupted the first execution run; recovery moves the proposal on.
     await store.transition(proposal_id, ProposalState.RECONCILING)
@@ -612,11 +623,11 @@ async def test_a_reconciling_run_can_give_up(tools: WriteTools, store: MemorySto
 
 
 async def test_only_an_executing_proposal_takes_a_result(
-    tools: WriteTools, store: MemoryStore
+    tools: WriteTools, store: LiveStore
 ) -> None:
     topic_id = await new_topic(tools)
     proposed: Any = await tools.propose_issue(DRAFT, issue(topic_id))
-    grant = Grant("run-x", RunKind.EXECUTION, CH, proposal_id=proposed.proposal_id)
+    grant = store.register(Grant("run-x", RunKind.EXECUTION, CH, proposal_id=proposed.proposal_id))
     with pytest.raises(ToolError, match="is pending, not executing or reconciling"):
         await tools.record_result(grant, RecordResultArgs(issue_url=URL))
 
@@ -625,9 +636,8 @@ async def test_a_proposal_outside_the_grant_reads_as_missing(
     tools: WriteTools, store: LiveStore
 ) -> None:
     _, proposal_id, _ = await executing(tools, store)
-    store.kinds["run-y"] = (RunKind.EXECUTION, OTHER)
-    elsewhere = Grant("run-y", RunKind.EXECUTION, OTHER, proposal_id=proposal_id)
-    missing = Grant("run-x", RunKind.EXECUTION, CH, proposal_id="prop-none")
+    elsewhere = store.register(Grant("run-y", RunKind.EXECUTION, OTHER, proposal_id=proposal_id))
+    missing = store.register(Grant("run-z", RunKind.EXECUTION, CH, proposal_id="prop-none"))
     for grant, pid in ((elsewhere, proposal_id), (missing, "prop-none")):
         with pytest.raises(ToolError, match=f"no proposal {pid}"):
             await tools.record_result(grant, RecordResultArgs(issue_url=URL))
@@ -703,7 +713,9 @@ async def test_over_the_wire_a_refusal_is_a_tool_result_and_kinds_list_their_too
 
     registry = TokenRegistry()
     drafting = registry.issue(DRAFT, 60)
-    execution = registry.issue(Grant("run-x", RunKind.EXECUTION, CH, proposal_id="prop-9"), 60)
+    execution = registry.issue(
+        store.register(Grant("run-x", RunKind.EXECUTION, CH, proposal_id="prop-9")), 60
+    )
     specs = write_tools(store, POLICY, poster)
     async with client_for(tokens=registry, tools=specs) as http:
         listed = await post(http, "tools/list", Authorization=f"Bearer {drafting}")
@@ -752,3 +764,28 @@ async def test_a_run_past_its_deadline_but_still_running_may_finish(
     assert clock() > datetime(2026, 10, 18, 11, 30, tzinfo=UTC)
     result: Any = await tools.record_result(grant, RecordResultArgs(issue_url=URL))
     assert result.state is ProposalState.APPLIED
+
+
+@pytest.mark.parametrize(
+    "token_grant",
+    [
+        # A drafting token whose run is now on another thread.
+        Grant("run-p", RunKind.DRAFTING, CH, thread_ts=REPLY),
+        # An execution token naming another proposal than its run.
+        Grant("run-q", RunKind.EXECUTION, CH, proposal_id="prop-other"),
+    ],
+)
+async def test_a_grant_must_match_its_runs_thread_or_proposal(
+    tools: WriteTools, store: LiveStore, token_grant: Grant
+) -> None:
+    run_grant = (
+        Grant(token_grant.run_id, RunKind.DRAFTING, CH, thread_ts=ROOT)
+        if token_grant.kind is RunKind.DRAFTING
+        else Grant(token_grant.run_id, RunKind.EXECUTION, CH, proposal_id="prop-run")
+    )
+    store.register(run_grant)
+    with pytest.raises(ToolError, match=f"run {token_grant.run_id} is not running"):
+        if token_grant.kind is RunKind.DRAFTING:
+            await tools.link_message(token_grant, link())
+        else:
+            await tools.record_result(token_grant, RecordResultArgs(issue_url=URL))

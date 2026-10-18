@@ -292,6 +292,10 @@ class WriteTools:
             run is None
             or run.status is not RunStatus.RUNNING
             or (run.kind, run.channel_id) != (grant.kind, grant.channel_id)
+            # The same matching get_work does: the run's own thread, or for an
+            # execution run its own proposal.
+            or (run.kind is not RunKind.EXECUTION and run.thread_ts != grant.thread_ts)
+            or (run.kind is RunKind.EXECUTION and run.proposal_id != grant.proposal_id)
         ):
             raise ToolError(f"run {grant.run_id} is not running")
 
