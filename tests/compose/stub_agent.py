@@ -1,7 +1,7 @@
 """The stub agent CI's reach check runs in each agent container (#54, #55).
 
 It reads the MCP config the runner wrote, calls ``tools/list`` with the run's
-token, and exits 0 only if it sees its kind's tools and not the other kind's.
+token, and exits 0 only if it sees exactly its kind's tools.
 It is passed as ``python -c`` code, so it uses only the standard library.
 """
 
@@ -34,10 +34,18 @@ request = urllib.request.Request(
 )
 with urllib.request.urlopen(request, timeout=10) as reply:
     names = {tool["name"] for tool in json.loads(reply.read())["result"]["tools"]}
-mine, theirs = (
-    ("record_result", "propose_issue")
-    if kind == "execution"
-    else ("propose_issue", "record_result")
-)
-if "get_work" not in names or mine not in names or theirs in names:
+# Exactly the run kind's tools, from the token table in docs/architecture.md.
+EXPECTED = {
+    "drafting": {
+        "get_work",
+        "list_topics",
+        "get_topic",
+        "propose_issue",
+        "propose_update",
+        "link_message",
+        "ask_channel",
+    },
+    "execution": {"get_work", "record_result"},
+}
+if names != EXPECTED[kind]:
     sys.exit(f"{kind} run saw the wrong tools: {sorted(names)}")

@@ -487,8 +487,16 @@ class RunnerGate:
         return None
 
 
+def runner_info(config: RunnerConfig) -> dict[str, Any]:
+    """``GET /info``: the preset name (``command`` for a custom command) and kinds served."""
+    return {
+        "preset": config.agent.name,
+        "kinds": [kind.value for kind in RunKind if kind in config.kinds],
+    }
+
+
 def build_runner_app(runner: Runner, config: RunnerConfig) -> ASGIApp:
-    """The runner's HTTP app: POST /runs, GET /runs/{id}, DELETE /runs/{id}."""
+    """The runner's HTTP app: GET /info, POST /runs, GET /runs/{id}, DELETE /runs/{id}."""
 
     async def launch(request: Request) -> Response:
         # Read with a cap, so a chunked body without a length cannot grow unbounded.
@@ -516,6 +524,11 @@ def build_runner_app(runner: Runner, config: RunnerConfig) -> ASGIApp:
             return JSONResponse({"error": "no such run"}, status_code=404)
         return JSONResponse(view)
 
+    async def info(_: Request) -> Response:
+        # What this runner starts, so JotFlow can check it matches jotflow.toml.
+        # Behind the same gate as /runs: the secret is required.
+        return JSONResponse(runner_info(config))
+
     async def stop(request: Request) -> Response:
         view = await runner.stop(request.path_params["run_id"])
         if view is None:
@@ -524,6 +537,7 @@ def build_runner_app(runner: Runner, config: RunnerConfig) -> ASGIApp:
 
     app = Starlette(
         routes=[
+            Route("/info", info, methods=["GET"]),
             Route("/runs", launch, methods=["POST"]),
             Route("/runs/{run_id}", status, methods=["GET"]),
             Route("/runs/{run_id}", stop, methods=["DELETE"]),

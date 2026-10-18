@@ -595,3 +595,23 @@ def test_the_startup_line_names_a_preset(tmp_path: Path) -> None:
     assert runner_command.startup_line(cfg) == (
         "runner serving drafting, question with preset claude-code"
     )
+
+
+async def test_info_names_the_preset_and_kinds_behind_the_secret(tmp_path: Path) -> None:
+    cfg = config(tmp_path)
+    runner = Runner(cfg, environ=ENVIRON)
+    async with http_for(runner, cfg) as http:
+        reply = await http.get("/info")
+        assert reply.status_code == 200
+        assert reply.json() == {"preset": "command", "kinds": ["drafting", "question"]}
+        refused = await http.get("/info", headers={"Authorization": "Bearer wrong"})
+        assert refused.status_code == 401
+        assert (await http.get("/info?x=1")).status_code == 400
+
+
+def test_info_for_a_preset_runner(tmp_path: Path) -> None:
+    from jotflow.adapters.presets import CLAUDE_CODE
+    from jotflow.adapters.runner import runner_info
+
+    cfg = config(tmp_path, execution=True, command=(), preset=CLAUDE_CODE, write_token="ghp_write")
+    assert runner_info(cfg) == {"preset": "claude-code", "kinds": ["execution"]}
