@@ -39,7 +39,7 @@ src/jotflow/
   store/          local state behind the Store interface: SQLite, plus an in-memory store for tests
   testing/        saved Slack threads for tests, replay, and demos; format in testing/threads/README.md
   orchestrator/   event ingest, debouncing, topic index, proposal lifecycle, approval cards
-  whiteboard/     the MCP server
+  whiteboard/     the MCP server: gate (transport rules, audit), token interface, fixed tool registry
   adapters/       agent runners and presets
   execution/      execution runs: hands approved proposals back to the agent, checks results
 tests/            pytest suite

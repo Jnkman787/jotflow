@@ -33,16 +33,18 @@ from jotflow.orchestrator.slack import (
     report_missing,
 )
 from jotflow.policy import Policy, PolicyError, load_policy
+from jotflow.whiteboard.server import McpServer, McpStartError, build_app
 
 log = logging.getLogger("jotflow.run")
 
 LOG_LEVELS = ("debug", "info", "warning", "error")
 
-# These libraries print whole event payloads, message text included, at DEBUG.
-THIRD_PARTY_LOGGERS = ("slack_bolt", "slack_sdk", "aiohttp")
+# These libraries print whole event payloads or request bodies at DEBUG.
+THIRD_PARTY_LOGGERS = ("slack_bolt", "slack_sdk", "aiohttp", "mcp", "uvicorn")
 
 EXIT_CONFIG = 2
 EXIT_SLACK = 1
+EXIT_MCP = 3
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -132,6 +134,12 @@ async def run_until_stopped(connection: Connection, stop: asyncio.Event) -> None
         log.info("disconnected")
 
 
+def make_mcp_server(settings: Settings) -> McpServer:
+    """The whiteboard MCP server for these settings. Every token is refused until #16."""
+    app = build_app(port=settings.mcp_port, extra_hosts=settings.mcp_allowed_hosts)
+    return McpServer(app, settings.mcp_host, settings.mcp_port)
+
+
 async def serve(settings: Settings, policy: Policy) -> int:
     app = AsyncApp(
         token=settings.slack_bot_token.get_secret_value(),
@@ -145,6 +153,13 @@ async def serve(settings: Settings, policy: Policy) -> int:
         return EXIT_SLACK
     register_handlers(app, EventFilter(policy.channels, identity))
     log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
+
+    mcp = make_mcp_server(settings)
+    try:
+        await mcp.start()
+    except McpStartError as exc:
+        log.error("%s", exc)
+        return EXIT_MCP
 
     handler: Connection = AsyncSocketModeHandler(app, settings.slack_app_token.get_secret_value())
     stop = asyncio.Event()
@@ -164,6 +179,7 @@ async def serve(settings: Settings, policy: Policy) -> int:
         return EXIT_SLACK
     finally:
         remove_signals()
+        await mcp.stop()
     return 0
 
 
