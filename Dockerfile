@@ -46,6 +46,7 @@ COPY --from=builder /app/.venv /app/.venv
 
 # JOTFLOW_IMAGE marks JotFlow's own image. `jotflow check --live` refuses to
 # run here, because Compose's env_file would carry an opt-in left in .env.
+# A guard against accidents, not a boundary: env_file or -e can override it.
 ENV PATH="/app/.venv/bin:${PATH}" \
     JOTFLOW_IMAGE=1 \
     PYTHONDONTWRITEBYTECODE=1 \
