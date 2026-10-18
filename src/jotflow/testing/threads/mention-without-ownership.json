@@ -1,0 +1,165 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "mention-without-ownership",
+  "description": "An idea that mentions Bob, and Bob's reply with an opinion, but nobody says who takes it. Per the mention rule on #23, a mention marks someone as involved, never as an assignee: the agent proposes the issue with no assignees and asks once in the thread who should own it, instead of guessing or leaving it silently blank.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792316400.000100",
+      "user": "U0CAROL",
+      "text": "<@U0BOB> the reports page should probably support dark mode too"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792316640.000100",
+      "user": "U0BOB",
+      "text": "Agreed, the charts are hard to read on a dark screen.",
+      "thread_ts": "1792316400.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792316400.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792316400.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "reports-dark-mode"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792316640.000100",
+              "thread_ts": "1792316400.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:reports-dark-mode"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:reports-dark-mode",
+            "repo": "acme-co/web",
+            "title": "Support dark mode on the reports page",
+            "body": "The charts on the reports page are hard to read on a dark screen, so the page should follow dark mode.",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792316400.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792316640.000100",
+                "thread_ts": "1792316400.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        },
+        {
+          "tool": "ask_channel",
+          "arguments": {
+            "text": "Who should take this one? I've proposed it with no assignee for now."
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One topic and one create_issue proposal for acme-co/web with no assignees, plus one ask_channel question about who owns it. Bob is mentioned and replies, but never volunteers, so he is not assigned.",
+    "accepted": [
+      "1792316400.000100",
+      "1792316640.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:reports-dark-mode",
+        "messages": [
+          "1792316400.000100",
+          "1792316640.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:reports-dark-mode"
+      }
+    ],
+    "asks": [
+      "1792316400.000100"
+    ]
+  }
+}

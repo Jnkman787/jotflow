@@ -6,7 +6,7 @@
 - Also serves: #17, which will replay these fixtures
 - Draft PR: #95
 - Status: ready for review
-- Last verified: `make check` green locally on 2026-10-18, 369 tests, 97% coverage
+- Last verified: `make check` green locally on 2026-10-18, 377 tests, 97% coverage
 - Next safe action: review and merge #95; the replay-tests box on #18 completes with #17
 
 ## Objective and done-when
@@ -29,6 +29,7 @@ Done when:
   - a message belonging to an existing topic
   - one with the keywords `idea:`, `re:`, and `skip:`
   - one with mentions of people
+  - a mention that does not hand over ownership, added at review: no assignee, and one question asking who owns it
 - [x] Every fixture runs through the real ingest filter in a test, and the accepted and ignored events match its expected outcome
 - [x] A test asserts that no fixture contains real-looking Slack ids, organisation names outside the fictional set, or token-shaped strings
 - [ ] Used by the replay tests. This box completes with #17, which does not exist yet. This PR uses the fixtures in the ingest and loader tests.
@@ -74,7 +75,7 @@ Alternatives considered: fixtures under `tests/` would not ship with the package
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
 - [x] Commit this plan and open the draft PR
 - [x] Loader and models in `src/jotflow/testing/threads.py`
-- [x] Seven fixtures and a README describing the format and each fixture's outcome
+- [x] Eight fixtures and a README describing the format and each fixture's outcome
 - [x] Tests: loader validation, ingest against every fixture, scripted outcome, fictional data guard
 - [x] Update documentation: AGENTS.md layout
 - [x] `make check` passes, coverage at or above the floor
@@ -83,11 +84,12 @@ Alternatives considered: fixtures under `tests/` would not ship with the package
 
 ## Validation
 
-- `make check` passes: ruff, mypy strict, and 369 tests with 97% total line and branch coverage. `src/jotflow/testing/threads.py` is at 99%.
-- `tests/test_fixture_threads.py` adds 68 tests:
+- `make check` passes: ruff, mypy strict, and 377 tests with 97% total line and branch coverage. `src/jotflow/testing/threads.py` is at 99%.
+- `tests/test_fixture_threads.py` adds 76 tests:
   - every built-in fixture loads, and the seven required ones ship
   - each fixture's events go through the real `EventFilter`, and the accepted and ignored events match `expected` exactly, including the edit, the bot's own message and reaction, the channel join, and the redelivery
-  - the script's topics, chatter, and proposals match `expected`
+  - the script's topics, chatter, proposals, and asks match `expected`
+  - a mention alone never assigns, and assignment appears only where someone says so in words, pinning the rule on #23
   - keyword entries match the message text, and skipped messages reach no agent run
   - the fictional-data guard passes on every file, and catches real-looking ids, foreign URLs and email domains, and token-shaped strings in samples
   - every loader check fails with its own message on a mutated fixture
@@ -98,4 +100,5 @@ Alternatives considered: fixtures under `tests/` would not ship with the package
 ## Handoff notes
 
 - #17 can load fixtures with `builtin_thread(name)` or `load_thread(path)`, feed `thread.events` through ingest, answer tool calls from `thread.agent`, map `key:<name>` topic ids to the ids it assigns, and compare with `thread.expected` and `scripted_outcome(thread)`.
+- Review change: the lead asked for an eighth fixture, `mention-without-ownership`, and for `Refs #18` instead of `Fixes #18`, so #18 stays open until #17 uses the fixtures. `expected.asks` was added to record `ask_channel` calls. The fixture models the ask path, not the silent wait, because the rule on #23 prefers asking to leaving the assignee blank without a word.
 - The fixtures were generated once by a throwaway script and are now edited by hand. The JSON files are the source of truth.

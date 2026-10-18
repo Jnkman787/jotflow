@@ -13,6 +13,7 @@ import pytest
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.testing.threads import (
     MessageEvent,
+    ProposeIssueCall,
     ReactionEvent,
     SavedThread,
     ThreadError,
@@ -33,6 +34,7 @@ REQUIRED = {
     "existing-topic",
     "keywords",
     "mentions",
+    "mention-without-ownership",
 }
 
 
@@ -85,6 +87,32 @@ def test_script_produces_the_expected_topics_and_proposals(path: Path) -> None:
     assert {k: sorted(v) for k, v in outcome.topics.items()} == {k: v for k, v in want.items() if v}
     assert sorted(outcome.chatter) == sorted(thread.expected.chatter)
     assert outcome.proposals == list(thread.expected.proposals)
+    assert outcome.asks == list(thread.expected.asks)
+
+
+def _assignees(thread: SavedThread) -> list[str]:
+    return [
+        login
+        for run in thread.agent
+        for call in run.calls
+        if isinstance(call, ProposeIssueCall)
+        for login in call.arguments.assignees
+    ]
+
+
+def test_a_mention_alone_never_assigns() -> None:
+    # The rule on #23: mentions mark people as involved, never as assignees.
+    thread = builtin_thread("mention-without-ownership")
+    assert "<@U0BOB>" in thread.messages[thread.agent[0].thread_ts].text
+    assert _assignees(thread) == []
+    assert list(thread.expected.asks) == [thread.agent[0].thread_ts]
+
+
+def test_assignment_needs_someone_to_say_so() -> None:
+    # Bob says "assign it to me" and is assigned; Alice is only mentioned.
+    thread = builtin_thread("mentions")
+    assert _assignees(thread) == ["acme-bob"]
+    assert "assign it to me" in " ".join(m.text for m in thread.messages.values())
 
 
 @pytest.mark.parametrize("path", PATHS, ids=ids(PATHS))
@@ -352,6 +380,10 @@ def test_expected_topics_and_proposals_must_match_the_script() -> None:
     data = _base()
     data["expected"]["proposals"] = []
     assert "expected.proposals: does not match the script's propose calls" in _problem(data)
+
+    data = _base()
+    data["expected"]["asks"] = [data["events"][0]["ts"]]
+    assert "expected.asks: lists" in _problem(data)
 
 
 def test_invalid_json_and_missing_file(tmp_path: Path) -> None:

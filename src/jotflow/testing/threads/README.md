@@ -14,9 +14,12 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `same-topic-two-threads.json` | Two threads, half an hour apart, both asking for a dark mode. The second thread joins the first thread's topic, so there is one topic and one proposal. |
 | `existing-topic.json` | A new message about the CSV export, which already has a topic and issue `acme-co/web#42`. The agent links it to that topic and proposes a comment on #42 instead of a new issue. |
 | `keywords.json` | `idea:` is a hint the agent follows. `re: web#42` is attached by JotFlow, and the agent proposes an update to #42. `skip:` keeps a message and its reply out of every agent run. "Skip button is broken" has no colon, so it is an ordinary bug report. The bot's own confirmation reaction is ignored. |
-| `mentions.json` | A bug report with `<!here>` and `<@U0BOB>`, and Bob's reply taking it. The agent picks `acme-co/api` by its description and assigns `acme-bob`, Bob's linked GitHub login. |
+| `mentions.json` | A bug report with `<!here>` and `<@U0BOB>`, and Bob's reply taking it: "assign it to me". The agent picks `acme-co/api` by its description and assigns `acme-bob`, Bob's linked GitHub login. Alice is mentioned in the reply but not assigned. |
+| `mention-without-ownership.json` | An idea that mentions Bob, and Bob's reply with an opinion, but nobody says who takes it. One topic and one `create_issue` proposal with no assignees, and one `ask_channel` question asking who should own it. |
 
 Each file repeats its outcome in `description` and `expected.summary`.
+
+**Mentions never assign.** The two mention fixtures pin the rule on #23: a mention marks someone as involved, never as an assignee. An assignee is proposed only when someone says so in words, as Bob does in `mentions.json`. When ownership is still unclear after the thread settles, the agent asks once in the thread. `mention-without-ownership.json` models that ask, rather than waiting silently, because the rule prefers asking to leaving the assignee blank without a word.
 
 ## Format
 
@@ -67,8 +70,9 @@ Real topic ids are assigned by JotFlow at replay time, so a `link_message` that 
 | `chatter` | Messages the agent marks as chatter. |
 | `keywords` | Messages that start with a keyword, mapped to `idea`, `bug`, `re`, or `skip`. |
 | `proposals` | Each proposal's `kind`, `repo`, `topic`, and for updates `issue_number`. |
+| `asks` | The thread `ts` of each `ask_channel` call, in order. |
 
-The loader checks that the outcome agrees with itself and with the script. Every accepted message must be in exactly one topic, in chatter, or in a skipped thread. The script must create exactly the listed topics, chatter, and proposals. Messages attached by `re:` are JotFlow's doing, so they appear in `topics` without a `link_message` call.
+The loader checks that the outcome agrees with itself and with the script. Every accepted message must be in exactly one topic, in chatter, or in a skipped thread. The script must create exactly the listed topics, chatter, proposals, and asks. Messages attached by `re:` are JotFlow's doing, so they appear in `topics` without a `link_message` call.
 
 ## Using them
 

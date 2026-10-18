@@ -165,6 +165,9 @@ class Expected(_Strict):
     chatter: tuple[str, ...] = ()
     keywords: dict[str, Literal["idea", "bug", "re", "skip"]] = Field(default_factory=dict)
     proposals: tuple[ExpectedProposal, ...] = ()
+    asks: tuple[str, ...] = Field(
+        default=(), description="Thread ts of each ask_channel call, in order"
+    )
 
 
 class SavedThread(_Strict):
@@ -313,6 +316,7 @@ class Outcome:
     topics: dict[str, list[str]] = field(default_factory=dict)
     chatter: list[str] = field(default_factory=list)
     proposals: list[ExpectedProposal] = field(default_factory=list)
+    asks: list[str] = field(default_factory=list)
 
 
 def scripted_outcome(thread: SavedThread) -> Outcome:
@@ -343,6 +347,8 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
                         kind="create_issue", repo=create.repo, topic=create.topic_id or ""
                     )
                 )
+            elif isinstance(call, AskChannelCall):
+                outcome.asks.append(run.thread_ts)
             elif isinstance(call, ProposeUpdateCall):
                 update = call.arguments
                 outcome.proposals.append(
@@ -415,6 +421,10 @@ def _expected_problems(thread: SavedThread) -> list[str]:
         )
     if list(expected.proposals) != outcome.proposals:
         problems.append("expected.proposals: does not match the script's propose calls")
+    if list(expected.asks) != outcome.asks:
+        problems.append(
+            f"expected.asks: lists {list(expected.asks)} but the script asks in {outcome.asks}"
+        )
     return problems
 
 
