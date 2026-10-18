@@ -27,7 +27,9 @@ from jotflow.models import RunKind
 MAX_TOKEN_LENGTH = 512
 # A recognisable prefix lets secret scanners spot a leaked token.
 TOKEN_PREFIX = "jfr_"
-MAX_TTL_SECONDS = 2 * 60 * 60
+# The longest a token lives. A run must not outlive its token, so run timeouts
+# are capped to match, and the runner issues with ttl = deadline - now + grace.
+MAX_TOKEN_TTL_SECONDS = 2 * 60 * 60
 MAX_LIVE_TOKENS = 1024
 
 Clock = Callable[[], float]
@@ -37,8 +39,10 @@ Clock = Callable[[], float]
 class Grant:
     """What a valid token allows: one run, of one kind, in one channel.
 
-    Drafting and question runs are also bound to the thread they work on, and
-    an execution run to the one approved proposal it executes.
+    Drafting and question runs are bound to the thread they work on.
+    ``thread_ts=None`` means the channel's loose top-level posts, never "any
+    thread": tools compare ``thread_ts`` exactly, ``None`` included. An
+    execution run is bound to the one approved proposal it executes.
     """
 
     run_id: str
@@ -54,9 +58,6 @@ class Grant:
             raise ValueError("an execution grant must name its proposal")
         if self.kind is not RunKind.EXECUTION and self.proposal_id is not None:
             raise ValueError("only an execution grant names a proposal")
-        if self.kind in (RunKind.DRAFTING, RunKind.QUESTION) and not self.thread_ts:
-            # These runs work on one thread, so the grant pins it.
-            raise ValueError(f"a {self.kind.value} grant must name its thread")
 
 
 class TokenCheck(Protocol):
@@ -96,7 +97,7 @@ class TokenRegistry:
     """Issues, checks, and revokes per-run tokens. One live token per run."""
 
     clock: Clock = time.monotonic
-    max_ttl: float = MAX_TTL_SECONDS
+    max_ttl: float = MAX_TOKEN_TTL_SECONDS
     max_live: int = MAX_LIVE_TOKENS
     _by_digest: dict[str, _Entry] = field(default_factory=dict, init=False, repr=False)
     _by_run: dict[str, str] = field(default_factory=dict, init=False, repr=False)

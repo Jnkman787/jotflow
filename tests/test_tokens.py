@@ -55,16 +55,10 @@ def test_a_grant_needs_a_run_and_a_channel(run_id: str, channel_id: str) -> None
         Grant(run_id=run_id, kind=RunKind.DRAFTING, channel_id=channel_id, thread_ts="1.000100")
 
 
-@pytest.mark.parametrize("kind", [RunKind.DRAFTING, RunKind.QUESTION])
-@pytest.mark.parametrize("thread_ts", [None, ""])
-def test_drafting_and_question_grants_name_their_thread(
-    kind: RunKind, thread_ts: str | None
-) -> None:
-    with pytest.raises(ValueError, match=f"a {kind.value} grant must name its thread"):
-        Grant(run_id="r", kind=kind, channel_id="C0EXAMPLE1", thread_ts=thread_ts)
-
-
-def test_an_execution_grant_needs_no_thread() -> None:
+def test_a_loose_post_grant_has_no_thread_and_an_execution_grant_needs_none() -> None:
+    # thread_ts None is the channel's loose top-level posts, not "any thread".
+    loose = Grant(run_id="r", kind=RunKind.DRAFTING, channel_id="C0EXAMPLE1")
+    assert loose.thread_ts is None
     assert EXECUTE.thread_ts is None
 
 
