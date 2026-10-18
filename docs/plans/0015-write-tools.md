@@ -4,7 +4,7 @@
 
 - Issue: #15
 - Draft PR: pending
-- Status: blocked: waiting for #104 (run records) and #105 (per-run tokens and `ToolSpec.kinds`) to merge
+- Status: blocked: waiting for #104 (run records) and #105 (per-run tokens and `ToolSpec.kinds`) to merge; split with #14 agreed
 - Last verified: plan written on 2026-10-18 on main at 2b03ef2, no code yet
 - Next safe action: once #104 and #105 are on `main`, rebase this branch and build `whiteboard/write_tools.py`
 
@@ -64,11 +64,12 @@ References: D1, D5, D7, D8, and D13 in [roadmap.md](../roadmap.md); the tool and
 - `tool_calls`: run id, sequence number, tool, argument hash, result JSON, time. The result JSON holds ids and states, never message text.
 - A record of which message ts values each run's packet served, written by `get_work` (#14) and read by `link_message`.
 
-**Shared edits with #14**, agreed with architect up front:
+**Shared edits with #14**, agreed with architect on 2026-10-18:
 
 - `whiteboard/tools.py`: #14 adds `ToolError`, which the server turns into `CallToolResult(is_error=True)`, and `READ_TOOLS`. This PR adds `WRITE_TOOLS`, and `TOOLS` becomes both. Whichever PR merges second rebases; the conflict is one line.
 - `server.py`: #14 owns the `ToolError` path and `output_model`. This PR changes nothing there.
-- Packet membership: #14's `get_work` records the served message refs through a store method this PR adds. If #14 lands first, it adds that method and this PR uses it.
+- Packet membership: a `packet_messages(run_id, channel_id, ts)` table with `record_packet(run_id, refs)` and `in_packet(run_id, channel_id, ts)`. A drafting `get_work` records exactly the refs it serves. Execution packets serve no messages and record none. Whichever of #106 and #109 merges first adds the table and its migration, after #104's runs migration, and the other uses it.
+- Idempotency: architect agreed the ledger key is run id plus the hash of tool and canonical arguments, with the counter only for caps and the write shielded.
 
 Alternatives considered:
 
