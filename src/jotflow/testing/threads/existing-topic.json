@@ -1,0 +1,141 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "existing-topic",
+  "description": "A new top-level message about the CSV export, which already has topic-csv-export and issue acme-co/web#42. The agent links the message to that topic and proposes a comment on #42 instead of a new issue.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [
+    {
+      "id": "topic-csv-export",
+      "channel_id": "C0EXAMPLE1",
+      "title": "Export the dashboard table as CSV",
+      "repo": "acme-co/web",
+      "issue_number": 42,
+      "messages": [
+        {
+          "channel_id": "C0EXAMPLE1",
+          "ts": "1792224000.000100"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792314600.000100",
+      "user": "U0BOB",
+      "text": "Following up on the CSV export: it should also apply the date filter that is set on the dashboard."
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792314600.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792314600.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.91,
+            "topic_id": "topic-csv-export"
+          }
+        },
+        {
+          "tool": "propose_update",
+          "arguments": {
+            "topic_id": "topic-csv-export",
+            "repo": "acme-co/web",
+            "issue_number": 42,
+            "changes": {
+              "comment": "The export should apply the date filter that is set on the dashboard."
+            },
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792314600.000100"
+              }
+            ],
+            "confidence": 0.88
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "The message joins topic-csv-export, and one update_issue proposal adds a comment to acme-co/web#42. No new topic.",
+    "accepted": [
+      "1792314600.000100"
+    ],
+    "topics": [
+      {
+        "topic": "topic-csv-export",
+        "messages": [
+          "1792314600.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "update_issue",
+        "repo": "acme-co/web",
+        "topic": "topic-csv-export",
+        "issue_number": 42
+      }
+    ]
+  }
+}

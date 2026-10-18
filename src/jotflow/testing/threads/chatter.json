@@ -1,0 +1,178 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "chatter",
+  "description": "Lunch plans and a greeting, which the agent marks as chatter, plus events ingest must drop before any agent sees them: an edit, the bot's own message, a channel join, and a redelivered message. No topic and no proposal.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311600.000100",
+      "user": "U0BOB",
+      "text": "Anyone up for lunch at the noodle place?"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311660.000100",
+      "user": "U0ALICE",
+      "text": "Count me in, 12:30?",
+      "thread_ts": "1792311600.000100"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311900.000100",
+      "user": "U0CAROL",
+      "text": "Happy Friday everyone"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311960.000100",
+      "subtype": "message_changed"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792312020.000100",
+      "user": "U0JOTBOT",
+      "text": "Reminder: type /jotflow help to see what I understand.",
+      "bot_id": "B0JOTBOT"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792312080.000100",
+      "user": "U0DAVE",
+      "text": "<@U0DAVE> has joined the channel",
+      "subtype": "channel_join"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792311900.000100",
+      "user": "U0CAROL",
+      "text": "Happy Friday everyone"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792311600.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792311600.000100"
+            },
+            "decision": "chatter",
+            "confidence": 0.95
+          }
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792311660.000100",
+              "thread_ts": "1792311600.000100"
+            },
+            "decision": "chatter",
+            "confidence": 0.95
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792311900.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792311900.000100"
+            },
+            "decision": "chatter",
+            "confidence": 0.97
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "Three chatter messages, no topic, no proposal. The edit, the bot's own message, the join, and the second delivery are ignored by ingest.",
+    "accepted": [
+      "1792311600.000100",
+      "1792311660.000100",
+      "1792311900.000100"
+    ],
+    "ignored": {
+      "1792311960.000100": "edit",
+      "1792312020.000100": "own message",
+      "1792312080.000100": "subtype 'channel_join'",
+      "1792311900.000100": "duplicate delivery"
+    },
+    "chatter": [
+      "1792311600.000100",
+      "1792311660.000100",
+      "1792311900.000100"
+    ]
+  }
+}

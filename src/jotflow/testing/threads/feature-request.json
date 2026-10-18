@@ -1,0 +1,156 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "feature-request",
+  "description": "A clean feature request with one supporting reply. The agent starts a topic and proposes one enhancement issue in acme-co/web.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792310400.000100",
+      "user": "U0ALICE",
+      "text": "It would be great if the dashboard could export the current table as CSV. Finance asks for this every month."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792310640.000100",
+      "user": "U0BOB",
+      "text": "Yes please, even just the visible columns would do.",
+      "thread_ts": "1792310400.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792310400.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792310400.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "csv-export"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792310640.000100",
+              "thread_ts": "1792310400.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:csv-export"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:csv-export",
+            "repo": "acme-co/web",
+            "title": "Export the dashboard table as CSV",
+            "body": "People want to download the dashboard table as a CSV file. Exporting only the visible columns is enough for a first version.",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792310400.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792310640.000100",
+                "thread_ts": "1792310400.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One new topic with both messages, and one create_issue proposal for acme-co/web labelled enhancement.",
+    "accepted": [
+      "1792310400.000100",
+      "1792310640.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:csv-export",
+        "messages": [
+          "1792310400.000100",
+          "1792310640.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:csv-export"
+      }
+    ]
+  }
+}

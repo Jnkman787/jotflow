@@ -4,10 +4,10 @@
 
 - Issue: #18
 - Also serves: #17, which will replay these fixtures
-- Draft PR: pending
-- Status: planning
-- Last verified: plan written on 2026-10-18, nothing built yet
-- Next safe action: commit this plan, push, open the draft PR
+- Draft PR: #95
+- Status: implementing
+- Last verified: `make check` green locally on 2026-10-18, 369 tests, 97% coverage
+- Next safe action: run the local CodeRabbit review or skip it, wait for CI on #95, then mark it ready
 
 ## Objective and done-when
 
@@ -15,13 +15,13 @@ Give tests, the `jotflow replay` command (#17), and the README demo a set of sav
 
 Done when:
 
-- [ ] A documented JSON format for a saved thread, covering:
+- [x] A documented JSON format for a saved thread, covering:
   - the Slack event fields JotFlow reads: channel, ts, thread_ts, user, bot_id, text, subtype, and `reaction_added` events
   - the admin policy, the people in the thread, and topics that already exist
   - a scripted fake-agent section that the replay's fake agent answers with
   - the expected outcome
-- [ ] A loader with Pydantic validation, in `src/jotflow/testing/`, that rejects inconsistent fixtures with a message naming the fault
-- [ ] At least five fixtures, each documenting its expected outcome:
+- [x] A loader with Pydantic validation, in `src/jotflow/testing/`, that rejects inconsistent fixtures with a message naming the fault
+- [x] At least five fixtures, each documenting its expected outcome:
   - a clean feature request
   - a bug report with replies
   - pure chatter
@@ -29,8 +29,8 @@ Done when:
   - a message belonging to an existing topic
   - one with the keywords `idea:`, `re:`, and `skip:`
   - one with mentions of people
-- [ ] Every fixture runs through the real ingest filter in a test, and the accepted and ignored events match its expected outcome
-- [ ] A test asserts that no fixture contains real-looking Slack ids, organisation names outside the fictional set, or token-shaped strings
+- [x] Every fixture runs through the real ingest filter in a test, and the accepted and ignored events match its expected outcome
+- [x] A test asserts that no fixture contains real-looking Slack ids, organisation names outside the fictional set, or token-shaped strings
 - [ ] Used by the replay tests. This box completes with #17, which does not exist yet. This PR uses the fixtures in the ingest and loader tests.
 
 **Out of scope:** the replay command itself (#17), the store (#11), and keyword parsing (#19 era work). Fixtures record what keywords should do; nothing here implements them.
@@ -72,19 +72,29 @@ Alternatives considered: fixtures under `tests/` would not ship with the package
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Loader and models in `src/jotflow/testing/threads.py`
-- [ ] Seven fixtures and a README describing the format and each fixture's outcome
-- [ ] Tests: loader validation, ingest against every fixture, scripted outcome, fictional data guard
-- [ ] Update documentation: AGENTS.md layout
-- [ ] `make check` passes, coverage at or above the floor
+- [x] Commit this plan and open the draft PR
+- [x] Loader and models in `src/jotflow/testing/threads.py`
+- [x] Seven fixtures and a README describing the format and each fixture's outcome
+- [x] Tests: loader validation, ingest against every fixture, scripted outcome, fictional data guard
+- [x] Update documentation: AGENTS.md layout
+- [x] `make check` passes, coverage at or above the floor
 - [ ] CodeRabbit local review, or skipped
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes: ruff, mypy strict, and 369 tests with 97% total line and branch coverage. `src/jotflow/testing/threads.py` is at 99%.
+- `tests/test_fixture_threads.py` adds 68 tests:
+  - every built-in fixture loads, and the seven required ones ship
+  - each fixture's events go through the real `EventFilter`, and the accepted and ignored events match `expected` exactly, including the edit, the bot's own message and reaction, the channel join, and the redelivery
+  - the script's topics, chatter, and proposals match `expected`
+  - keyword entries match the message text, and skipped messages reach no agent run
+  - the fictional-data guard passes on every file, and catches real-looking ids, foreign URLs and email domains, and token-shaped strings in samples
+  - every loader check fails with its own message on a mutated fixture
+- `uv build --wheel` includes `jotflow/testing/threads/*.json` and the README, so the fixtures ship with the package.
+- `make eol` passes, and every new file is LF.
 
 ## Handoff notes
 
-None yet.
+- #17 can load fixtures with `builtin_thread(name)` or `load_thread(path)`, feed `thread.events` through ingest, answer tool calls from `thread.agent`, map `key:<name>` topic ids to the ids it assigns, and compare with `thread.expected` and `scripted_outcome(thread)`.
+- The fixtures were generated once by a throwaway script and are now edited by hand. The JSON files are the source of truth.
