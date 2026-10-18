@@ -62,6 +62,10 @@ APP_TOKEN_KEY = "JOTFLOW_SLACK_APP_TOKEN"
 # applies docker-compose.policy.yml, which mounts jotflow.toml read-only.
 COMPOSE_FILE_KEY = "COMPOSE_FILE"
 COMPOSE_FILE_VALUE = "docker-compose.yml:docker-compose.policy.yml"
+# Compose splits COMPOSE_FILE on ";" on Windows unless told otherwise, so setup
+# sets the separator itself there rather than asking people to edit .env.
+COMPOSE_SEPARATOR_KEY = "COMPOSE_PATH_SEPARATOR"
+COMPOSE_SEPARATOR_VALUE = ":"
 # jotflow.toml holds no secrets, and the container's uid must be able to read it.
 POLICY_FILE_MODE = 0o644
 
@@ -71,6 +75,8 @@ MAX_ATTEMPTS = 5
 # Agent runs arrive in milestone 3, so a fresh setup connects without one.
 DEFAULT_PRESET: str | None = None
 FIRST_PRESET = "claude-code"
+# Presets setup accepts today; others are refused until JotFlow ships them.
+SUPPORTED_PRESETS = (FIRST_PRESET,)
 STEPS = 6
 ANY_LABEL = "any"
 MAX_CHANNELS = 50
@@ -91,7 +97,7 @@ minutes, most of it in Slack's settings pages. It will:
 
 .env and jotflow.toml are written only after the last question; only the
 Slack manifest, slack-app-manifest.json, is saved earlier so you can paste
-it if the link fails. Press Ctrl-D at any prompt to stop. Each question
+it if the link fails. Press Ctrl-C at any prompt to stop. Each question
 allows {MAX_ATTEMPTS} tries; after that setup stops without changing anything,
 and you can run it again."""
 
@@ -106,7 +112,7 @@ EXPLAIN_EXISTING_APP = (
 )
 EXPLAIN_REUSE_APP = (
     f"Open your existing app at {CREATE_APP_URL}, under Your Apps, and continue from its "
-    "settings. If its install is still waiting for an admin, press Ctrl-D now and run setup "
+    "settings. If its install is still waiting for an admin, press Ctrl-C now and run setup "
     "again once it is approved."
 )
 EXPLAIN_CREATE_LINK = (
@@ -128,7 +134,7 @@ EXPLAIN_APP_TOKEN = (
 EXPLAIN_BOT_TOKEN = (
     "Now install the app: open Install App, click Install to Workspace, then click Allow.",
     "If Slack shows Request to Install instead, your workspace needs an admin to approve "
-    "the app. Press Ctrl-D, wait for the approval, then run setup again and answer y when "
+    "the app. Press Ctrl-C, wait for the approval, then run setup again and answer y when "
     "it asks whether you already created the app.",
     "Copy the Bot User OAuth Token shown on the Install App page; it also appears under "
     "OAuth & Permissions. It starts with xoxb-.",
@@ -159,8 +165,8 @@ EXPLAIN_LABELS = (
     "Press Enter for any: any label that already exists on the repo. A list narrows it.",
 )
 EXPLAIN_PRESET = (
-    "Which agent CLI will your team run? Your team supplies and controls the agent;",
-    "JotFlow only needs to know which CLI it is so it can start it correctly.",
+    "Which agent program will your team run? Your team supplies and controls the agent;",
+    "JotFlow only needs to know which program it is so it can start it correctly.",
     f"Agent runs arrive in milestone 3, so press Enter to keep none for now. "
     f"The first preset will be {FIRST_PRESET}.",
 )
@@ -271,6 +277,7 @@ class InitOptions:
     env_file: Path = Path(".env")
     manifest_out: Path = Path(DEFAULT_MANIFEST_OUT)
     config_file: Path = field(default_factory=_default_config_file)
+    windows: bool = os.name == "nt"
 
 
 def create_app_link(manifest_json: str) -> str:
@@ -339,7 +346,7 @@ def _paste_until_valid[T](
 
 def _create_app_steps(console: Console, options: InitOptions) -> None:
     _explain(console, EXPLAIN_EXISTING_APP)
-    if console.confirm("Have you already created the JotFlow app in Slack?", default=False):
+    if console.confirm("Have you already created a Slack app for JotFlow?", default=False):
         _explain(console, EXPLAIN_REUSE_APP)
         console.say()
         return
@@ -386,7 +393,11 @@ _check_nickname = _checker(Nickname)
 _check_preset = _checker(PresetName)
 _check_label = _checker(Label)
 
-_CHANNEL_LINK = re.compile(r"https://[^\s/]+\.slack\.com/archives/([A-Za-z0-9]+)/?.*")
+# A channel's link, as Copy link gives it (.../archives/C...) or as the browser
+# shows it (app.slack.com/client/T.../C...).
+_CHANNEL_LINK = re.compile(
+    r"https://[^\s/]+\.slack\.com/(?:archives|client/[A-Za-z0-9]+)/([A-Za-z0-9]+)(?:[/?#].*)?"
+)
 _GITHUB_LINK = re.compile(r"(?:https?://)?github\.com/([^/\s]+/[^/\s]+?)(?:\.git)?/?")
 
 
@@ -502,6 +513,21 @@ def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:
             return tuple(repos)
 
 
+def _preset_answer(value: str) -> str:
+    """``none``, or a preset JotFlow ships. Anything else is refused for now."""
+    answer = value.strip().lower()
+    if answer == "none":
+        return answer
+    preset = _check_preset(answer)
+    if preset not in SUPPORTED_PRESETS:
+        raise ValueError(
+            f"JotFlow does not ship a {preset!r} preset yet. Type none for now, or one of: "
+            + ", ".join(SUPPORTED_PRESETS)
+            + "."
+        )
+    return preset
+
+
 def _ask_policy(console: Console, existing: Policy | None) -> Policy:
     console.say()
     _step(console, 5)
@@ -545,10 +571,16 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
     _step(console, 6)
     _explain(console, EXPLAIN_PRESET)
     current = existing.agent.preset if existing else DEFAULT_PRESET
+    if current is not None and current not in SUPPORTED_PRESETS:
+        console.say(
+            f"Your jotflow.toml names the preset {current}, which JotFlow does not ship yet, "
+            "so the default below is none. Press Enter to switch to none."
+        )
+        current = None
     preset_answer = console.ask(
         "Agent preset",
         current or "none",
-        lambda v: "none" if v.strip().lower() == "none" else _check_preset(v.strip().lower()),
+        _preset_answer,
     )
     preset = None if preset_answer == "none" else preset_answer
 
@@ -670,11 +702,18 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     compose_file = existing.get(COMPOSE_FILE_KEY)
     if compose_file is None:
         updates[COMPOSE_FILE_KEY] = COMPOSE_FILE_VALUE
+    if options.windows and COMPOSE_SEPARATOR_KEY not in existing:
+        updates[COMPOSE_SEPARATOR_KEY] = COMPOSE_SEPARATOR_VALUE
     write_env(options.env_file, updates)
     console.say(_saved_tokens_message(options.env_file))
     if COMPOSE_FILE_KEY in updates:
         console.say(
             f"  Also set {COMPOSE_FILE_KEY} there, so `docker compose up -d` mounts jotflow.toml."
+        )
+    if COMPOSE_SEPARATOR_KEY in updates:
+        console.say(
+            f"  And {COMPOSE_SEPARATOR_KEY}={COMPOSE_SEPARATOR_VALUE}, which Docker needs on "
+            "Windows to read that line."
         )
     if compose_file is not None and compose_file != COMPOSE_FILE_VALUE:
         console.say(

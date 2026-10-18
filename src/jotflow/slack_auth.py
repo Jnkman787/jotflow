@@ -213,8 +213,9 @@ def check_bot_token(api: SlackApi, token: str) -> BotIdentity:
             one = len(missing) == 1
             raise TokenError(
                 f"The bot token is missing {'this scope' if one else 'these scopes'}: "
-                f"{', '.join(missing)}. Add {'it' if one else 'them'} under OAuth & "
-                f"Permissions, or recreate the app from the JotFlow manifest. {_REINSTALL}"
+                f"{', '.join(missing)}. In the app's settings, open OAuth & Permissions, "
+                f"and under Scopes, Bot Token Scopes, add {'it' if one else 'them'}. "
+                f"Do not create a second app. {_REINSTALL}"
             )
     return BotIdentity(
         team=str(result.body.get("team") or ""),

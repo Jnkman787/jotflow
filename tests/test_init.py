@@ -7,6 +7,7 @@ import re
 import stat
 import urllib.parse
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -317,7 +318,7 @@ def test_rerun_rewrite_keeps_other_settings_and_backs_up(options: InitOptions) -
     options.config_file.write_text(EXAMPLE.read_text())
     original = options.config_file.read_text()
     # keep both tokens, rewrite the policy, keep the first channel's repos, drop the second
-    answers = ["", "", "n", "C0EXAMPLE1", "", "", "codex-cli"]
+    answers = ["", "", "n", "C0EXAMPLE1", "", "", "codex-cli", "claude-code"]
     script = Script(answers=answers)
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
 
@@ -325,7 +326,8 @@ def test_rerun_rewrite_keeps_other_settings_and_backs_up(options: InitOptions) -
     after = load_policy(options.config_file)
     assert list(after.channels) == ["C0EXAMPLE1"]
     assert after.channels["C0EXAMPLE1"] == before.channels["C0EXAMPLE1"]
-    assert after.agent.preset == "codex-cli"
+    assert after.agent.preset == "claude-code"
+    assert "does not ship a 'codex-cli' preset yet" in script.text
     assert after.debounce_seconds == before.debounce_seconds
     assert after.issue_links == before.issue_links
     assert after.approval == before.approval
@@ -431,7 +433,7 @@ def _fresh_session(options: InitOptions) -> Script:
 def test_intro_comes_first(options: InitOptions) -> None:
     script = _fresh_session(options)
     assert script.text.startswith(init.INTRO)
-    for words in (".env", "jotflow.toml", "Ctrl-D", "no secrets"):
+    for words in (".env", "jotflow.toml", "Ctrl-C", "no secrets"):
         assert words in init.INTRO
 
 
@@ -597,7 +599,7 @@ def test_an_existing_app_skips_the_create_link(options: InitOptions) -> None:
 
 def test_request_to_install_is_explained() -> None:
     bot = " ".join(init.EXPLAIN_BOT_TOKEN)
-    for words in ("Request to Install", "Ctrl-D", "run setup again", "OAuth & Permissions"):
+    for words in ("Request to Install", "Ctrl-C", "run setup again", "OAuth & Permissions"):
         assert words in bot
 
 
@@ -644,3 +646,69 @@ def test_saved_tokens_message_on_a_windows_drive(monkeypatch: pytest.MonkeyPatch
     assert "Only your user" not in message
     monkeypatch.setattr(init, "on_windows_drive", lambda path: False)
     assert "Only your user can read that file" in init._saved_tokens_message(Path(".env"))
+
+
+# --- #100 round 2 --------------------------------------------------------------
+
+
+def test_windows_setup_writes_the_compose_separator(options: InitOptions) -> None:
+    on_windows = replace(options, windows=True)
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), on_windows) == 0
+    env = read_env(on_windows.env_file)
+    assert env[init.COMPOSE_SEPARATOR_KEY] == ":"
+    assert "COMPOSE_PATH_SEPARATOR=:" in script.text
+
+
+def test_other_systems_do_not_get_the_separator(options: InitOptions) -> None:
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), replace(options, windows=False)) == 0
+    assert init.COMPOSE_SEPARATOR_KEY not in read_env(options.env_file)
+
+
+def test_an_existing_separator_is_left_alone(options: InitOptions) -> None:
+    options.env_file.write_text("COMPOSE_PATH_SEPARATOR=;\n")
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), replace(options, windows=True)) == 0
+    assert read_env(options.env_file)[init.COMPOSE_SEPARATOR_KEY] == ";"
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://acme-co.slack.com/archives/C0IDEAS01",
+        "https://acme-co.slack.com/archives/C0IDEAS01/p1760781600000100",
+        "https://app.slack.com/client/T0ACME001/C0IDEAS01",
+        "https://app.slack.com/client/T0ACME001/C0IDEAS01/thread/C0IDEAS01-1760781600.000100",
+    ],
+)
+def test_channel_links_give_the_id(link: str) -> None:
+    assert init._channel_id(link) == "C0IDEAS01"
+
+
+def test_unsupported_presets_are_refused() -> None:
+    assert init._preset_answer("None") == "none"
+    assert init._preset_answer(" Claude-Code ") == "claude-code"
+    with pytest.raises(ValueError, match="does not ship"):
+        init._preset_answer("some-agent")
+
+
+def test_the_reuse_question_does_not_assume_the_bot_name(options: InitOptions) -> None:
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert any("a Slack app for JotFlow?" in p for p in script.prompts)
+    assert init.INTRO.count("Ctrl-C") == 1 and "Ctrl-D" not in init.INTRO
+
+
+def test_an_unsupported_existing_preset_is_named_before_it_is_dropped(
+    options: InitOptions,
+) -> None:
+    options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
+    text = EXAMPLE.read_text().replace('# preset = "claude-code"', 'preset = "codex-cli"')
+    options.config_file.write_text(text)
+    assert load_policy(options.config_file).agent.preset == "codex-cli"
+    # keep both tokens, rewrite the policy, keep the first channel, drop the second, Enter
+    script = Script(answers=["", "", "n", "C0EXAMPLE1", "", "", ""])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "names the preset codex-cli, which JotFlow does not ship yet" in script.text
+    assert load_policy(options.config_file).agent.preset is None

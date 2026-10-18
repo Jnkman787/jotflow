@@ -9,7 +9,7 @@ JotFlow is a self-hosted Slack app that exposes an MCP server. It watches a Slac
 Read before changing behaviour:
 
 - [docs/architecture.md](docs/architecture.md): the design contract.
-- [docs/roadmap.md](docs/roadmap.md): milestones and decisions D1 to D12.
+- [docs/roadmap.md](docs/roadmap.md): milestones and decisions D1 to D13.
 
 ## Principles that are not up for debate
 
