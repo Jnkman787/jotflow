@@ -88,7 +88,7 @@ Alternatives considered:
 - [x] Tests: each gate rule, protocol behaviour through the SDK, capabilities, audit lines, lifecycle
 - [x] Update documentation: architecture Whiteboard section and configuration, AGENTS layout
 - [x] `make check` passes, coverage at or above the floor
-- [ ] CodeRabbit local review, or skipped
+- [x] CodeRabbit local review, or skipped: skipped, rate limit
 - [ ] `closingIssuesReferences` is empty, then mark the PR ready
 
 ## Validation
@@ -110,6 +110,7 @@ Alternatives considered:
   - malformed registries fail at startup
   - a real uvicorn start on loopback answers a request, leaves the process's SIGTERM handler untouched, stops, and frees the port. A taken port gives `McpStartError` rather than exiting the process.
 - `tests/test_run.py`: `serve()` starts the MCP server after Slack setup and stops it after Socket Mode closes, also when Socket Mode is refused. A Slack setup error never starts it, and an MCP start error exits 3 before Socket Mode connects.
+- CodeRabbit: skipped. The free CLI allowance was used up ("Rate limit exceeded").
 - `uv lock` adds no package. `uvicorn` and `starlette` move from transitive to declared, `httpx2` joins the dev group, and `mcp` is pinned to `>=2.3,<3` because the code uses the 2.x API.
 
 ## Handoff notes
