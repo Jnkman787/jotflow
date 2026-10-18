@@ -625,7 +625,7 @@ async def test_a_failed_draft_stays_for_retry_until_cleared(store: Store, clock:
 @pytest.mark.parametrize("state", [S.PENDING, S.APPROVED, S.EXECUTING, S.RECONCILING])
 async def test_a_live_draft_cannot_be_cleared(store: Store, state: ProposalState) -> None:
     await _reach(store, state)
-    with pytest.raises(TransitionError):
+    with pytest.raises(TransitionError, match="so its draft is still needed"):
         await store.clear_draft("p1")
     still = await store.get_proposal("p1")
     assert still is not None and still.draft_cleared_at is None and still.proposal == draft()
@@ -646,14 +646,49 @@ async def test_clear_draft_is_a_no_op_once_final(
     assert await store.clear_draft("p1") == first
 
 
-async def test_cleared_text_is_gone_from_the_database_files(tmp_path: Path, clock: Clock) -> None:
-    """secure_delete overwrites the old draft, so no copy is left in free pages."""
-    path = tmp_path / "jotflow.db"
-    sqlite_store = await SqliteStore.open(path, clock=clock)
+@pytest.mark.parametrize("path", ["rejected", "applied", "superseded", "cleared after failing"])
+async def test_cleared_text_is_gone_from_the_files_while_open(
+    tmp_path: Path, clock: Clock, path: str
+) -> None:
+    """secure_delete scrubs the main file and a checkpoint resets the WAL, so while
+    the store is still open no file holds the cleared text."""
+    secret = "SECRET-THREAD-QUOTE " * 50
+    sqlite_store = await SqliteStore.open(tmp_path / "jotflow.db", clock=clock)
+
+    def leftovers() -> list[str]:
+        return [p.name for p in tmp_path.iterdir() if b"SECRET-THREAD-QUOTE" in p.read_bytes()]
+
     try:
-        await sqlite_store.add_proposal(record(proposal=draft(body="SECRET-THREAD-QUOTE " * 50)))
-        await sqlite_store.transition("p1", S.REJECTED)
+        await sqlite_store.add_proposal(record(proposal=draft(body=secret)))
+        assert leftovers()  # the draft is really on disk before the clear
+        if path == "rejected":
+            await sqlite_store.transition("p1", S.REJECTED)
+        elif path == "superseded":
+            await sqlite_store.add_proposal(record("p2"))
+            await sqlite_store.supersede_pending(CH, "1760781600.000100", keep_id="p2")
+        else:
+            hashed = content_hash(draft(body=secret))
+            await sqlite_store.transition(
+                "p1", S.APPROVED, approved_by="U0CAROL", expected_hash=hashed
+            )
+            await sqlite_store.transition("p1", S.EXECUTING)
+            if path == "applied":
+                await sqlite_store.transition(
+                    "p1", S.APPLIED, result=ExecutionResult(issue_url=ISSUE_URL)
+                )
+            else:
+                await sqlite_store.transition("p1", S.FAILED)
+                assert leftovers()  # a failed draft is kept for a retry
+                await sqlite_store.clear_draft("p1")
+        assert leftovers() == []
     finally:
         await sqlite_store.close()
-    leftovers = [p.name for p in tmp_path.iterdir() if b"SECRET-THREAD-QUOTE" in p.read_bytes()]
-    assert leftovers == []
+    assert leftovers() == []
+
+
+async def test_an_in_memory_database_has_no_log_to_scrub(clock: Clock) -> None:
+    memory_db = await SqliteStore.open(":memory:", clock=clock)
+    async with memory_db:
+        await memory_db.add_proposal(record())
+        rejected = await memory_db.transition("p1", S.REJECTED)
+    assert rejected.draft_cleared_at == clock.now

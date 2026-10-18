@@ -24,11 +24,13 @@ from pydantic import TypeAdapter
 from jotflow.models import (
     ChannelMode,
     ExecutionResult,
+    IssueProposal,
     MessageRef,
     Proposal,
     ProposalRecord,
     ProposalState,
     Topic,
+    UpdateProposal,
 )
 from jotflow.store.base import (
     ChannelModeSetting,
@@ -91,6 +93,7 @@ class SqliteStore:
         self._db = db
         self._clock = clock
         self._lock = asyncio.Lock()
+        self._wal = False
 
     @classmethod
     async def open(
@@ -106,19 +109,22 @@ class SqliteStore:
         """
         _create_private(path)
         db = await aiosqlite.connect(str(path), isolation_level=None)
+        in_memory = str(path) == ":memory:"
         try:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA foreign_keys = ON")
             # Overwrite deleted content, so a cleared draft leaves no copy in free pages.
             await db.execute("PRAGMA secure_delete = ON")
             await db.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-            if str(path) != ":memory:":
+            if not in_memory:
                 await db.execute("PRAGMA journal_mode = WAL")
             await migrate(db, migrations)
         except BaseException:
             await db.close()
             raise
-        return cls(db, clock)
+        store = cls(db, clock)
+        store._wal = not in_memory
+        return store
 
     async def close(self) -> None:
         await self._db.close()
@@ -440,11 +446,13 @@ class SqliteStore:
                     record.state.value,
                 ),
             )
-            if changes.clear_draft:
-                await self._clear(record, now)
             if cursor.rowcount != 1:  # pragma: no cover - the write lock rules this out
                 raise StoreError(f"proposal {proposal_id} changed during the transition")
+            if changes.clear_draft:
+                await self._clear(proposal_id, record.proposal, now)
             updated = await self._get_proposal(proposal_id)
+        if changes.clear_draft:
+            await self._scrub_wal()
         return _found(updated)
 
     async def supersede_pending(
@@ -452,29 +460,46 @@ class SqliteStore:
     ) -> list[str]:
         async with self._write():
             rows = await self._all(
-                "SELECT id FROM proposals WHERE channel_id = ? AND thread_ts IS ?"
+                "SELECT id, draft_json FROM proposals WHERE channel_id = ? AND thread_ts IS ?"
                 " AND state = 'pending' AND id != ? ORDER BY id",
                 (channel_id, thread_ts, keep_id),
             )
-            ids = [row["id"] for row in rows]
             now = to_text(self._clock())
-            for proposal_id in ids:
-                record = _found(await self._get_proposal(proposal_id))
+            for row in rows:
                 await self._db.execute(
                     "UPDATE proposals SET state = 'superseded', updated_at = ?"
                     " WHERE id = ? AND state = 'pending'",
-                    (now, proposal_id),
+                    (now, row["id"]),
                 )
-                await self._clear(record, now)
-            return ids
+                await self._clear(row["id"], _PROPOSAL.validate_json(row["draft_json"]), now)
+        if rows:
+            await self._scrub_wal()
+        return [row["id"] for row in rows]
 
-    async def _clear(self, record: ProposalRecord, now: str) -> None:
+    async def _clear(
+        self, proposal_id: str, draft: IssueProposal | UpdateProposal, now: str
+    ) -> None:
         """Replace the stored draft with its cleared form, inside the caller's transaction."""
         await self._db.execute(
             "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?"
             " WHERE id = ? AND draft_cleared_at IS NULL",
-            (canonical_json(cleared_draft(record.proposal)), now, now, record.id),
+            (canonical_json(cleared_draft(draft)), now, now, proposal_id),
         )
+
+    async def _scrub_wal(self) -> None:
+        """Checkpoint and truncate the write-ahead log after a draft is cleared.
+
+        secure_delete overwrites removed text in the main file, but in WAL mode
+        the page as it was before the clear also sits in the -wal file until a
+        checkpoint copies it back and the log is reset. A running JotFlow never
+        closes its connection, so this is done explicitly. Clears are rare. If
+        another connection is reading, the checkpoint cannot finish now; the next
+        clear or SQLite's automatic checkpoint gets it.
+        """
+        if not self._wal:
+            return
+        async with self._lock:
+            await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._write():
@@ -482,8 +507,11 @@ class SqliteStore:
             if record is None:
                 raise NotFoundError(f"no proposal {proposal_id}")
             check_clearable(record)
-            await self._clear(record, to_text(self._clock()))
+            cleared = record.draft_cleared_at is None
+            await self._clear(proposal_id, record.proposal, to_text(self._clock()))
             updated = await self._get_proposal(proposal_id)
+        if cleared:
+            await self._scrub_wal()
         return _found(updated)
 
     # Identity links

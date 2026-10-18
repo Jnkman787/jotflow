@@ -146,7 +146,9 @@ def cleared_draft(
 def check_clearable(record: ProposalRecord) -> None:
     """Only a final or failed proposal may lose its draft; others still need it."""
     if record.state not in CLEARABLE_STATES:
-        raise TransitionError(record.id, record.state, record.state)
+        error = TransitionError(record.id, record.state, record.state)
+        error.args = (f"proposal {record.id} is {record.state}, so its draft is still needed",)
+        raise error
 
 
 def utc_now() -> datetime:

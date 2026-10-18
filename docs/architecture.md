@@ -243,7 +243,7 @@ stateDiagram-v2
     reconciling --> approved: marker absent, retry allowed
     reconciling --> failed: retry limit reached
     executing --> failed: agent reports an error
-    failed --> approved: a person retries from the card
+    failed --> approved: a person retries from the card, while the draft is kept
     applied --> [*]
 ```
 
@@ -264,7 +264,7 @@ Not stored by JotFlow: message bodies, channel history.
 
 The store (`src/jotflow/store/`) enforces this. Every column carries a comment saying what it holds, and a test reads the live schema and fails if any column is named or documented as a message's body, text, or content. The proposals table holds the agent's structured draft, the issue title and body that a person approves, because approval must lock exactly what the card showed (D7). That draft is derived content bound for GitHub, not a copy of the thread. Topic titles are cleaned on every write: no markup, links, or mentions, and at most 80 characters, because a title written by one run is read by others.
 
-**Retention of drafts (#102).** A draft can quote what people wrote, so it stays only while it is needed. When a proposal is applied, rejected, or superseded, its drafted title, body, and comment are removed in the same transaction; an applied issue's text already lives on GitHub. A failed proposal keeps its draft so a person can retry it, until the draft is cleared explicitly, after which a retry is refused. What stays is the audit trail: the content hash of what was approved, the approver and time, the state, the result and issue URL, the Slack pointers, the participants, and the non-text fields such as repo, labels, and assignees. The database runs with `secure_delete`, so removed text is overwritten rather than left in free pages.
+**Retention of drafts (#102).** A draft can quote what people wrote, so it stays only while it is needed. When a proposal is applied, rejected, or superseded, its drafted title, body, and comment are removed in the same transaction; an applied issue's text already lives on GitHub. A failed proposal keeps its draft so a person can retry it, until the draft is cleared explicitly, after which a retry is refused. What stays is the audit trail: the content hash of what was approved, the approver and time, the state, the result and issue URL, the Slack pointers, the participants, and the non-text fields such as repo, labels, and assignees. The database runs with `secure_delete`, so removed text is overwritten rather than left in free pages, and after every clear the store checkpoints and truncates its write-ahead log, so no earlier copy of the page stays in the `-wal` file while JotFlow runs.
 
 Thread text is fetched from Slack when building a packet, passed to the agent, and discarded. Logs redact message bodies by default.
 

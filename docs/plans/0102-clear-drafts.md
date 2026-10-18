@@ -6,7 +6,7 @@
 - Also serves: #11 (the store), #96
 - Draft PR: #103
 - Status: ready for review
-- Last verified: `make check` green locally on 2026-10-18 after rebasing onto main with #96
+- Last verified: `make check` green locally on 2026-10-18 after the reviewer's WAL fix
 - Next safe action: review
 
 ## Objective and done-when
@@ -59,6 +59,8 @@ Team lead's decision, 2026-10-18: clear applied, rejected, and superseded drafts
 - Contract tests, run against both stores: applied, rejected, and superseded drafts are cleared with the hash, approver, approval time, result, participants, and non-text fields intact; an update draft loses only its body and comment; a failed draft stays until `clear_draft`, after which a retry raises `DraftClearedError` and `try_transition` returns None; a live draft (pending, approved, executing, reconciling) cannot be cleared; `clear_draft` is a no-op once final.
 - `secure_delete`: a SQLite test writes a draft, rejects it, closes the store, and finds no copy of the text in any file. With `secure_delete` off, the same steps leave the text in the main database file, so the test is meaningful.
 - CodeRabbit: completed with no findings.
+- Reviewer's blocker: with the store open, the page as it was before a clear stayed in the `-wal` file, because `secure_delete` only scrubs the main file and a running JotFlow never closes its connection; the file test only scanned after close. Fixed: after every transaction that clears a draft (a final transition, `supersede_pending`, `clear_draft`), the store runs `PRAGMA wal_checkpoint(TRUNCATE)`. The test now scans every file while the store is open, after each of the four clearing paths, and again after close. With the checkpoint disabled, the text is found in `j.db-wal`, so the test is meaningful.
+- Reviewer's nits, all taken: `clear_draft` on a live proposal says "proposal p1 is pending, so its draft is still needed"; the diagram's retry edge says "while the draft is kept"; `supersede_pending` clears from the row it already selected instead of reading each proposal again.
 - Folded in after review: `clean_title` unescapes until the text stops changing, at most 8 passes, instead of twice (security's #96 nit, at the team lead's request); anything escaped deeper loses its `&` as markup. A test pins migration versions to 1..N with no gaps or duplicates (architect's request), since #53 also adds a migration and whichever merges second renumbers.
 - Schema test: SQLite splices an added column into the stored CREATE TABLE after the last column, mid-line, and a `--` comment in the ALTER would swallow the closing parenthesis. Added columns therefore use `/* */` comments, documented in `migrations.py`, and the schema test now tokenises the column list and gives a `--` comment to the column that starts its line. Tests cover added columns, a bad comment on one, and the spliced proposals table.
 
