@@ -6,7 +6,7 @@
 - Also serves: #56, for the strict keyword prefix only; #14's `WorkSource` interface
 - Draft PR: #125
 - Status: completed
-- Last verified: `make check` green locally after the review nits: 1286 tests, `packet.py` at 99%, `keywords.py` at 100%
+- Last verified: `make check` green locally after the review nits and the shared budget: 1318 tests, `packet.py` at 99%, `keywords.py` at 100%
 - Next safe action: review and merge #125. #55 wires `SlackWorkSource(BoltSlackReader(app.client), store, bot=identity)` into `read_tools`
 
 ## Objective and done-when
@@ -126,8 +126,16 @@ Alternatives considered:
   - Related excerpts now read only each thread's first message, with one call each.
 - After the fixes: 1278 tests.
 - Reviewer, at bdcf8f0: approved, with 2 nits, both taken.
-  1. **Ranking read the thread twice.** `related()` fetched the run's own thread a second time, just to rank, adding to `get_work`'s time under rate limits. `WorkSource.related(thread, topics)` now ranks from the `WorkThread` that `get_work` already has. A test shows only one read of the run's thread. A shared budget per `get_work` was considered: each call's 20 s retry budget, with the reads now fewer, keeps a rate-limited packet close to the 30 s request limit. Folding everything into one budget is left for #55 to judge against real timings.
+  1. **Ranking read the thread twice.** `related()` fetched the run's own thread a second time, just to rank, adding to `get_work`'s time under rate limits. `WorkSource.related(thread, topics)` now ranks from the `WorkThread` that `get_work` already has. A test shows only one read of the run's thread. The team lead and security then asked for one budget per `get_work`, which is done: see the next item.
   2. **The size cap could be exceeded.** `_trim` shrinks the head too, once the tail is at its minimum, so long early replies cannot push a packet past `MAX_PACKET_CHARS`. The last resort is the root plus the minimum tail, each capped at `MAX_MESSAGE_CHARS`. Tests cover both.
+
+- **One wait budget per `get_work` call**, from the team lead and security. Each Slack call used to get its own 20 s retry budget, so one `get_work` could wait through several.
+  - A `Budget` of 20 s is now shared by the thread's pages, every `users.info` lookup, and the related excerpts. `thread()` creates it and hands the remainder to `related()`; it holds only a number of seconds.
+  - Out of budget on the thread: a clean `ToolError`, and nothing recorded. Out of budget on a name: the user id. Out of budget on an excerpt: it is left out.
+  - Tests:
+    - a rate-limited thread with five uncached mentions waits 16 s in total and shows every mention as its id
+    - `related()` gets no fresh budget after the thread used it all
+    - an exhausted budget through `get_work` gives a clean error, and `packet_ref` finds nothing
 
 ## Handoff notes
 

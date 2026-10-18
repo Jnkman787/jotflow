@@ -637,3 +637,69 @@ async def test_a_tiny_cap_still_keeps_the_root_and_the_newest(
     assert thread.messages[0].ts == ROOT
     assert len(thread.messages) == 1 + packet.MIN_TAIL
     assert thread.messages[-1].ts == "1.0089"
+
+
+# One wait budget per get_work call, shared by every Slack call
+
+
+class RateLimitedNames(FakeReader):
+    """users.info is always rate limited, asking for 8 s."""
+
+    async def user(self, user_id: str) -> Mapping[str, Any]:
+        self.calls.append(("user", user_id))
+        raise slack_error(429, "ratelimited", retry_after="8")
+
+
+async def test_a_rate_limited_thread_with_many_mentions_stays_within_one_budget() -> None:
+    mentions = " ".join(f"<@U0P{i}>" for i in range(5))
+    reader = RateLimitedNames({ROOT: [msg(ROOT, f"who owns this? {mentions}", user="U0NEW")]})
+    reader.failures = [slack_error(429, "ratelimited", retry_after="8")]  # the replies fetch
+    sleeps = Sleeps()
+    thread = await SlackWorkSource(reader, MemoryStore(), sleep=sleeps).thread(CH, ROOT)
+    assert sum(sleeps.waits) <= packet.RETRY_BUDGET_SECONDS
+    assert sleeps.waits == [8.0, 8.0]  # the fetch, then one name; the rest fall back at once
+    [message] = thread.messages
+    assert message.author.text == "U0NEW"
+    assert [m.display_name.text for m in message.mentions] == [f"U0P{i}" for i in range(5)]
+
+
+async def test_related_spends_what_the_thread_left_not_a_new_budget() -> None:
+    reader = FakeReader(
+        {
+            ROOT: [msg(ROOT, "progress bar")],
+            "2.0": [msg("2.0", "progress bar", thread_ts="2.0")],
+        }
+    )
+    sleeps = Sleeps()
+    src = SlackWorkSource(reader, MemoryStore(), sleep=sleeps)
+    reader.failures = [slack_error(429, "ratelimited", retry_after="10")] * 2
+    thread = await src.thread(CH, ROOT)  # waits 10, 10: the whole budget
+    reader.failures = [slack_error(429, "ratelimited", retry_after="1")]
+    excerpts = await src.related(thread, index(summary("t", "Progress bar", ["2.0"])))
+    assert excerpts == []  # no budget left, so no wait and no excerpt
+    assert sleeps.waits == [10.0, 10.0]
+
+
+async def test_an_exhausted_budget_returns_a_clean_error_and_records_nothing() -> None:
+    from jotflow.models import RunKind as Kind
+
+    store = MemoryStore()
+    policy = parse_policy(
+        f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+"""
+    )
+    reader = FakeReader({ROOT: [msg(ROOT, "progress bar")]})
+    reader.failures = [slack_error(429, "ratelimited", retry_after="10")] * 10
+    run = await store.enqueue_run(Kind.DRAFTING, CH, ROOT)
+    await store.claim_next_run(max_running=1)
+    tools = checked_registry(read_tools(store, policy, source(reader, store)))
+    grant = Grant(run.id, Kind.DRAFTING, CH, thread_ts=ROOT)
+    with pytest.raises(ToolError, match="rate limiting"):
+        await tools["get_work"].handler(grant, NoArguments())
+    assert await store.packet_ref(run.id, CH, ROOT) is None

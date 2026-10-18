@@ -77,22 +77,41 @@ def _retry_after(error: SlackApiError) -> float | None:
         return None
 
 
+@dataclass
+class Budget:
+    """Seconds of rate-limit waiting that one ``get_work`` call may spend.
+
+    One budget is shared by every Slack call the call makes: the thread's
+    pages, each name lookup, and the related excerpts. So the total wait stays
+    inside the MCP server's 30 s request timeout, however many calls it takes.
+    """
+
+    remaining: float = RETRY_BUDGET_SECONDS
+
+    def take(self, wait: float) -> bool:
+        """Spend ``wait`` seconds if the budget allows it."""
+        if wait > self.remaining:
+            return False
+        self.remaining -= wait
+        return True
+
+
 async def with_backoff[T](
     call: Callable[[], Awaitable[T]],
     *,
     what: str,
     sleep: Sleep = asyncio.sleep,
     attempts: int = RETRY_ATTEMPTS,
-    budget: float = RETRY_BUDGET_SECONDS,
+    budget: Budget | None = None,
 ) -> T:
     """Run ``call``, retrying Slack rate limits with backoff.
 
     It waits ``Retry-After`` when Slack sends it, otherwise 1, 2, 4… seconds,
-    each capped. It stops early when the next wait would take the total past
-    ``budget``, so a slow retry never outlasts the request. Then it raises
-    :class:`SlackFetchError`. Any other Slack error raises at once.
+    each capped. It stops when the next wait would overspend ``budget``, which
+    is shared across calls, so a slow retry never outlasts the request. Then it
+    raises :class:`SlackFetchError`. Any other Slack error raises at once.
     """
-    waited = 0.0
+    budget = budget if budget is not None else Budget()
     for attempt in range(attempts):
         try:
             return await call()
@@ -107,9 +126,8 @@ async def with_backoff[T](
             if wait is None:
                 wait = RETRY_BASE_SECONDS * (2**attempt)
             wait = min(wait, RETRY_CAP_SECONDS)
-            if waited + wait > budget:
+            if not budget.take(wait):
                 break
-            waited += wait
             await sleep(wait)
     raise SlackFetchError(f"Slack is rate limiting {what}; try the run again shortly")
 
@@ -221,21 +239,28 @@ class _Names:
     clock: Callable[[], float] = time.monotonic
     _cache: dict[str, tuple[str, float]] = field(default_factory=dict)
 
-    async def resolve(self, user_ids: Iterable[str]) -> dict[str, str]:
+    async def resolve(
+        self, user_ids: Iterable[str], budget: Budget | None = None
+    ) -> dict[str, str]:
+        """Names for ``user_ids``. A lookup the budget cannot afford falls back to the id."""
+        shared = budget if budget is not None else Budget()
         names: dict[str, str] = {}
         for user_id in user_ids:
             if user_id not in names:
-                names[user_id] = await self._one(user_id)
+                names[user_id] = await self._one(user_id, shared)
         return names
 
-    async def _one(self, user_id: str) -> str:
+    async def _one(self, user_id: str, budget: Budget) -> str:
         now = self.clock()
         cached = self._cache.get(user_id)
         if cached is not None and cached[1] > now:
             return cached[0]
         try:
             data = await with_backoff(
-                lambda: self.reader.user(user_id), what="users.info", sleep=self.sleep
+                lambda: self.reader.user(user_id),
+                what="users.info",
+                sleep=self.sleep,
+                budget=budget,
             )
         except SlackFetchError:
             return user_id  # a name is a convenience; the id still identifies them
@@ -270,17 +295,23 @@ class SlackWorkSource:
         self._bot = bot
         self._sleep = sleep
         self._names = _Names(reader, sleep)
+        # One wait budget per get_work call, handed from thread() to related().
+        # It holds only a number of seconds, never message text.
+        self._budgets: dict[tuple[str, str], Budget] = {}
 
     async def _page(
-        self, channel: str, ts: str, cursor: str | None, limit: int
+        self, channel: str, ts: str, cursor: str | None, limit: int, budget: Budget
     ) -> Mapping[str, Any]:
         return await with_backoff(
             partial(self._reader.replies, channel, ts, cursor=cursor, limit=limit),
             what="conversations.replies",
             sleep=self._sleep,
+            budget=budget,
         )
 
-    async def _window(self, channel: str, thread_ts: str) -> tuple[list[Mapping[str, Any]], int]:
+    async def _window(
+        self, channel: str, thread_ts: str, budget: Budget
+    ) -> tuple[list[Mapping[str, Any]], int]:
         """The thread's oldest and newest messages, oldest first, and how many were skipped.
 
         Pages through the whole thread, up to :data:`MAX_PAGES`, keeping the
@@ -292,7 +323,7 @@ class SlackWorkSource:
         total = 0
         cursor: str | None = None
         for _ in range(MAX_PAGES):
-            page = await self._page(channel, thread_ts, cursor, PAGE_SIZE)
+            page = await self._page(channel, thread_ts, cursor, PAGE_SIZE, budget)
             for message in page.get("messages") or []:
                 if not isinstance(message, Mapping):
                     continue
@@ -304,9 +335,11 @@ class SlackWorkSource:
         kept = head + list(tail)
         return kept, total - len(kept)
 
-    async def _first(self, channel: str, thread_ts: str) -> Mapping[str, Any] | None:
+    async def _first(
+        self, channel: str, thread_ts: str, budget: Budget
+    ) -> Mapping[str, Any] | None:
         """A thread's first message only, for a related excerpt."""
-        page = await self._page(channel, thread_ts, None, 1)
+        page = await self._page(channel, thread_ts, None, 1, budget)
         messages = [m for m in page.get("messages") or [] if isinstance(m, Mapping)]
         return messages[0] if messages else None
 
@@ -324,9 +357,11 @@ class SlackWorkSource:
         return link.chatter and link.linked_by == "person", link.topic_id
 
     async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
+        budget = Budget()
         try:
-            raw, skipped_while_paging = await self._window(channel_id, thread_ts)
+            raw, skipped_while_paging = await self._window(channel_id, thread_ts, budget)
         except SlackFetchError as error:
+            # No packet: get_work records nothing when the thread cannot be read.
             raise ToolError(str(error)) from None
         root = next((m for m in raw if m.get("ts") == thread_ts), None)
         if root is not None and split_keyword(str(root.get("text") or ""))[0] == "skip":
@@ -354,7 +389,7 @@ class SlackWorkSource:
             if isinstance(author, str):
                 ids.append(author)
             ids.extend(mentioned_ids(rest))
-        names = await self._names.resolve(ids)
+        names = await self._names.resolve(ids, budget)
 
         messages = [self._message(m, rest, topic_id, names) for m, rest, topic_id in kept]
         trimmed, trimmed_out = _trim(messages)
@@ -366,6 +401,9 @@ class SlackWorkSource:
             len(trimmed),
             omitted,
         )
+        if len(self._budgets) >= NAME_CACHE_SIZE:  # pragma: no cover - one run per thread
+            self._budgets.clear()
+        self._budgets[(channel_id, thread_ts)] = budget
         return WorkThread(
             channel_id=channel_id, thread_ts=thread_ts, messages=trimmed, omitted=omitted
         )
@@ -404,6 +442,8 @@ class SlackWorkSource:
         # twice. No channel history: only the threads the index already names,
         # and only their first message.
         channel_id, thread_ts = thread.channel_id, thread.thread_ts
+        # The rest of this get_work call's wait budget, after the thread's fetch.
+        budget = self._budgets.pop((channel_id, thread_ts), None) or Budget()
         own_words = _words(" ".join(m.text.text for m in thread.messages))
         ranked: list[tuple[int, str, str]] = []
         seen = {thread_ts}
@@ -420,7 +460,7 @@ class SlackWorkSource:
             if len(excerpts) >= MAX_RELATED:
                 break
             try:
-                first = await self._first(channel_id, other)
+                first = await self._first(channel_id, other, budget)
             except SlackFetchError:
                 continue
             if first is None:
@@ -431,7 +471,7 @@ class SlackWorkSource:
                 continue
             if (await self._kept_by_person_as_chatter(channel_id, ts))[0]:
                 continue
-            names = await self._names.resolve(mentioned_ids(rest))
+            names = await self._names.resolve(mentioned_ids(rest), budget)
             excerpts.append(
                 RelatedExcerpt(
                     ts=ts,
