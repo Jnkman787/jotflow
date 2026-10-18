@@ -158,6 +158,7 @@ Defaults that need no syntax (D9):
 
 - A loose top-level message starts a candidate topic. The agent may attach it to an existing one.
 - A reply in a thread whose topic has expired revives that topic.
+- Expiry only removes a topic from the active index handed to the agent. Its record, a few ids linking messages to an issue, is kept indefinitely so ideas revisited months later still find their issue.
 - A follow-up reply in a thread with an issue produces an update proposal, gated like any other.
 - The agent sees the thread in question plus short excerpts of likely-related threads, so it can correlate on content rather than titles alone.
 
@@ -169,7 +170,12 @@ This is the novel and risky piece. The agent, not the orchestrator, decides wher
 - The agent classifies each new message as: new topic, belongs to topic X, or chatter, and records any keyword hint it overruled and why.
 - Below a confidence threshold the agent uses `ask_channel` rather than guessing.
 - People override with `re:`, `skip:`, or the equivalent reaction; overrides are recorded so the index stays correct.
-- Before proposing a new issue the agent searches the target repository for duplicates with its read-only GitHub access and cites any candidates in the proposal.
+- **Reuse before creating.** Before proposing a new issue, the agent looks for an existing home for the idea in two places, regardless of age:
+  - GitHub: open and closed issues across all of the channel's repos, searched with its read-only access.
+  - JotFlow's topic history: every topic and the issue it became, including expired topics.
+- When it finds a likely match, the agent proposes an update to that issue, or asks in the thread whether the idea is the same, instead of drafting a new issue. A closed match is shown as such so a person can decide whether to reopen it or start fresh.
+- The card shows the best candidate prominently with a one-click "this is the same as" action, so a duplicate costs one click to resolve.
+- This search is separate from the execution-run marker check, which only guards against a crashed run creating the same issue twice within minutes.
 
 ## Run lifecycle
 
