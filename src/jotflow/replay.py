@@ -52,10 +52,10 @@ class ReplayError(Exception):
 
 @dataclass(frozen=True)
 class Check:
-    """One comparison with ``expected``. ``ok`` is None for a check not run yet."""
+    """One comparison with ``expected``."""
 
     name: str
-    ok: bool | None
+    ok: bool
     detail: str
 
 
@@ -67,10 +67,10 @@ class ReplayReport:
 
     @property
     def ok(self) -> bool:
-        return all(check.ok is not False for check in self.checks)
+        return all(check.ok for check in self.checks)
 
     def render(self) -> str:
-        marks = {True: "ok  ", False: "FAIL", None: "--  "}
+        marks = {True: "ok  ", False: "FAIL"}
         lines = [f"Replaying {self.thread}: {self.description}", ""]
         lines += [f"  {marks[c.ok]}  {c.name}: {c.detail}" for c in self.checks]
         lines += [

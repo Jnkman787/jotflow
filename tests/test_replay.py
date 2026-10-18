@@ -109,10 +109,10 @@ def test_the_report_never_contains_message_text() -> None:
             assert message.text not in rendered
 
 
-def test_report_ok_ignores_checks_not_run() -> None:
+def test_report_ok_needs_every_check() -> None:
     from jotflow.replay import Check
 
-    report = ReplayReport("x", "y", [Check("a", True, ""), Check("b", None, "")])
+    report = ReplayReport("x", "y", [Check("a", True, "")])
     assert report.ok
     report.checks.append(Check("c", False, ""))
     assert not report.ok
