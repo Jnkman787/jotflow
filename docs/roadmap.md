@@ -114,7 +114,7 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 - Documentation: deployment guide, agent adapter guide, threat model
 - First tagged release
 
-**Done when** a fresh-eyes review (a new agent with no project context reading only the README and setup prompts as a non-engineer) finds no unresolved stumbling points, and the maintainer, unguided, completes the no-clone install from an empty folder and files an issue through Slack. JotFlow has a single maintainer until v1, so outside testers are not a gate; feedback from the first real adopters is the first post-v1 task.
+**Done when** a fresh-eyes review (a new agent with no project context reading only the README and setup prompts as a non-engineer) passes under the three-pass cap in AGENTS.md, with no BLOCKER and no contradiction left and every deferred minor finding in #114 fixed or declined, and the maintainer, unguided, completes the no-clone install from an empty folder and files an issue through Slack. JotFlow has a single maintainer until v1, so outside testers are not a gate; feedback from the first real adopters is the first post-v1 task.
 
 ## Post-v1
 
