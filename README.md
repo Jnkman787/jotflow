@@ -116,51 +116,72 @@ uv run jotflow init
 
 Without uv: `python3 -m venv .venv`, then `.venv/bin/pip install .`, then `.venv/bin/jotflow init`.
 
-Setup asks a few questions. Press Enter to accept the default in brackets, or Ctrl-D to stop. Nothing is saved until the last question, so stopping part-way changes nothing.
+Setup starts by saying what it will do, and explains every question just before it asks. `uv run jotflow init --help` shows the same overview. Press Enter to accept the default in brackets, or Ctrl-D to stop. `.env` and `jotflow.toml` are written only after the last question, so stopping part-way leaves them unchanged. Only the Slack manifest is saved earlier, so you can paste it if the link fails.
 
-1. **The bot's name.** This is how it appears in Slack, for example `Idea Bot`.
+1. **The bot's name.** This is how the bot appears in Slack, for example `Idea Bot`. You can change it later in Slack.
 2. **Create the Slack app.** Setup prints a link. Open it, pick your workspace, and click **Create**: the manifest is already filled in. If the link doesn't open, choose **Create New App**, then **From a manifest**, at <https://api.slack.com/apps>, and paste the contents of `slack-app-manifest.json`, which setup saved for you.
-3. **Two tokens.** In the new app's settings:
-   - Under **Basic Information**, in **App-Level Tokens**, generate a token with the `connections:write` scope. It starts with `xapp-`.
-   - Under **Install App**, click **Install to Workspace**, then **Allow**, and copy the **Bot User OAuth Token**. It starts with `xoxb-`.
+3. **The app-level token**, which lets JotFlow connect to Slack without a public URL. In the new app's settings, open **Basic Information**, scroll to **App-Level Tokens**, and click **Generate Token and Scopes**. Name it anything, for example `socket-mode`; the name is only a label. Click **Add Scope**, choose `connections:write`, then click **Generate**. It starts with `xapp-`.
+4. **The bot token.** Open **Install App**, click **Install to Workspace**, then **Allow**, and copy the **Bot User OAuth Token**. It starts with `xoxb-`.
 
-   Paste each one when asked. They stay hidden as you type, and setup checks them with Slack straight away. If a token is wrong, setup says what's wrong and asks again. If a token ever leaks, [manifests/README.md](manifests/README.md) explains how to revoke it.
-4. **Channels and repos.** For each channel JotFlow should watch, setup asks for:
-   - the channel id. Open the channel, click its name, and find the id at the bottom of **About**. It starts with `C`, or `G` for some private channels. A copied channel link works too.
-   - each GitHub repo that channel feeds, as `owner/name` or a GitHub link
-   - a short nickname, used in replies like `re: web#42`
-   - one line on what the repo covers. When a channel feeds several repos, the agent picks one by this line.
-   - which labels a proposal may use. The default, `any`, allows any label that already exists on the repo. The agent's rule is to never invent a label, which its instructions carry and JotFlow cannot check. A comma-separated list narrows it to just those.
-5. **The agent preset.** This names which agent CLI will draft issues, for example `claude-code`. Type `none` for now if you only want to see JotFlow connect; agent runs arrive in milestone 3.
+   Paste each token when asked. They stay hidden as you type, and setup checks them with Slack straight away. If a token is wrong, setup says what's wrong and asks again. If a token ever leaks, [manifests/README.md](manifests/README.md) explains how to revoke it.
+5. **Channels and repos.** For each channel JotFlow should watch, such as `#ideas`, setup asks for:
+   - **the channel id.** Open the channel, click its name at the top, and find the **Channel ID** at the bottom of the **About** tab. It starts with `C`, or `G` for some private channels, for example `C0IDEAS01`. Pasting the channel's link works too.
+   - **each GitHub repo** that channel feeds, as `owner/name`: the part after `github.com/` in its URL. For example `https://github.com/acme-co/web` is `acme-co/web`. Pasting the link works too.
+   - **a nickname**, a short word people type to point at the repo, as in `re: web#42`.
+   - **what it covers**, in one sentence, for example `The customer-facing website`. When a channel feeds several repos, the agent uses these sentences to choose one.
+   - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo; the agent's instructions say never to invent a label, which JotFlow cannot check itself. A comma-separated list, for example `bug, enhancement`, narrows it to just those.
+6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which CLI it is so it can start it correctly, for example `claude-code`. Type `none` to connect without agent runs for now; they arrive in milestone 3.
 
 A session looks like this, shortened. Your answers are on the right of each prompt.
 
 ```
-What should the bot be called in Slack? [JotFlow]: Idea Bot
+jotflow init sets JotFlow up for your team in about five minutes. It will:
+  ...
+.env and jotflow.toml are written only after the last question; only the
+  ...
+
+This is how the bot appears in Slack, for example Idea Bot. You can change it later in Slack.
+Bot name [JotFlow]: Idea Bot
 
 Create the Slack app. Open this link, pick your workspace, and click Create:
 
   https://api.slack.com/apps?new_app=1&manifest_json=...
 
-Paste the bot token (xoxb-, hidden):
-  Bot token works: @idea_bot in Example Team.
+Next, the app-level token, which lets JotFlow connect to Slack without a public URL.
+In the new app's settings, open Basic Information, scroll to App-Level Tokens, and click Generate Token and Scopes.
+Name it anything, for example socket-mode; the name is only a label. Click Add Scope, choose connections:write, then click Generate.
+Copy the token. It starts with xapp-.
 Paste the app-level token (xapp-, hidden):
   App-level token works: Socket Mode can connect.
 
-Channel id: C0EXAMPLE1
-  GitHub repo (owner/name): example-org/web
-  Short nickname people can type, as in re: web#42 [web]:
-  What does it cover? The agent picks a repo by this: The customer web app
-  Labels a proposal may use: any existing label, or a comma-separated list to narrow it [any]:
+Now install the app: open Install App, click Install to Workspace, then click Allow.
+Copy the Bot User OAuth Token shown there. It starts with xoxb-.
+Paste the bot token (xoxb-, hidden):
+  Bot token works: @idea_bot in Acme Co.
+
+Which Slack channel should JotFlow watch? Open the channel, click its name at the top, and find the Channel ID at the bottom of the About tab.
+It starts with C, or G for some private channels, for example C0IDEAS01. Pasting the channel's link works too.
+Channel id: C0IDEAS01
+  ...
+  GitHub repo: https://github.com/acme-co/web
+  ...
+  Nickname [web]:
+  ...
+  What it covers: The customer-facing website
+  ...
+  Labels [any]:
   Add another repo to this channel? [y/N]:
 Add another channel? [y/N]:
 
+Which agent CLI will your team run? Your team supplies and controls the agent;
+JotFlow only needs to know which CLI it is so it can start it correctly.
+For example claude-code. Type none to connect without agent runs for now.
 Agent preset [claude-code]: none
 
 Saved both tokens to .env. Only your user can read that file.
   Also set COMPOSE_FILE there, so `docker compose up -d` mounts jotflow.toml.
 Wrote jotflow.toml: 1 channel, 1 repo, no agent preset.
-Connected to Slack as @idea_bot in Example Team.
+Connected to Slack as @idea_bot in Acme Co.
 ```
 
 Setup writes two files next to `docker-compose.yml`. Neither is committed to git.
@@ -199,7 +220,7 @@ Post a message in one of your channels. A line like the last one below appears:
 ```
 2026-10-18 09:41:02,118 INFO jotflow.run: watching 1 configured channel(s) as @idea_bot
 2026-10-18 09:41:02,604 INFO jotflow.run: connected to Slack over Socket Mode
-2026-10-18 09:41:37,250 INFO jotflow.ingest: message channel=C0EXAMPLE1 ts=1760781697.000100 thread_ts=None
+2026-10-18 09:41:37,250 INFO jotflow.ingest: message channel=C0IDEAS01 ts=1760781697.000100 thread_ts=None
 ```
 
 The log shows where a message was posted and when, never what it says. It does show channel ids and your bot and workspace names, so remove those before pasting logs into a public issue. Adding a reaction logs a `reaction` line in the same way. Press Ctrl-C to stop following the log; JotFlow keeps running. Stop it with `docker compose down`.
@@ -234,7 +255,7 @@ Every error names what to fix. The common ones:
 | Compose says the bind source path for `jotflow.toml` does not exist | Run `jotflow init` before `docker compose up -d`. |
 | `jotflow.toml` is a directory, or JotFlow reports `Is a directory` | Compose ran before setup, and Docker Desktop created an empty directory in place of the missing file. Stop JotFlow with `docker compose down` and remove the directory. That may need `sudo`, or Docker Desktop's file access, because Docker created it as root. Then run `jotflow init` and start again with `docker compose up -d`. |
 | `Permission denied` on `/etc/jotflow/jotflow.toml` | The container runs as its own user and must be able to read the file: `chmod 644 jotflow.toml`. |
-| `not a member of channel C0EXAMPLE1; invite the bot there with /invite @idea_bot` | Invite the bot to that channel. JotFlow keeps running and watches the channels it is in. |
+| `not a member of channel C0IDEAS01; invite the bot there with /invite @idea_bot` | Invite the bot to that channel. JotFlow keeps running and watches the channels it is in. |
 | `could not look up channel ... the app needs the channels:read and groups:read scopes` | The app was created from an older manifest. Add the two scopes under **OAuth & Permissions** and reinstall the app. If Slack shows a new bot token, run `jotflow init` again to save it. |
 | `Slack rejected the bot token (...)` or `Slack refused the Socket Mode connection (...)` | A token was revoked or the app was reinstalled. Run `jotflow init` again to save fresh tokens. |
 | `FAIL  receive: no event for the test message` from the live check | First make sure JotFlow is stopped, since a running JotFlow can take the event. Otherwise the app is not getting message events. Check **Event Subscriptions** for `message.channels` and `message.groups`, and that Socket Mode is on, then reinstall the app. |
