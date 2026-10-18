@@ -127,7 +127,7 @@ Validation, round 2: `make check` green, 753 tests. New tests cover the Windows 
 
 ## Round 3
 
-The third fresh-eyes review (2026-10-18) found no blockers and four contradictions, which gate #100, plus minor items and jargon. Round 3 is PR #NNN, `Refs #100`; the team lead runs a fourth review on the merged text. Every quoted string was checked against the code first. The code check showed that JotFlow posts nothing in Slack in this release: no pinned help message, no `/jotflow` handler, no replies.
+The third fresh-eyes review (2026-10-18) found no blockers and four contradictions, which gate #100, plus minor items and jargon. Round 3 is PR #113, `Refs #100`; the team lead runs a fourth review on the merged text. Every quoted string was checked against the code first. The code check showed that JotFlow posts nothing in Slack in this release: no pinned help message, no `/jotflow` handler, no replies.
 
 | Finding | Fix |
 |---|---|
@@ -150,6 +150,8 @@ The third fresh-eyes review (2026-10-18) found no blockers and four contradictio
 | 15: live check with `uv run jotflow run` | Or press Ctrl-C in its terminal. |
 | 16: exact commands | `rm -r`, `sudo rm -r`, or `Remove-Item -Recurse` for the directory; `JOTFLOW_MCP_PORT=8766` in `.env` for the port; for the proxy, the same `HTTPS_PROXY` line in `.env` reaches JotFlow in Docker. Checked: the Slack SDK's web and Socket Mode clients both read `HTTPS_PROXY` from the environment, and Compose passes `.env` into the container. |
 | Jargon | Defined in "Words used here": `jotflow.toml` and TOML, label, OAuth, handle. Inline: bind source path, root, chmod, port, token rotation, orchestrator. Reworded out: mounts (also in setup's own output), exit code 3, "keys", pipe, "Compose v2.24", correlates. `thread_ts` was already explained beside the log. |
+
+CodeRabbit: skipped, rate-limited.
 
 Declined: none.
 
