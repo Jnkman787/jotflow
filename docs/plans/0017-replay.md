@@ -71,6 +71,7 @@ Proposals take `ProposeIssueArgs` and `ProposeUpdateArgs`, the fixture models pl
 - [x] Tests: every fixture, sockets blocked, CLI output
 - [x] README demo section
 - [x] CodeRabbit: skipped, rate-limited
+- [x] Reviewer's nit: a refused or invalid scripted call reports field names, a tool's own reason, or an exception type, never the input or message text
 - [x] `make check` passes
 - [x] Mark the PR ready for review
 

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from jotflow.models import RunKind, RunStatus, UntrustedText
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
@@ -40,7 +40,7 @@ from jotflow.whiteboard.read_tools import (
     read_tools,
 )
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
-from jotflow.whiteboard.tools import ToolSpec
+from jotflow.whiteboard.tools import ToolError, ToolSpec
 from jotflow.whiteboard.write_tools import write_tools
 
 # Replay runs at a fixed time, so every run of a fixture is identical.
@@ -158,12 +158,20 @@ class _Replay:
         spec = self.specs[tool]
         if grant.kind not in spec.kinds:
             raise ReplayError(f"a {grant.kind.value} run may not call {tool}")
+        # Reports name messages by ts only, so no error text that could quote
+        # a message or an argument reaches them.
         try:
-            result: BaseModel = await spec.handler(
-                grant, spec.input_model.model_validate(arguments)
-            )
+            parsed = spec.input_model.model_validate(arguments)
+        except ValidationError as exc:
+            fields = ", ".join(".".join(str(p) for p in e["loc"]) or "-" for e in exc.errors())
+            raise ReplayError(f"{tool} got invalid arguments: {fields}") from None
+        try:
+            result: BaseModel = await spec.handler(grant, parsed)
+        except ToolError as exc:
+            # Tool reasons are written in code and never quote Slack text.
+            raise ReplayError(f"{tool} refused the scripted call: {exc.reason}") from None
         except Exception as exc:
-            raise ReplayError(f"{tool} refused the scripted call: {exc}") from None
+            raise ReplayError(f"{tool} failed: {type(exc).__name__}") from None
         return result
 
 
