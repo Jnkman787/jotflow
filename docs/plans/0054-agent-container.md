@@ -32,7 +32,7 @@ From the dated notes on #54 and #21:
 
 **Split with #21.** This PR is the agent side: the container, the runner, and how a run's process is started, scoped, and ended. #21 is the JotFlow side: it asks the runner to start a run, follows the run to its end, finishes it through `RunLifecycle`, and posts a short notice in Slack on failure.
 
-**Out of scope:** the agent CLIs and their presets and prompts (#22, #31), with the image taking the CLI's npm package as a build argument; the JotFlow-side client (#21); the end-to-end issue (#55); writing the runner secret from `jotflow init`, which is a follow-up for #7, while this PR documents generating it by hand.
+**Out of scope:** the agent CLIs and their presets and prompts (#22, #31), with the image taking the CLI's npm package as a build argument; the JotFlow-side client (#21); the end-to-end issue (#55); writing the runner secret from `jotflow init`, which is #126, while this PR documents generating it by hand.
 
 ## Design
 
@@ -82,7 +82,7 @@ Alternatives considered:
 
 - Debian's `nodejs` version must satisfy the CLIs. Claude Code needs Node 18 or newer, and trixie ships 20. #22 pins the versions.
 - A CI test runs the image and proves the agent process's environment and the container's own environment hold no Slack variable. Reaching the MCP port across the two containers needs JotFlow connected to Slack, so CI proves it in process with the real MCP app and a stub agent. The Compose-level check is a live step for #55.
-- The runner secret is one more value to set up by hand until `jotflow init` writes it (#7 follow-up).
+- The runner secret is one more value to set up by hand until `jotflow init` writes it (#126).
 
 ## Progress checklist
 
@@ -114,11 +114,12 @@ Alternatives considered:
   - the subcommand and its settings, and configuration problems exit 2 naming the variable
 - Local Docker, Docker 28.3: the agent image builds with Node 20 and runs as uid 10002. With Slack sentinels in `.env`, neither `docker compose run agent env` nor the runner process's own environment holds them. The runner answers 401 without the secret and 404 with it. CI's `agent-image` job repeats this.
 - CodeRabbit: skipped. The free CLI allowance was used up ("Rate limit exceeded").
+- Compose policy, a CI step on both Compose file sets. With sentinel `.env` and `agent.env` files, neither service publishes a port and neither mounts the Docker socket. The agent's resolved environment is exactly `agent.env`, with no bind mount, so no access to `.env` or the checkout. JotFlow's does hold the `.env` sentinel, which shows the check is not vacuous. It passed locally.
 - `docker compose config --services` lists only `jotflow` by default, and both with `COMPOSE_PROFILES=agent`.
 
 ## Handoff notes
 
 - #21: the JotFlow-side client posts `{run_id, kind, token}` to `JOTFLOW_RUNNER_URL` with `Authorization: Bearer <JOTFLOW_RUNNER_SECRET>`. A 202 means started; then poll `GET /runs/{id}` for `exited`, `timed_out`, `killed`, or `failed` and the exit code. Call `DELETE /runs/{id}` on JotFlow's timeout or shutdown. The responses are 409 for an already-launched run, 429 at the live cap, and 503 when no GitHub token is set for the kind. Add `JOTFLOW_RUNNER_URL` and `JOTFLOW_RUNNER_SECRET` to JotFlow's `Settings`.
 - #22: set `AGENT_NPM_PACKAGES` with pinned versions, and replace `JOTFLOW_AGENT_COMMAND` with named presets that use `{mcp_config}`. Turn off session transcripts where the CLI allows it, since `HOME` is the persistent `agent-home` volume.
-- #7: `jotflow init` should generate `JOTFLOW_RUNNER_SECRET` and write it to both `.env` and `agent.env`, with mode 0600, and add `COMPOSE_PROFILES=agent` once the agent is set up.
+- #126 (new, M3): `jotflow init` should generate `JOTFLOW_RUNNER_SECRET` and write it to both `.env` and `agent.env`, with mode 0600, and add `COMPOSE_PROFILES=agent` once the agent is set up.
 - #55: the live step is `COMPOSE_PROFILES=agent docker compose up -d` with real tokens, a run started from JotFlow, and its `record_result`.

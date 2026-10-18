@@ -133,6 +133,38 @@ jobs:
         with:
           persist-credentials: false
 
+      # D6 as Compose policy: nothing is published, nothing mounts the Docker
+      # socket, and the agent can reach neither .env nor the checkout. Compose
+      # resolves env files into each service's environment, so a sentinel in
+      # .env shows exactly where .env goes. Dummy values only.
+      - name: Compose policy
+        run: |
+          printf 'JOTFLOW_SLACK_BOT_TOKEN=ci-sentinel-bot\n' > .env
+          printf 'JOTFLOW_RUNNER_SECRET=ci-runner-secret\n' > agent.env
+          for files in "-f docker-compose.yml" "-f docker-compose.yml -f docker-compose.policy.yml"; do
+            touch jotflow.toml
+            docker compose $files --profile agent config --format json > compose.json
+            python3 - <<'PY'
+          import json
+          services = json.load(open("compose.json"))["services"]
+          assert set(services) == {"jotflow", "agent"}, sorted(services)
+          for name, service in services.items():
+              assert not service.get("ports"), f"{name} publishes ports"
+              for volume in service.get("volumes") or []:
+                  assert "docker.sock" not in str(volume.get("source", "")), f"{name} mounts the Docker socket"
+          agent = services["agent"]
+          assert (agent.get("environment") or {}) == {"JOTFLOW_RUNNER_SECRET": "ci-runner-secret"}, (
+              "the agent's environment must be exactly agent.env"
+          )
+          binds = [v for v in agent.get("volumes") or [] if v.get("type") == "bind"]
+          assert not binds, f"the agent bind-mounts {binds}"
+          # The check above means something: .env does reach JotFlow.
+          assert services["jotflow"]["environment"]["JOTFLOW_SLACK_BOT_TOKEN"] == "ci-sentinel-bot"
+          print("compose policy ok")
+          PY
+          done
+          rm -f .env agent.env jotflow.toml compose.json
+
       - name: Build
         run: docker build --file Dockerfile.agent --tag jotflow-agent:local .
 
