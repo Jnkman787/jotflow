@@ -52,7 +52,7 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 **Agent adapters.** Thin runners that launch the team's agent with the MCP server attached and a prompt.
 
 - First adapter: a generic command template. Every major agent CLI has a headless mode and reads an MCP configuration, so a team selects their agent by editing one line. Presets ship for Claude Code and Codex CLI first, then Gemini CLI and Copilot CLI.
-- A preset defines, per run kind, which of the CLI's tools are allowed. Drafting runs get no shell and no file-write tools, and only read-only GitHub access. Execution runs get the GitHub write access needed to create or update one issue. Presets disable session transcripts where the CLI supports it.
+- A preset defines, per run kind, which of the CLI's tools are allowed. Drafting runs get no shell and no file-write tools, and only the team's read-only GitHub token. Execution runs get the write token, used to create or update one issue. Presets disable session transcripts where the CLI supports it.
 - Later: an HTTP adapter and a reference SDK adapter.
 
 **Agent output contract.** The agent acts only by calling the whiteboard MCP tools. JotFlow records each call as it happens; the agent's stdout is ignored. The prompt handed to the agent is minimal: a run id and the instruction to call `get_work` and then act.
@@ -80,7 +80,7 @@ flowchart LR
     agent --> gh["GitHub"]
 ```
 
-The agent container receives an explicit allowlist of environment variables. It never sees JotFlow's `.env`, Slack tokens, or database. JotFlow's container never holds the agent's GitHub token. A prompt-injected agent can therefore misuse only what it already had, its own GitHub access, and only within the tool allowlist of its run kind.
+The agent container receives an explicit allowlist of environment variables. It never sees JotFlow's `.env`, Slack tokens, or database. JotFlow's container never holds the agent's GitHub token. A prompt-injected agent therefore cannot reach JotFlow's Slack tokens. It can still misuse its own GitHub access within its run kind's tool allowlist; in particular, read-only access during drafting can copy private repo content into a proposal body or a clarifying question in Slack. Channel repo mappings and the agent's read token should cover only repos whose content may be discussed in that channel.
 
 The team decides where both containers run. The only requirements are that JotFlow can start runs in the agent container and the agent can reach JotFlow's MCP port. A split across machines is the post-v1 HTTP adapter.
 
@@ -100,12 +100,14 @@ Post-v1: `hold:` and `go:` to lengthen or shorten the wait before drafting, and 
 Rules:
 
 - The colon is required, so sentences like "Skip button is broken" are never read as commands. Typos are tolerated only on keywords of four or more letters.
+- JotFlow confirms a recognised keyword with a reaction on the message, so the poster knows it was understood. Reactions never restart the wait before drafting.
 - Every keyword has an equivalent reaction, for people who forget or prefer clicking. Reactions from guests and external users are ignored.
 - JotFlow strips the keyword before the agent sees the text, and passes the rest as untrusted thread content. A keyword never adds instructions to the agent's prompt.
 - No keyword can skip approval or change the channel mode.
 - Acting on someone else's message: with approvers off, anyone may, and JotFlow posts a visible note in the thread that the author can undo. With approvers on, only the author or an approver may.
 - Editing a message after its card is posted never changes what is approved.
-- `/jotflow help` shows the set privately, and JotFlow pins a short help message when it joins a channel.
+- `/jotflow help` shows the set privately, JotFlow pins a short help message when it joins a channel, and a newcomer's first card carries a one-line keyword tip.
+- When JotFlow replies with an issue link, it includes the exact handle to use, for example "reply `re: web#42` to add to this", so nobody needs to know issue numbers.
 
 ## Channels and repos
 
@@ -140,6 +142,8 @@ Every mode change is announced in the channel. Approval by reaction is off by de
 **Request Changes** opens a dialog whose text JotFlow posts as a thread reply attributed to the person, so the next drafting run treats it like any other message (D9).
 
 **What the gate is and is not.** JotFlow enforces the gate in its own flow: it never hands the agent a proposal to execute until the mode or a person allows it, and it validates proposals against the configured repos and label allowlists before posting a card. It is not a credential boundary: the agent holds the team's GitHub access, so a misbehaving agent could still write on its own. D6 narrows this: drafting runs, the ones exposed to raw Slack text, get read-only GitHub access. Teams should still scope the agent's write token to the repositories JotFlow is meant to touch.
+
+**Open mode, stated plainly.** With approvers off, the default, the gate catches agent mistakes but not a single member acting alone: anyone can post text, approve it themselves, or switch the channel to `auto`. In `auto` mode, text from anyone in the channel reaches GitHub with no human review. That fits a small team of equals. Channels with wide membership, guests, or external Slack Connect users should turn approvers on. JotFlow warns in the channel when `auto` is set in a channel that has guests or external members.
 
 ## Conversation rules
 
@@ -200,7 +204,7 @@ There is no hosted component and no telemetry. Nothing is sent to the JotFlow pr
 | Component | Needs | Does not need |
 |---|---|---|
 | JotFlow | A Slack app installed in the team's workspace: `channels:history`, `groups:history`, `chat:write`, `reactions:read`, `reactions:write`, `users:read`, `commands`, and from M5 `app_mentions:read`, plus an app-level token for Socket Mode | Any GitHub access |
-| Team's agent | Read access to the target repos for drafting, write access for execution | Any Slack access |
+| Team's agent | Two GitHub tokens: a read-only token for drafting runs and a write token for execution runs, both scoped to the channel's mapped repos | Any Slack access |
 
 Each team creates a dedicated Slack app for JotFlow from the manifest in this repository, inside their own workspace. The bot's display name and icon are theirs to choose; "JotFlow" is only the manifest default. The app stays internal to that workspace and is never distributed. Reusing an existing app is not supported: scopes, event subscriptions, and slash commands would have to be merged by hand and would collide with whatever the app already does. Slack requires two manual steps that no software can skip, creating the app and clicking Allow on the install screen, so `jotflow init` wraps everything around them: it renders the manifest, opens the create-from-manifest link, validates the pasted tokens, and writes the environment file.
 
@@ -223,7 +227,7 @@ Assignment requires a Slack user to GitHub handle mapping. A self-service slash 
 
 ## Security posture
 
-- Slack content is untrusted input. It reaches only drafting runs, which have read-only GitHub access and no shell or write tools. Execution runs, which can write, receive only the approved structured fields.
+- Slack content is untrusted input. It reaches only drafting runs. The shipped presets configure drafting runs with read-only GitHub access and no shell or write tools, and execution runs, which can write, receive only the approved structured fields. This holds only when the team gives the agent separate read and write GitHub tokens, and only for the shipped presets; a custom command template is the team's responsibility.
 - The agent runs in its own container with an environment allowlist and no access to JotFlow's secrets.
 - Proposals are validated against the configured repos and label allowlists before they can be approved, and a reported issue URL must point at the approved repo.
 - `ask_channel` posts only in the source thread, strips broadcast mentions such as `@channel`, and is rate-limited.
