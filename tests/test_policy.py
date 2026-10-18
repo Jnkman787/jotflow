@@ -255,6 +255,14 @@ UNSAFE_LABELS = [
     "line\u2028separator",
     "bidi\u202eoverride",
     "isolate\u2066x",
+    "b\u200bug",
+    "bug\ufeff",
+    "word\u2060joiner",
+    "soft\u00adhyphen",
+    "lone\u200djoiner",
+    "\U0001f680\u200d",
+    "\u200d\U0001f680",
+    "a\u200d\U0001f680",
 ]
 
 
@@ -268,7 +276,17 @@ def test_unsafe_label_names_are_rejected_either_way(repo_ref: str, bad: str) -> 
 
 
 @pytest.mark.parametrize(
-    "good", ["size:m", "Needs Design", "good first issue", "🚀 launch", "👩‍💻 dev"]
+    "good",
+    [
+        "size:m",
+        "Needs Design",
+        "good first issue",
+        "\U0001f680 launch",
+        "\U0001f469\u200d\U0001f4bb dev",  # woman technologist
+        "\U0001f469\U0001f3fd\u200d\U0001f4bb dev",  # with a skin tone
+        "\U0001f3f3\ufe0f\u200d\U0001f308 pride",  # rainbow flag
+        "caf\u00e9",
+    ],
 )
 def test_ordinary_and_emoji_labels_are_allowed(good: str) -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
@@ -286,3 +304,9 @@ def test_invalid_label_error_says_why() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
     with pytest.raises(InvalidLabelError, match="must not contain control characters"):
         repo.check_labels(["a\nb"])
+
+
+def test_invisible_characters_are_named() -> None:
+    repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
+    with pytest.raises(InvalidLabelError, match="invisible characters"):
+        repo.check_labels(["b\u200bug"])
