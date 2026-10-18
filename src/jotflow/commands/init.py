@@ -25,7 +25,8 @@ from typing import Any, TextIO
 
 from pydantic import TypeAdapter, ValidationError
 
-from jotflow.envfile import read_env, write_env
+from jotflow import agent_setup
+from jotflow.envfile import EnvChange, read_env, write_envs
 from jotflow.models import RepoName
 from jotflow.policy import (
     ChannelId,
@@ -75,8 +76,10 @@ MAX_ATTEMPTS = 5
 # Agent runs arrive in milestone 3, so a fresh setup connects without one.
 DEFAULT_PRESET: str | None = None
 FIRST_PRESET = "claude-code"
+# The team's own JOTFLOW_AGENT_COMMAND, as the runner reports it in GET /info (#142).
+COMMAND_PRESET = "command"
 # Presets setup accepts today; others are refused until JotFlow ships them.
-SUPPORTED_PRESETS = (FIRST_PRESET,)
+SUPPORTED_PRESETS = (FIRST_PRESET, COMMAND_PRESET)
 STEPS = 6
 ANY_LABEL = "any"
 MAX_CHANNELS = 50
@@ -94,6 +97,8 @@ minutes, most of it in Slack's settings pages. It will:
      GitHub repos each one feeds, such as acme-co/web.
   4. Write .env, with the Slack tokens and readable only by you on Linux and
      macOS, and jotflow.toml, with your channels and repos and no secrets.
+     If you choose an agent preset, also write agent.env and agent-exec.env
+     for the agent containers, each with its own new secret.
 
 .env and jotflow.toml are written only after the last question; only the
 Slack manifest, slack-app-manifest.json, is saved earlier so you can paste
@@ -168,9 +173,22 @@ EXPLAIN_LABELS = (
 EXPLAIN_PRESET = (
     "Which agent program will your team run? Your team supplies and controls the agent;",
     "JotFlow only needs to know which program it is so it can start it correctly.",
-    f"Agent runs arrive in milestone 3. {FIRST_PRESET} is accepted today but does nothing "
-    "until then, so press Enter to keep none for now.",
+    f"Choosing {FIRST_PRESET} also sets up agent.env and agent-exec.env for the two agent",
+    "containers, each with its own new secret. Type none to leave the agent off for now.",
+    f"Type {COMMAND_PRESET} if your agent files set JOTFLOW_AGENT_COMMAND to run your own agent.",
 )
+EXPLAIN_MODEL = (
+    "Which model should the agent use? Press Enter for the preset's defaults: a stronger",
+    "model for drafting and questions, a faster one for writing approved issues.",
+    "A name you type is used for both drafting and execution, in agent.env and agent-exec.env.",
+    "Type default to go back to the preset's defaults.",
+    "For a different model per kind, set JOTFLOW_AGENT_MODEL_DRAFTING, _QUESTION, or",
+    "_EXECUTION in agent.env or agent-exec.env by hand; setup keeps them.",
+)
+AGENT_FILE = "agent.env"
+AGENT_EXEC_FILE = "agent-exec.env"
+# Matches the runner's own check on model names (#137).
+_MODEL = re.compile(r"[A-Za-z0-9._:\[\]-]{1,100}")
 STEP_TITLES = {
     1: "The bot's name",
     2: "Create the Slack app",
@@ -279,6 +297,16 @@ class InitOptions:
     manifest_out: Path = Path(DEFAULT_MANIFEST_OUT)
     config_file: Path = field(default_factory=_default_config_file)
     windows: bool = os.name == "nt"
+    rotate_runner_secret: bool = False
+    rotate_exec_secret: bool = False
+
+    @property
+    def agent_file(self) -> Path:
+        return self.env_file.with_name(AGENT_FILE)
+
+    @property
+    def agent_exec_file(self) -> Path:
+        return self.env_file.with_name(AGENT_EXEC_FILE)
 
 
 def create_app_link(manifest_json: str) -> str:
@@ -557,7 +585,7 @@ def _preset_answer(value: str) -> str:
     return preset
 
 
-def _ask_policy(console: Console, existing: Policy | None) -> Policy:
+def _ask_policy(console: Console, existing: Policy | None, detected: str | None = None) -> Policy:
     console.say()
     _step(console, 5)
     console.say("Now the channels JotFlow watches and the repos each one feeds.")
@@ -600,6 +628,8 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
     _step(console, 6)
     _explain(console, EXPLAIN_PRESET)
     current = existing.agent.preset if existing else DEFAULT_PRESET
+    if current is None and detected is not None:
+        current = detected
     if current is not None and current not in SUPPORTED_PRESETS:
         console.say(
             f"Your jotflow.toml names the preset {current}, which JotFlow does not ship yet, "
@@ -641,7 +671,13 @@ def _policy_step(console: Console, options: InitOptions) -> Policy | None:
             if console.confirm("Keep it?"):
                 _warn_if_unreadable(console, path)
                 return None
-    return _ask_policy(console, existing)
+    return _ask_policy(console, existing, _detected_preset(options))
+
+
+def _detected_preset(options: InitOptions) -> str | None:
+    """``command`` when an agent env file already runs the team's own command."""
+    files = (read_env(options.agent_file), read_env(options.agent_exec_file))
+    return COMMAND_PRESET if any(agent_setup.uses_command(f) for f in files) else None
 
 
 def _warn_if_unreadable(console: Console, path: Path) -> None:
@@ -682,6 +718,164 @@ def _save_policy(console: Console, path: Path, policy: Policy) -> None:
         console.say(f"Saved the previous {path} as {backup}.")
     _write_text_atomic(path, text)
     console.say(f"Wrote {path}: {_summary(policy)}.")
+
+
+def _chosen_preset(options: InitOptions, policy: Policy | None) -> str | None:
+    """The preset from the policy being written, or from the jotflow.toml being kept."""
+    if policy is not None:
+        return policy.agent.preset
+    try:
+        return load_policy(options.config_file).agent.preset
+    except (PolicyError, OSError):
+        return None
+
+
+def _model_answer(value: str) -> str:
+    answer = value.strip()
+    if answer.lower() == "default":
+        return "default"
+    if answer and not _MODEL.fullmatch(answer):
+        raise ValueError(
+            "A model name is letters, digits, and . _ : [ ] -, up to 100 characters, "
+            "for example sonnet."
+        )
+    return answer
+
+
+@dataclass(frozen=True)
+class AgentChoice:
+    """What setup will write to the agent env files. ``model`` None removes it."""
+
+    preset: str
+    change_model: bool = False
+    model: str | None = None
+
+
+def _ask_agent(console: Console, options: InitOptions, preset: str | None) -> AgentChoice | None:
+    if preset is None:
+        if options.rotate_runner_secret or options.rotate_exec_secret:
+            console.say("  No agent preset is chosen, so there is no runner secret to rotate.")
+        return None
+    if preset == COMMAND_PRESET:
+        # The runner refuses model settings next to a raw command.
+        return AgentChoice(preset)
+    files = [read_env(options.agent_file), read_env(options.agent_exec_file)]
+    current = next((f[agent_setup.MODEL_KEY] for f in files if f.get(agent_setup.MODEL_KEY)), None)
+    console.say()
+    _explain(console, EXPLAIN_MODEL)
+    answer = console.ask("Agent model", current, _model_answer)
+    if answer == "default":
+        return AgentChoice(preset, change_model=current is not None)
+    if not answer or answer == current:
+        return AgentChoice(preset)
+    return AgentChoice(preset, change_model=True, model=answer)
+
+
+_HOW = {
+    "kept": "kept its runner secret",
+    "copied": "filled in its runner secret, so both files hold the same one",
+    "regenerated": (
+        "held a different runner secret from .env, so setup made a new one for both. "
+        "Neither old value is kept"
+    ),
+    "generated": "got a new runner secret",
+    "rotated": "got a new runner secret, as asked",
+}
+
+
+def _example(path: Path) -> str:
+    """The shipped example's text for a new agent env file, so its comments come along."""
+    try:
+        return path.with_name(path.name + ".example").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+@dataclass
+class AgentFiles:
+    """The agent env files' changes, what ``.env`` needs, and what to say once written."""
+
+    changes: list[EnvChange]
+    env_updates: dict[str, str]
+    notes: list[str]
+
+
+def _plan_agent_files(options: InitOptions, choice: AgentChoice, env: dict[str, str]) -> AgentFiles:
+    agent, agent_exec = read_env(options.agent_file), read_env(options.agent_exec_file)
+    drafting, execution = agent_setup.choose_secrets(
+        env,
+        agent,
+        agent_exec,
+        rotate_drafting=options.rotate_runner_secret,
+        rotate_execution=options.rotate_exec_secret,
+    )
+    pairs = [
+        (options.agent_file, agent, drafting),
+        (options.agent_exec_file, agent_exec, execution),
+    ]
+    changes: list[EnvChange] = []
+    notes: list[str] = []
+    for path, values, secret in pairs:
+        updates: dict[str, str | None] = {agent_setup.AGENT_SECRET_KEY: secret.value}
+        command = agent_setup.uses_command(values)
+        if choice.preset == COMMAND_PRESET:
+            # The runner refuses a preset next to a command, so a stray one goes.
+            updates[agent_setup.PRESET_KEY] = None
+            if not command:
+                notes.append(
+                    f"  {path} has no {agent_setup.COMMAND_KEY}. Set it to your agent's command, "
+                    "since jotflow.toml names the command preset."
+                )
+        elif command:
+            notes.append(
+                f"  {path} sets {agent_setup.COMMAND_KEY}, so setup left the preset and model out "
+                f"of it, and JotFlow will refuse that runner while jotflow.toml names "
+                f"{choice.preset}. Remove that line, or run setup again and choose "
+                f"{COMMAND_PRESET}."
+            )
+        else:
+            updates[agent_setup.PRESET_KEY] = choice.preset
+            if choice.change_model:
+                updates[agent_setup.MODEL_KEY] = choice.model
+        changes.append((path, updates, _example(path)))
+        notes.append(f"  {path} {_HOW[secret.how]}.")
+    notes.append(_saved_agent_message(options))
+
+    env_updates = {
+        agent_setup.ENV_DRAFTING_KEY: drafting.value,
+        agent_setup.ENV_EXECUTION_KEY: execution.value,
+    }
+    if agent.get(agent_setup.READ_TOKEN_KEY) and agent_exec.get(agent_setup.WRITE_TOKEN_KEY):
+        profiles = agent_setup.with_agent_profile(env.get(agent_setup.PROFILES_KEY))
+        if profiles is not None:
+            env_updates[agent_setup.PROFILES_KEY] = profiles
+            notes.append(
+                f"  Also set {agent_setup.PROFILES_KEY}={profiles} in {options.env_file}, so "
+                "`docker compose up -d` starts the agent containers too."
+            )
+    else:
+        notes.append(
+            f"  Before the agent containers can start, fill in {agent_setup.READ_TOKEN_KEY} in "
+            f"{options.agent_file} and {agent_setup.WRITE_TOKEN_KEY} in {options.agent_exec_file}, "
+            "and the model login, as their comments describe. Then run jotflow init again, "
+            f"or add {agent_setup.PROFILES_KEY}={agent_setup.AGENT_PROFILE} to {options.env_file}."
+        )
+    if {drafting.how, execution.how} & {"rotated", "regenerated"}:
+        notes.append(
+            "  Restart with `docker compose up -d`, so JotFlow and the agent containers "
+            "use the new secret."
+        )
+    return AgentFiles(changes, env_updates, notes)
+
+
+def _saved_agent_message(options: InitOptions) -> str:
+    names = f"{options.agent_file} and {options.agent_exec_file}"
+    if on_windows_drive(options.agent_file):
+        return (
+            f"Saved {names}. They are on a Windows drive, so the folder's Windows permissions, "
+            "not JotFlow, decide who can read them."
+        )
+    return f"Saved {names}. Only your user can read them."
 
 
 def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
@@ -726,15 +920,27 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
         )
 
     policy = _policy_step(console, options)
+    agent_choice = _ask_agent(console, options, _chosen_preset(options, policy))
 
     console.say()
     updates = {BOT_TOKEN_KEY: bot_token, APP_TOKEN_KEY: app_token}
+    agent_files = (
+        None if agent_choice is None else _plan_agent_files(options, agent_choice, existing)
+    )
+    changes: list[EnvChange] = []
+    if agent_files is not None:
+        updates |= agent_files.env_updates
+        changes += agent_files.changes
     compose_file = existing.get(COMPOSE_FILE_KEY)
     if compose_file is None:
         updates[COMPOSE_FILE_KEY] = COMPOSE_FILE_VALUE
     if options.windows and COMPOSE_SEPARATOR_KEY not in existing:
         updates[COMPOSE_SEPARATOR_KEY] = COMPOSE_SEPARATOR_VALUE
-    write_env(options.env_file, updates)
+    # One step: if any file cannot be written, none of them changes, so a
+    # rotation never leaves .env and an agent file holding different secrets.
+    write_envs([*changes, (options.env_file, updates, "")])
+    for note in agent_files.notes if agent_files is not None else []:
+        console.say(note)
     console.say(_saved_tokens_message(options.env_file))
     if COMPOSE_FILE_KEY in updates:
         console.say(
@@ -780,6 +986,16 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         help="where to save the policy file (default: $JOTFLOW_CONFIG or jotflow.toml)",
     )
     parser.add_argument(
+        "--rotate-runner-secret",
+        action="store_true",
+        help="replace the drafting runner's secret in .env and agent.env",
+    )
+    parser.add_argument(
+        "--rotate-exec-secret",
+        action="store_true",
+        help="replace the execution runner's secret in .env and agent-exec.env",
+    )
+    parser.add_argument(
         "--manifest-out",
         type=Path,
         default=Path(DEFAULT_MANIFEST_OUT),
@@ -802,6 +1018,8 @@ def run(
         env_file=args.env_file,
         manifest_out=args.manifest_out,
         config_file=getattr(args, "config", None) or _default_config_file(),
+        rotate_runner_secret=getattr(args, "rotate_runner_secret", False),
+        rotate_exec_secret=getattr(args, "rotate_exec_secret", False),
     )
     try:
         return run_init(console, api or HttpSlackApi(), options)
