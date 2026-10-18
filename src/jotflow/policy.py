@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, Literal
@@ -44,7 +45,37 @@ Nickname = Annotated[
 ]
 PresetName = Annotated[str, _matching(_PRESET, "a preset name of lowercase letters, digits and -")]
 MAX_LABEL_LENGTH = 50  # GitHub's limit on a label name
-Label = Annotated[str, Field(min_length=1, max_length=MAX_LABEL_LENGTH)]
+
+# Bidirectional overrides and isolates, which can make text on a card read
+# differently from what it is. Other format characters stay allowed: emoji
+# sequences rely on the zero-width joiner.
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+
+def label_problem(label: str) -> str | None:
+    """Why ``label`` cannot be a label name, or None if it can.
+
+    Labels reach the Slack card and GitHub. With no label list they come from
+    the agent, so control characters, line breaks, bidirectional overrides,
+    and surrounding spaces are refused here rather than trusted downstream.
+    """
+    if not 0 < len(label) <= MAX_LABEL_LENGTH:
+        return f"must be 1 to {MAX_LABEL_LENGTH} characters"
+    if label != label.strip():
+        return "must not start or end with a space"
+    for char in label:
+        if unicodedata.category(char) in {"Cc", "Zl", "Zp"} or char in _BIDI_CONTROLS:
+            return "must not contain control characters or line breaks"
+    return None
+
+
+def _check_label_name(value: str) -> str:
+    if problem := label_problem(value):
+        raise ValueError(f"label {shown(value)} {problem}")
+    return value
+
+
+Label = Annotated[str, AfterValidator(_check_label_name)]
 
 IssueLinks = Literal["permalinks", "none"]
 
@@ -91,10 +122,8 @@ class LabelNotAllowedError(PolicyViolation):
 
 class InvalidLabelError(PolicyViolation):
     def __init__(self, repo: str, labels: list[str]) -> None:
-        listed = ", ".join(repr(label) for label in labels)
-        super().__init__(
-            f"not valid label names for {repo} (1 to {MAX_LABEL_LENGTH} characters): {listed}"
-        )
+        listed = "; ".join(f"{shown(label)} {label_problem(label)}" for label in labels)
+        super().__init__(f"not valid label names for {repo}: {listed}")
         self.repo = repo
         self.labels = labels
 
@@ -129,14 +158,15 @@ class RepoPolicy(_Strict):
     def check_labels(self, labels: Iterable[str]) -> list[str]:
         """The labels a proposal may set, without duplicates.
 
-        With no label list, any label is allowed: JotFlow cannot see which labels
-        exist on the repo, so the agent chooses only existing ones (#23, #31).
+        With no label list, any valid label name is allowed. JotFlow cannot see
+        which labels exist on the repo; the agent is instructed to use only
+        existing ones (#23), and the execution run checks before applying (#31).
         With a list, labels must be on it, matched without case, and come back in
         the list's own spelling. Raises :class:`LabelNotAllowedError` for a label
         outside the list, and :class:`InvalidLabelError` for one no repo could have.
         """
         wanted = list(labels)
-        invalid = [label for label in wanted if not 0 < len(label) <= MAX_LABEL_LENGTH]
+        invalid = [label for label in wanted if label_problem(label) is not None]
         if invalid:
             raise InvalidLabelError(self.repo, invalid)
         if not self.restricts_labels:

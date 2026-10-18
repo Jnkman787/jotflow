@@ -5,7 +5,7 @@
 - Issue: #92
 - Draft PR: #94
 - Status: completed
-- Last verified: `make check` green locally on Python 3.12: 315 tests, 96.78% coverage
+- Last verified: `make check` green locally on Python 3.12 after the security review: 340 tests, 96.93% coverage
 - Next safe action: review and merge #94; #93 (product's init wording) rebases over it, or the other way round
 
 ## Objective and done-when
@@ -80,6 +80,12 @@ Alternative considered: `labels: tuple | None`, with `None` for unrestricted and
   - the answer parsing rules
 - The example config now has one repo with a narrowing list and one without, and it still round-trips through the writer.
 - CodeRabbit (local CLI, `--committed --base main -c AGENTS.md`): 0 findings.
+- Security review, at head 247b432:
+  1. Reject an explicit `labels = []`. This contradicts #92's "empty or missing means any", so it went to the team lead to decide. It is not changed yet.
+  2. Unsafe label text: taken. One rule, `label_problem`, now applies both to labels in `jotflow.toml` and to labels a proposal sets. It rejects control characters, line breaks, Unicode line and paragraph separators, bidirectional overrides and isolates, and leading or trailing spaces, as well as the length limit. Emoji, including zero-width joiner sequences, stay allowed.
+  3. Wording: taken. The docs and example now say the agent is *instructed* to use only existing labels, a prompt rule JotFlow cannot enforce. The architecture doc says the execution run checks each label exists before applying it, because GitHub would otherwise create a missing one.
+- The dated notes security asked for were offered to the team lead to post: for #26, escape labels as plain text and mark unrestricted ones; for #31, check that each label exists and fail rather than create one.
+- After the review: 340 tests pass, with total coverage at 96.93%.
 - Product was told the exact `init.py` changes, for its #93 rewording of init prompts.
 
 ## Handoff notes

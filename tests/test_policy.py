@@ -201,15 +201,6 @@ def test_a_listed_repo_restricts_labels() -> None:
     assert parse_policy(MINIMAL).repo("C0TEST1", "web").restricts_labels
 
 
-@pytest.mark.parametrize("repo_ref", ["web", "api"])
-@pytest.mark.parametrize("bad", ["", "x" * 51])
-def test_impossible_label_names_are_rejected_either_way(repo_ref: str, bad: str) -> None:
-    repo = parse_policy(MINIMAL).repo("C0TEST1", repo_ref)
-    with pytest.raises(InvalidLabelError) as exc:
-        repo.check_labels(["bug", bad])
-    assert exc.value.labels == [bad]
-
-
 def test_label_list_error_names_the_list() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "web")
     with pytest.raises(LabelNotAllowedError, match="not in acme/web's label list: 'wontfix'"):
@@ -250,3 +241,47 @@ def test_rejected_values_are_cut_short() -> None:
 def test_a_label_listed_twice_is_rejected_ignoring_case() -> None:
     text = MINIMAL.replace('labels = ["bug", "Enhancement"]', 'labels = ["bug", "Bug"]')
     assert problems(text) == ["channels.C0TEST1.repos[0]: labels listed more than once: Bug"]
+
+
+UNSAFE_LABELS = [
+    "",
+    "x" * 51,
+    " bug",
+    "bug ",
+    "two\nlines",
+    "tab\there",
+    "bell\x07",
+    "line\u2028separator",
+    "bidi\u202eoverride",
+    "isolate\u2066x",
+]
+
+
+@pytest.mark.parametrize("repo_ref", ["web", "api"])
+@pytest.mark.parametrize("bad", UNSAFE_LABELS)
+def test_unsafe_label_names_are_rejected_either_way(repo_ref: str, bad: str) -> None:
+    repo = parse_policy(MINIMAL).repo("C0TEST1", repo_ref)
+    with pytest.raises(InvalidLabelError) as exc:
+        repo.check_labels(["bug", bad])
+    assert exc.value.labels == [bad]
+
+
+@pytest.mark.parametrize(
+    "good", ["size:m", "Needs Design", "good first issue", "🚀 launch", "👩‍💻 dev"]
+)
+def test_ordinary_and_emoji_labels_are_allowed(good: str) -> None:
+    repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
+    assert repo.check_labels([good]) == [good]
+
+
+@pytest.mark.parametrize("bad", ["bug\\n", " bug", "bidi\\u202e"])
+def test_unsafe_labels_in_the_file_are_named(bad: str) -> None:
+    text = MINIMAL.replace('labels = ["bug", "Enhancement"]', f'labels = ["{bad}"]')
+    [problem] = problems(text)
+    assert problem.startswith("channels.C0TEST1.repos[0].labels[0]: label ")
+
+
+def test_invalid_label_error_says_why() -> None:
+    repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
+    with pytest.raises(InvalidLabelError, match="must not contain control characters"):
+        repo.check_labels(["a\nb"])
