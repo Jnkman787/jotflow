@@ -7,7 +7,7 @@
 - Draft PR: #143
 - Status: ready for review
 - Last verified: 2026-10-18, `make check` passes with the code below
-- Next safe action: review; the architect confirms the two defaults under Risks; merge after #137
+- Next safe action: review, including security's second look
 
 ## Objective and done-when
 
@@ -31,7 +31,7 @@ Done when:
 ## Design
 
 - **One preset question, as today, in step 6.** Its answer, or the preset in a `jotflow.toml` the person keeps, drives the agent env files as well as `agent.preset`. So there is one question and the two places never disagree. A new step would sometimes be skipped, which makes "step N of 7" misleading, and moving the question would only churn the policy step.
-  - When a preset is chosen, setup next asks for the model, optionally. Enter keeps the value already in the files, or the preset's defaults if there is none. Typing `default` removes the setting. The answer goes into both files as `JOTFLOW_AGENT_MODEL`, checked against #137's pattern. Per-kind overrides are never written, and existing ones are kept.
+  - When a preset is chosen, setup next asks for the model, optionally. Enter keeps the value already in the files, or the preset's defaults if there is none. Typing `default` removes the setting. The answer goes into both files as `JOTFLOW_AGENT_MODEL`, checked against #137's pattern. Per-kind overrides are never written, and existing ones are kept. The prompt says how to set them by hand.
   - `none` leaves both agent files and the secrets untouched, and adds no profile. Asking to rotate then says there is nothing to rotate.
   - An invalid `jotflow.toml` that the person keeps counts as no preset.
   - Nothing is written until the last question is answered, as before.
@@ -50,9 +50,9 @@ Done when:
 
 ## Risks and open questions
 
-- **The preset's home** (asked of the architect). #137 names the preset in the agent env files and leaves `jotflow.toml`'s `agent.preset` alone. Its description says "unset disables agent runs", which #55 might read. Default: one question, written to both places, as above. It also keeps the default at `none` until runs are wired (#136).
-- **The model question** (asked of the architect). Default: one optional `JOTFLOW_AGENT_MODEL` for both files, as above.
-- #137 is still open. Until it merges, `JOTFLOW_AGENT_PRESET` isn't read by main's runner, so this PR should merge after #137. The env keys are #137's names, and the tests pin them.
+- **The preset's home** (settled by the lead on 2026-10-18: keep `agent.preset` from the same answer, matching #142's GET /info agreement check). #137 names the preset in the agent env files and leaves `jotflow.toml`'s `agent.preset` alone. Its description says "unset disables agent runs", which #55 might read. Default: one question, written to both places, as above. It also keeps the default at `none` until runs are wired (#136).
+- **The model question** (settled by the lead: one optional shared model; per-kind by hand). Default: one optional `JOTFLOW_AGENT_MODEL` for both files, as above.
+- #137 has merged, and this branch is rebased onto it. The env keys are #137's names, and the tests pin them.
 - Rotating while the containers run breaks runs until both restart. Init says so.
 
 ## Progress checklist

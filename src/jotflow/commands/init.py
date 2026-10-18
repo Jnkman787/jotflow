@@ -177,7 +177,9 @@ EXPLAIN_PRESET = (
 EXPLAIN_MODEL = (
     "Which model should the agent use? Press Enter for the preset's defaults: a stronger",
     "model for drafting and questions, a faster one for writing approved issues.",
-    "Type default to go back to those after choosing one.",
+    "A name you type is used for every run. Type default to go back to the preset's defaults.",
+    "For a different model per kind, set JOTFLOW_AGENT_MODEL_DRAFTING, _QUESTION, or",
+    "_EXECUTION in agent.env or agent-exec.env by hand; setup keeps them.",
 )
 AGENT_FILE = "agent.env"
 AGENT_EXEC_FILE = "agent-exec.env"

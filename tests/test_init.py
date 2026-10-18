@@ -976,3 +976,16 @@ def test_agent_files_on_a_windows_drive_say_who_decides(
     monkeypatch.setattr(init, "on_windows_drive", lambda path: True)
     script = _with_agent(options)
     assert "agent-exec.env. They are on a Windows drive" in script.text
+
+
+def test_per_kind_models_are_explained_and_kept(options: InitOptions) -> None:
+    assert "JOTFLOW_AGENT_MODEL_DRAFTING" in " ".join(init.EXPLAIN_MODEL)
+    _with_agent(options)
+    options.agent_file.write_text(
+        options.agent_file.read_text() + "JOTFLOW_AGENT_MODEL_DRAFTING=opus\n"
+    )
+    _kept_session(options, model="haiku")
+    agent = read_env(options.agent_file)
+    assert (
+        agent["JOTFLOW_AGENT_MODEL_DRAFTING"] == "opus" and agent["JOTFLOW_AGENT_MODEL"] == "haiku"
+    )
