@@ -29,6 +29,7 @@ src/jotflow/
   models.py       shared contracts: proposals, classifications, topics, channel modes
   config.py       environment-driven settings
   cli.py          entry point
+  slack_manifest.py  renders the Slack app manifest; default checked in under manifests/
   orchestrator/   event ingest, debouncing, topic index, proposal lifecycle, approval cards
   whiteboard/     the MCP server
   adapters/       agent runners and presets
@@ -46,6 +47,7 @@ docs/             architecture, roadmap, plans
 | `make test` | Tests only |
 | `make format` | Apply ruff formatting and safe fixes |
 | `make run` | Run the `jotflow` CLI |
+| `make manifest` | Regenerate `manifests/slack-app.json` from the renderer |
 
 Run `make check` before pushing. CI runs the same checks on Python 3.12 and 3.13.
 

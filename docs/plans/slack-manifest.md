@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #5
-- Draft PR: to be opened
-- Status: planning
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then write `src/jotflow/slack_manifest.py` and its tests
+- Draft PR: #61
+- Status: completed
+- Last verified: `make check` green locally on 2026-10-18 (ruff, mypy strict, 32 tests); CI on #61
+- Next safe action: in the sandbox workspace, create an app from `manifests/slack-app.json` and check the two live criteria on #5
 
 ## Objective and done-when
 
@@ -14,14 +14,14 @@ Each team creates its own Slack app for JotFlow by pasting a manifest into Slack
 
 Done when:
 
-- [ ] `render_manifest(bot_name)` returns a manifest with exactly the bot scopes in the architecture Permissions section for v1: `channels:history`, `groups:history`, `chat:write`, `reactions:read`, `reactions:write`, `users:read`, `commands`
-- [ ] Socket Mode is on, and event subscriptions cover `message.channels`, `message.groups`, and `reaction_added`
-- [ ] The `/jotflow` slash command is declared
-- [ ] Interactivity is on, so Approve, Request Changes, and dialogs can reach JotFlow over Socket Mode
-- [ ] The app is not distributable: org-wide deploy is off and no distribution settings are declared
-- [ ] A custom bot name is applied to the app name and the bot user, and invalid names are rejected with a clear message
-- [ ] `manifests/slack-app.json` is checked in, documented, and a test fails if it drifts from the renderer
-- [ ] `make check` passes
+- [x] `render_manifest(bot_name)` returns a manifest with exactly the bot scopes in the architecture Permissions section for v1: `channels:history`, `groups:history`, `chat:write`, `reactions:read`, `reactions:write`, `users:read`, `commands`
+- [x] Socket Mode is on, and event subscriptions cover `message.channels`, `message.groups`, and `reaction_added`
+- [x] The `/jotflow` slash command is declared
+- [x] Interactivity is on, so Approve, Request Changes, and dialogs can reach JotFlow over Socket Mode
+- [x] The app is not distributable: org-wide deploy is off and no distribution settings are declared
+- [x] A custom bot name is applied to the app name and the bot user, and invalid names are rejected with a clear message
+- [x] `manifests/slack-app.json` is checked in, documented, and a test fails if it drifts from the renderer
+- [x] `make check` passes
 
 Stays open on #5 after this PR, because it needs the live sandbox workspace:
 
@@ -49,18 +49,23 @@ Stays open on #5 after this PR, because it needs the live sandbox workspace:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Renderer and name validation in `src/jotflow/slack_manifest.py`
-- [ ] Checked-in default `manifests/slack-app.json` and `manifests/README.md`
-- [ ] `make manifest` target
-- [ ] Add tests
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] Renderer and name validation in `src/jotflow/slack_manifest.py`
+- [x] Checked-in default `manifests/slack-app.json` and `manifests/README.md`
+- [x] `make manifest` target
+- [x] Add tests
+- [x] `make check` passes
+- [x] Update AGENTS.md layout and commands
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check`: ruff lint and format, mypy strict, and pytest all pass; 32 tests, 18 of them new in `tests/test_slack_manifest.py`.
+- `make manifest` regenerates `manifests/slack-app.json`; `test_checked_in_manifest_matches_renderer` guards against drift.
+- Not yet done: creating an app from the manifest in the sandbox workspace and reading a private channel. Both stay open on #5.
+
+Deviations from the issue text: the manifest is JSON from a Python renderer instead of `manifests/slack.yaml.j2`, which the issue allowed as "or equivalent". Interactivity is turned on, which the issue did not list, because the Approve and Request Changes buttons and the dialog need it.
 
 ## Handoff notes
 
-None yet.
+`jotflow init` (#7) should call `render_manifest_json(bot_name)` and surface `BotNameError` messages to the user. When questions land in M5 (D12), add `app_mentions:read` to `BOT_SCOPES` and `app_mention` to `BOT_EVENTS`, update the tests that assert their absence, and run `make manifest`.

@@ -1,0 +1,52 @@
+{
+  "_metadata": {
+    "major_version": 1,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "JotFlow",
+    "description": "Turns ideas and bugs in this channel into GitHub issues."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "JotFlow",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/jotflow",
+        "description": "Help, channel mode, and account linking for JotFlow",
+        "usage_hint": "help",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "channels:history",
+        "groups:history",
+        "chat:write",
+        "reactions:read",
+        "reactions:write",
+        "users:read",
+        "commands"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "message.channels",
+        "message.groups",
+        "reaction_added"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
