@@ -50,6 +50,7 @@ from jotflow.slack_auth import (
 )
 from jotflow.slack_manifest import (
     DEFAULT_BOT_NAME,
+    MAX_BOT_NAME_LENGTH,
     BotNameError,
     render_manifest_json,
     validate_bot_name,
@@ -67,15 +68,19 @@ POLICY_FILE_MODE = 0o644
 CREATE_APP_URL = "https://api.slack.com/apps"
 DEFAULT_MANIFEST_OUT = "slack-app-manifest.json"
 MAX_ATTEMPTS = 5
-DEFAULT_PRESET = "claude-code"
+# Agent runs arrive in milestone 3, so a fresh setup connects without one.
+DEFAULT_PRESET: str | None = None
+FIRST_PRESET = "claude-code"
+STEPS = 6
 ANY_LABEL = "any"
 MAX_CHANNELS = 50
 MAX_REPOS_PER_CHANNEL = 20
 
 # Everything init says to explain itself. Prompts, --help, and tests share it.
 # Examples are fictional: acme-co, #ideas, Idea Bot. Never a real org or workspace.
-INTRO = """\
-jotflow init sets JotFlow up for your team in about five minutes. It will:
+INTRO = f"""\
+jotflow init sets JotFlow up for your team. It usually takes ten to fifteen
+minutes, most of it in Slack's settings pages. It will:
 
   1. Help you create a Slack app for JotFlow from a link with everything filled in.
   2. Check the two tokens Slack gives you for that app.
@@ -86,22 +91,47 @@ jotflow init sets JotFlow up for your team in about five minutes. It will:
 
 .env and jotflow.toml are written only after the last question; only the
 Slack manifest, slack-app-manifest.json, is saved earlier so you can paste
-it if the link fails. Press Ctrl-D at any prompt to stop."""
+it if the link fails. Press Ctrl-D at any prompt to stop. Each question
+allows {MAX_ATTEMPTS} tries; after that setup stops without changing anything,
+and you can run it again."""
 
 EXPLAIN_BOT_NAME = (
-    "This is how the bot appears in Slack, for example Idea Bot. You can change it later in Slack."
+    "This is how the bot appears in Slack, for example Idea Bot. You can change it later in Slack.",
+    f"Up to {MAX_BOT_NAME_LENGTH} characters: letters, digits, spaces, . - and _, "
+    "starting with a letter or digit.",
+)
+EXPLAIN_EXISTING_APP = (
+    "If you already created JotFlow's Slack app, for example on an earlier run while "
+    "waiting for an admin to approve it, answer y to reuse it instead of creating another."
+)
+EXPLAIN_REUSE_APP = (
+    f"Open your existing app at {CREATE_APP_URL}, under Your Apps, and continue from its "
+    "settings. If its install is still waiting for an admin, press Ctrl-D now and run setup "
+    "again once it is approved."
+)
+EXPLAIN_CREATE_LINK = (
+    "Sign in to Slack in your browser first. Then open this link, pick your workspace, "
+    "click Next if Slack shows it, and click Create:"
+)
+EXPLAIN_PASTE = (
+    "Nothing appears as you paste; that is expected, the token stays hidden. "
+    "In some terminals, right-click to paste. Then press Enter."
 )
 EXPLAIN_APP_TOKEN = (
-    "Next, the app-level token, which lets JotFlow connect to Slack without a public URL.",
+    "The app-level token lets JotFlow connect to Slack without a public URL.",
     "In the new app's settings, open Basic Information, scroll to App-Level Tokens, "
     "and click Generate Token and Scopes.",
     "Name it anything, for example socket-mode; the name is only a label. "
     "Click Add Scope, choose connections:write, then click Generate.",
-    "Copy the token. It starts with xapp-.",
+    "Click Copy next to the token. It starts with xapp-.",
 )
 EXPLAIN_BOT_TOKEN = (
     "Now install the app: open Install App, click Install to Workspace, then click Allow.",
-    "Copy the Bot User OAuth Token shown there. It starts with xoxb-.",
+    "If Slack shows Request to Install instead, your workspace needs an admin to approve "
+    "the app. Press Ctrl-D, wait for the approval, then run setup again and answer y when "
+    "it asks whether you already created the app.",
+    "Copy the Bot User OAuth Token shown on the Install App page; it also appears under "
+    "OAuth & Permissions. It starts with xoxb-.",
 )
 EXPLAIN_CHANNEL = (
     "Which Slack channel should JotFlow watch? Open the channel, click its name at the "
@@ -124,14 +154,25 @@ EXPLAIN_DESCRIPTION = (
     "When a channel feeds several repos, the agent uses these sentences to choose one.",
 )
 EXPLAIN_LABELS = (
-    "Labels a proposal may put on an issue, comma-separated, for example bug, enhancement.",
+    "Labels a proposal may put on an issue. List only labels that already exist on the "
+    "repo, comma-separated, for example bug, enhancement.",
     "Press Enter for any: any label that already exists on the repo. A list narrows it.",
 )
 EXPLAIN_PRESET = (
     "Which agent CLI will your team run? Your team supplies and controls the agent;",
     "JotFlow only needs to know which CLI it is so it can start it correctly.",
-    "For example claude-code. Type none to connect without agent runs for now.",
+    f"Agent runs arrive in milestone 3, so press Enter to keep none for now. "
+    f"The first preset will be {FIRST_PRESET}.",
 )
+STEP_TITLES = {
+    1: "The bot's name",
+    2: "Create the Slack app",
+    3: "The app-level token",
+    4: "The bot token",
+    5: "Channels and repos",
+    6: "The agent preset",
+}
+_WINDOWS_DRIVE = re.compile(r"/mnt/[A-Za-z](/|$)")
 
 
 class SetupAborted(Exception):
@@ -193,6 +234,26 @@ class Console:
 
     def secret(self, question: str) -> str:
         return self._read(self.read_secret, f"{question}: ").strip()
+
+
+def _step(console: Console, number: int) -> None:
+    """A heading that matches the README's numbered setup steps."""
+    console.say(f"Setup step {number} of {STEPS}: {STEP_TITLES[number]}")
+
+
+def on_windows_drive(path: Path) -> bool:
+    """Whether ``path`` is on a Windows filesystem, where file modes are not enforced."""
+    return os.name == "nt" or bool(_WINDOWS_DRIVE.match(str(path.resolve())))
+
+
+def _saved_tokens_message(path: Path) -> str:
+    if on_windows_drive(path):
+        return (
+            f"Saved both tokens to {path}. It is on a Windows drive, so the folder's Windows "
+            "permissions, not JotFlow, decide who can read it. Keep the folder private; "
+            "in WSL, prefer a checkout in your Linux home directory."
+        )
+    return f"Saved both tokens to {path}. Only your user can read that file."
 
 
 def _explain(console: Console, lines: str | tuple[str, ...], indent: str = "") -> None:
@@ -261,6 +322,7 @@ def _describe(identity: BotIdentity) -> str:
 def _paste_until_valid[T](
     console: Console, question: str, check: Callable[[str], T]
 ) -> tuple[str, T]:
+    _explain(console, EXPLAIN_PASTE)
     for _ in range(MAX_ATTEMPTS):
         token = console.secret(question)
         try:
@@ -276,18 +338,27 @@ def _paste_until_valid[T](
 
 
 def _create_app_steps(console: Console, options: InitOptions) -> None:
+    _explain(console, EXPLAIN_EXISTING_APP)
+    if console.confirm("Have you already created the JotFlow app in Slack?", default=False):
+        _explain(console, EXPLAIN_REUSE_APP)
+        console.say()
+        return
+    console.say()
+    _step(console, 1)
     _explain(console, EXPLAIN_BOT_NAME)
     name = console.ask("Bot name", DEFAULT_BOT_NAME, _bot_name)
     manifest = render_manifest_json(name)
     options.manifest_out.write_text(manifest, encoding="utf-8")
     console.say()
-    console.say("Create the Slack app. Open this link, pick your workspace, and click Create:")
+    _step(console, 2)
+    _explain(console, EXPLAIN_CREATE_LINK)
     console.say()
     console.say(f"  {create_app_link(manifest)}")
     console.say()
     console.say(
-        f"If the link does not open, choose Create New App, then From a manifest, at "
-        f"{CREATE_APP_URL} and paste the contents of {options.manifest_out}."
+        f"If the link is cut off or does not open, choose Create New App, then From a "
+        f"manifest, at {CREATE_APP_URL} and paste the contents of {options.manifest_out}, "
+        "which setup just saved with your bot name."
     )
     console.say()
 
@@ -321,6 +392,11 @@ _GITHUB_LINK = re.compile(r"(?:https?://)?github\.com/([^/\s]+/[^/\s]+?)(?:\.git
 
 def _channel_id(value: str) -> str:
     """Accept a channel id or a pasted channel link."""
+    if value.strip().startswith("#"):
+        raise ValueError(
+            "That is the channel's name. Setup needs its id, which starts with C or G: "
+            "click the channel's name at the top and look at the bottom of the About tab."
+        )
     if match := _CHANNEL_LINK.fullmatch(value.strip()):
         value = match.group(1)
     return _check_channel(value.strip())
@@ -397,7 +473,7 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
         return nickname
 
     _explain(console, EXPLAIN_REPO, "  ")
-    repo = console.ask("  GitHub repo", validate=new_repo)
+    repo = console.ask("  GitHub repo (owner/name or link)", validate=new_repo)
     _explain(console, EXPLAIN_NICKNAME, "  ")
     nickname = console.ask("  Nickname", _suggest_nickname(repo), new_nickname)
     _explain(console, EXPLAIN_DESCRIPTION, "  ")
@@ -428,6 +504,7 @@ def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:
 
 def _ask_policy(console: Console, existing: Policy | None) -> Policy:
     console.say()
+    _step(console, 5)
     console.say("Now the channels JotFlow watches and the repos each one feeds.")
     if existing is not None:
         listed = ", ".join(existing.channels)
@@ -465,6 +542,7 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
             break
 
     console.say()
+    _step(console, 6)
     _explain(console, EXPLAIN_PRESET)
     current = existing.agent.preset if existing else DEFAULT_PRESET
     preset_answer = console.ask(
@@ -550,16 +628,18 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     console.say()
     existing = read_env(options.env_file)
 
+    # Same order as the steps: the app-level token, then the bot token.
+    app_token = existing.get(APP_TOKEN_KEY, "")
+    keep_app_token = bool(app_token) and _existing_app_token(console, api, app_token)
     identity: BotIdentity | None = None
     bot_token = existing.get(BOT_TOKEN_KEY, "")
     if bot_token:
         identity = _existing_bot(console, api, bot_token)
-    app_token = existing.get(APP_TOKEN_KEY, "")
-    keep_app_token = bool(app_token) and _existing_app_token(console, api, app_token)
 
     if identity is None:
         _create_app_steps(console, options)
     if not keep_app_token:
+        _step(console, 3)
         _explain(console, EXPLAIN_APP_TOKEN)
         app_token, _ = _paste_until_valid(
             console,
@@ -569,6 +649,7 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
         console.say("  App-level token works: Socket Mode can connect.")
         console.say()
     if identity is None:
+        _step(console, 4)
         _explain(console, EXPLAIN_BOT_TOKEN)
         bot_token, new_identity = _paste_until_valid(
             console, "Paste the bot token (xoxb-, hidden)", lambda t: check_bot_token(api, t)
@@ -590,7 +671,7 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     if compose_file is None:
         updates[COMPOSE_FILE_KEY] = COMPOSE_FILE_VALUE
     write_env(options.env_file, updates)
-    console.say(f"Saved both tokens to {options.env_file}. Only your user can read that file.")
+    console.say(_saved_tokens_message(options.env_file))
     if COMPOSE_FILE_KEY in updates:
         console.say(
             f"  Also set {COMPOSE_FILE_KEY} there, so `docker compose up -d` mounts jotflow.toml."

@@ -77,7 +77,7 @@ def _args(options: InitOptions) -> argparse.Namespace:
 
 
 def test_fresh_setup_writes_env_and_manifest(options: InitOptions) -> None:
-    script = Script(answers=["Idea Bot", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "Idea Bot", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
 
     assert read_env(options.env_file) == {
@@ -94,7 +94,7 @@ def test_fresh_setup_writes_env_and_manifest(options: InitOptions) -> None:
 
 
 def test_tokens_are_never_printed(options: InitOptions) -> None:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     run_init(script.console(), FakeSlackApi.working(), options)
     assert GOOD_BOT not in script.text
     assert GOOD_APP not in script.text
@@ -102,7 +102,7 @@ def test_tokens_are_never_printed(options: InitOptions) -> None:
 
 
 def test_default_bot_name(options: InitOptions) -> None:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     run_init(script.console(), FakeSlackApi.working(), options)
     assert json.loads(options.manifest_out.read_text())["display_information"]["name"] == (
         "JotFlow"
@@ -110,7 +110,7 @@ def test_default_bot_name(options: InitOptions) -> None:
 
 
 def test_invalid_bot_name_is_asked_again(options: InitOptions) -> None:
-    script = Script(answers=["<bad>", "Good Bot", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "<bad>", "Good Bot", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "may contain only letters" in script.text
     assert json.loads(options.manifest_out.read_text())["display_information"]["name"] == (
@@ -122,21 +122,21 @@ def test_missing_scope_is_named_and_a_new_token_is_accepted(options: InitOptions
     api = FakeSlackApi.working()
     weak = "xoxb-missing-pins"
     api.responses[("auth.test", weak)] = auth_ok([s for s in BOT_SCOPES if s != "pins:write"])
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, weak, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, weak, GOOD_BOT])
     assert run_init(script.console(), api, options) == 0
     assert "missing this scope: pins:write" in script.text
     assert read_env(options.env_file)[BOT_TOKEN_KEY] == GOOD_BOT
 
 
 def test_swapped_tokens_get_specific_messages(options: InitOptions) -> None:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_BOT, GOOD_APP, GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_BOT, GOOD_APP, GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "That is an app-level token (xapp-)" in script.text
     assert "That is a bot token (xoxb-)" in script.text
 
 
 def test_running_out_of_input_saves_nothing(options: InitOptions) -> None:
-    script = Script(answers=[""], secrets=[GOOD_BOT])
+    script = Script(answers=["", ""], secrets=[GOOD_BOT])
     args = _args(options)
     assert init.run(args, console=script.console(), api=FakeSlackApi.working()) == 1
     assert not options.env_file.exists()
@@ -144,7 +144,7 @@ def test_running_out_of_input_saves_nothing(options: InitOptions) -> None:
 
 
 def test_too_many_bad_tokens_stops(options: InitOptions) -> None:
-    script = Script(answers=[""], secrets=["xoxb-wrong"] * 5)
+    script = Script(answers=["", ""], secrets=["xoxb-wrong"] * 5)
     args = _args(options)
     assert init.run(args, console=script.console(), api=FakeSlackApi.working()) == 1
     assert "Too many attempts" in script.text
@@ -155,7 +155,7 @@ def test_slack_unreachable_offers_retry(options: InitOptions) -> None:
     api = FakeSlackApi.working()
     flaky = "xoxb-flaky"
     api.responses[("auth.test", flaky)] = unreachable()
-    script = Script(answers=["", "y", *POLICY], secrets=[GOOD_APP, flaky, GOOD_BOT])
+    script = Script(answers=["", "", "y", *POLICY], secrets=[GOOD_APP, flaky, GOOD_BOT])
     assert run_init(script.console(), api, options) == 0
     assert "could not reach Slack" in script.text
 
@@ -163,7 +163,7 @@ def test_slack_unreachable_offers_retry(options: InitOptions) -> None:
 def test_unverified_scopes_warn(options: InitOptions) -> None:
     api = FakeSlackApi.working()
     api.responses[("auth.test", GOOD_BOT)] = auth_ok(None)
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), api, options) == 0
     assert "could not be checked" in script.text
 
@@ -194,7 +194,7 @@ def test_rerun_can_replace_tokens(options: InitOptions) -> None:
         ("apps.connections.open", GOOD_APP)
     ]
     options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
-    script = Script(answers=["n", "n", "", *POLICY], secrets=[new_app, new_bot])
+    script = Script(answers=["n", "n", "", "", *POLICY], secrets=[new_app, new_bot])
     assert run_init(script.console(), api, options) == 0
     assert read_env(options.env_file) == {
         BOT_TOKEN_KEY: new_bot,
@@ -205,7 +205,7 @@ def test_rerun_can_replace_tokens(options: InitOptions) -> None:
 
 def test_rerun_with_revoked_token_starts_over(options: InitOptions) -> None:
     options.env_file.write_text(f"{BOT_TOKEN_KEY}=xoxb-revoked\n{APP_TOKEN_KEY}={GOOD_APP}\n")
-    script = Script(answers=["y", "", *POLICY], secrets=[GOOD_BOT])
+    script = Script(answers=["y", "", "", *POLICY], secrets=[GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "no longer works" in script.text
     assert read_env(options.env_file) == {
@@ -234,7 +234,7 @@ def test_refuses_without_a_terminal(
 
 
 def test_fresh_setup_writes_a_valid_policy(options: InitOptions) -> None:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert stat.S_IMODE(options.config_file.stat().st_mode) == 0o644
     assert stat.S_IMODE(options.env_file.stat().st_mode) == 0o600
@@ -244,12 +244,13 @@ def test_fresh_setup_writes_a_valid_policy(options: InitOptions) -> None:
     assert (repo.repo, repo.nickname, repo.description) == ("acme/web", "web", "The web app")
     assert repo.labels is None  # Enter: any existing label (#92)
     assert not repo.restricts_labels
-    assert policy.agent.preset == "claude-code"
+    assert policy.agent.preset is None
     assert not policy.approval.approvers_enabled
 
 
 def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> None:
     answers = [
+        "",
         "",
         "https://example.slack.com/archives/C0LINKS1",
         "https://github.com/acme/Web-App.git",
@@ -298,13 +299,13 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
     ],
 )
 def test_invalid_channel_ids_are_explained(options: InitOptions, bad: str, fragment: str) -> None:
-    script = Script(answers=["", bad, *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", bad, *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert fragment in script.text
 
 
 def test_invalid_repo_and_long_description_are_explained(options: InitOptions) -> None:
-    answers = ["", "C0TEST1", "not a repo", "acme/web", "", "x" * 201, "Web", "", "", "", ""]
+    answers = ["", "", "C0TEST1", "not a repo", "acme/web", "", "x" * 201, "Web", "", "", "", ""]
     script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "owner/name" in script.text
@@ -351,7 +352,7 @@ def test_invalid_existing_policy_can_be_replaced(options: InitOptions) -> None:
 
 
 def test_stopping_during_policy_questions_saves_nothing(options: InitOptions) -> None:
-    script = Script(answers=["", "C0TEST1", "acme/web"], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", "C0TEST1", "acme/web"], secrets=[GOOD_APP, GOOD_BOT])
     assert init.run(_args(options), console=script.console(), api=FakeSlackApi.working()) == 1
     assert not options.env_file.exists()
     assert not options.config_file.exists()
@@ -363,7 +364,7 @@ def test_config_defaults_to_environment(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 
 def test_compose_file_is_written_once(options: InitOptions) -> None:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     first = options.env_file.read_text()
     assert first.count(f"{COMPOSE_FILE_KEY}=") == 1
@@ -406,7 +407,10 @@ def test_keeping_an_unreadable_policy_warns(options: InitOptions) -> None:
 # --- #90: every prompt explains itself ---------------------------------------
 
 EXPLANATIONS = [
-    init.EXPLAIN_BOT_NAME,
+    init.EXPLAIN_EXISTING_APP,
+    *init.EXPLAIN_BOT_NAME,
+    init.EXPLAIN_CREATE_LINK,
+    init.EXPLAIN_PASTE,
     *init.EXPLAIN_APP_TOKEN,
     *init.EXPLAIN_BOT_TOKEN,
     *init.EXPLAIN_CHANNEL,
@@ -419,7 +423,7 @@ EXPLANATIONS = [
 
 
 def _fresh_session(options: InitOptions) -> Script:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     return script
 
@@ -455,12 +459,13 @@ def test_each_explanation_comes_just_before_its_prompt(options: InitOptions) -> 
         manifest_out=options.manifest_out,
         config_file=options.config_file.with_name("fresh.toml"),
     )
-    script.answers, script.secrets = ["", *POLICY], [GOOD_APP, GOOD_BOT]
+    script.answers, script.secrets = ["", "", *POLICY], [GOOD_APP, GOOD_BOT]
     assert run_init(console, FakeSlackApi.working(), fresh) == 0
     pairs = {
-        "Bot name": init.EXPLAIN_BOT_NAME,
-        "Paste the app-level token": init.EXPLAIN_APP_TOKEN[-1],
-        "Paste the bot token": init.EXPLAIN_BOT_TOKEN[-1],
+        "Have you already created": init.EXPLAIN_EXISTING_APP,
+        "Bot name": init.EXPLAIN_BOT_NAME[-1],
+        "Paste the app-level token": init.EXPLAIN_PASTE,
+        "Paste the bot token": init.EXPLAIN_PASTE,
         "Channel id": init.EXPLAIN_CHANNEL[-1],
         "  GitHub repo": init.EXPLAIN_REPO[-1],
         "  Nickname": init.EXPLAIN_NICKNAME,
@@ -510,12 +515,12 @@ def test_examples_are_fictional(options: InitOptions) -> None:
         assert owner == "acme-co", owner
     for owner in re.findall(r"(?<![\w./-])([a-z0-9-]+)/[a-z0-9-]+", " ".join(EXPLANATIONS)):
         assert owner in {"acme-co", "owner"}, owner
-    assert "Idea Bot" in init.EXPLAIN_BOT_NAME
+    assert "Idea Bot" in init.EXPLAIN_BOT_NAME[0]
     assert "#ideas" in init.INTRO
 
 
 def test_none_is_not_a_label_choice(options: InitOptions) -> None:
-    answers = ["", "C0TEST1", "acme-co/web", "", "The web app", "none", "", "", "", ""]
+    answers = ["", "", "C0TEST1", "acme-co/web", "", "The web app", "none", "", "", "", ""]
     script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "Type any to allow every label the repo already has" in script.text
@@ -524,7 +529,7 @@ def test_none_is_not_a_label_choice(options: InitOptions) -> None:
 
 
 def test_a_label_list_narrows(options: InitOptions) -> None:
-    answers = ["", "C0TEST1", "acme-co/web", "", "The web app", "bug, needs-design", "", "", ""]
+    answers = ["", "", "C0TEST1", "acme-co/web", "", "The web app", "bug, needs-design", "", "", ""]
     script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
@@ -546,7 +551,7 @@ def test_labels_answer_rules() -> None:
 def test_none_for_labels_is_explained_and_asked_again(options: InitOptions) -> None:
     # POLICY's fifth answer is the labels prompt; answer none, then a list.
     answers = [*POLICY[:4], "none", "bug", *POLICY[5:]]
-    script = Script(answers=["", *answers], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *answers], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "Type any to allow every label the repo already has" in script.text
     (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
@@ -554,7 +559,7 @@ def test_none_for_labels_is_explained_and_asked_again(options: InitOptions) -> N
 
 
 def test_labels_prompt_defaults_to_any(options: InitOptions) -> None:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     [labels_prompt] = [p for p in script.prompts if p.strip().startswith("Labels")]
     assert labels_prompt.strip() == "Labels [any]:"
@@ -562,7 +567,80 @@ def test_labels_prompt_defaults_to_any(options: InitOptions) -> None:
 
 
 def test_any_writes_no_labels_line(options: InitOptions) -> None:
-    script = Script(answers=["", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     text = options.config_file.read_text(encoding="utf-8")
     assert "labels" not in text.split("[[channels.C0TEST1.repos]]", 1)[1]
+
+
+# --- #100: fresh-eyes fixes ---------------------------------------------------
+
+
+def test_steps_are_numbered_like_the_readme(options: InitOptions) -> None:
+    text = _fresh_session(options).text
+    headings = [line for line in text.splitlines() if line.startswith("Setup step ")]
+    assert headings == [f"Setup step {n} of 6: {init.STEP_TITLES[n]}" for n in range(1, 7)]
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    for n, title in init.STEP_TITLES.items():
+        assert f"{n}. **{title}" in readme, title
+
+
+def test_an_existing_app_skips_the_create_link(options: InitOptions) -> None:
+    script = Script(answers=["y", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "api.slack.com/apps?new_app" not in script.text
+    assert "Open your existing app" in script.text
+    assert not options.manifest_out.exists()
+    assert "Setup step 1 of 6" not in script.text
+    assert "Setup step 3 of 6" in script.text
+
+
+def test_request_to_install_is_explained() -> None:
+    bot = " ".join(init.EXPLAIN_BOT_TOKEN)
+    for words in ("Request to Install", "Ctrl-D", "run setup again", "OAuth & Permissions"):
+        assert words in bot
+
+
+def test_paste_hint_comes_before_each_token(options: InitOptions) -> None:
+    assert _fresh_session(options).text.count(init.EXPLAIN_PASTE) == 2
+
+
+def test_a_channel_name_gets_a_clear_message(options: InitOptions) -> None:
+    script = Script(answers=["", "", "#ideas", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "That is the channel's name. Setup needs its id" in script.text
+
+
+def test_preset_defaults_to_none_and_names_the_first_preset(options: InitOptions) -> None:
+    script = _fresh_session(options)
+    [prompt] = [p for p in script.prompts if p.startswith("Agent preset")]
+    assert "[none]" in prompt
+    assert init.FIRST_PRESET in " ".join(init.EXPLAIN_PRESET)
+    assert load_policy(options.config_file).agent.preset is None
+
+
+def test_intro_states_retries_and_no_fixed_time() -> None:
+    assert f"{init.MAX_ATTEMPTS} tries" in " ".join(init.INTRO.split())
+    assert "five minutes" not in init.INTRO
+
+
+@pytest.mark.parametrize(
+    ("path", "windows"),
+    [
+        ("/mnt/c/Users/sam/jotflow/.env", True),
+        ("/mnt/d/.env", True),
+        ("/home/sam/jotflow/.env", False),
+        ("/mnt/data/jotflow/.env", False),
+    ],
+)
+def test_windows_drive_detection(path: str, windows: bool) -> None:
+    assert init.on_windows_drive(Path(path)) is windows
+
+
+def test_saved_tokens_message_on_a_windows_drive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(init, "on_windows_drive", lambda path: True)
+    message = init._saved_tokens_message(Path(".env"))
+    assert "Windows drive" in message
+    assert "Only your user" not in message
+    monkeypatch.setattr(init, "on_windows_drive", lambda path: False)
+    assert "Only your user can read that file" in init._saved_tokens_message(Path(".env"))
