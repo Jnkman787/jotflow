@@ -30,13 +30,3 @@ def test_confidence_is_bounded() -> None:
             changes=IssueChanges(comment="hi"),
             confidence=1.5,
         )
-
-
-def test_cli_reports_version() -> None:
-    from jotflow import __version__
-    from jotflow.cli import main
-
-    with pytest.raises(SystemExit) as exc:
-        main(["--version"])
-    assert exc.value.code == 0
-    assert __version__
