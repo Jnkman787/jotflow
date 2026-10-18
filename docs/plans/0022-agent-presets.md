@@ -3,8 +3,8 @@
 ## Links and status
 
 - Issue: #22
-- Draft PR: to be opened with this plan
-- Status: planning
+- Draft PR: #137
+- Status: implementing
 - Last verified: Claude Code 2.1.303 and github-mcp-server 2.0.2, checked locally on 2026-10-18 (see Validation)
 - Next safe action: implement `src/jotflow/adapters/presets.py` and wire it into the runner
 
