@@ -14,6 +14,8 @@ from jotflow.commands import init
 from jotflow.commands.init import (
     APP_TOKEN_KEY,
     BOT_TOKEN_KEY,
+    COMPOSE_FILE_KEY,
+    COMPOSE_FILE_VALUE,
     Console,
     InitOptions,
     create_app_link,
@@ -77,7 +79,11 @@ def test_fresh_setup_writes_env_and_manifest(options: InitOptions) -> None:
     script = Script(answers=["Idea Bot", *POLICY], secrets=[GOOD_BOT, GOOD_APP])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
 
-    assert read_env(options.env_file) == {BOT_TOKEN_KEY: GOOD_BOT, APP_TOKEN_KEY: GOOD_APP}
+    assert read_env(options.env_file) == {
+        BOT_TOKEN_KEY: GOOD_BOT,
+        APP_TOKEN_KEY: GOOD_APP,
+        COMPOSE_FILE_KEY: COMPOSE_FILE_VALUE,
+    }
     assert stat.S_IMODE(options.env_file.stat().st_mode) == 0o600
     manifest = json.loads(options.manifest_out.read_text())
     assert manifest == render_manifest("Idea Bot")
@@ -174,7 +180,7 @@ def test_rerun_keeps_working_tokens_without_asking_again(options: InitOptions) -
     assert sum("Keep it?" in p for p in script.prompts) == 3
     assert not any("Paste" in p for p in script.prompts)
     assert not options.manifest_out.exists()
-    assert options.env_file.read_text() == before
+    assert options.env_file.read_text() == before + f"\n{COMPOSE_FILE_KEY}={COMPOSE_FILE_VALUE}\n"
     assert options.config_file.read_text() == policy_before
     assert not options.config_file.with_name("jotflow.toml.bak").exists()
 
@@ -189,7 +195,11 @@ def test_rerun_can_replace_tokens(options: InitOptions) -> None:
     options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
     script = Script(answers=["n", "n", "", *POLICY], secrets=[new_bot, new_app])
     assert run_init(script.console(), api, options) == 0
-    assert read_env(options.env_file) == {BOT_TOKEN_KEY: new_bot, APP_TOKEN_KEY: new_app}
+    assert read_env(options.env_file) == {
+        BOT_TOKEN_KEY: new_bot,
+        APP_TOKEN_KEY: new_app,
+        COMPOSE_FILE_KEY: COMPOSE_FILE_VALUE,
+    }
 
 
 def test_rerun_with_revoked_token_starts_over(options: InitOptions) -> None:
@@ -197,7 +207,11 @@ def test_rerun_with_revoked_token_starts_over(options: InitOptions) -> None:
     script = Script(answers=["y", "", *POLICY], secrets=[GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "no longer works" in script.text
-    assert read_env(options.env_file) == {BOT_TOKEN_KEY: GOOD_BOT, APP_TOKEN_KEY: GOOD_APP}
+    assert read_env(options.env_file) == {
+        BOT_TOKEN_KEY: GOOD_BOT,
+        APP_TOKEN_KEY: GOOD_APP,
+        COMPOSE_FILE_KEY: COMPOSE_FILE_VALUE,
+    }
 
 
 def test_create_app_link_round_trips_the_manifest() -> None:
@@ -221,6 +235,8 @@ def test_refuses_without_a_terminal(
 def test_fresh_setup_writes_a_valid_policy(options: InitOptions) -> None:
     script = Script(answers=["", *POLICY], secrets=[GOOD_BOT, GOOD_APP])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert stat.S_IMODE(options.config_file.stat().st_mode) == 0o644
+    assert stat.S_IMODE(options.env_file.stat().st_mode) == 0o600
     policy = load_policy(options.config_file)
     assert list(policy.channels) == ["C0TEST1"]
     (repo,) = policy.channels["C0TEST1"].repos
@@ -341,3 +357,43 @@ def test_stopping_during_policy_questions_saves_nothing(options: InitOptions) ->
 def test_config_defaults_to_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("JOTFLOW_CONFIG", str(tmp_path / "custom.toml"))
     assert InitOptions().config_file == tmp_path / "custom.toml"
+
+
+def test_compose_file_is_written_once(options: InitOptions) -> None:
+    script = Script(answers=["", *POLICY], secrets=[GOOD_BOT, GOOD_APP])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    first = options.env_file.read_text()
+    assert first.count(f"{COMPOSE_FILE_KEY}=") == 1
+    # a re-run keeping everything leaves .env byte for byte the same
+    script = Script(answers=["", "", ""])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert options.env_file.read_text() == first
+
+
+def test_custom_compose_file_is_kept(options: InitOptions) -> None:
+    options.env_file.write_text(
+        f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n{COMPOSE_FILE_KEY}=mine.yml\n"
+    )
+    script = Script(answers=["", "", *POLICY])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert read_env(options.env_file)[COMPOSE_FILE_KEY] == "mine.yml"
+    assert "docker-compose.policy.yml" in script.text
+
+
+def test_rewritten_policy_is_world_readable(options: InitOptions) -> None:
+    options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
+    options.config_file.write_text(EXAMPLE.read_text())
+    options.config_file.chmod(0o600)
+    script = Script(answers=["", "", "n", *POLICY])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert stat.S_IMODE(options.config_file.stat().st_mode) == 0o644
+
+
+def test_keeping_an_unreadable_policy_warns(options: InitOptions) -> None:
+    options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
+    options.config_file.write_text(EXAMPLE.read_text())
+    options.config_file.chmod(0o600)
+    script = Script(answers=["", "", ""])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "chmod 644" in script.text
+    assert stat.S_IMODE(options.config_file.stat().st_mode) == 0o600

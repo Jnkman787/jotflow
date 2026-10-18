@@ -57,6 +57,12 @@ from jotflow.slack_manifest import (
 
 BOT_TOKEN_KEY = "JOTFLOW_SLACK_BOT_TOKEN"
 APP_TOKEN_KEY = "JOTFLOW_SLACK_APP_TOKEN"
+# Compose reads COMPOSE_FILE from .env, so plain `docker compose up -d` also
+# applies docker-compose.policy.yml, which mounts jotflow.toml read-only.
+COMPOSE_FILE_KEY = "COMPOSE_FILE"
+COMPOSE_FILE_VALUE = "docker-compose.yml:docker-compose.policy.yml"
+# jotflow.toml holds no secrets, and the container's uid must be able to read it.
+POLICY_FILE_MODE = 0o644
 
 CREATE_APP_URL = "https://api.slack.com/apps"
 DEFAULT_MANIFEST_OUT = "slack-app-manifest.json"
@@ -442,11 +448,21 @@ def _policy_step(console: Console, options: InitOptions) -> Policy | None:
             console.say()
             console.say(f"{path} is already set up: {_summary(existing)}.")
             if console.confirm("Keep it?"):
+                _warn_if_unreadable(console, path)
                 return None
     return _ask_policy(console, existing)
 
 
-def _write_text_atomic(path: Path, text: str, mode: int = 0o644) -> None:
+def _warn_if_unreadable(console: Console, path: Path) -> None:
+    """The container reads jotflow.toml as another user, so it must be world-readable."""
+    if os.name == "posix" and not path.stat().st_mode & 0o004:
+        console.say(
+            f"  {path} is not readable by other users, so the JotFlow container cannot "
+            f"read it. Fix it with: chmod 644 {path}"
+        )
+
+
+def _write_text_atomic(path: Path, text: str, mode: int = POLICY_FILE_MODE) -> None:
     directory = path.parent if str(path.parent) else Path(".")
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=directory)
     try:
@@ -458,6 +474,7 @@ def _write_text_atomic(path: Path, text: str, mode: int = 0o644) -> None:
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)
         raise
+    os.chmod(path, mode)
 
 
 def _save_policy(console: Console, path: Path, policy: Policy) -> None:
@@ -512,8 +529,17 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     policy = _policy_step(console, options)
 
     console.say()
-    write_env(options.env_file, {BOT_TOKEN_KEY: bot_token, APP_TOKEN_KEY: app_token})
+    updates = {BOT_TOKEN_KEY: bot_token, APP_TOKEN_KEY: app_token}
+    compose_file = existing.get(COMPOSE_FILE_KEY)
+    if compose_file is None:
+        updates[COMPOSE_FILE_KEY] = COMPOSE_FILE_VALUE
+    write_env(options.env_file, updates)
     console.say(f"Saved both tokens to {options.env_file}. Only your user can read that file.")
+    if compose_file is not None and compose_file != COMPOSE_FILE_VALUE:
+        console.say(
+            f"  Left your {COMPOSE_FILE_KEY}={compose_file} as it is. For Docker to mount "
+            f"jotflow.toml it should include docker-compose.policy.yml."
+        )
     if policy is not None:
         _save_policy(console, options.config_file, policy)
     console.say(f"Connected to Slack as {_describe(identity)}.")

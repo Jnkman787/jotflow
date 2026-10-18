@@ -5,7 +5,7 @@
 - Issue: #7
 - Draft PR: #67
 - Status: completed
-- Last verified: `make check` green locally on 2026-10-18 after rebasing on #64, 184 tests
+- Last verified: `make check` green locally on 2026-10-18 after rebasing on #66, #68 and #69, 233 tests
 - Next safe action: in the sandbox workspace, run `jotflow init` on a fresh clone and time it, for the live criterion on #7
 
 ## Objective and done-when
@@ -51,6 +51,7 @@ Order of work. The `jotflow.toml` part waits for #64, which defines the policy s
   - Each answer is checked by the policy's own field types, so prompts show the same messages as the loader. Duplicate channels, repos, and nicknames are asked again.
   - Re-run: an existing valid file can be kept whole. If it is rewritten, settings init does not ask about (issue links, debounce, approval) are kept, a channel already listed can keep its repos, and the old file is saved as `jotflow.toml.bak`. An invalid file shows the loader's problems and can be kept or replaced.
   - Both files are written only after the last question, so stopping part-way changes nothing.
+- Docker (after #68, team lead decisions): `jotflow.toml` is written with mode 0644, because the container's uid 10001 reads it from a read-only mount and it holds no secrets. `.env` stays 0600. Keeping an existing policy file that others cannot read prints the `chmod 644` fix. Init also adds `COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml` to `.env` when the key is absent, so plain `docker compose up -d` mounts the policy. A different value already there is kept, with a note.
 - Create-from-manifest link: `https://api.slack.com/apps?new_app=1&manifest_json=<url-encoded JSON>`. The rendered manifest is also saved to a file in case the link is too long for a terminal or browser.
 
 Security:
@@ -82,6 +83,7 @@ Security:
 - 2026-10-18, before #64: `make check` green, 97 tests. New: `tests/test_slack_auth.py`, `tests/test_envfile.py`, `tests/test_init.py`, with shared fakes in `tests/fakes.py`. Init sessions are scripted end to end with a fake Slack client; no network.
 - 2026-10-18, after rebasing on #64: `make check` green, 184 tests. New: `tests/test_policy_writer.py` round-trips `jotflow.example.toml` and awkward strings; `tests/test_init.py` covers the policy interview, pasted links, duplicates, re-runs with keep, rewrite, and backup, invalid existing files, and stopping part-way.
 - CodeRabbit: skipped. The local CLI hit its free-allowance rate limit (all 3 included reviews used, reset in about 26 minutes). In its place I reviewed the diff myself and fixed two things: a rewrite now says that channels left out are removed, and the owner-only file mode is set only where `os.fchmod` exists, which is not on Windows before Python 3.13.
+- 2026-10-18, after rebasing on #66, #68 and #69: `make check` green, 233 tests. New tests cover the policy file mode, the unreadable-policy warning, and `COMPOSE_FILE` being written once and a custom value being kept.
 - Found while testing: uppercasing a typed channel id would have accepted `general` as `GENERAL`, a valid-looking private channel id. Ids are now taken as typed.
 
 ## Handoff notes
