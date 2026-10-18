@@ -250,4 +250,4 @@ def test_comments_stay_with_their_columns_after_add_column(db_path: Path) -> Non
 def test_shipped_migrations_are_numbered_one_to_n() -> None:
     """Whoever rebases second renumbers; this catches a gap or a duplicate."""
     assert [m.version for m in MIGRATIONS] == list(range(1, len(MIGRATIONS) + 1))
-    assert LATEST_VERSION == len(MIGRATIONS)
+    assert len(MIGRATIONS) == LATEST_VERSION
