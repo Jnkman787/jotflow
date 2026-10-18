@@ -60,7 +60,7 @@ Stays open on #5 after this PR, because it needs the live sandbox workspace:
 
 ## Validation
 
-- `make check`: ruff lint and format, mypy strict, and pytest all pass; 32 tests, 18 of them new in `tests/test_slack_manifest.py`.
+- `make check`: ruff lint and format, mypy strict, and pytest all pass; 32 tests, 28 of them new in `tests/test_slack_manifest.py`.
 - `make manifest` regenerates `manifests/slack-app.json`; `test_checked_in_manifest_matches_renderer` guards against drift.
 - Not yet done: creating an app from the manifest in the sandbox workspace and reading a private channel. Both stay open on #5.
 
