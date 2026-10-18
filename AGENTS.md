@@ -31,13 +31,14 @@ src/jotflow/
   policy.py       jotflow.toml schema and loader: channels, repos, labels, approvers
   policy_writer.py  writes a Policy back to jotflow.toml; output always reloads
   cli.py          entry point
-  commands/       one module per CLI subcommand: init, run, check
+  commands/       one module per CLI subcommand: init, run, check, replay
   live_check.py   the opt-in live Slack round trip behind `jotflow check --live`
   slack_manifest.py  renders the Slack app manifest; default checked in under manifests/
   slack_auth.py   checks Slack tokens behind a small protocol tests can fake
   envfile.py      reads and updates .env without disturbing other lines
   store/          local state behind the Store interface: SQLite, plus an in-memory store for tests
   testing/        saved Slack threads for tests, replay, and demos; format in testing/threads/README.md
+  replay.py       runs a saved thread through the real pipeline with a scripted agent (`jotflow replay`)
   orchestrator/   event ingest, debouncing, topic index, run lifecycle and tokens, proposal lifecycle, approval cards
   whiteboard/     the MCP server: gate (transport rules, audit), token interface, fixed tool registry
   adapters/       agent runners and presets

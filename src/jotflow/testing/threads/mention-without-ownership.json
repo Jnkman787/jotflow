@@ -87,7 +87,8 @@
             "decision": "new_topic",
             "confidence": 0.9
           },
-          "topic_key": "reports-dark-mode"
+          "topic_key": "reports-dark-mode",
+          "title": "Dark mode for reports"
         },
         {
           "tool": "link_message",

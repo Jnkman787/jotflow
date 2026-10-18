@@ -102,7 +102,8 @@
             "decision": "new_topic",
             "confidence": 0.9
           },
-          "topic_key": "dark-mode"
+          "topic_key": "dark-mode",
+          "title": "Dark mode"
         },
         {
           "tool": "link_message",

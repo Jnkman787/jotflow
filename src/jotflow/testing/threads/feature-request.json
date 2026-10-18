@@ -87,7 +87,8 @@
             "decision": "new_topic",
             "confidence": 0.9
           },
-          "topic_key": "csv-export"
+          "topic_key": "csv-export",
+          "title": "CSV export of reports"
         },
         {
           "tool": "link_message",
