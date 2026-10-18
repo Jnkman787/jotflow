@@ -80,3 +80,16 @@ def test_write_env_leaves_file_untouched_on_bad_input(tmp_path: Path) -> None:
 
 def test_read_env_missing_file(tmp_path: Path) -> None:
     assert read_env(tmp_path / "missing") == {}
+
+
+def test_update_removes_a_key_set_to_none() -> None:
+    text = "# keep\nA=1\nB=2\nB=3\n"
+    assert update_env_text(text, {"B": None, "C": None}) == "# keep\nA=1\n"
+
+
+def test_write_env_starts_a_new_file_from_the_template(tmp_path: Path) -> None:
+    path = tmp_path / "agent.env"
+    write_env(path, {"A": "1"}, template="# what A is\nA=\nB=\n")
+    assert path.read_text(encoding="utf-8") == "# what A is\nA=1\nB=\n"
+    write_env(path, {"B": "2"}, template="ignored once the file exists\n")
+    assert path.read_text(encoding="utf-8") == "# what A is\nA=1\nB=2\n"

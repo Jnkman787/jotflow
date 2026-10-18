@@ -318,7 +318,7 @@ def test_rerun_rewrite_keeps_other_settings_and_backs_up(options: InitOptions) -
     options.config_file.write_text(EXAMPLE.read_text())
     original = options.config_file.read_text()
     # keep both tokens, rewrite the policy, keep the first channel's repos, drop the second
-    answers = ["", "", "n", "C0EXAMPLE1", "", "", "codex-cli", "claude-code"]
+    answers = ["", "", "n", "C0EXAMPLE1", "", "", "codex-cli", "claude-code", ""]
     script = Script(answers=answers)
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
 
@@ -770,5 +770,201 @@ def test_a_guessed_id_is_never_written(options: InitOptions) -> None:
 
 def test_preset_and_nickname_prompts_say_what_they_do() -> None:
     preset = " ".join(init.EXPLAIN_PRESET)
-    assert "claude-code is accepted today but does nothing" in preset
+    assert "agent.env and agent-exec.env" in preset and "Type none" in preset
     assert "issue 42" in init.EXPLAIN_NICKNAME
+
+
+# --- #126: runner secrets and the agent preset ---------------------------------
+
+AGENT_POLICY = [*POLICY[:-1], "claude-code"]
+DRAFT_KEY, EXEC_KEY = "JOTFLOW_RUNNER_SECRET", "JOTFLOW_RUNNER_EXEC_SECRET"
+
+
+def _with_agent(options: InitOptions, model: str = "", **rotate: bool) -> Script:
+    opts = replace(options, **rotate)
+    script = Script(answers=["", "", *AGENT_POLICY, model], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), opts) == 0
+    return script
+
+
+def _kept_session(options: InitOptions, model: str = "", **rotate: bool) -> Script:
+    """A re-run that keeps the tokens and jotflow.toml, whose preset is claude-code."""
+    opts = replace(options, **rotate)
+    script = Script(answers=["", "", "", model])
+    assert run_init(script.console(), FakeSlackApi.working(), opts) == 0
+    return script
+
+
+def _files(options: InitOptions) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    return (
+        read_env(options.env_file),
+        read_env(options.agent_file),
+        read_env(options.agent_exec_file),
+    )
+
+
+def test_a_first_run_writes_two_distinct_secrets_to_three_files(options: InitOptions) -> None:
+    script = _with_agent(options)
+    env, agent, agent_exec = _files(options)
+    assert env[DRAFT_KEY] == agent[DRAFT_KEY]
+    assert env[EXEC_KEY] == agent_exec[DRAFT_KEY]
+    assert env[DRAFT_KEY] != env[EXEC_KEY]
+    assert len(env[DRAFT_KEY]) >= 32 and len(env[EXEC_KEY]) >= 32
+    for path in (options.env_file, options.agent_file, options.agent_exec_file):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert agent["JOTFLOW_AGENT_PRESET"] == agent_exec["JOTFLOW_AGENT_PRESET"] == "claude-code"
+    assert "JOTFLOW_AGENT_MODEL" not in agent and "JOTFLOW_AGENT_MODEL" not in agent_exec
+    assert load_policy(options.config_file).agent.preset == "claude-code"
+    for secret in (env[DRAFT_KEY], env[EXEC_KEY]):
+        assert secret not in script.text and all(secret not in p for p in script.prompts)
+    assert "got a new runner secret" in script.text
+
+
+def test_nothing_but_the_runner_secret_reaches_the_agent_files(options: InitOptions) -> None:
+    options.env_file.write_text("JOTFLOW_GITHUB_TOKEN=ghp_sentinel\nOTHER=sentinel-value\n")
+    _with_agent(options)
+    for path in (options.agent_file, options.agent_exec_file):
+        text = path.read_text()
+        assert "sentinel" not in text and GOOD_BOT not in text and GOOD_APP not in text
+        assert set(read_env(path)) == {"JOTFLOW_RUNNER_SECRET", "JOTFLOW_AGENT_PRESET"}
+
+
+def test_a_rerun_keeps_both_secrets(options: InitOptions) -> None:
+    _with_agent(options)
+    before = _files(options)
+    script = _kept_session(options)
+    assert _files(options) == before
+    assert script.text.count("kept its runner secret") == 2
+
+
+@pytest.mark.parametrize("which", ["rotate_runner_secret", "rotate_exec_secret"])
+def test_either_secret_rotates_alone(options: InitOptions, which: str) -> None:
+    _with_agent(options)
+    env, _, _ = _files(options)
+    script = _kept_session(options, **{which: True})
+    after, agent, agent_exec = _files(options)
+    rotated, kept = (
+        (DRAFT_KEY, EXEC_KEY) if which == "rotate_runner_secret" else (EXEC_KEY, DRAFT_KEY)
+    )
+    assert after[rotated] != env[rotated] and after[kept] == env[kept]
+    assert after[DRAFT_KEY] == agent[DRAFT_KEY] and after[EXEC_KEY] == agent_exec[DRAFT_KEY]
+    assert "as asked" in script.text and "Restart with `docker compose up -d`" in script.text
+    assert after[rotated] not in script.text
+
+
+def test_both_secrets_rotate_together(options: InitOptions) -> None:
+    _with_agent(options)
+    env, _, _ = _files(options)
+    _kept_session(options, rotate_runner_secret=True, rotate_exec_secret=True)
+    after, _, _ = _files(options)
+    assert after[DRAFT_KEY] != env[DRAFT_KEY] and after[EXEC_KEY] != env[EXEC_KEY]
+    assert after[DRAFT_KEY] != after[EXEC_KEY]
+
+
+def test_mismatched_files_are_repaired_from_env(options: InitOptions) -> None:
+    _with_agent(options)
+    env, _, _ = _files(options)
+    text = options.agent_file.read_text().replace(env[DRAFT_KEY], "z" * 40)
+    options.agent_file.write_text(text)
+    options.agent_exec_file.unlink()
+    script = _kept_session(options)
+    after, agent, agent_exec = _files(options)
+    assert after[DRAFT_KEY] == agent[DRAFT_KEY] == env[DRAFT_KEY]
+    assert after[EXEC_KEY] == agent_exec[DRAFT_KEY] == env[EXEC_KEY]
+    assert "both now use the one in .env" in script.text
+    assert "both files hold the same one" in script.text
+    assert "z" * 40 not in script.text
+
+
+def test_a_model_is_set_kept_and_removed(options: InitOptions) -> None:
+    _with_agent(options, model="opus")
+    assert read_env(options.agent_file)["JOTFLOW_AGENT_MODEL"] == "opus"
+    assert read_env(options.agent_exec_file)["JOTFLOW_AGENT_MODEL"] == "opus"
+    script = _kept_session(options)
+    assert any(p.startswith("Agent model [opus]") for p in script.prompts)
+    assert read_env(options.agent_file)["JOTFLOW_AGENT_MODEL"] == "opus"
+    _kept_session(options, model="default")
+    assert "JOTFLOW_AGENT_MODEL" not in read_env(options.agent_file)
+    assert "JOTFLOW_AGENT_MODEL" not in read_env(options.agent_exec_file)
+
+
+def test_a_bad_model_name_is_asked_again(options: InitOptions) -> None:
+    script = Script(
+        answers=["", "", *AGENT_POLICY, "$(rm -rf)", "sonnet"], secrets=[GOOD_APP, GOOD_BOT]
+    )
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "A model name is letters, digits" in script.text
+    assert read_env(options.agent_file)["JOTFLOW_AGENT_MODEL"] == "sonnet"
+
+
+def test_the_escape_hatch_gets_a_secret_but_no_preset(options: InitOptions) -> None:
+    options.agent_exec_file.write_text('JOTFLOW_AGENT_COMMAND=["my-agent", "{mcp_config}"]\n')
+    script = _with_agent(options, model="opus")
+    agent_exec = read_env(options.agent_exec_file)
+    assert "JOTFLOW_AGENT_PRESET" not in agent_exec and "JOTFLOW_AGENT_MODEL" not in agent_exec
+    assert agent_exec["JOTFLOW_RUNNER_SECRET"] == read_env(options.env_file)[EXEC_KEY]
+    assert "sets JOTFLOW_AGENT_COMMAND, so setup left the preset and model out" in script.text
+    assert read_env(options.agent_file)["JOTFLOW_AGENT_PRESET"] == "claude-code"
+
+
+def test_new_agent_files_start_from_the_examples(options: InitOptions) -> None:
+    root = Path(__file__).resolve().parents[1]
+    for name in ("agent.env.example", "agent-exec.env.example"):
+        (options.env_file.parent / name).write_text((root / name).read_text())
+    _with_agent(options)
+    text = options.agent_file.read_text()
+    assert text.startswith("# agent.env:") and "JOTFLOW_GITHUB_READ_TOKEN=" in text
+    assert read_env(options.agent_file)["JOTFLOW_RUNNER_SECRET"]
+    assert options.agent_exec_file.read_text().startswith("# agent-exec.env:")
+
+
+def test_the_profile_waits_for_the_github_tokens(options: InitOptions) -> None:
+    script = _with_agent(options)
+    assert "COMPOSE_PROFILES" not in read_env(options.env_file)
+    assert "Before the agent containers can start" in script.text
+    options.agent_file.write_text(options.agent_file.read_text() + "JOTFLOW_GITHUB_READ_TOKEN=r\n")
+    text = options.agent_exec_file.read_text() + "JOTFLOW_GITHUB_WRITE_TOKEN=w\n"
+    options.agent_exec_file.write_text(text)
+    options.env_file.write_text(options.env_file.read_text() + "COMPOSE_PROFILES=debug\n")
+    script = _kept_session(options)
+    assert read_env(options.env_file)["COMPOSE_PROFILES"] == "debug,agent"
+    assert "starts the agent containers too" in script.text
+    script = _kept_session(options)
+    assert read_env(options.env_file)["COMPOSE_PROFILES"] == "debug,agent"
+    assert "starts the agent containers too" not in script.text
+
+
+def test_no_preset_leaves_the_agent_alone(options: InitOptions) -> None:
+    options.agent_file.write_text("JOTFLOW_RUNNER_SECRET=" + "a" * 40 + "\n")
+    before = options.agent_file.read_text()
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert (
+        run_init(
+            script.console(), FakeSlackApi.working(), replace(options, rotate_runner_secret=True)
+        )
+        == 0
+    )
+    assert options.agent_file.read_text() == before
+    assert not options.agent_exec_file.exists()
+    assert DRAFT_KEY not in read_env(options.env_file)
+    assert "no runner secret to rotate" in script.text
+    assert not any(p.startswith("Agent model") for p in script.prompts)
+
+
+def test_an_invalid_kept_policy_means_no_agent(options: InitOptions) -> None:
+    options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
+    options.config_file.write_text("unknown_key = 1\n")
+    assert run_init(Script(answers=["", "", "n"]).console(), FakeSlackApi.working(), options) == 0
+    assert not options.agent_file.exists()
+
+
+def test_rotation_flags_reach_the_options(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parser = argparse.ArgumentParser()
+    init.add_arguments(parser)
+    args = parser.parse_args(["--rotate-runner-secret", "--rotate-exec-secret"])
+    seen: list[InitOptions] = []
+    monkeypatch.setattr(init, "run_init", lambda console, api, opts: seen.append(opts) or 0)
+    assert init.run(args, console=Script().console(), api=FakeSlackApi.working()) == 0
+    assert seen[0].rotate_runner_secret and seen[0].rotate_exec_secret

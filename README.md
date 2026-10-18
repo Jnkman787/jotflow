@@ -176,7 +176,7 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
    - **a nickname**, a short word people type to point at the repo. Later, starting a Slack message with `re: web#42` points it at issue 42 in that repo.
    - **what it covers**, in one sentence, for example `The customer-facing website`. When a channel feeds several repos, the agent uses these sentences to choose one.
    - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo. A comma-separated list, for example `bug, enhancement`, narrows it to just those; list only labels that already exist on the repo.
-6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Agent runs arrive in a later release, milestone 3. Setup accepts `claude-code` today, but it does nothing until then, so press Enter to keep the default, `none`, for now. Any other name is refused for now.
+6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Setup accepts `claude-code`, or `none` to leave the agent off, which is the default for now. Any other name is refused for now. If you choose `claude-code`, setup then asks which model the agent should use. Press Enter for the preset's defaults. It also sets up the agent containers' files; see [the agent containers](#the-agent-containers) below.
 
 A session looks like this, shortened. Your answers are on the right of each prompt; a hidden token shows nothing.
 
@@ -231,7 +231,7 @@ Setup writes two files next to `docker-compose.yml`. Neither is committed to git
 - **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that is not enforced: the folder's Windows permissions decide who can read it, and setup says so instead of "Only your user can read that file". Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
 - **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option.
 
-Running `uv run jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`.
+Running `uv run jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`, and it keeps the agent containers' secrets.
 
 #### If your workspace needs admin approval
 
@@ -261,13 +261,18 @@ On Windows in PowerShell, setup has already added the `COMPOSE_PATH_SEPARATOR=:`
 docker compose up -d
 ```
 
-This starts JotFlow. The agent containers, where your team's agent will draft issues and write the approved ones, are off until you set them up; agent runs arrive in milestone 3. There are two, so the GitHub token that can write never sits where drafting happens. To set them up:
+This starts JotFlow. The agent containers, where your team's agent will draft issues and write the approved ones, are off until you set them up; agent runs arrive in milestone 3.
 
-1. Copy `agent.env.example` to `agent.env`. It holds the model login and a read-only GitHub token.
-2. Copy `agent-exec.env.example` to `agent-exec.env`. It holds the model login and a GitHub token that can write issues.
-3. Give both files mode 0600 and fill them in as their comments describe. Each gets its own runner secret, and `.env` holds both, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. Then add `COMPOSE_PROFILES=agent` to `.env`.
+#### The agent containers
 
-Neither file holds Slack tokens, and neither agent sees `.env`.
+There are two agent containers, so the GitHub token that can write never sits where drafting happens. When you choose a preset, setup writes their files next to `.env`, from `agent.env.example` and `agent-exec.env.example`, readable only by you:
+
+- **`agent.env`** is for drafting and questions. Fill in a read-only GitHub token and the model login, as its comments describe.
+- **`agent-exec.env`** is for writing approved issues. Fill in a GitHub token that can write issues and the model login.
+
+Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Once both GitHub tokens are filled in, run `uv run jotflow init` again: it keeps the secrets and adds `COMPOSE_PROFILES=agent` to `.env`, so `docker compose up -d` starts both agent containers too. Neither file holds Slack tokens, and neither agent sees `.env`.
+
+To replace a secret, for example after it leaked, run setup with `--rotate-runner-secret` for drafting, `--rotate-exec-secret` for execution, or both. Then run `docker compose up -d` so every container picks up the new value. If a file sets `JOTFLOW_AGENT_COMMAND` for an agent without a preset, setup still writes its secret but leaves the preset and model out.
 
 Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 

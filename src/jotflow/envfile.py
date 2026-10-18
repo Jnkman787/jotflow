@@ -52,17 +52,20 @@ def _check(key: str, value: str) -> None:
         raise ValueError(f"value for {key} must be a single line")
 
 
-def update_env_text(text: str, updates: Mapping[str, str]) -> str:
-    """Return ``text`` with each key in ``updates`` set, replacing in place or appending."""
+def update_env_text(text: str, updates: Mapping[str, str | None]) -> str:
+    """Return ``text`` with each key in ``updates`` set, replacing in place or appending.
+
+    A ``None`` value removes the key.
+    """
     for key, value in updates.items():
-        _check(key, value)
-    pending = dict(updates)
+        _check(key, value or "")
+    pending = {key: value for key, value in updates.items() if value is not None}
     lines: list[str] = []
     for line in text.splitlines():
         match = None if line.lstrip().startswith("#") else _LINE.fullmatch(line)
         if match and match.group(1) in updates:
             key = match.group(1)
-            if key in pending:
+            if key in pending:  # a key set to None is never pending, so it is dropped
                 lines.append(f"{key}={pending.pop(key)}")
             # A repeated key is dropped so the file has one definition.
             continue
@@ -74,12 +77,15 @@ def update_env_text(text: str, updates: Mapping[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_env(path: Path, updates: Mapping[str, str]) -> None:
-    """Set ``updates`` in the file at ``path``, creating it with mode 0600 if needed."""
+def write_env(path: Path, updates: Mapping[str, str | None], *, template: str = "") -> None:
+    """Set ``updates`` in the file at ``path``, creating it with mode 0600 if needed.
+
+    A new file starts from ``template``, such as an example file's text.
+    """
     try:
         current = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        current = ""
+        current = template
     new_text = update_env_text(current, updates)
     directory = path.parent if str(path.parent) else Path(".")
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=directory)
