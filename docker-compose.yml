@@ -33,21 +33,29 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # Two agent services, so the write GitHub token never exists in a container a
+  # drafting run can reach: runs share one uid, and a same-uid process can read
+  # another's /proc/<pid>/environ and run directory (D6, #54).
+  #
+  # Off until the team sets them up: add COMPOSE_PROFILES=agent to .env once
+  # agent.env and agent-exec.env are filled in.
   agent:
-    # Off until the team sets it up: add COMPOSE_PROFILES=agent to .env once
-    # agent.env is filled in. Without agent.env the runner would only fail.
     profiles: [agent]
     build:
       context: .
       dockerfile: Dockerfile.agent
     image: jotflow-agent:local
     restart: unless-stopped
-    # The agent's own environment. Never .env: Slack tokens stay with JotFlow.
+    # Drafting and question runs: the read-only GitHub token and the model
+    # login. Never .env, and never the write token.
     env_file:
       - path: agent.env
         required: false
+    environment:
+      JOTFLOW_RUNNER_KINDS: drafting,question
+      JOTFLOW_RUNNER_ALLOWED_HOSTS: agent
     volumes:
-      # The CLI's model login, kept between restarts.
+      # This service's own home, for the CLI's model login.
       - agent-home:/home/agent
     networks:
       - agents
@@ -61,9 +69,36 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  agent-exec:
+    profiles: [agent]
+    image: jotflow-agent:local
+    restart: unless-stopped
+    # Execution runs only, one at a time: the write GitHub token and the model
+    # login. Never .env, and never the read token.
+    env_file:
+      - path: agent-exec.env
+        required: false
+    environment:
+      JOTFLOW_RUNNER_KINDS: execution
+      JOTFLOW_RUNNER_ALLOWED_HOSTS: agent-exec
+    volumes:
+      # A separate home: nothing a drafting run writes can reach an execution run.
+      - agent-exec-home:/home/agent
+    networks:
+      - agents
+      - agent-egress
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   jotflow-data:
   agent-home:
+  agent-exec-home:
 
 networks:
   # Outbound access, for Slack's Socket Mode connection.

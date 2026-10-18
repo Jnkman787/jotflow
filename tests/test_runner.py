@@ -19,7 +19,9 @@ import pytest
 
 from jotflow import cli
 from jotflow.adapters.runner import (
+    CONVERSATION_KINDS,
     DIR_PREFIX,
+    EXECUTION_KINDS,
     ConfigError,
     LaunchRequest,
     Runner,
@@ -97,15 +99,18 @@ ENVIRON = {
 }
 
 
-def config(tmp_path: Path, mode: str = "exit", **overrides: Any) -> RunnerConfig:
+def config(
+    tmp_path: Path, mode: str = "exit", *, execution: bool = False, **overrides: Any
+) -> RunnerConfig:
     script = tmp_path / "agent.py"
     script.write_text(AGENT, encoding="utf-8")
     fields: dict[str, Any] = {
         "secret": SECRET,
         "mcp_url": "http://jotflow:8765/mcp",
         "command": (sys.executable, str(script), "{mcp_config}", str(tmp_path / "out.json"), mode),
-        "read_token": READ,
-        "write_token": WRITE,
+        "kinds": EXECUTION_KINDS if execution else CONVERSATION_KINDS,
+        "read_token": None if execution else READ,
+        "write_token": WRITE if execution else None,
         "env_allow": ("ANTHROPIC_API_KEY",),
         "allowed_hosts": frozenset({HOST}),
         "workdir": tmp_path,
@@ -203,7 +208,8 @@ def test_a_launch_request_is_exactly_three_fields(body: dict[str, Any], ok: bool
     ],
 )
 def test_the_child_environment_is_the_allowlist(tmp_path: Path, kind: RunKind, token: str) -> None:
-    env = child_env(config(tmp_path), kind, "run-1", tmp_path, ENVIRON)
+    cfg = config(tmp_path, execution=kind is RunKind.EXECUTION)
+    env = child_env(cfg, kind, "run-1", tmp_path, ENVIRON)
     assert env["GITHUB_TOKEN"] == env["GH_TOKEN"] == token
     assert env["ANTHROPIC_API_KEY"] == "model-key"
     assert env["HOME"] == "/home/agent"
@@ -230,7 +236,7 @@ def test_the_mcp_config_carries_the_token_as_a_header() -> None:
 async def test_a_run_gets_a_private_config_and_only_its_kinds_token(
     tmp_path: Path, kind: RunKind, token: str
 ) -> None:
-    runner = Runner(config(tmp_path), environ=ENVIRON)
+    runner = Runner(config(tmp_path, execution=kind is RunKind.EXECUTION), environ=ENVIRON)
     await runner.launch(LaunchRequest(run_id="run-1", kind=kind, token=TOKEN))
     view = await finish(runner, "run-1")
     assert view == {"run_id": "run-1", "state": "exited", "exit_code": 0}
@@ -254,13 +260,61 @@ async def test_a_failing_agent_reports_its_exit_code(tmp_path: Path) -> None:
     assert (await finish(runner, "run-1"))["exit_code"] == 3
 
 
-async def test_a_missing_token_refuses_without_falling_back(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("overrides", "problem"),
+    [
+        ({"read_token": None}, "holds the read GitHub token and never the write one"),
+        ({"write_token": WRITE}, "holds the read GitHub token and never the write one"),
+        (
+            {"kinds": frozenset({RunKind.DRAFTING, RunKind.EXECUTION})},
+            "either drafting and question runs, or execution runs only",
+        ),
+        ({"kinds": frozenset()}, "either drafting and question runs"),
+    ],
+)
+def test_a_conversation_runner_never_holds_the_write_token(
+    tmp_path: Path, overrides: dict[str, Any], problem: str
+) -> None:
+    with pytest.raises(ConfigError, match=problem):
+        config(tmp_path, **overrides)
+
+
+@pytest.mark.parametrize("overrides", [{"write_token": None}, {"read_token": READ}])
+def test_an_execution_runner_never_holds_the_read_token(
+    tmp_path: Path, overrides: dict[str, Any]
+) -> None:
+    with pytest.raises(ConfigError, match="holds the write GitHub token and never the read"):
+        config(tmp_path, execution=True, **overrides)
+
+
+@pytest.mark.parametrize(
+    ("execution", "kind", "served"),
+    [
+        (False, RunKind.EXECUTION, "drafting and question"),
+        (True, RunKind.DRAFTING, "execution"),
+        (True, RunKind.QUESTION, "execution"),
+    ],
+)
+async def test_a_runner_refuses_kinds_it_does_not_serve(
+    tmp_path: Path, execution: bool, kind: RunKind, served: str
+) -> None:
     from jotflow.adapters.runner import LaunchRefused
 
-    runner = Runner(config(tmp_path, read_token=None), environ=ENVIRON)
-    with pytest.raises(LaunchRefused, match="no GitHub token is configured for drafting runs"):
-        await runner.launch(LaunchRequest(run_id="run-1", kind=RunKind.DRAFTING, token=TOKEN))
+    runner = Runner(config(tmp_path, execution=execution), environ=ENVIRON)
+    with pytest.raises(LaunchRefused, match=f"serves only {served} runs") as refused:
+        await runner.launch(LaunchRequest(run_id="run-1", kind=kind, token=TOKEN))
+    assert refused.value.status == 403
     assert runner.get("run-1") is None
+
+
+async def test_execution_runs_go_one_at_a_time(tmp_path: Path) -> None:
+    from jotflow.adapters.runner import LaunchRefused
+
+    runner = Runner(config(tmp_path, mode="sleep", execution=True), environ=ENVIRON)
+    await runner.launch(LaunchRequest(run_id="run-1", kind=RunKind.EXECUTION, token=TOKEN))
+    with pytest.raises(LaunchRefused, match="limit of live runs"):
+        await runner.launch(LaunchRequest(run_id="run-2", kind=RunKind.EXECUTION, token=TOKEN))
+    await runner.close()
 
 
 async def test_a_run_launches_once_and_live_runs_are_capped(tmp_path: Path) -> None:
@@ -379,6 +433,18 @@ async def test_an_oversized_body_is_refused(tmp_path: Path) -> None:
     assert response.status_code == 413
 
 
+async def test_a_chunked_body_is_capped_while_it_is_read(tmp_path: Path) -> None:
+    async def chunks() -> AsyncIterator[bytes]:
+        for _ in range(10):
+            yield b" " * 1024
+
+    cfg = config(tmp_path)
+    runner = Runner(cfg, environ=ENVIRON)
+    async with http_for(runner, cfg) as http:
+        response = await http.post("/runs", content=chunks())
+    assert response.status_code == 413
+
+
 async def test_launch_status_and_stop_over_http(tmp_path: Path) -> None:
     cfg = config(tmp_path, mode="sleep")
     runner = Runner(cfg, environ=ENVIRON, kill_grace=1.0)
@@ -445,8 +511,15 @@ def test_runner_settings_build_the_config(monkeypatch: pytest.MonkeyPatch) -> No
         monkeypatch.setenv(name, value)
     cfg = runner_command.build_config(runner_command.RunnerSettings())  # type: ignore[call-arg]
     assert cfg.command[0] == "claude"
+    assert cfg.kinds == CONVERSATION_KINDS
     assert cfg.github_token(RunKind.DRAFTING) == READ
     assert cfg.github_token(RunKind.EXECUTION) is None
+    monkeypatch.delenv("JOTFLOW_GITHUB_READ_TOKEN")
+    monkeypatch.setenv("JOTFLOW_GITHUB_WRITE_TOKEN", WRITE)
+    monkeypatch.setenv("JOTFLOW_RUNNER_KINDS", "execution")
+    exec_cfg = runner_command.build_config(runner_command.RunnerSettings())  # type: ignore[call-arg]
+    assert exec_cfg.github_token(RunKind.EXECUTION) == WRITE
+    assert exec_cfg.live_limit == 1
     assert cfg.env_allow == ("ANTHROPIC_API_KEY", "LANG")
     assert {"agent:8766", "agent.internal:8766", "127.0.0.1:8766"} <= cfg.allowed_hosts
 
@@ -456,6 +529,15 @@ def test_runner_settings_build_the_config(monkeypatch: pytest.MonkeyPatch) -> No
     [
         ({}, "JOTFLOW_RUNNER_SECRET"),
         ({"JOTFLOW_RUNNER_SECRET": SECRET, "JOTFLOW_AGENT_COMMAND": "claude"}, "JSON list"),
+        (
+            {
+                "JOTFLOW_RUNNER_SECRET": SECRET,
+                "JOTFLOW_AGENT_COMMAND": '["x"]',
+                "JOTFLOW_GITHUB_READ_TOKEN": READ,
+                "JOTFLOW_RUNNER_KINDS": "drafting,admin",
+            },
+            "unknown run kind",
+        ),
     ],
 )
 def test_runner_configuration_problems_exit_2(
@@ -464,7 +546,7 @@ def test_runner_configuration_problems_exit_2(
     env: dict[str, str],
     problem: str,
 ) -> None:
-    for name in ("JOTFLOW_RUNNER_SECRET", "JOTFLOW_AGENT_COMMAND"):
+    for name in ("JOTFLOW_RUNNER_SECRET", "JOTFLOW_AGENT_COMMAND", "JOTFLOW_RUNNER_KINDS"):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)

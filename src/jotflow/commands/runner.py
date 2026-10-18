@@ -26,6 +26,7 @@ from jotflow.adapters.runner import (
     remove_stale,
 )
 from jotflow.logs import configure_logging
+from jotflow.models import RunKind
 
 EXIT_CONFIG = 2
 
@@ -46,6 +47,17 @@ class RunnerSettings(BaseSettings):
     runner_host: str = "0.0.0.0"  # the internal Compose network only; no port is published
     runner_port: int = Field(default=RUNNER_PORT, ge=1, le=65535)
     runner_allowed_hosts: str = Field(default="agent", description="Comma-separated Host names")
+    runner_kinds: str = Field(
+        default="drafting,question",
+        description="The run kinds this runner serves: drafting,question or execution",
+    )
+
+
+def _kinds(raw: str) -> frozenset[RunKind]:
+    try:
+        return frozenset(RunKind(part.strip()) for part in raw.split(",") if part.strip())
+    except ValueError:
+        raise ConfigError(f"JOTFLOW_RUNNER_KINDS has an unknown run kind: {raw!r}") from None
 
 
 def build_config(settings: RunnerSettings) -> RunnerConfig:
@@ -63,6 +75,7 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
             settings.github_write_token.get_secret_value() if settings.github_write_token else None
         ),
         env_allow=tuple(n.strip() for n in settings.agent_env_allow.split(",") if n.strip()),
+        kinds=_kinds(settings.runner_kinds),
         allowed_hosts=frozenset(hosts),
     )
 

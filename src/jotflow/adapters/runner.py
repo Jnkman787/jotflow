@@ -69,6 +69,10 @@ _FORBIDDEN_ENV = re.compile(r"^JOTFLOW_|^SLACK_|_TOKEN$|^GH_|^GITHUB_")
 _RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
+CONVERSATION_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+EXECUTION_KINDS = frozenset({RunKind.EXECUTION})
+
+
 class RunState(StrEnum):
     STARTING = "starting"
     RUNNING = "running"
@@ -101,11 +105,20 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class RunnerConfig:
-    """What the runner needs, from its own environment (agent.env), never JotFlow's."""
+    """What the runner needs, from its own environment, never JotFlow's.
+
+    A runner serves either conversation runs (drafting and question), holding
+    only the read-only GitHub token, or execution runs, holding only the write
+    token. Same-uid processes in one container can read each other's
+    ``/proc/<pid>/environ`` and run directories, so the write token must never
+    exist in a container a drafting run can reach. Within one kind that is
+    accepted: those runs hold the same token anyway.
+    """
 
     secret: str = field(repr=False)
     mcp_url: str
     command: tuple[str, ...]
+    kinds: frozenset[RunKind] = CONVERSATION_KINDS
     read_token: str | None = field(default=None, repr=False)
     write_token: str | None = field(default=None, repr=False)
     env_allow: tuple[str, ...] = ()
@@ -120,6 +133,19 @@ class RunnerConfig:
             raise ConfigError("the agent command is empty")
         if not self.mcp_url.startswith(("http://", "https://")):
             raise ConfigError("the MCP URL must be http or https")
+        if self.kinds not in (CONVERSATION_KINDS, EXECUTION_KINDS):
+            raise ConfigError(
+                "a runner serves either drafting and question runs, or execution runs only"
+            )
+        if self.serves_execution:
+            if self.write_token is None or self.read_token is not None:
+                raise ConfigError(
+                    "an execution runner holds the write GitHub token and never the read one"
+                )
+        elif self.read_token is None or self.write_token is not None:
+            raise ConfigError(
+                "a drafting and question runner holds the read GitHub token and never the write one"
+            )
         for name in self.env_allow:
             if not _ENV_NAME.fullmatch(name):
                 raise ConfigError(f"{name!r} is not an environment variable name")
@@ -129,8 +155,19 @@ class RunnerConfig:
                     "variables are set by the runner itself"
                 )
 
+    @property
+    def serves_execution(self) -> bool:
+        return self.kinds == EXECUTION_KINDS
+
+    @property
+    def live_limit(self) -> int:
+        """Execution runs go one at a time; conversation runs up to ``max_live``."""
+        return 1 if self.serves_execution else self.max_live
+
     def github_token(self, kind: RunKind) -> str | None:
         """The one GitHub token a run of ``kind`` gets. No fallback between them."""
+        if kind not in self.kinds:
+            return None
         return self.write_token if kind is RunKind.EXECUTION else self.read_token
 
 
@@ -249,12 +286,15 @@ class Runner:
 
     async def launch(self, request: LaunchRequest) -> dict[str, Any]:
         """Start a run. Raises :class:`LaunchRefused` if it may not start."""
+        if request.kind not in self._config.kinds:
+            served = " and ".join(sorted(k.value for k in self._config.kinds))
+            raise LaunchRefused(403, f"this runner serves only {served} runs")
         existing = self._runs.get(request.run_id)
         if existing is not None:
             raise LaunchRefused(409, f"run {request.run_id} was already launched")
-        if self.live() >= self._config.max_live:
+        if self.live() >= self._config.live_limit:
             raise LaunchRefused(429, "the runner is at its limit of live runs")
-        if self._config.github_token(request.kind) is None:
+        if self._config.github_token(request.kind) is None:  # pragma: no cover - config refuses
             raise LaunchRefused(503, f"no GitHub token is configured for {request.kind.value} runs")
         run = _Run(request.run_id, request.kind)
         self._runs[request.run_id] = run
@@ -387,9 +427,12 @@ def build_runner_app(runner: Runner, config: RunnerConfig) -> ASGIApp:
     """The runner's HTTP app: POST /runs, GET /runs/{id}, DELETE /runs/{id}."""
 
     async def launch(request: Request) -> Response:
-        body = await request.body()
-        if len(body) > MAX_BODY_BYTES:
-            return JSONResponse({"error": "request body is too large"}, status_code=413)
+        # Read with a cap, so a chunked body without a length cannot grow unbounded.
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
         try:
             launch_request = LaunchRequest.model_validate_json(body)
         except ValidationError:

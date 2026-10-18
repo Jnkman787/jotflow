@@ -24,7 +24,7 @@ From the dated notes on #54 and #21:
 
 - [x] The runner listens only on the internal `agents` network, with no published port and no Docker socket
 - [x] The runner accepts exactly run id, run kind, and per-run token, never a command. It authenticates JotFlow with a shared secret that is compared in constant time and never given to the agent.
-- [x] The read-only GitHub token goes to drafting and question runs, and the write token only to execution runs. A missing token refuses the run, and drafting never falls back to the write token.
+- [x] The read-only GitHub token goes to drafting and question runs, and the write token only to execution runs. After review, they live in two separate services, `agent` and `agent-exec`, so the write token never exists in a container a drafting run can reach. Each runner refuses kinds it does not serve, and refuses to start holding the other kind's token. Execution runs go one at a time.
 - [x] Each run gets a private temporary directory (0700) holding its MCP config (0600), with the MCP URL and the token as an `Authorization` header. The directory is deleted when the run ends, including on timeout, kill, or a runner restart.
 - [x] The agent process gets an explicit environment allowlist: base variables, the model-login variables the team names, and the one GitHub token for its kind. Nothing else, so not the runner secret either.
 - [x] A run past its time limit is killed with its whole process group
@@ -52,7 +52,7 @@ See Deployment, How runs start, Network, and GitHub tokens in [architecture.md](
 1. `tempfile.mkdtemp()` gives a private directory under the container's `/tmp` tmpfs.
 2. `mcp.json` is written there with `os.open(..., 0o600)`. It holds the server URL and `Authorization: Bearer <run token>` in the shape agent CLIs read.
 3. The child environment is the allowlist:
-   - `PATH`, `LANG`, `TZ`, and `HOME`, set to the run's directory so CLIs write their state there
+   - `PATH` and locale variables, `HOME` (the service's own login volume, so the CLI finds its model login), and `TMPDIR` (the run's directory)
    - each name listed in `JOTFLOW_AGENT_ENV_ALLOW`, such as the model API key
    - `GITHUB_TOKEN` and `GH_TOKEN`, from `JOTFLOW_GITHUB_READ_TOKEN` or `JOTFLOW_GITHUB_WRITE_TOKEN` by kind
    - `JOTFLOW_RUN_ID` and `JOTFLOW_MCP_CONFIG`
@@ -62,11 +62,18 @@ See Deployment, How runs start, Network, and GitHub tokens in [architecture.md](
 
 **Image, `Dockerfile.agent`:** the same pinned Python base as JotFlow's, plus Debian's `nodejs` and `npm`. Agent CLIs install through `ARG AGENT_NPM_PACKAGES`, pinned by the preset. JotFlow is installed from `uv.lock` for the runner. The image runs as user `agent` (uid 10002) with a read-only root, `/tmp` as tmpfs, and `/home/agent` as a named volume for the CLI's model login. All capabilities are dropped, with `no-new-privileges`.
 
+**Review change: two agent services.** The reviewer showed that runs sharing a uid can read each other's `/proc/<pid>/environ` and run directories, Yama `ptrace_scope=1` notwithstanding. The lead added that the runner holds its env file in its own environment, readable at `/proc/1/environ`. So in one container, a drafting run with only a file-read tool could take the write token. The fix is one image, two services:
+
+- `agent` serves drafting and question runs with `agent.env`: the read token and the model login
+- `agent-exec` serves execution runs only, one at a time, with `agent-exec.env`: the write token and the model login
+
+Each has its own home volume, which also stops a drafting run from planting CLI config that an execution run would load. Within one service, runs can read each other's environment and run directory. That is accepted, because they hold the same token. `RunnerConfig` enforces the split: its kinds are either drafting and question or execution only, it holds exactly that side's token, and `JOTFLOW_RUNNER_KINDS` selects which.
+
 **Compose:**
 
 - The agent service is behind the profile `agent`. Without `agent.env` the runner can only fail, and its restart policy would loop, so plain `docker compose up -d` keeps starting JotFlow alone until a team adds `COMPOSE_PROFILES=agent` to `.env`. That is how both containers start, and it keeps today's setup unchanged.
 
-- The `agent` service builds `Dockerfile.agent` and reads `agent.env`, never `.env`. It joins `agents` and a new `agent-egress` network, for the model API and GitHub. It publishes no ports.
+- The `agent` and `agent-exec` services share the `Dockerfile.agent` image. Each reads its own env file, never `.env`, and has its own home volume, `agent-home` or `agent-exec-home`. Both join `agents` and a new `agent-egress` network, for the model API and GitHub, and publish no ports.
 - `jotflow` gets `JOTFLOW_MCP_HOST=0.0.0.0` and `JOTFLOW_MCP_ALLOWED_HOSTS=jotflow`. #21 adds `JOTFLOW_RUNNER_URL=http://agent:8766` along with the client that reads it.
 - The runner secret lives in both `.env` and `agent.env`, as `JOTFLOW_RUNNER_SECRET`.
 
@@ -76,7 +83,7 @@ Alternatives considered:
 
 - `docker exec` from JotFlow: needs the Docker socket, which D6 forbids.
 - A runner in Node: the runner shares JotFlow's models and tests in Python.
-- Passing the token in the environment: CLIs and their tools can print the environment. A 0600 file in a private directory reaches only the agent's own process.
+- Passing the token in the environment: CLIs and their tools can print the environment. A 0600 file in a private directory keeps it out of argv, env, and anything the CLI prints. It does not hide it from other runs in the same service, which share the uid; the two services are what keep the write token away from drafting runs.
 
 ## Risks and open questions
 
@@ -101,6 +108,7 @@ Alternatives considered:
 
 ## Validation
 
+- Two-service review change: 58 runner tests cover a conversation runner refusing the write token, an execution runner refusing the read token, mixed kinds refused, each runner refusing the other's kinds with 403, one execution run at a time, and a chunked body capped while it is read. CI's Compose policy asserts no ports, no host network, no privileged mode, and no docker.sock on any service. It also asserts that each agent service's environment is exactly its own env file, so `agent` has no write token and `agent-exec` no read token, with no bind mounts and separate homes. A CI step starts `agent-exec` and shows it refuses a drafting run with 403 and cannot see the `.env` sentinel. Both passed locally.
 - `make check` passes: 1281 tests, 98.3% total coverage. `adapters/runner.py` is at 96%. `commands/runner.py`'s uvicorn loop is not covered; the CI job starts the real runner.
 - `tests/test_runner.py`, 47 tests:
   - configuration: a short secret, an empty command, a non-HTTP MCP URL, a bad env name, and allowlisting any JotFlow, Slack, GitHub, or `*_TOKEN` name all fail at startup. The config's `repr` hides its secrets. The command must be a JSON list of strings, and only `{mcp_config}` and `{run_id}` are filled.
@@ -119,7 +127,7 @@ Alternatives considered:
 
 ## Handoff notes
 
-- #21: the JotFlow-side client posts `{run_id, kind, token}` to `JOTFLOW_RUNNER_URL` with `Authorization: Bearer <JOTFLOW_RUNNER_SECRET>`. A 202 means started; then poll `GET /runs/{id}` for `exited`, `timed_out`, `killed`, or `failed` and the exit code. Call `DELETE /runs/{id}` on JotFlow's timeout or shutdown. The responses are 409 for an already-launched run, 429 at the live cap, and 503 when no GitHub token is set for the kind. Add `JOTFLOW_RUNNER_URL` and `JOTFLOW_RUNNER_SECRET` to JotFlow's `Settings`.
-- #22: set `AGENT_NPM_PACKAGES` with pinned versions, and replace `JOTFLOW_AGENT_COMMAND` with named presets that use `{mcp_config}`. Turn off session transcripts where the CLI allows it, since `HOME` is the persistent `agent-home` volume.
-- #126 (new, M3): `jotflow init` should generate `JOTFLOW_RUNNER_SECRET` and write it to both `.env` and `agent.env`, with mode 0600, and add `COMPOSE_PROFILES=agent` once the agent is set up.
+- #21: the JotFlow-side client routes by kind, sending drafting and question runs to `http://agent:8766` and execution runs to `http://agent-exec:8766`. It posts `{run_id, kind, token}` with `Authorization: Bearer <JOTFLOW_RUNNER_SECRET>`. A 202 means started; then poll `GET /runs/{id}` for `exited`, `timed_out`, `killed`, or `failed` and the exit code. Call `DELETE /runs/{id}` on JotFlow's timeout or shutdown. The responses are 409 for an already-launched run, 429 at the live cap, and 503 when no GitHub token is set for the kind. A runner answers 403 for a kind it does not serve. Add `JOTFLOW_RUNNER_URL` and `JOTFLOW_RUNNER_EXEC_URL`, or one URL per kind, and `JOTFLOW_RUNNER_SECRET` to JotFlow's `Settings`.
+- #22: set `AGENT_NPM_PACKAGES` with pinned versions, and replace `JOTFLOW_AGENT_COMMAND` with named presets that use `{mcp_config}`. Turn off session transcripts where the CLI allows it, since `HOME` is the service's persistent home volume.
+- #126 (new, M3): `jotflow init` should generate `JOTFLOW_RUNNER_SECRET` and write it to `.env`, `agent.env`, and `agent-exec.env`, with mode 0600, and add `COMPOSE_PROFILES=agent` once the agent is set up.
 - #55: the live step is `COMPOSE_PROFILES=agent docker compose up -d` with real tokens, a run started from JotFlow, and its `record_result`.
