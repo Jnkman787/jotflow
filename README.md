@@ -4,7 +4,7 @@
 
 JotFlow is a self-hosted, agent-agnostic bridge between a shared Slack channel and your GitHub repositories. Anyone on the team, engineer or not, drops an idea, bug, or request into the channel. JotFlow watches the conversation, correlates follow-up messages and replies to the same topic, and has *your* AI agent draft the corresponding GitHub issue. A human approves it, or the channel is configured to let it through automatically. Either way, the result is posted back to Slack so everyone sees what was created.
 
-> **Status: design phase.** There is no runnable code yet. The architecture and principles below are the contract the first implementation will be built against. See [docs/architecture.md](docs/architecture.md) for the full design.
+> **Status: milestone 1, installable, in progress.** Setup and `jotflow run` are built and tested offline; the first live check against a Slack workspace is next. Drafting and approving issues arrives in later milestones; see the [roadmap](docs/roadmap.md). [docs/architecture.md](docs/architecture.md) is the full design.
 
 ## Why
 
@@ -82,20 +82,163 @@ The pieces:
 4. **Your agent.** Launched by JotFlow in headless mode with the MCP server attached, using a preset for your CLI of choice. It reads, drafts, searches your repos for duplicates, and performs the GitHub writes with the access you already gave it.
 5. **Approval gate.** Each channel is in `propose`, `auto`, or `paused` mode. It covers the whole lifecycle: creation, description edits, comments, assignment, and labels.
 
+## What a team needs
+
+| Component | Needs | Does not need |
+|---|---|---|
+| JotFlow | A Slack app in your workspace, created from the included manifest. It reads messages and channel details in the channels you invite it to, posts messages, adds reactions, pins its help message, looks up user names, and has one slash command, over Socket Mode. [manifests/README.md](manifests/README.md) explains each permission. | Any GitHub access |
+| Your agent | Whatever GitHub access you already gave it, for example GitHub's MCP server or the `gh` CLI | Any Slack access |
+| Your machine | Docker to run JotFlow, and uv or Python 3.12 or newer to run the setup once | A public URL or open ports: Socket Mode connects out to Slack |
+
+## Quickstart
+
+This takes about five minutes, most of it in Slack's settings pages. Every name and id below is made up; use your own.
+
+### 1. Prerequisites
+
+- **Git**, to clone the repository.
+- **Docker** with Compose v2.24 or newer. Check with `docker compose version`.
+- **uv**, which also fetches Python 3.12 or newer if you don't have it. See [uv's installation guide](https://docs.astral.sh/uv/getting-started/installation/). Without uv, Python 3.12 or newer with `pip` works too; see the note in step 3.
+- Permission to **create apps in your Slack workspace**. Some workspaces need an admin to approve new apps.
+
+### 2. Clone
+
+```
+git clone https://github.com/Jnkman787/jotflow.git
+cd jotflow
+```
+
+### 3. Run the guided setup
+
+```
+uv run jotflow init
+```
+
+Without uv: `python3 -m venv .venv`, then `.venv/bin/pip install .`, then `.venv/bin/jotflow init`.
+
+Setup asks a few questions. Press Enter to accept the default in brackets, or Ctrl-D to stop. Nothing is saved until the last question, so stopping part-way changes nothing.
+
+1. **The bot's name.** This is how it appears in Slack, for example `Idea Bot`.
+2. **Create the Slack app.** Setup prints a link. Open it, pick your workspace, and click **Create**: the manifest is already filled in. If the link doesn't open, choose **Create New App**, then **From a manifest**, at <https://api.slack.com/apps>, and paste the contents of `slack-app-manifest.json`, which setup saved for you.
+3. **Two tokens.** In the new app's settings:
+   - Under **Basic Information**, in **App-Level Tokens**, generate a token with the `connections:write` scope. It starts with `xapp-`.
+   - Under **Install App**, click **Install to Workspace**, then **Allow**, and copy the **Bot User OAuth Token**. It starts with `xoxb-`.
+
+   Paste each one when asked. They stay hidden as you type, and setup checks them with Slack straight away. If a token is wrong, setup says what's wrong and asks again. If a token ever leaks, [manifests/README.md](manifests/README.md) explains how to revoke it.
+4. **Channels and repos.** For each channel JotFlow should watch, setup asks for:
+   - the channel id. Open the channel, click its name, and find the id at the bottom of **About**. It starts with `C`, or `G` for some private channels. A copied channel link works too.
+   - each GitHub repo that channel feeds, as `owner/name` or a GitHub link
+   - a short nickname, used in replies like `re: web#42`
+   - one line on what the repo covers. When a channel feeds several repos, the agent picks one by this line.
+   - the labels a proposal may set
+5. **The agent preset.** This names which agent CLI will draft issues, for example `claude-code`. Type `none` for now if you only want to see JotFlow connect; agent runs arrive in milestone 3.
+
+A session looks like this, shortened. Your answers are on the right of each prompt.
+
+```
+What should the bot be called in Slack? [JotFlow]: Idea Bot
+
+Create the Slack app. Open this link, pick your workspace, and click Create:
+
+  https://api.slack.com/apps?new_app=1&manifest_json=...
+
+Paste the bot token (xoxb-, hidden):
+  Bot token works: @idea_bot in Example Team.
+Paste the app-level token (xapp-, hidden):
+  App-level token works: Socket Mode can connect.
+
+Channel id: C0EXAMPLE1
+  GitHub repo (owner/name): example-org/web
+  Short nickname people can type, as in re: web#42 [web]:
+  What does it cover? The agent picks a repo by this: The customer web app
+  Labels a proposal may set, comma-separated, or none [bug, enhancement]:
+  Add another repo to this channel? [y/N]:
+Add another channel? [y/N]:
+
+Agent preset [claude-code]: none
+
+Saved both tokens to .env. Only your user can read that file.
+  Also set COMPOSE_FILE there, so `docker compose up -d` mounts jotflow.toml.
+Wrote jotflow.toml: 1 channel, 1 repo, no agent preset.
+Connected to Slack as @idea_bot in Example Team.
+```
+
+Setup writes two files next to `docker-compose.yml`. Neither is committed to git.
+
+- **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that mode is not enforced and the folder's Windows permissions decide who can read it. Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
+- **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option.
+
+Running `jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`.
+
+### 4. Invite the bot
+
+In Slack, in each channel you listed, type:
+
+```
+/invite @idea_bot
+```
+
+Use the bot's handle, which setup printed after `Connected to Slack as`; Slack also suggests it as you type. JotFlow never joins channels by itself. Joining a channel is always a person's choice.
+
+### 5. Start JotFlow
+
+```
+docker compose up -d
+```
+
+The first start builds the image, which takes a minute or two.
+
+### 6. See it working
+
+```
+docker compose logs -f jotflow
+```
+
+Post a message in one of your channels. A line like the last one below appears:
+
+```
+2026-10-18 09:41:02,118 INFO jotflow.run: watching 1 configured channel(s) as @idea_bot
+2026-10-18 09:41:02,604 INFO jotflow.run: connected to Slack over Socket Mode
+2026-10-18 09:41:37,250 INFO jotflow.ingest: message channel=C0EXAMPLE1 ts=1760781697.000100 thread_ts=None
+```
+
+The log shows where a message was posted and when, never what it says. It does show channel ids and your bot and workspace names, so remove those before pasting logs into a public issue. Adding a reaction logs a `reaction` line in the same way. Press Ctrl-C to stop following the log; JotFlow keeps running. Stop it with `docker compose down`.
+
+To run JotFlow without Docker, use `uv run jotflow run` from the same directory instead of steps 5 and 6.
+
+## Troubleshooting
+
+Every error names what to fix. The common ones:
+
+| You see | What to do |
+|---|---|
+| `jotflow init is interactive; run it in a terminal.` | Run setup in a terminal window, not through a pipe or a script. |
+| `That is an app-level token (xapp-).` or `That is a bot token (xoxb-).` | The two tokens were swapped. Paste the other one. |
+| `The bot token is missing these scopes: ...` or `missing this scope` | The app wasn't created from JotFlow's manifest, or the manifest changed. Add the named scopes under **OAuth & Permissions**, or create the app again from the link. Then click **Reinstall to Workspace** and copy the new bot token. |
+| `The app-level token is missing the connections:write scope.` | Generate a new app-level token under **Basic Information**, with the `connections:write` scope. |
+| `Slack does not recognise this token.` | The token was copied incompletely. Copy it again with the **Copy** button. |
+| `could not reach Slack` | Check your network. Behind a proxy, set `HTTPS_PROXY` before running setup. |
+| `jotflow.toml has problems:` followed by keys | A hand edit broke the file. Each line names the key at fault. Fix it, or let setup write a new one. The old file is kept as `jotflow.toml.bak`. |
+| `configuration problem in environment or .env:` `JOTFLOW_SLACK_BOT_TOKEN: not set` | `.env` is missing or isn't next to `docker-compose.yml`. Run `jotflow init` in the repository folder. |
+| `configuration problem in jotflow.toml:` ``file not found; run `jotflow init` to create it`` | The container didn't get your policy file. Check that `.env` has the `COMPOSE_FILE` line. If you removed it, start with `docker compose -f docker-compose.yml -f docker-compose.policy.yml up -d`. |
+| Compose says the bind source path for `jotflow.toml` does not exist | Run `jotflow init` before `docker compose up -d`. |
+| `jotflow.toml` is a directory, or JotFlow reports `Is a directory` | Compose ran before setup, and Docker Desktop created an empty directory in place of the missing file. Stop JotFlow with `docker compose down` and remove the directory. That may need `sudo`, or Docker Desktop's file access, because Docker created it as root. Then run `jotflow init` and start again with `docker compose up -d`. |
+| `Permission denied` on `/etc/jotflow/jotflow.toml` | The container runs as its own user and must be able to read the file: `chmod 644 jotflow.toml`. |
+| `not a member of channel C0EXAMPLE1; invite the bot there with /invite @idea_bot` | Invite the bot to that channel. JotFlow keeps running and watches the channels it is in. |
+| `could not look up channel ... the app needs the channels:read and groups:read scopes` | The app was created from an older manifest. Add the two scopes under **OAuth & Permissions** and reinstall the app. If Slack shows a new bot token, run `jotflow init` again to save it. |
+| `Slack rejected the bot token (...)` or `Slack refused the Socket Mode connection (...)` | A token was revoked or the app was reinstalled. Run `jotflow init` again to save fresh tokens. |
+| No `message` lines appear | Check that the channel's id is in `jotflow.toml` and that the bot is in the channel. JotFlow ignores channels it isn't configured for and its own messages. |
+| On Windows, Compose ignores the `COMPOSE_FILE` line | Compose separates file names with `;` on Windows. Add `COMPOSE_PATH_SEPARATOR=:` to `.env`, or use WSL. |
+
 ## Using it
+
+This is how JotFlow works for the people in the channel once drafting and approval cards land, in milestones 3 and 4.
 
 - **Just post.** Write your idea, bug, or request in the channel like you normally would. JotFlow waits for the conversation to settle, then posts a proposed issue for the team to approve.
 - **Steer it if you like.** Start a message with `idea:` or `bug:` to say what it is, `re:` to add to an existing issue (JotFlow's link replies tell you exactly what to type), or `skip:` if it isn't an idea at all. Most people never need these.
 - **Forgot the words?** Type `/jotflow help`.
 
 Comments and closures on GitHub do not flow back into Slack yet; that is planned after v1.
-
-## What a team needs
-
-| Component | Needs | Does not need |
-|---|---|---|
-| JotFlow | A Slack app in your workspace, created from the included manifest: read channel history, post messages, reactions, slash commands, Socket Mode | Any GitHub access |
-| Your agent | Whatever GitHub access you already gave it, for example GitHub's MCP server or the `gh` CLI | Any Slack access |
 
 ## Principles
 
