@@ -1,35 +1,97 @@
 """Shared data contracts.
 
 These Pydantic models are the single source of truth for three things at
-once: the MCP tool schemas the agent sees, the validation applied before
-any GitHub write, and the shape rendered into Slack approval cards.
+once: the MCP tool schemas the agent sees, the validation applied before a
+proposal card is posted, and the shape rendered into Slack approval cards.
 
-Only the orchestrator writes to GitHub. The agent emits proposals; the
-orchestrator decides, based on the channel mode, whether a proposal is
-applied immediately or held for human approval.
+JotFlow never writes to GitHub. The agent drafts proposals through JotFlow's
+tools; JotFlow decides, based on the channel mode, whether a proposal waits
+for a person or is approved automatically. Once approved, JotFlow launches an
+execution run in which the agent performs the write with its own GitHub
+access and reports back with :class:`ExecutionResult` (D5, D8).
+
+Models the agent fills in (:class:`IssueProposal`, :class:`UpdateProposal`,
+:class:`Classification`, :class:`ExecutionResult`) carry only what the agent
+may decide. Ids, channel, run, and state are assigned by JotFlow and live on
+:class:`ProposalRecord` and :class:`Run`.
 """
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, model_validator
+
+# GitHub's rules: an owner is 1 to 39 letters, digits, or hyphens, not starting
+# with a hyphen; a repo name is 1 to 100 letters, digits, ".", "-", or "_",
+# and never "." or "..". ASCII only.
+_REPO = r"(?P<owner>[A-Za-z0-9][A-Za-z0-9-]{0,38})/(?P<name>[A-Za-z0-9._-]{1,100})"
+_REPO_RE = re.compile(_REPO, re.ASCII)
+_ISSUE_URL = re.compile(
+    rf"https://github\.com/{_REPO}/issues/(?P<number>[1-9][0-9]{{0,9}})"
+    r"(?P<comment>#issuecomment-[0-9]{1,20})?",
+    re.ASCII,
+)
+
+
+def shown(value: str, limit: int = 40) -> str:
+    """``repr`` of a rejected value, cut short so a pasted secret is not echoed whole."""
+    return repr(value if len(value) <= limit else value[:limit] + "...")
+
+
+def is_repo_name(value: str) -> bool:
+    """Whether ``value`` is a valid ``owner/name`` GitHub repo."""
+    match = _REPO_RE.fullmatch(value)
+    return match is not None and match["name"] not in {".", ".."}
+
+
+def _check_repo(value: str) -> str:
+    if not is_repo_name(value):
+        raise ValueError(f"{shown(value)} is not a repo in owner/name form")
+    return value
+
+
+RepoName = Annotated[
+    str, AfterValidator(_check_repo), Field(description="owner/name", examples=["acme/web"])
+]
 
 
 class ChannelMode(StrEnum):
     """How a channel treats agent proposals. Applies to the full issue lifecycle."""
 
     PROPOSE = "propose"  # post a card and wait for approval
-    AUTO = "auto"  # write immediately, then post a summary card
+    AUTO = "auto"  # approve immediately, write, then post the card
     PAUSED = "paused"  # read nothing, write nothing
 
 
 class ProposalState(StrEnum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    APPLIED = "applied"
+    """Proposal lifecycle; see the state diagram in docs/architecture.md."""
+
+    PENDING = "pending"  # card posted, waiting for a person
+    APPROVED = "approved"  # content locked, waiting for an execution run
+    EXECUTING = "executing"  # an execution run is performing the write
+    RECONCILING = "reconciling"  # a run was interrupted; checking for the marker
+    APPLIED = "applied"  # the agent reported a matching issue URL
+    REJECTED = "rejected"  # a person rejected or skipped it
+    SUPERSEDED = "superseded"  # a newer proposal on the same thread replaced it
+    FAILED = "failed"  # the write failed or the retry limit was reached
+
+
+class RunKind(StrEnum):
+    DRAFTING = "drafting"  # reads a thread, proposes; read-only GitHub access
+    EXECUTION = "execution"  # performs one approved write
+    QUESTION = "question"  # answers a read-only question in the thread (M5, D12)
+
+
+class RunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    INTERRUPTED = "interrupted"  # JotFlow restarted while the run was in flight
 
 
 class MessageRef(BaseModel):
@@ -45,8 +107,11 @@ class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
     kind: Literal["create_issue"] = "create_issue"
-    topic_id: str
-    repo: str = Field(pattern=r"^[\w.-]+/[\w.-]+$", description="owner/name")
+    topic_id: str | None = Field(
+        default=None,
+        description="Existing topic this issue is for; omit to start a new topic",
+    )
+    repo: RepoName
     title: str = Field(min_length=1, max_length=256)
     body: str
     labels: list[str] = Field(default_factory=list)
@@ -75,14 +140,123 @@ class UpdateProposal(BaseModel):
 
     kind: Literal["update_issue"] = "update_issue"
     topic_id: str
-    repo: str = Field(pattern=r"^[\w.-]+/[\w.-]+$")
+    repo: RepoName
     issue_number: int = Field(gt=0)
     changes: IssueChanges
     sources: list[MessageRef] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-Proposal = IssueProposal | UpdateProposal
+Proposal = Annotated[IssueProposal | UpdateProposal, Field(discriminator="kind")]
+
+
+class ExecutionResult(BaseModel):
+    """What the agent reports through ``record_result`` after an execution run.
+
+    Exactly one of ``issue_url`` and ``error`` is set.
+    """
+
+    issue_url: str | None = Field(
+        default=None, description="https://github.com/owner/name/issues/N of the issue written"
+    )
+    error: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Why the write failed; agent-written, so treat as untrusted text",
+    )
+
+    @model_validator(mode="after")
+    def _one_outcome(self) -> ExecutionResult:
+        if (self.issue_url is None) == (self.error is None):
+            raise ValueError("set exactly one of issue_url and error")
+        if self.issue_url is not None and self._match() is None:
+            raise ValueError("issue_url must look like https://github.com/owner/name/issues/N")
+        return self
+
+    def _match(self) -> re.Match[str] | None:
+        if self.issue_url is None:
+            return None
+        match = _ISSUE_URL.fullmatch(self.issue_url)
+        if match is None or match["name"] in {".", ".."}:
+            return None
+        return match
+
+    def issue_ref(self) -> tuple[str, int] | None:
+        """The ``(owner/name, number)`` the URL points at, or None for an error result."""
+        match = self._match()
+        if match is None:
+            return None
+        return f"{match['owner']}/{match['name']}", int(match["number"])
+
+    def matches(self, proposal: IssueProposal | UpdateProposal) -> bool:
+        """Whether the reported URL is a valid result for ``proposal``.
+
+        A create must report a plain issue URL in the proposal's repo, never a
+        comment, so a run cannot pass off an existing issue's comment as the new
+        issue. An update must report the proposal's own issue, optionally one
+        of its comments. Repo names compare without case, as GitHub does.
+        """
+        match = self._match()
+        if match is None:
+            return False
+        if f"{match['owner']}/{match['name']}".casefold() != proposal.repo.casefold():
+            return False
+        if isinstance(proposal, IssueProposal):
+            return match["comment"] is None
+        return int(match["number"]) == proposal.issue_number
+
+
+class ProposalRecord(BaseModel):
+    """A proposal as JotFlow stores and tracks it.
+
+    The agent supplies only :attr:`proposal`; everything else is JotFlow's.
+    """
+
+    id: str = Field(
+        description="Random id assigned by JotFlow; doubles as the hidden marker in the issue body"
+    )
+    channel_id: str
+    thread_ts: str | None = Field(default=None, description="Thread the proposal came from")
+    run_id: str = Field(description="The drafting run that produced it")
+    state: ProposalState = ProposalState.PENDING
+    proposal: Proposal
+    content_hash: str | None = Field(
+        default=None, description="Hash of the approved content; set when approved"
+    )
+    approved_by: str | None = Field(
+        default=None, description="Slack user id of the approver, or 'auto' in auto mode"
+    )
+    approved_at: AwareDatetime | None = None
+    result: ExecutionResult | None = None
+    created_at: AwareDatetime
+
+
+class Run(BaseModel):
+    """One launch of the team's agent (D8)."""
+
+    id: str
+    kind: RunKind
+    status: RunStatus = RunStatus.QUEUED
+    channel_id: str
+    thread_ts: str | None = None
+    proposal_id: str | None = Field(
+        default=None, description="Required for execution runs: the approved proposal"
+    )
+    created_at: AwareDatetime
+    deadline: AwareDatetime
+    started_at: AwareDatetime | None = None
+    finished_at: AwareDatetime | None = None
+    error: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Why the run failed; may hold agent-written text, so treat as untrusted",
+    )
+
+    @model_validator(mode="after")
+    def _execution_has_proposal(self) -> Run:
+        if self.kind is RunKind.EXECUTION and self.proposal_id is None:
+            raise ValueError("an execution run needs proposal_id")
+        return self
 
 
 class Classification(BaseModel):

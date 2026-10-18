@@ -1,8 +1,13 @@
-"""Runtime configuration, loaded from environment variables.
+"""Runtime settings, loaded from environment variables.
 
-No secrets are ever read from files inside the repository. Teams supply
-Slack and GitHub App credentials through the environment or a local
-``.env`` file that is gitignored.
+This is the environment tier of D2: secrets and process knobs. Admin policy,
+such as which repos a channel may feed, lives in ``jotflow.toml`` and is
+loaded by :mod:`jotflow.policy`.
+
+No secrets are ever read from files inside the repository. Teams supply the
+Slack tokens through the environment or a local ``.env`` file that is
+gitignored. JotFlow's code never uses GitHub credentials (D5); the team's
+agent brings its own, in its own container (D6).
 """
 
 from __future__ import annotations
@@ -12,29 +17,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="JOTFLOW_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="JOTFLOW_",
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+        # Never echo a value in a validation error: it may be a token.
+        hide_input_in_errors=True,
+    )
 
     # Slack
-    slack_bot_token: SecretStr
+    slack_bot_token: SecretStr = Field(description="Bot token (xoxb-...)")
     slack_app_token: SecretStr = Field(description="App-level token for Socket Mode (xapp-...)")
 
-    # GitHub App installed by the team on the repositories JotFlow may write to
-    github_app_id: int
-    github_app_private_key: SecretStr
-    github_installation_id: int
-
-    # Whiteboard MCP server
+    # Whiteboard MCP server. Outside Compose it stays on loopback.
     mcp_host: str = "127.0.0.1"
-    mcp_port: int = 8765
+    mcp_port: int = Field(default=8765, ge=1, le=65535)
 
     # Local state. Pointers only; see docs/architecture.md.
     database_path: str = "jotflow.db"
 
-    # Agent adapter: a command template run in headless mode with the MCP server attached
-    agent_command: str = Field(
-        default="",
-        description="Shell command template for the team's agent. Empty disables agent runs.",
+    # Admin policy file; see jotflow.example.toml
+    config_path: str = Field(
+        default="jotflow.toml",
+        validation_alias="JOTFLOW_CONFIG",
+        description="Path to the jotflow.toml policy file",
     )
-
-    # Seconds a thread must be quiet before it is handed to the agent
-    debounce_seconds: int = 120

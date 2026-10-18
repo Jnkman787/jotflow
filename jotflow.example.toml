@@ -1,0 +1,50 @@
+# jotflow.toml: admin policy for JotFlow (decision D2 in docs/roadmap.md).
+#
+# Copy this file to jotflow.toml and replace every value. All ids, repos, and
+# names below are made up. Secrets never go here; Slack tokens come from the
+# environment or .env. Unknown keys are rejected, so typos fail loudly.
+
+# "permalinks" puts the Slack permalinks a proposal came from in the issue
+# body, so the store can be rebuilt from Slack. "none" keeps permalinks and
+# every other workspace detail out of issue bodies.
+issue_links = "permalinks"
+
+# Seconds a thread must be quiet before it is drafted. Channels may override.
+debounce_seconds = 120
+
+[agent]
+# The agent preset the runner in the agent container launches.
+# Leave it out to connect JotFlow to Slack without starting agent runs.
+preset = "claude-code"
+
+[approval]
+# Slack user ids allowed to approve and change channel modes. Empty, the
+# default, lets anyone in the channel approve, including their own proposals.
+approvers = []
+# Whether a reaction on a card counts as approval. Off by default.
+reactions = false
+
+# One table per Slack channel, keyed by channel id.
+[channels.C0EXAMPLE1]
+debounce_seconds = 60
+
+# The repos this channel may feed. The agent picks one by its description.
+# Labels are the only labels a proposal for that repo may set.
+[[channels.C0EXAMPLE1.repos]]
+repo = "example-org/web"
+nickname = "web"
+description = "The customer-facing web app: pages, sign-up, onboarding"
+labels = ["bug", "enhancement", "size:s", "size:m", "size:l"]
+
+[[channels.C0EXAMPLE1.repos]]
+repo = "example-org/api"
+nickname = "api"
+description = "The public REST API and its background jobs"
+labels = ["bug", "enhancement"]
+
+[channels.G0EXAMPLE2]
+
+[[channels.G0EXAMPLE2.repos]]
+repo = "example-org/handbook"
+nickname = "handbook"
+description = "Team handbook and process docs"
