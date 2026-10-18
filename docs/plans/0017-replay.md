@@ -4,7 +4,7 @@
 
 - Issue: #17
 - Also serves: #18 (its last box, "used by the replay tests")
-- Draft PR: to be opened
+- Draft PR: #111
 - Status: blocked on #104 (run records), #105 (grants and tokens), #106 (read tools), #109 (write tools)
 - Last verified: plan written against the plans of the PRs above, no code yet
 - Next safe action: once those merge, write `src/jotflow/replay.py` against their merged interfaces and check this design still matches
@@ -55,7 +55,7 @@ Files: `src/jotflow/replay.py` holds the pipeline and report, and `src/jotflow/c
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
+- [x] Commit this plan and open the draft PR
 - [ ] Wait for #104, #105, #106, #109; re-check this design against them
 - [ ] Pipeline and report in `replay.py`
 - [ ] CLI command
