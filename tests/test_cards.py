@@ -27,6 +27,7 @@ from jotflow.orchestrator.cards import (
     MAX_BUTTON_TEXT,
     MAX_HEADER_TEXT,
     MAX_SECTION_TEXT,
+    SHORTENED,
     TOO_LONG,
     Card,
     CardContext,
@@ -499,3 +500,37 @@ def test_a_cleared_update_and_one_with_only_labels() -> None:
         "plain_text",
     )
     assert "b" not in cleared and "c" not in cleared
+
+
+def test_many_participants_are_compacted_and_the_card_still_fits() -> None:
+    people = [f"U0P{i:03d}" for i in range(60)]
+    card = render_card(record(participants=people), context())
+    assert len(card.blocks) <= MAX_BLOCKS
+    assert ACTION_APPROVE in actions(card)
+    assert ACTION_ASSIGN not in actions(card)  # compacted: no per-person buttons
+    assert any(t.startswith("Involved: U0P000, U0P001") for t in texts(card, "plain_text"))
+    assert "Assignees: acme-alice" in texts(card, "plain_text")
+
+
+def test_shortened_approved_content_cannot_be_approved() -> None:
+    labels = [f"label-{i:02d}-" + "x" * 40 for i in range(60)]
+    card = render_card(record(issue(repo="acme-co/api", labels=labels)), context())
+    assert ACTION_APPROVE not in actions(card)
+    assert SHORTENED in texts(card, "plain_text")
+    assert ACTION_REQUEST_CHANGES in actions(card)
+
+
+def test_a_huge_body_and_many_people_still_fit() -> None:
+    people = [f"U0P{i:03d}" for i in range(60)]
+    body = "y" * (MAX_SECTION_TEXT * MAX_BLOCKS)
+    card = render_card(record(issue(body=body), participants=people), context())
+    assert len(card.blocks) <= MAX_BLOCKS
+    assert ACTION_APPROVE not in actions(card)
+    assert TOO_LONG in texts(card, "plain_text")
+
+
+def test_a_huge_body_with_nobody_involved() -> None:
+    body = "y" * (MAX_SECTION_TEXT * MAX_BLOCKS)
+    card = render_card(record(issue(body=body, assignees=[]), participants=[]), context())
+    assert len(card.blocks) <= MAX_BLOCKS
+    assert not any(t.startswith(("Involved", "Assignee")) for t in texts(card, "plain_text"))

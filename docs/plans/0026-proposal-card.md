@@ -44,7 +44,7 @@ Done when:
 - **Updating in place.**
   - Migration 5 adds `proposals.card_ts`, with `Store.set_card_ts(proposal_id, ts)`, and `ProposalRecord.card_ts` reads it back.
   - `CardPublisher(store, poster).show(record, context)` posts a new card into the thread when there is no `card_ts`, and updates that message otherwise.
-  - `CardPoster` is a small protocol, with `post(channel, thread_ts, blocks, text) -> ts` and `update(channel, ts, blocks, text)`. `SlackCardPoster` implements it with `chat.postMessage` and `chat.update`.
+  - `CardPoster` is a small protocol, with `post(channel_id, thread_ts, card) -> ts` and `update(channel_id, ts, card)`, where a `Card` holds the blocks and the fallback text. `SlackCardPoster` implements it with `chat.postMessage` and `chat.update`.
 
 ## Risks and open questions
 
@@ -66,7 +66,7 @@ Done when:
 
 ## Validation
 
-- `tests/test_cards.py`, 35 tests, covers:
+- `tests/test_cards.py`, 39 tests, covers:
   - a create card with everything approved, and the Approve value of id and content hash
   - agent text carrying `<!channel>`, a mention, a link, and markup, found only inside `plain_text`, never `mrkdwn`, and never in the fallback text
   - a long body shown in full across sections, and a body too long for one card with no Approve button
@@ -79,6 +79,10 @@ Done when:
   - a repo the channel does not list
   - publishing once and then updating in place, against both stores, with `set_card_ts` rules and the Slack poster's calls
 - Migration 5 adds `proposals.card_ts`, and the schema test checks its comment.
+- CodeRabbit: 3 findings, 3 fixed.
+  1. The plan described `CardPoster` with the old signatures; it now says `post(channel_id, thread_ts, card)` and `update(channel_id, ts, card)`.
+  2. Many participants could still overflow the 50-block limit with the body left out. The renderer now tries three layouts in order: the full body with a row per person, then people compacted to one line per group, then the body left out as well. Tests cover 60 participants, which stay approvable with people compacted, and a huge body with many people.
+  3. Approved content cut to fit Slack's limits still offered Approve. Approved-content lines now record when they are cut, and such a card loses Approve and says why. Tested with a 60-label list.
 
 ## Handoff notes
 

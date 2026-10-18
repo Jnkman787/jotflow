@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC
 from typing import Any, Literal, Protocol
@@ -105,6 +106,17 @@ def _context(text: str) -> Block:
     return {"type": "context", "elements": [plain(text, MAX_CONTEXT_TEXT)]}
 
 
+# Set while a card renders: whether any approved content had to be shortened.
+_SHORTENED: ContextVar[list[bool]] = ContextVar("card_shortened")
+
+
+def _approved_context(text: str) -> Block:
+    """A context line holding approved content. If it must be cut, the card cannot approve."""
+    if len(text) > MAX_CONTEXT_TEXT:
+        _SHORTENED.get().append(True)
+    return _context(text)
+
+
 def _button(text: str, action_id: str, value: str, style: str | None = None) -> dict[str, Any]:
     button: dict[str, Any] = {
         "type": "button",
@@ -174,20 +186,33 @@ def _labels_line(labels: Sequence[str], entry: RepoPolicy | None, prefix: str = 
     return f"{prefix}: {shown}" + ("" if checked or not labels else " (not checked against a list)")
 
 
+def _assignee_note(context: CardContext, login: str) -> str:
+    link = context.login_link(login)
+    if link is not None and link.verified:
+        return ""
+    return " (unverified)" if link is not None else " (not linked to anyone in Slack)"
+
+
 def _people_blocks(
-    record: ProposalRecord, context: CardContext, assignees: Sequence[str], pending: bool
+    record: ProposalRecord,
+    context: CardContext,
+    assignees: Sequence[str],
+    pending: bool,
+    compact: bool = False,
 ) -> list[Block]:
-    blocks: list[Block] = []
+    if compact:
+        # Too many people for a row each: one line per group, no buttons.
+        blocks: list[Block] = []
+        if assignees:
+            line = ", ".join(f"{login}{_assignee_note(context, login)}" for login in assignees)
+            blocks.append(_approved_context(f"Assignees: {line}"))
+        if record.participants:
+            names = ", ".join(context.names.get(u, u) for u in record.participants)
+            blocks.append(_context(f"Involved: {names}"))
+        return blocks
+    blocks = []
     for login in assignees:
-        link = context.login_link(login)
-        note = (
-            ""
-            if link is not None and link.verified
-            else " (unverified)"
-            if link is not None
-            else " (not linked to anyone in Slack)"
-        )
-        block = _section(f"Assignee: {login}{note}")
+        block = _section(f"Assignee: {login}{_assignee_note(context, login)}")
         if pending:
             block["accessory"] = _button("Remove", ACTION_UNASSIGN, f"{record.id}:{login}")
         blocks.append(block)
@@ -213,7 +238,11 @@ def _body(text: str, show: bool) -> list[Block]:
 
 
 def _draft_blocks(
-    record: ProposalRecord, context: CardContext, pending: bool, show_body: bool = True
+    record: ProposalRecord,
+    context: CardContext,
+    pending: bool,
+    show_body: bool = True,
+    compact: bool = False,
 ) -> tuple[list[Block], str]:
     """The blocks for the draft's content, and the header text."""
     draft = record.proposal
@@ -224,15 +253,15 @@ def _draft_blocks(
         if record.draft_cleared_at is None:
             blocks.append(_section(draft.title))
             blocks += _body(draft.body, show_body)
-        blocks.append(_context(_labels_line(draft.labels, entry)))
+        blocks.append(_approved_context(_labels_line(draft.labels, entry)))
         details = [f"Confidence: {round(draft.confidence * 100)}%"]
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
-        blocks.append(_context("   ".join(details)))
-        blocks += _people_blocks(record, context, draft.assignees, pending)
+        blocks.append(_approved_context("   ".join(details)))
+        blocks += _people_blocks(record, context, draft.assignees, pending, compact)
         return blocks, header
     header = f"Proposed update to {_nickname(context.channel, draft.repo)}#{draft.issue_number}"
-    return _update_blocks(record, draft, context, entry, pending, show_body), header
+    return _update_blocks(record, draft, context, entry, pending, show_body, compact), header
 
 
 def _update_blocks(
@@ -242,6 +271,7 @@ def _update_blocks(
     entry: RepoPolicy | None,
     pending: bool,
     show_body: bool,
+    compact: bool,
 ) -> list[Block]:
     changes = draft.changes
     blocks: list[Block] = []
@@ -253,13 +283,13 @@ def _update_blocks(
             blocks.append(_context("Comment:"))
             blocks += _body(changes.comment, show_body)
     if changes.add_labels:
-        blocks.append(_context(_labels_line(changes.add_labels, entry, "Add labels")))
+        blocks.append(_approved_context(_labels_line(changes.add_labels, entry, "Add labels")))
     if changes.remove_labels:
-        blocks.append(_context("Remove labels: " + ", ".join(changes.remove_labels)))
+        blocks.append(_approved_context("Remove labels: " + ", ".join(changes.remove_labels)))
     if changes.remove_assignees:
-        blocks.append(_context("Unassign: " + ", ".join(changes.remove_assignees)))
+        blocks.append(_approved_context("Unassign: " + ", ".join(changes.remove_assignees)))
     blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
-    blocks += _people_blocks(record, context, changes.add_assignees, pending)
+    blocks += _people_blocks(record, context, changes.add_assignees, pending, compact)
     return blocks
 
 
@@ -324,15 +354,32 @@ def _approved_block(record: ProposalRecord) -> Block:
     return _context(f"Approved {when}".strip())
 
 
+SHORTENED = (
+    "Part of this draft is too long to show in full, so it cannot be approved here. "
+    "Use Request Changes to ask for a shorter one."
+)
+
+# Tried in order: full body with a row per person, then people compacted, then
+# the body left out too. Only a layout showing the whole draft can approve.
+_LAYOUTS = ((True, False), (True, True), (False, True))
+
+
 def render_card(record: ProposalRecord, context: CardContext) -> Card:
     """The card for ``record`` in its current state."""
-    blocks, header, fits = _assemble(record, context, show_body=True)
-    if not fits:
-        # A draft too long to show in full cannot be approved from the card (D7).
-        blocks, header, _ = _assemble(record, context, show_body=False)
-    if record.state is ProposalState.PENDING:
+    pending = record.state is ProposalState.PENDING
+    for show_body, compact in _LAYOUTS[:-1]:
+        blocks, header, shortened = _assemble(record, context, show_body, compact)
+        if len(blocks) + (2 if pending else 0) <= MAX_BLOCKS:
+            break
+    else:
+        show_body, compact = _LAYOUTS[-1]
+        blocks, header, shortened = _assemble(record, context, show_body, compact)
+    approvable = show_body and not shortened
+    if pending:
+        if not approvable and show_body:
+            blocks.append(_context(SHORTENED))
         actions = [_button("Request Changes", ACTION_REQUEST_CHANGES, record.id)]
-        if fits:
+        if approvable:
             approve = _button(
                 "Approve",
                 ACTION_APPROVE,
@@ -341,14 +388,20 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
             )
             actions.insert(0, approve)
         blocks.append({"type": "actions", "elements": actions})
-    return Card(blocks=blocks, text=f"{header} for {record.proposal.repo}")
+    return Card(blocks=blocks[:MAX_BLOCKS], text=f"{header} for {record.proposal.repo}")
 
 
 def _assemble(
-    record: ProposalRecord, context: CardContext, *, show_body: bool
+    record: ProposalRecord, context: CardContext, show_body: bool, compact: bool
 ) -> tuple[list[Block], str, bool]:
+    """The card's blocks before the buttons, its header, and whether content was cut."""
     pending = record.state is ProposalState.PENDING
-    content, header = _draft_blocks(record, context, pending, show_body)
+    token = _SHORTENED.set([])
+    try:
+        content, header = _draft_blocks(record, context, pending, show_body, compact)
+        shortened = bool(_SHORTENED.get())
+    finally:
+        _SHORTENED.reset(token)
     blocks: list[Block] = [{"type": "header", "text": plain(header, MAX_HEADER_TEXT)}]
     blocks += _repo_blocks(record, context, pending)
     blocks += content
@@ -356,8 +409,7 @@ def _assemble(
         blocks.append(sources)
     if (state := _state_block(record)) is not None:
         blocks.append(state)
-    reserved = 1 if pending else 0  # the actions block
-    return blocks, header, len(blocks) + reserved <= MAX_BLOCKS
+    return blocks, header, shortened
 
 
 class CardPoster(Protocol):
