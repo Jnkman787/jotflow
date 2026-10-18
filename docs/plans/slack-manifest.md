@@ -5,7 +5,7 @@
 - Issue: #5
 - Draft PR: #61
 - Status: completed
-- Last verified: `make check` green locally on 2026-10-18 (ruff, mypy strict, 35 tests after rebase on #63); CI on #61
+- Last verified: `make check` green locally on 2026-10-18 after the review changes (ruff, mypy strict, 35 tests); CI on #61
 - Next safe action: in the sandbox workspace, create an app from `manifests/slack-app.json` and check the two live criteria on #5
 
 ## Objective and done-when
@@ -63,6 +63,7 @@ Stays open on #5 after this PR, because it needs the live sandbox workspace:
 - `make check`: ruff lint and format, mypy strict, and pytest all pass; 35 tests, 28 of them new in `tests/test_slack_manifest.py`.
 - `make manifest` regenerates `manifests/slack-app.json`; `test_checked_in_manifest_matches_renderer` guards against drift.
 - CodeRabbit (local CLI 0.7.6, free allowance, `--committed --base main -c AGENTS.md`): 1 finding, 1 fixed. `manifests/README.md` now explains generating the app-level token with `connections:write` for Socket Mode and copying the bot token.
+- CodeRabbit re-run after the review changes (scopes, AGENTS.md layout): skipped. The CLI hit its free-allowance rate limit, with a reset in about 55 minutes. `make check` and CI cover the change.
 - Not yet done: creating an app from the manifest in the sandbox workspace and reading a private channel. Both stay open on #5.
 
 Deviations from the issue text: the manifest is JSON from a Python renderer instead of `manifests/slack.yaml.j2`, which the issue allowed as "or equivalent". Interactivity is turned on, which the issue did not list, because the Approve and Request Changes buttons and the dialog need it.
