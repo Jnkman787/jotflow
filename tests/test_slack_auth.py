@@ -260,3 +260,14 @@ def test_http_client_bounds_the_response() -> None:
     api, _ = _api(_FakeResponse(big, None))
     with pytest.raises(SlackUnreachableError, match="large"):
         api.call("auth.test", "xoxb-1")
+
+
+def test_missing_scope_advice_never_suggests_a_second_app() -> None:
+    granted = [s for s in BOT_SCOPES if s != "pins:write"]
+    api = FakeSlackApi({("auth.test", GOOD_BOT): auth_ok(granted)})
+    with pytest.raises(TokenError) as exc:
+        check_bot_token(api, GOOD_BOT)
+    message = str(exc.value)
+    assert "recreate" not in message
+    assert "Do not create a second app" in message
+    assert "Bot Token Scopes" in message

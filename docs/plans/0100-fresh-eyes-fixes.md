@@ -5,9 +5,9 @@
 - Issue: #100
 - Also serves: #7, #10, #90
 - Draft PR: #101
-- Status: completed
+- Status: round 2 ready for review
 - Last verified: `make check` green locally on Python 3.12 after rebasing onto #98: 458 tests
-- Next safe action: review and merge #101; then the team lead runs the second fresh-eyes review on the merged text
+- Next safe action: review round 2; then the team lead runs the third fresh-eyes review on the merged text
 
 ## Objective and done-when
 
@@ -96,3 +96,27 @@ None is declined.
 
 - `init.py` constants `STEP_TITLES` and the README's numbered setup list must stay in step; `test_steps_are_numbered_like_the_readme` fails if they drift.
 - The preset default is `none` until milestone 3. When presets ship, #22 should change `DEFAULT_PRESET` and the README's setup step 6 together.
+
+## Round 2
+
+The second fresh-eyes review (comment on #100, 2026-10-18) found four platform blockers, six contradictions, minor items, and a jargon list. Round 2 is PR #NNN, `Refs #100`; the team lead runs a third review on the merged text. #100 closes when a review finds no blocker and no contradiction.
+
+| Finding | Fix |
+|---|---|
+| Blocker: WSL, `docker` not found | Prerequisites say to switch on Docker Desktop's WSL integration for the distribution; a troubleshooting row names the error. |
+| Blocker: Linux Docker Engine, `docker.sock` permission denied | Prerequisites say `sudo systemctl start docker` and `sudo usermod -aG docker $USER`, then log out and in; a troubleshooting row names the error. |
+| Blocker: Ctrl-D does not stop setup in PowerShell | Setup and the README say Ctrl-C everywhere; the code already treated Ctrl-C as a clean stop. |
+| Blocker: Windows needs `COMPOSE_PATH_SEPARATOR=:` | Setup writes it into `.env` on Windows when it is absent, and says so; an existing value is left alone. The README no longer asks people to edit `.env`. |
+| The example file says copy it and sets `preset = "claude-code"` | Its header says setup writes `jotflow.toml` and the example shows every option; the preset is commented out until agent runs exist. |
+| The missing-scope error suggests recreating the app | It now says where to add the scope, under Bot Token Scopes, and "Do not create a second app". |
+| Admin approval says "nothing is saved" | It says `.env` and `jotflow.toml` are not written yet; only `slack-app-manifest.json` was, and it is fine to leave. |
+| manifests/README says `/invite @YourBotName` | It says the bot's handle, such as `@idea_bot`, which setup prints. |
+| The re-run question says "the JotFlow app" | It asks "Have you already created a Slack app for JotFlow?", which holds whatever the bot is called. |
+| README "program", prompt "CLI" | Both say "program". |
+| Minor: uv needs a new terminal; macOS Python is older; `cd ~` in WSL; showing the manifest file; viewing the app-level token again; the channel must exist and browser links work; refuse unsupported presets; where logs go and stopping `jotflow run`; plain live-check steps; explain the proxy | All done. Setup accepts `app.slack.com/client/T.../C...` links, and refuses presets it does not ship yet, with `none` or `claude-code` accepted. A pip row covers too-old Python. |
+| Jargon | Defined in "Words used here": manifest, Docker, image, container, Compose, slash command, milestone. Inline: sudo, chmod, daemon, bind source path, proxy, OAuth & Permissions, Event Subscriptions, `.venv`, `ts` and `thread_ts`. Removed from user-facing text: "MCP server hat", "headless mode", "CLI", "policy file", "host", "CI", "shell profile", "opt in", and "decision D2" and the bare `debounce_seconds` comment in the example file. |
+| Also, from the reviewer | AGENTS.md and the architecture intro say decisions D1 to D13. |
+
+Declined: none. "Gemini CLI" in the README's diagram stays, as it is the product's name.
+
+Validation, round 2: `make check` green, 753 tests. New tests cover the Windows separator (written, skipped elsewhere, existing value kept), channel links from Copy link and the browser, preset refusal, the reworded reuse question, Ctrl-C in the intro, and the missing-scope advice.

@@ -1,21 +1,24 @@
-# jotflow.toml: admin policy for JotFlow (decision D2 in docs/roadmap.md).
-#
-# Copy this file to jotflow.toml and replace every value. All ids, repos, and
-# names below are made up. Secrets never go here; Slack tokens come from the
-# environment or .env. Unknown keys are rejected, so typos fail loudly.
+# jotflow.toml: which channels JotFlow watches, which repos they feed, and who
+# may approve. `uv run jotflow init` writes your jotflow.toml for you; this
+# example shows every option. To write one by hand instead, copy this file to
+# jotflow.toml and replace every value. All ids, repos, and names below are
+# made up. Secrets never go here; the Slack tokens live in .env. Unknown keys
+# are rejected, so typos fail loudly.
 
 # "permalinks" puts the Slack permalinks a proposal came from in the issue
 # body, so the store can be rebuilt from Slack. "none" keeps permalinks and
 # every other workspace detail out of issue bodies.
 issue_links = "permalinks"
 
-# Seconds a thread must be quiet before it is drafted. Channels may override.
+# How long a conversation must be quiet, in seconds, before JotFlow drafts an
+# issue from it, so a burst of replies is read together. A channel may set its own.
 debounce_seconds = 120
 
 [agent]
-# The agent preset the runner in the agent container launches.
-# Leave it out to connect JotFlow to Slack without starting agent runs.
-preset = "claude-code"
+# Which agent program drafts issues. Agent runs arrive in milestone 3; until
+# then leave this out, as setup does, and JotFlow connects to Slack without
+# starting the agent. The first preset will be "claude-code".
+# preset = "claude-code"
 
 [approval]
 # Slack user ids allowed to approve and change channel modes. Empty, the

@@ -1,6 +1,6 @@
 # JotFlow architecture
 
-This document is the design contract the implementation is built against. Change it through a pull request when a decision changes. The build order, milestone definitions, and the numbered decisions D1 to D12 are in [roadmap.md](roadmap.md).
+This document is the design contract the implementation is built against. Change it through a pull request when a decision changes. The build order, milestone definitions, and the numbered decisions D1 to D13 are in [roadmap.md](roadmap.md).
 
 ## Problem
 
