@@ -17,7 +17,7 @@ Done when:
 - [x] The image builds from the locked dependencies, runs as a non-root user, and contains no Node and no agent CLI
 - [x] `docker compose run --rm jotflow jotflow --version` prints the version
 - [x] The database lives on a named volume and survives `docker compose down` followed by `up`
-- [ ] The image builds in CI on every pull request, with read-only permissions and no push
+- [x] The image builds in CI on every pull request, with read-only permissions and no push
 - [ ] Deferred to #8: `docker compose up` with a filled `.env` reaches the connected state. This needs `jotflow run` from #8 and a live Slack workspace, so this PR uses `Refs #9`, not `Fixes #9`.
 
 **Out of scope:** the agent container and runner (#54), publishing the image to GHCR (#39), `jotflow run` itself (#8), and any change to `config.py`, `models.py`, or `cli.py`.
