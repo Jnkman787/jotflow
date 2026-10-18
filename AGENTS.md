@@ -54,7 +54,7 @@ docs/             architecture, roadmap, plans
 | `make run` | Run the `jotflow` CLI |
 | `make manifest` | Regenerate `manifests/slack-app.json` from the renderer |
 
-Run `make check` before pushing. CI runs the same checks on Python 3.12 and 3.13.
+Run `make check` before pushing. CI runs the same checks on Python 3.12, 3.13, and 3.14; the container image uses 3.14, so keep it in the matrix.
 
 ## Work tracking
 
