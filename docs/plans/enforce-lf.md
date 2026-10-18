@@ -4,9 +4,9 @@
 
 - Issue: #74
 - Draft PR: #75
-- Status: implementing
-- Last verified: audit of the index on origin/main, 2026-10-18
-- Next safe action: add `.gitattributes`, `.editorconfig`, the ruff setting, and the CI check
+- Status: ready for review
+- Last verified: `make check` and the scratch-clone proofs below, 2026-10-18
+- Next safe action: merge, make `Line endings` a required check, restore the maintainer's checkout
 
 ## Objective and done-when
 
@@ -33,19 +33,24 @@ Audit on origin/main: 63 files `i/lf`, one empty file (`tests/__init__.py`, `i/n
 ## Progress checklist
 
 - [x] Confirm the issue is ready
-- [ ] Commit this plan and open the draft PR
-- [ ] `.gitattributes` and `.editorconfig`
-- [ ] ruff `line-ending = "lf"`
-- [ ] `make eol` and inclusion in `make check`
-- [ ] CI `Line endings` job, proven to fail on a CRLF file
-- [ ] AGENTS.md rule
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] `.gitattributes` and `.editorconfig`
+- [x] ruff `line-ending = "lf"`
+- [x] `make eol` and inclusion in `make check`
+- [x] CI `Line endings` job, proven to fail on a CRLF file
+- [x] AGENTS.md rule
+- [x] `make check` passes
 - [ ] Merge, make the job required, restore the maintainer's checkout
 
 ## Validation
 
-To be filled in.
+- Audit of origin/main: 63 files `i/lf`, one empty file, no CRLF.
+- `git add --renormalize .` with the new `.gitattributes` changed no existing file.
+- In a scratch clone, a CRLF blob added to the index bypassing filters is reported as `i/crlf` and the check fails, as intended.
+- In the same clone, `git add` of a file an editor saved with CRLF stores it as LF (`i/lf w/crlf`), so normal commits are normalised automatically.
+- `make check` passes, now including `make eol`.
+- CodeRabbit: skipped for a configuration-only change.
 
 ## Handoff notes
 
-None yet.
+After merge: add `Line endings` to the required checks, and restore the maintainer's checkout with `git checkout -- .` once it has pulled this change.
