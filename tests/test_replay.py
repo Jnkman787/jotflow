@@ -96,7 +96,7 @@ async def test_a_refused_tool_call_stops_the_replay() -> None:
     thread = builtin_thread("mentions")
 
     async def refusing(self: Any, grant: Any, arguments: Any) -> Any:
-        raise RuntimeError("nope")
+        raise RuntimeError("SECRET-TEXT")
 
     from jotflow.whiteboard.write_tools import WriteTools
 
@@ -108,7 +108,8 @@ async def test_a_refused_tool_call_stops_the_replay() -> None:
         WriteTools.propose_issue = original  # type: ignore[method-assign]
     (script,) = [c for c in report.checks if c.name == "script"]
     assert script.ok is False
-    assert "propose_issue refused the scripted call" in script.detail
+    assert script.detail == "propose_issue failed: RuntimeError"
+    assert "SECRET-TEXT" not in report.render()
 
 
 def test_the_report_never_contains_message_text() -> None:
@@ -231,3 +232,22 @@ async def test_missing_topics_and_chatter_are_reported() -> None:
     topical = _state("feature-request")
     checks = {c.name: c for c in await module._compare(topical, [], {})}
     assert checks["topics"].ok is False and "was not created" in checks["topics"].detail
+
+
+async def test_errors_name_fields_and_reasons_never_input() -> None:
+    state = _state()
+    state.specs = {
+        spec.name: spec
+        for spec in module.write_tools(state.store, state.thread.policy, state.poster)
+    }
+    grant = Grant(run_id="r1", kind=RunKind.DRAFTING, channel_id="C0EXAMPLE1", thread_ts="1.1")
+    with pytest.raises(module.ReplayError) as invalid:
+        await state.call(grant, "ask_channel", {"text": 12345, "extra": "SECRET-TEXT"})
+    assert "invalid arguments: " in str(invalid.value)
+    assert "SECRET-TEXT" not in str(invalid.value) and "12345" not in str(invalid.value)
+    with pytest.raises(module.ReplayError) as refused:
+        await state.call(
+            grant, "link_message", {"ts": "9.9", "decision": "chatter", "confidence": 1}
+        )
+    # The tool's own reason, written in code, is passed through as it is.
+    assert str(refused.value) == "link_message refused the scripted call: run r1 is not running"
