@@ -326,6 +326,15 @@ The store (`src/jotflow/store/`) enforces this. Every column carries a comment s
 
 Thread text is fetched from Slack when building a packet, passed to the agent, and discarded. Logs never carry it: JotFlow's own modules log ids and timestamps only, libraries that print whole payloads are capped at INFO, and every line passes one redacting formatter, which also covers tracebacks. That formatter removes the Slack payload fields that carry what people wrote, `text` and the attachment, unfurl, and file fields such as `fallback`, `title`, and `comment`, and, always, every token shape JotFlow knows: Slack, GitHub, JotFlow run tokens, bearer values, and private keys. `jotflow run --log-bodies` shows message text for local debugging, with a warning, and is refused in CI and inside JotFlow's image; tokens stay redacted even then.
 
+How the work packet treats thread text:
+
+- It reads only the run's own thread, with `conversations.replies`, never channel history. A very long thread is paged in full, up to a bound, keeping its first and newest messages.
+- Related excerpts are the first message of a few other threads already named in the topic index.
+- Authors and `<@U…>` mentions become display names, with the Slack user id kept alongside. The only cache maps user ids to names: directory data, bounded and short-lived, never message text.
+- `skip:` messages, a whole thread under a `skip:` root, and messages a person marked as chatter never reach the agent. Keyword prefixes are removed from the text and passed as a hint.
+- Very long threads are trimmed to the root, the first replies, and the most recent ones, within fixed size caps.
+- Slack rate limits are retried with backoff that honours `Retry-After`. One `get_work` call shares a single 20 s wait budget across every Slack call it makes: the thread's pages, name lookups, and related excerpts. That keeps it inside the MCP server's 30 s request timeout. If the thread cannot be read within the budget, the agent gets a clear error and nothing is recorded as served. A name lookup that cannot finish shows the user id instead, and related excerpts that cannot be fetched are left out.
+
 The local store is a **rebuildable cache**. Each linked Slack message receives a reply with the issue URL, and by default each issue carries the Slack permalinks it came from, so the correlation map can be reconstructed from Slack alone. Setting `issue_links = "none"` keeps permalinks and every other workspace detail out of issue bodies.
 
 Where conversation content does go, so teams can judge it:
