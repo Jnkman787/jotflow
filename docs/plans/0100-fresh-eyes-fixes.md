@@ -6,7 +6,7 @@
 - Also serves: #7, #10, #90
 - Draft PR: #101
 - Status: completed
-- Last verified: `make check` green locally on Python 3.12: 438 tests, 97.43% coverage
+- Last verified: `make check` green locally on Python 3.12 after rebasing onto #98: 458 tests
 - Next safe action: review and merge #101; then the team lead runs the second fresh-eyes review on the merged text
 
 ## Objective and done-when
@@ -77,7 +77,7 @@ None is declined.
 
 ## Validation
 
-- `make check` passes, with 438 tests and total coverage at 97.43%. The #90 tests still check that every prompt is explained just before it is asked, and their scripted sessions now answer the new "already created the app?" question. New tests cover:
+- `make check` passes, with 458 tests after rebasing onto #98. The #90 tests still check that every prompt is explained just before it is asked, and their scripted sessions now answer the new "already created the app?" question. New tests cover:
   - "Setup step N of 6" headings in order, each matching a numbered step title in the README
   - an existing app skipping the create link and the manifest
   - Request to Install and both token pages being explained
