@@ -36,7 +36,7 @@ Done when:
 
 ## Risks and open questions
 
-- **Timers live in memory.** A thread that was waiting out its window when JotFlow stopped gets no run until its next message, because Slack does not redeliver. Persisting pending threads in the store is a small follow-up if it matters in practice; I'll raise it as an issue rather than widen this PR.
+- **Timers live in memory.** A thread that was waiting out its window when JotFlow stopped gets no run until its next message, because Slack does not redeliver. Persisting pending threads in the store is follow-up #130, kept out of this PR.
 - **Reactions do not start runs in v1.** Keyword reactions arrive with #56.
 
 ## Progress checklist
@@ -61,6 +61,7 @@ Done when:
   - the bot's own reply, through the real `EventFilter`, leaving the due time unchanged
   - a reply reviving a 30-day-old topic into the index, a reply already placed by a person left alone, and a reply to an unplaced or chatter post linking nothing
 - The carried #111 nit has its own tests in `tests/test_replay.py`.
+- CodeRabbit: skipped, rate-limited.
 
 ## Handoff notes
 
