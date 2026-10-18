@@ -4,9 +4,9 @@
 
 - Issue: #76
 - Draft PR: #78
-- Status: implementing
+- Status: completed
 - Last verified: `make check` green locally on Python 3.12, 243 tests, 95.74% total coverage
-- Next safe action: wait for CI on #78, then mark it ready
+- Next safe action: review and merge #78
 
 ## Objective and done-when
 
@@ -31,7 +31,7 @@ Done when:
   - The floor lives only in this config. `make` and CI both read it, so it changes in one place.
 - **Make.** A new `cov` target runs `pytest --cov --cov-report=term-missing`. `check` runs `cov` instead of `test`. `test` stays a fast run without coverage.
 - **CI.** The `Test` step in the `check` matrix runs the same command as `make cov`, on all three Python versions. A run below the floor exits non-zero, which fails the job.
-- **`commands/run.py`.** The uncovered part is `serve()`: building the Bolt app, startup checks, connecting, waiting, and the error exits. The tests replace `AsyncApp`, `AsyncSocketModeHandler`, `fetch_identity`, and `missing_channels` in the module with fakes, then drive each path:
+- **`commands/run.py`.** The uncovered part is `serve()`: building the Bolt app, startup checks, connecting, waiting, and the error exits. The tests replace `AsyncApp`, `AsyncSocketModeHandler`, and `install_stop_signals` in the module with fakes. The real `fetch_identity` and `missing_channels` run against a fake Slack client. The tests then drive each path:
   - a clean run stopped by the stop event
   - a Slack setup error exiting 1
   - Slack refusing the Socket Mode connection exiting 1 and closing the handler
@@ -59,8 +59,8 @@ Alternatives considered: putting `--cov` in pytest's `addopts` would slow every 
 - [x] Tests for `serve()` in `commands/run.py`
 - [x] Update documentation: AGENTS.md Testing and Commands
 - [x] `make check` passes
-- [ ] Local CodeRabbit review, or skipped
-- [ ] Mark the PR ready for review
+- [x] Local CodeRabbit review, or skipped
+- [x] Mark the PR ready for review
 
 ## Validation
 
@@ -76,9 +76,10 @@ Alternatives considered: putting `--cov` in pytest's `addopts` would slow every 
   - running only `tests/test_cli.py` with coverage reports "Required test coverage of 80.0% not reached. Total coverage: 33.42%" and exits 1
   - `--cov-fail-under=99` on the full suite exits 1
 - `make check` passes, including `make eol`. Every changed file is LF in the index and the working tree.
+- CodeRabbit (local CLI, `--committed --base main -c AGENTS.md`): 0 findings.
 - Lowest files now: `commands/init.py` at 91%, then `envfile.py` and `slack_auth.py` at 96%. Raising them is out of scope.
 
 
 ## Handoff notes
 
-None yet.
+Nothing pending. `make test` stays a quick run without coverage for local iteration; `make check` and CI are what enforce the floor.
