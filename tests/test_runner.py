@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import socket
 import stat
@@ -555,3 +556,33 @@ def test_runner_configuration_problems_exit_2(
 
 def test_file_modes_constant() -> None:
     assert stat.S_IRUSR | stat.S_IWUSR == 0o600
+
+
+# The startup line names the kinds and the agent program, never its arguments.
+
+
+def test_the_startup_line_names_kinds_and_program_only(tmp_path: Path) -> None:
+    line = runner_command.startup_line(config(tmp_path))
+    assert line == f"runner serving drafting, question with command {Path(sys.executable).name}"
+    assert "agent.py" not in line and SECRET not in line
+    exec_line = runner_command.startup_line(config(tmp_path, execution=True))
+    assert exec_line.startswith("runner serving execution with command ")
+
+
+async def test_serve_logs_the_startup_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Server:
+        def __init__(self, _: Any) -> None: ...
+
+        async def serve(self) -> None:
+            return None
+
+    monkeypatch.setattr(runner_command.uvicorn, "Server", Server)
+    cfg = config(tmp_path)
+    with caplog.at_level(logging.INFO, logger="jotflow.runner"):
+        settings = runner_command.RunnerSettings(  # type: ignore[call-arg]
+            runner_secret=SECRET, agent_command='["true"]'
+        )
+        assert await runner_command.serve(settings, cfg) == 0
+    assert "runner serving drafting, question with command" in caplog.text

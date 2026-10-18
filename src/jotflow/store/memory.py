@@ -378,7 +378,9 @@ class MemoryStore:
                 return existing.model_copy()
             return self._insert_run(kind, channel_id, thread_ts, proposal_id, seconds).model_copy()
 
-    async def claim_next_run(self, *, max_running: int) -> Run | None:
+    async def claim_next_run(
+        self, *, max_running: int, kinds: Collection[RunKind] | None = None
+    ) -> Run | None:
         if max_running < 1:
             raise ValueError("max_running must be at least 1")
         async with self._lock:
@@ -387,6 +389,8 @@ class MemoryStore:
                 return None
             busy = {(r.channel_id, r.thread_ts) for r in running}
             for run in self._ordered_runs():
+                if kinds is not None and run.kind not in kinds:
+                    continue
                 if run.status is RunStatus.QUEUED and (run.channel_id, run.thread_ts) not in busy:
                     now = self._clock()
                     claimed = run.model_copy(

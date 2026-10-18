@@ -23,10 +23,12 @@ feeds accepted messages to the debouncer, and drives runs through
 Runs still running stay so in the store, and the next start's recovery marks
 them interrupted and queues them again.
 
-Agent runs are on only when ``[agent] preset`` is set in jotflow.toml and
-JotFlow holds the drafting runner's secret. Otherwise nothing is queued, no
-token is issued, and the MCP server refuses every call, as before. An
-execution run without the exec runner's secret fails with a short notice.
+Each run kind is on only when ``[agent] preset`` is set in jotflow.toml and
+JotFlow holds that kind's runner secret, decided once at startup with one log
+line for each kind that is off. A kind that is off never starts: its runs stay
+queued and its proposals stay approved. With drafting off, nothing is queued
+from Slack. With every kind off, no token is issued and the MCP server refuses
+every call, as before.
 """
 
 from __future__ import annotations
@@ -35,11 +37,13 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
+from jotflow.models import RunKind
 from jotflow.orchestrator.debounce import Debouncer
 from jotflow.orchestrator.ingest import BotIdentity, Decision
 from jotflow.orchestrator.launch import RunnerClient, RunSupervisor
@@ -71,13 +75,38 @@ async def open_sqlite(path: str) -> Store:
     return await SqliteStore.open(path)
 
 
-def runs_off_reason(settings: Settings, policy: Policy) -> str | None:
-    """Why agent runs are off, or None when they are on."""
+CONVERSATION_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+
+
+@dataclass(frozen=True)
+class RunKinds:
+    """Which run kinds may start, decided once at startup, and why the others may not."""
+
+    on: frozenset[RunKind]
+    off: tuple[str, ...]
+
+
+def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
+    """Each kind is on only with a preset and its own runner's secret.
+
+    A kind that is off never starts: its runs stay queued and its proposals
+    stay approved, rather than failing for want of a runner.
+    """
     if policy.agent.preset is None:
-        return "[agent] preset is not set in jotflow.toml"
+        return RunKinds(
+            frozenset(), ("agent runs are off: [agent] preset is not set in jotflow.toml",)
+        )
+    on: set[RunKind] = set()
+    off: list[str] = []
     if settings.runner_secret is None:
-        return "JOTFLOW_RUNNER_SECRET is not set"
-    return None
+        off.append("drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set")
+    else:
+        on |= CONVERSATION_KINDS
+    if settings.runner_exec_secret is None:
+        off.append("execution runs are off: JOTFLOW_RUNNER_EXEC_SECRET is not set")
+    else:
+        on.add(RunKind.EXECUTION)
+    return RunKinds(frozenset(on), tuple(off))
 
 
 class Orchestrator:
@@ -106,7 +135,7 @@ class Orchestrator:
         self._flush_seconds = flush_seconds
         self._tick_seconds = tick_seconds
         self.registry = TokenRegistry()
-        self.off_reason = runs_off_reason(settings, policy)
+        self.kinds = decide_run_kinds(settings, policy)
         self._store: Store | None = None
         self._server: Server | None = None
         self._debouncer: Debouncer | None = None
@@ -122,7 +151,7 @@ class Orchestrator:
 
     @property
     def runs_on(self) -> bool:
-        return self.off_reason is None
+        return bool(self.kinds.on)
 
     async def start(self) -> None:
         """Start everything in order. On failure, stops what had started, then raises."""
@@ -144,8 +173,9 @@ class Orchestrator:
         )
         self._server = self._make_server(self._settings, self.registry, tools)
         await self._server.start()
+        for reason in self.kinds.off:
+            log.warning("%s", reason)
         if not self.runs_on:
-            log.info("agent runs are off: %s", self.off_reason)
             return
         runner = self._runner or RunnerClient.from_settings(self._settings)
         self._runner = runner
@@ -155,18 +185,26 @@ class Orchestrator:
             runner,
             poster,
             max_running=self._policy.agent.max_concurrent_runs,
+            kinds=self.kinds.on,
         )
-        self._debouncer = Debouncer(self._store, self._policy)
+        # Only drafting runs come from the debouncer; with them off, queue none.
+        if RunKind.DRAFTING in self.kinds.on:
+            self._debouncer = Debouncer(self._store, self._policy)
         supervise = (
             self._supervisor.run(self._stop)
             if self._tick_seconds is None
             else self._supervisor.run(self._stop, interval=self._tick_seconds)
         )
-        self._tasks = [
-            asyncio.create_task(supervise, name="jotflow-supervisor"),
-            asyncio.create_task(self._flush_loop(self._debouncer), name="jotflow-debouncer"),
-        ]
-        log.info("agent runs are on, up to %d at a time", self._policy.agent.max_concurrent_runs)
+        self._tasks = [asyncio.create_task(supervise, name="jotflow-supervisor")]
+        if self._debouncer is not None:
+            self._tasks.append(
+                asyncio.create_task(self._flush_loop(self._debouncer), name="jotflow-debouncer")
+            )
+        log.info(
+            "agent runs are on for %s, up to %d at a time",
+            ", ".join(sorted(k.value for k in self.kinds.on)),
+            self._policy.agent.max_concurrent_runs,
+        )
 
     async def note(self, decision: Decision) -> None:
         """Take one ingest decision. Does nothing while runs are off."""

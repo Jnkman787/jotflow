@@ -12,6 +12,7 @@ import pytest
 from slack_sdk.errors import SlackApiError
 
 from jotflow.commands import run as run_command
+from jotflow.orchestrator import service as service_module
 from jotflow.orchestrator.ingest import BotIdentity, EventFilter
 from jotflow.orchestrator.slack import (
     SlackSetupError,
@@ -316,6 +317,8 @@ class ServeHarness:
         self.mcp_calls: list[str] = []
         self.mcp_start_error: BaseException | None = None
         monkeypatch.setattr(run_command, "AsyncApp", lambda **_: self.app)
+        # The packet reader copies the real client's settings; the fake has none.
+        monkeypatch.setattr(service_module, "BoltSlackReader", lambda client: client)
         monkeypatch.setattr(
             run_command, "make_mcp_server", lambda *_: FakeMcp(self.mcp_calls, self.mcp_start_error)
         )

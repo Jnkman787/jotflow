@@ -181,11 +181,11 @@ async def serve(settings: Settings, policy: Policy) -> int:
         log.error("%s", exc)
         return EXIT_MCP
     except (StoreError, OSError, sqlite3.Error) as exc:
+        # The type and path only: an error's text could, in principle, quote a row.
         log.error(
-            "could not open the database at %s (%s: %s); check JOTFLOW_DATABASE_PATH",
+            "could not open the database at %s (%s); check JOTFLOW_DATABASE_PATH",
             settings.database_path,
             type(exc).__name__,
-            exc,
         )
         return EXIT_STORE
     register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)

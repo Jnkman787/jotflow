@@ -34,6 +34,7 @@ From the handoffs on #55:
 - [x] Shutdown order: stop taking Slack events first. Then stop the supervisor, which sends DELETE for live runs and revokes every live token. Then stop the MCP server, and close the store last. A test checks the order, and checks that no token is valid by the time the MCP server stops.
 - [x] The token reaches the agent only through the runner's 0600 per-run MCP config (#54). JotFlow sends it only in the launch request body, never in a URL, a header, argv, or a log line. A test scans captured logs for the token.
 - [x] Agent runs are off unless `[agent] preset` is set and that kind's runner secret is present. With them off, `jotflow run` behaves as today, and it says once at startup why runs are off.
+- [x] Review change: the decision is per kind. A kind whose runner secret is missing is off, with one startup line, and its runs stay queued and its proposals approved, since `claim_next_run` takes `kinds`. The runner logs `runner serving <kinds> with command <program>` at startup. #137 changes it to name the preset. The README says `[agent] preset` must match it. A store error at startup logs the type and path only.
 
 From #54:
 

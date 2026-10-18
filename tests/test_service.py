@@ -20,7 +20,7 @@ from jotflow.config import Settings
 from jotflow.models import MessageRef, ProposalState, RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Ignored
 from jotflow.orchestrator.launch import RunnerClient, RunnerEndpoint
-from jotflow.orchestrator.service import Orchestrator, runs_off_reason
+from jotflow.orchestrator.service import Orchestrator, RunKinds, decide_run_kinds
 from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
@@ -81,7 +81,7 @@ class FakeServer:
 
 
 class Rig:
-    def __init__(self, *, runs: bool = True, fail_server: bool = False) -> None:
+    def __init__(self, *, runs: bool = True, fail_server: bool = False, **overrides: Any) -> None:
         self.events: list[str] = []
         self.store = MemoryStore()
         self.server: FakeServer | None = None
@@ -93,7 +93,7 @@ class Rig:
             transport=httpx2.MockTransport(self._runner),
         )
         self.orchestrator = Orchestrator(
-            settings(),
+            settings(**overrides),
             policy(preset="claude-code" if runs else None),
             AsyncWebClient(token="xoxb-test"),
             IDENTITY,
@@ -143,14 +143,16 @@ async def until(condition: Any, *, tries: int = 500) -> None:
     raise AssertionError("the condition never held")
 
 
-def test_runs_are_off_without_a_preset_or_the_drafting_secret() -> None:
-    assert runs_off_reason(settings(), policy()) is None
-    assert "preset" in (runs_off_reason(settings(), policy(preset=None)) or "")
-    assert "JOTFLOW_RUNNER_SECRET" in (
-        runs_off_reason(settings(runner_secret=None), policy()) or ""
-    )
-    # The exec secret alone does not gate runs; execution runs fail with a notice.
-    assert runs_off_reason(settings(runner_exec_secret=None), policy()) is None
+def test_each_run_kind_needs_a_preset_and_its_own_runner_secret() -> None:
+    assert decide_run_kinds(settings(), policy()) == RunKinds(frozenset(RunKind), ())
+    none = decide_run_kinds(settings(), policy(preset=None))
+    assert none.on == frozenset() and "preset is not set" in none.off[0]
+    no_exec = decide_run_kinds(settings(runner_exec_secret=None), policy())
+    assert no_exec.on == {RunKind.DRAFTING, RunKind.QUESTION}
+    assert no_exec.off == ("execution runs are off: JOTFLOW_RUNNER_EXEC_SECRET is not set",)
+    no_draft = decide_run_kinds(settings(runner_secret=None), policy())
+    assert no_draft.on == {RunKind.EXECUTION}
+    assert no_draft.off == ("drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set",)
 
 
 async def test_with_runs_off_the_tools_are_served_and_nothing_is_queued(
@@ -160,6 +162,7 @@ async def test_with_runs_off_the_tools_are_served_and_nothing_is_queued(
     with caplog.at_level(logging.INFO, logger="jotflow.orchestrator"):
         await rig.orchestrator.start()
     assert "agent runs are off: [agent] preset is not set" in caplog.text
+    assert not rig.orchestrator.runs_on
     assert rig.server is not None
     assert {t.name for t in rig.server.tools} >= {"get_work", "propose_issue", "record_result"}
     await rig.orchestrator.note(accepted())
@@ -348,3 +351,49 @@ async def test_the_run_token_never_reaches_a_log_line(
     await rig.orchestrator.stop()
     assert tokens and tokens[0] not in caplog.text
     assert SECRET not in caplog.text and EXEC_SECRET not in caplog.text
+
+
+async def test_without_the_exec_secret_execution_runs_stay_queued_and_approved(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig(runner_exec_secret=None)
+    await _approved(rig.store)
+    with caplog.at_level(logging.INFO, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert "execution runs are off: JOTFLOW_RUNNER_EXEC_SECRET is not set" in caplog.text
+    assert "agent runs are on for drafting, question" in caplog.text
+    await rig.orchestrator.note(accepted("1760781700.000100"))
+
+    async def drafted() -> bool:
+        return ("POST", "agent", "/runs") in rig.calls
+
+    await until(drafted)
+    await asyncio.sleep(0.05)
+    (execution,) = [
+        r for r in await rig.store.thread_runs(CH, THREAD) if r.kind is RunKind.EXECUTION
+    ]
+    assert execution.status is RunStatus.QUEUED
+    proposal = await rig.store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.APPROVED
+    assert all(host != "agent-exec" for _, host, _ in rig.calls)
+    await rig.orchestrator.stop()
+
+
+async def test_without_the_drafting_secret_nothing_is_queued_but_execution_runs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig(runner_secret=None)
+    await _approved(rig.store)
+    with caplog.at_level(logging.INFO, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert "drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set" in caplog.text
+
+    async def executed() -> bool:
+        return ("POST", "agent-exec", "/runs") in rig.calls
+
+    await until(executed)
+    await rig.orchestrator.note(accepted("1760781700.000100"))
+    await asyncio.sleep(0.05)
+    assert await rig.store.thread_runs(CH, "1760781700.000100") == []
+    assert all(host != "agent" for _, host, _ in rig.calls)
+    await rig.orchestrator.stop()

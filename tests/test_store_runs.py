@@ -464,3 +464,17 @@ def test_no_run_outlives_its_token() -> None:
 async def test_a_two_hour_timeout_is_allowed(store: Store) -> None:
     run = await store.enqueue_run(D, CH, T1, timeout=timedelta(hours=2))
     assert run.timeout_seconds == 7200
+
+
+async def test_claim_can_be_limited_to_some_kinds(store: Store) -> None:
+    await approved(store)
+    execution = await store.enqueue_run(E, CH, T1, proposal_id="p1")
+    drafting = await store.enqueue_run(D, CH, T2)
+    claimed = await store.claim_next_run(max_running=4, kinds={D, Q})
+    assert claimed is not None and claimed.id == drafting.id
+    assert await store.claim_next_run(max_running=4, kinds={D, Q}) is None
+    left = await store.get_run(execution.id)
+    assert left is not None and left.status is RunStatus.QUEUED
+    assert await store.claim_next_run(max_running=4, kinds=()) is None
+    later = await store.claim_next_run(max_running=4, kinds={E})
+    assert later is not None and later.id == execution.id
