@@ -73,7 +73,12 @@ def test_proposal_record_round_trips_either_kind() -> None:
         confidence=0.8,
     )
     record = ProposalRecord(
-        id="p1", channel_id="C0TEST1", run_id="r1", proposal=update, created_at=NOW
+        id="p1",
+        channel_id="C0TEST1",
+        thread_ts="1700000000.000100",
+        run_id="r1",
+        proposal=update,
+        created_at=NOW,
     )
     assert record.state is ProposalState.PENDING
     restored = ProposalRecord.model_validate_json(record.model_dump_json())
@@ -87,6 +92,7 @@ def test_execution_run_needs_a_proposal() -> None:
             id="r1",
             kind=RunKind.EXECUTION,
             channel_id="C0TEST1",
+            thread_ts="1700000000.000100",
             created_at=NOW,
             deadline=NOW + timedelta(minutes=5),
         )

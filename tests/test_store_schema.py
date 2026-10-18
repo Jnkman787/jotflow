@@ -117,6 +117,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "proposals",
             "proposal_participants",
             "identity_links",
+            "runs",
             "channel_modes",
         }
         for table in tables:

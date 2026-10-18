@@ -109,6 +109,30 @@ CREATE TABLE channel_modes (
 )
 """
 
+_RUN_KINDS = "'drafting', 'execution', 'question'"
+_RUN_STATUSES = "'queued', 'running', 'succeeded', 'failed', 'timed_out', 'interrupted'"
+
+_RUNS = f"""
+CREATE TABLE runs (
+    id TEXT PRIMARY KEY, -- random run id assigned by JotFlow
+    kind TEXT NOT NULL CHECK (kind IN ({_RUN_KINDS})), -- drafting, execution, or question
+    status TEXT NOT NULL CHECK (status IN ({_RUN_STATUSES})), -- see docs/architecture.md
+    channel_id TEXT NOT NULL, -- Slack channel id
+    thread_ts TEXT NOT NULL, -- Slack thread the run is for; a top-level post is its own
+    proposal_id TEXT, -- the approved proposal an execution run writes, unenforced like run_id
+    timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds > 0), -- how long a run may run
+    created_at TEXT NOT NULL, -- UTC, ISO 8601
+    deadline TEXT NOT NULL, -- UTC, ISO 8601, reset to start plus timeout when claimed
+    started_at TEXT, -- UTC, ISO 8601
+    finished_at TEXT, -- UTC, ISO 8601
+    error TEXT CHECK (length(error) <= 2000), -- failure reason the agent gave, untrusted
+    CHECK (kind != 'execution' OR proposal_id IS NOT NULL),
+    CHECK (status != 'queued' OR started_at IS NULL),
+    CHECK (status NOT IN ('running', 'succeeded', 'timed_out') OR started_at IS NOT NULL),
+    CHECK ((status IN ('queued', 'running')) = (finished_at IS NULL))
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -131,6 +155,22 @@ MIGRATIONS: tuple[Migration, ...] = (
         (
             "ALTER TABLE proposals ADD COLUMN draft_cleared_at TEXT"
             " /* UTC, ISO 8601: when the drafted title and body were removed (#102) */",
+        ),
+    ),
+    Migration(
+        3,
+        (
+            _RUNS,
+            # One running run per thread, of any kind. A top-level post's run
+            # carries the post's own ts, so a reply to it shares the thread.
+            "CREATE UNIQUE INDEX runs_one_running_per_thread"
+            " ON runs (channel_id, thread_ts) WHERE status = 'running'",
+            # A burst during a run queues one follow-up, not one per message.
+            "CREATE UNIQUE INDEX runs_one_queued_drafting_per_thread"
+            " ON runs (channel_id, thread_ts) WHERE status = 'queued' AND kind = 'drafting'",
+            "CREATE UNIQUE INDEX runs_one_execution_per_proposal"
+            " ON runs (proposal_id) WHERE status IN ('queued', 'running') AND kind = 'execution'",
+            "CREATE INDEX runs_status ON runs (status, created_at)",
         ),
     ),
 )

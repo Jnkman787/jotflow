@@ -5,9 +5,11 @@ implement :class:`Store`. See docs/plans/0011-sqlite-store.md.
 """
 
 from jotflow.store.base import (
+    ALLOWED_RUN_TRANSITIONS,
     ALLOWED_TRANSITIONS,
     AUTO_APPROVER,
     CLEARED_TITLE,
+    DEFAULT_RUN_TIMEOUTS,
     FINAL_STATES,
     ChannelModeSetting,
     ConflictError,
@@ -16,6 +18,7 @@ from jotflow.store.base import (
     IdentityLink,
     MessageLink,
     NotFoundError,
+    Recovery,
     Store,
     StoreError,
     TopicRecord,
@@ -28,9 +31,11 @@ from jotflow.store.sqlite import SchemaVersionError, SqliteStore
 from jotflow.store.titles import MAX_TITLE_LENGTH, clean_title
 
 __all__ = [
+    "ALLOWED_RUN_TRANSITIONS",
     "ALLOWED_TRANSITIONS",
     "AUTO_APPROVER",
     "CLEARED_TITLE",
+    "DEFAULT_RUN_TIMEOUTS",
     "FINAL_STATES",
     "MAX_TITLE_LENGTH",
     "ChannelModeSetting",
@@ -41,6 +46,7 @@ __all__ = [
     "MemoryStore",
     "MessageLink",
     "NotFoundError",
+    "Recovery",
     "SchemaVersionError",
     "SqliteStore",
     "Store",

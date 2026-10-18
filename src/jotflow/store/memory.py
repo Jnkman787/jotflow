@@ -10,7 +10,7 @@ import asyncio
 import secrets
 from collections.abc import Collection
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from jotflow.models import (
     ChannelMode,
@@ -18,9 +18,14 @@ from jotflow.models import (
     MessageRef,
     ProposalRecord,
     ProposalState,
+    Run,
+    RunKind,
+    RunStatus,
     Topic,
 )
 from jotflow.store.base import (
+    ACTIVE_RUN_STATUSES,
+    DEFAULT_RUN_TIMEOUTS,
     ChannelModeSetting,
     Clock,
     ConflictError,
@@ -28,11 +33,14 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    Recovery,
     TopicRecord,
     check_clearable,
+    check_finish,
     check_github_login,
     check_id,
     check_new_proposal,
+    check_run_request,
     cleared_draft,
     plan_transition,
     to_text,
@@ -50,6 +58,7 @@ class MemoryStore:
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
+        self._runs: dict[str, Run] = {}
 
     async def close(self) -> None:
         return None
@@ -170,9 +179,7 @@ class MemoryStore:
         record = self._proposals.get(proposal_id)
         return None if record is None else record.model_copy(deep=True)
 
-    async def thread_proposals(
-        self, channel_id: str, thread_ts: str | None
-    ) -> list[ProposalRecord]:
+    async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         found = [
             r.model_copy(deep=True)
             for r in self._proposals.values()
@@ -231,7 +238,7 @@ class MemoryStore:
             return record.model_copy(deep=True)
 
     async def supersede_pending(
-        self, channel_id: str, thread_ts: str | None, *, keep_id: str
+        self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         async with self._lock:
             ids = sorted(
@@ -286,3 +293,188 @@ class MemoryStore:
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         return self._modes.get(channel_id)
+
+    # Runs (D8, #53): the same rules the SQLite indexes enforce, checked by hand.
+
+    def _active_run_for(
+        self, kind: RunKind, channel_id: str, thread_ts: str, proposal_id: str | None
+    ) -> Run | None:
+        for run in self._runs.values():
+            if run.kind is not kind:
+                continue
+            if (
+                kind is RunKind.DRAFTING
+                and run.status is RunStatus.QUEUED
+                and (run.channel_id, run.thread_ts) == (channel_id, thread_ts)
+            ):
+                return run
+            if (
+                kind is RunKind.EXECUTION
+                and run.status in ACTIVE_RUN_STATUSES
+                and run.proposal_id == proposal_id
+            ):
+                return run
+        return None
+
+    def _insert_run(
+        self,
+        kind: RunKind,
+        channel_id: str,
+        thread_ts: str,
+        proposal_id: str | None,
+        seconds: int,
+    ) -> Run:
+        now = self._clock()
+        run = Run(
+            id=secrets.token_hex(8),
+            kind=kind,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            proposal_id=proposal_id,
+            timeout_seconds=seconds,
+            created_at=now,
+            deadline=now + timedelta(seconds=seconds),
+        )
+        self._runs[run.id] = run
+        return run
+
+    def _ordered_runs(self) -> list[Run]:
+        # Insertion order breaks ties in created_at, as the id does in SQLite
+        # closely enough for a test double: both are oldest first.
+        return sorted(self._runs.values(), key=lambda r: r.created_at)
+
+    async def enqueue_run(
+        self,
+        kind: RunKind,
+        channel_id: str,
+        thread_ts: str,
+        *,
+        proposal_id: str | None = None,
+        timeout: timedelta | None = None,
+    ) -> Run:
+        seconds = check_run_request(
+            kind,
+            channel_id,
+            thread_ts,
+            proposal_id,
+            DEFAULT_RUN_TIMEOUTS[kind] if timeout is None else timeout,
+        )
+        async with self._lock:
+            existing = self._active_run_for(kind, channel_id, thread_ts, proposal_id)
+            if existing is not None:
+                return existing.model_copy()
+            return self._insert_run(kind, channel_id, thread_ts, proposal_id, seconds).model_copy()
+
+    async def claim_next_run(self, *, max_running: int) -> Run | None:
+        if max_running < 1:
+            raise ValueError("max_running must be at least 1")
+        async with self._lock:
+            running = [r for r in self._runs.values() if r.status is RunStatus.RUNNING]
+            if len(running) >= max_running:
+                return None
+            busy = {(r.channel_id, r.thread_ts) for r in running}
+            for run in self._ordered_runs():
+                if run.status is RunStatus.QUEUED and (run.channel_id, run.thread_ts) not in busy:
+                    now = self._clock()
+                    claimed = run.model_copy(
+                        update={
+                            "status": RunStatus.RUNNING,
+                            "started_at": now,
+                            "deadline": now + timedelta(seconds=run.timeout_seconds),
+                        }
+                    )
+                    self._runs[run.id] = claimed
+                    return claimed.model_copy()
+            return None
+
+    async def finish_run(
+        self, run_id: str, status: RunStatus, *, error: str | None = None
+    ) -> Run | None:
+        async with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                raise NotFoundError(f"no run {run_id}")
+            if run.status not in ACTIVE_RUN_STATUSES:
+                return None
+            bounded = check_finish(run, status, error)
+            finished = run.model_copy(
+                update={"status": status, "finished_at": self._clock(), "error": bounded}
+            )
+            self._runs[run_id] = finished
+            return finished.model_copy()
+
+    async def get_run(self, run_id: str) -> Run | None:
+        run = self._runs.get(run_id)
+        return None if run is None else run.model_copy()
+
+    async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
+        return [
+            r.model_copy()
+            for r in self._ordered_runs()
+            if (r.channel_id, r.thread_ts) == (channel_id, thread_ts)
+        ]
+
+    async def overdue_runs(self) -> list[Run]:
+        now = self._clock()
+        overdue = [
+            r for r in self._runs.values() if r.status is RunStatus.RUNNING and r.deadline < now
+        ]
+        return [r.model_copy() for r in sorted(overdue, key=lambda r: r.deadline)]
+
+    async def recover_runs(self) -> Recovery:
+        async with self._lock:
+            runs = [r for r in self._ordered_runs() if r.status in ACTIVE_RUN_STATUSES]
+            now = self._clock()
+            for run in runs:
+                self._runs[run.id] = run.model_copy(
+                    update={"status": RunStatus.INTERRUPTED, "finished_at": now}
+                )
+            requeued: list[str] = []
+            threads: set[tuple[str, str]] = set()
+            timeouts: dict[str, int] = {}
+            for run in runs:
+                if run.kind is RunKind.DRAFTING and (run.channel_id, run.thread_ts) not in threads:
+                    threads.add((run.channel_id, run.thread_ts))
+                    fresh = self._insert_run(
+                        run.kind, run.channel_id, run.thread_ts, None, run.timeout_seconds
+                    )
+                    requeued.append(fresh.id)
+                elif run.kind is RunKind.EXECUTION and run.proposal_id is not None:
+                    timeouts.setdefault(run.proposal_id, run.timeout_seconds)
+            waiting_states = (
+                ProposalState.APPROVED,
+                ProposalState.EXECUTING,
+                ProposalState.RECONCILING,
+            )
+            waiting = sorted(
+                (p for p in self._proposals.values() if p.state in waiting_states),
+                key=lambda p: (p.created_at, p.id),
+            )
+            reconciling: list[str] = []
+            for record in waiting:
+                if record.state is ProposalState.EXECUTING:
+                    changes = plan_transition(
+                        record,
+                        ProposalState.RECONCILING,
+                        expected={ProposalState.EXECUTING},
+                        approved_by=None,
+                        expected_hash=None,
+                        result=None,
+                        now=now,
+                    )
+                    self._proposals[record.id] = record.model_copy(
+                        update={"state": changes.state}, deep=True
+                    )
+                    reconciling.append(record.id)
+                seconds = timeouts.get(
+                    record.id, int(DEFAULT_RUN_TIMEOUTS[RunKind.EXECUTION].total_seconds())
+                )
+                fresh = self._insert_run(
+                    RunKind.EXECUTION, record.channel_id, record.thread_ts, record.id, seconds
+                )
+                requeued.append(fresh.id)
+            return Recovery(
+                interrupted=tuple(run.id for run in runs),
+                requeued=tuple(requeued),
+                reconciling=tuple(reconciling),
+            )

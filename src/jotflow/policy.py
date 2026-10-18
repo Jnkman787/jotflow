@@ -269,9 +269,18 @@ class ChannelPolicy(_Strict):
         raise RepoNotAllowedError(channel_id, ref)
 
 
+MAX_CONCURRENT_RUNS = 32
+
+
 class AgentPolicy(_Strict):
     preset: PresetName | None = Field(
         default=None, description="Agent preset the runner launches; unset disables agent runs"
+    )
+    max_concurrent_runs: int = Field(
+        default=2,
+        ge=1,
+        le=MAX_CONCURRENT_RUNS,
+        description="How many agent runs may run at once, across all channels (D8)",
     )
 
 

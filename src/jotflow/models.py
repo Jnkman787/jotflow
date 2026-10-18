@@ -217,7 +217,12 @@ class ProposalRecord(BaseModel):
         description="Random id assigned by JotFlow; doubles as the hidden marker in the issue body"
     )
     channel_id: str
-    thread_ts: str | None = Field(default=None, description="Thread the proposal came from")
+    thread_ts: str = Field(
+        description=(
+            "The thread the proposal came from. A top-level post is its own thread, so a "
+            "proposal drafted from one carries the post's own ts, the same as its run"
+        )
+    )
     run_id: str = Field(description="The drafting run that produced it")
     state: ProposalState = ProposalState.PENDING
     proposal: Proposal
@@ -253,9 +258,17 @@ class Run(BaseModel):
     kind: RunKind
     status: RunStatus = RunStatus.QUEUED
     channel_id: str
-    thread_ts: str | None = None
+    thread_ts: str = Field(
+        description=(
+            "The thread the run is for. A top-level post is its own thread, so its run "
+            "carries the post's own ts, as Slack gives replies the parent's ts"
+        )
+    )
     proposal_id: str | None = Field(
         default=None, description="Required for execution runs: the approved proposal"
+    )
+    timeout_seconds: int = Field(
+        default=600, gt=0, le=86_400, description="How long the run may run once started"
     )
     created_at: AwareDatetime
     deadline: AwareDatetime

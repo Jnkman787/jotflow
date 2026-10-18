@@ -585,7 +585,8 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
     preset = None if preset_answer == "none" else preset_answer
 
     data = existing.model_dump() if existing else {}
-    data["agent"] = {"preset": preset}
+    # Keep any other agent settings, such as max_concurrent_runs; change only the preset.
+    data["agent"] = {**(existing.agent.model_dump() if existing else {}), "preset": preset}
     data["channels"] = {cid: channel.model_dump() for cid, channel in channels.items()}
     return Policy.model_validate(data)
 

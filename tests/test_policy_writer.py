@@ -109,3 +109,10 @@ def test_a_label_list_is_written() -> None:
     text = render_policy(policy)
     assert 'labels = ["bug"]' in text
     assert parse_policy(text) == policy
+
+
+def test_run_cap_round_trips() -> None:
+    policy = _policy(agent={"max_concurrent_runs": 7})
+    text = render_policy(policy)
+    assert "max_concurrent_runs = 7" in text
+    assert parse_policy(text) == policy
