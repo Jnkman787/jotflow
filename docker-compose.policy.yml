@@ -1,0 +1,29 @@
+# Hands the team's jotflow.toml to the JotFlow container, read-only.
+#
+# Use it together with the base file once `jotflow init` has written
+# jotflow.toml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.policy.yml up -d
+#
+# or set COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml in your
+# shell or .env so plain `docker compose up -d` does the same.
+#
+# This lives apart from docker-compose.yml on purpose. When a bind-mount source
+# is missing, Docker can create a root-owned directory in its place on the
+# host, which would then block `jotflow init` from writing the file. Keeping the
+# mount here means only a deliberate start with a policy touches the path.
+#
+# The policy holds no secrets. The file must be readable by the container's
+# uid 10001, so give it mode 0644, not 0600.
+
+services:
+  jotflow:
+    environment:
+      JOTFLOW_CONFIG: /etc/jotflow/jotflow.toml
+    volumes:
+      - type: bind
+        source: ./jotflow.toml
+        target: /etc/jotflow/jotflow.toml
+        read_only: true
+        bind:
+          create_host_path: false
