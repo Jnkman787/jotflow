@@ -246,6 +246,8 @@ Stored, in the team's own database:
 
 Not stored by JotFlow: message bodies, channel history.
 
+The store (`src/jotflow/store/`) enforces this. Every column carries a comment saying what it holds, and a test reads the live schema and fails if any column is named or documented as a message's body, text, or content. The proposals table holds the agent's structured draft, the issue title and body that a person approves, because approval must lock exactly what the card showed (D7). That draft is derived content bound for GitHub, not a copy of the thread. Topic titles are cleaned on every write: no markup, links, or mentions, and at most 80 characters, because a title written by one run is read by others.
+
 Thread text is fetched from Slack when building a packet, passed to the agent, and discarded. Logs redact message bodies by default.
 
 The local store is a **rebuildable cache**. Each linked Slack message receives a reply with the issue URL, and by default each issue carries the Slack permalinks it came from, so the correlation map can be reconstructed from Slack alone. Setting `issue_links = "none"` keeps permalinks and every other workspace detail out of issue bodies.

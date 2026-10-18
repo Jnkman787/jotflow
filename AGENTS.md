@@ -36,6 +36,7 @@ src/jotflow/
   slack_manifest.py  renders the Slack app manifest; default checked in under manifests/
   slack_auth.py   checks Slack tokens behind a small protocol tests can fake
   envfile.py      reads and updates .env without disturbing other lines
+  store/          local state behind the Store interface: SQLite, plus an in-memory store for tests
   testing/        saved Slack threads for tests, replay, and demos; format in testing/threads/README.md
   orchestrator/   event ingest, debouncing, topic index, proposal lifecycle, approval cards
   whiteboard/     the MCP server

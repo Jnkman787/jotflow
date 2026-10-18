@@ -228,6 +228,13 @@ class ProposalRecord(BaseModel):
     )
     approved_at: AwareDatetime | None = None
     result: ExecutionResult | None = None
+    participants: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Slack user ids whose messages the proposal was drawn from; with approvers on, "
+            "none of them may approve it (D7)"
+        ),
+    )
     created_at: AwareDatetime
 
 
