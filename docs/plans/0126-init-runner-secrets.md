@@ -65,7 +65,7 @@ Done when:
 - [x] Rotation flags
 - [x] Tests: first run, re-run, each rotation, mismatch, escape hatch, no leak, distinct values
 - [x] Docs: README setup, Deployment's agent container section, the example env files' comments
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: skipped, the free CLI allowance was rate-limited
 - [x] `make check` passes
 - [ ] Mark the PR ready for review
 

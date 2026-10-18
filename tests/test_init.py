@@ -968,3 +968,11 @@ def test_rotation_flags_reach_the_options(
     monkeypatch.setattr(init, "run_init", lambda console, api, opts: seen.append(opts) or 0)
     assert init.run(args, console=Script().console(), api=FakeSlackApi.working()) == 0
     assert seen[0].rotate_runner_secret and seen[0].rotate_exec_secret
+
+
+def test_agent_files_on_a_windows_drive_say_who_decides(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(init, "on_windows_drive", lambda path: True)
+    script = _with_agent(options)
+    assert "agent-exec.env. They are on a Windows drive" in script.text
