@@ -1,6 +1,6 @@
 # Upshot architecture
 
-This document records the design decisions made before the first line of code. It is the contract the implementation is built against. Change it through a pull request when a decision changes.
+This document records the design decisions made before the first line of code. It is the contract the implementation is built against. Change it through a pull request when a decision changes. The build order, milestone definitions, and the numbered decisions D1 to D4 are in [roadmap.md](roadmap.md).
 
 ## Problem
 
@@ -42,6 +42,8 @@ The same server is useful on its own: an engineer can point a terminal agent at 
 
 - First adapter: a generic command template. Every major agent CLI has a headless mode and reads an MCP configuration, so a team selects their agent by editing one line. Ship tested presets for Claude Code, Codex CLI, Gemini CLI, and Copilot CLI.
 - Later: an HTTP adapter and a reference SDK adapter.
+
+**Agent output contract.** The agent acts only by calling the whiteboard MCP tools. Upshot records each `propose_*`, `link_message`, and `ask_channel` call as it happens; the agent's stdout is ignored. The prompt handed to the agent is minimal: a run id and the instruction to call `get_work` and then act. Each run receives a short-lived bearer token so no other local process can call the server.
 
 **GitHub writer.** A GitHub App the team installs on the repositories they choose. All writes go through it. The agent never holds GitHub write credentials. The agent may be given read-only GitHub access by the team if they want richer drafts that reference code or plan files.
 
@@ -93,6 +95,17 @@ The local store (SQLite by default) is a **rebuildable cache**. Each issue creat
 Content leaves the team's control in exactly one place: the agent they chose. If that agent uses a hosted model, thread text goes to that vendor under the team's own agreement. Upshot sends only the thread in question, never channel history, and documents this clearly.
 
 There is no hosted component and no telemetry.
+
+## Configuration
+
+Two tiers, because every team supplies every value and the two kinds change at different speeds.
+
+| Tier | Lives in | Changed by | Holds |
+|---|---|---|---|
+| Policy | `upshot.toml`, deployed with the service | An admin editing the file | Channel to default repo mapping, repo and label allowlists, approver list, debounce window |
+| Runtime | The local database | Slack slash commands | Channel mode (`propose`, `auto`, `paused`), Slack to GitHub identity links |
+
+Setup is a first-class feature: `upshot init` asks a few questions and writes `upshot.toml` plus a `.env` template, and the Slack and GitHub App manifests install in a couple of clicks. A team should go from clone to connected bot without reading source.
 
 ## Identity
 

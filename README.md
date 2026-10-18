@@ -37,14 +37,7 @@ Slack channel  ──events──▶  Upshot orchestrator  ──MCP──▶  y
 
 ## Roadmap
 
-- [ ] Slack app manifest, GitHub App manifest, and a Docker Compose deployment
-- [ ] Orchestrator: event ingest, debouncing, topic index, proposal lifecycle, GitHub writer
-- [ ] Whiteboard MCP server over Streamable HTTP
-- [ ] Generic CLI adapter with presets for Claude Code, Codex CLI, Gemini CLI, and Copilot CLI
-- [ ] Block Kit proposal cards with Approve and Request Changes
-- [ ] Self-service Slack-to-GitHub identity linking
-- [ ] Duplicate detection against existing issues
-- [ ] Per-channel `propose` / `auto` / `paused` modes
+The plan lives in [docs/roadmap.md](docs/roadmap.md): five milestones from "installable" to "ready for another team," the decisions each rests on, and what done means for each. Work is tracked as GitHub milestones and issues on this repo.
 
 ## Contributing
 
