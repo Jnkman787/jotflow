@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #7
-- Draft PR: to be opened
+- Draft PR: #67
 - Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then build the Slack token checks and the `.env` writer
+- Last verified: `make check` green locally on 2026-10-18, 97 tests
+- Next safe action: wait for #64 to merge, rebase, then add the channel, repo, and preset questions and write `jotflow.toml` with `jotflow.policy`
 
 ## Objective and done-when
 
@@ -14,16 +14,16 @@
 
 Done when:
 
-- [ ] Asks for the bot name and renders the manifest with `render_manifest_json`
-- [ ] Prints the create-from-manifest link and the path of a manifest file as a fallback
-- [ ] Reads the bot token and app-level token without echoing them
-- [ ] Validates the bot token with `auth.test` and the app token with `apps.connections.open`
-- [ ] A token with a missing scope produces a message naming each missing scope
-- [ ] A token of the wrong kind or a revoked token produces a specific message, and the user can paste again
-- [ ] Writes `.env` with the two tokens, readable only by its owner, keeping unrelated lines
+- [x] Asks for the bot name and renders the manifest with `render_manifest_json`
+- [x] Prints the create-from-manifest link and the path of a manifest file as a fallback
+- [x] Reads the bot token and app-level token without echoing them
+- [x] Validates the bot token with `auth.test` and the app token with `apps.connections.open`
+- [x] A token with a missing scope produces a message naming each missing scope
+- [x] A token of the wrong kind or a revoked token produces a specific message, and the user can paste again
+- [x] Writes `.env` with the two tokens, readable only by its owner, keeping unrelated lines
 - [ ] Asks for channel ids, each channel's repos with nickname and description (D11), and the agent preset, then writes `jotflow.toml`
-- [ ] Re-running is idempotent and offers to keep existing values
-- [ ] Prompts and Slack calls are injected, so tests use fakes and need no network
+- [ ] Re-running is idempotent and offers to keep existing values (done for the tokens; `jotflow.toml` waits for #64)
+- [x] Prompts and Slack calls are injected, so tests use fakes and need no network
 - [ ] `make check` passes
 
 Stays open on #7 after this PR, because it needs the live sandbox workspace:
@@ -45,6 +45,7 @@ Order of work. The `jotflow.toml` part waits for #64, which defines the policy s
 - `src/jotflow/commands/init.py`: the interview. A `Console` takes injected input, secret input, and output, so tests script the whole session.
   - Re-run: if `.env` holds tokens that still validate, init reports the connected workspace and bot and offers to keep them, skipping the manifest step.
   - Flags: `--env-file` and `--config` for the two output paths, and `--manifest-out` for where to save the rendered manifest.
+- Without a terminal on stdin, init exits with code 2 and a message instead of waiting for input. The rendered manifest goes to `slack-app-manifest.json`, which is gitignored.
 - Create-from-manifest link: `https://api.slack.com/apps?new_app=1&manifest_json=<url-encoded JSON>`. The rendered manifest is also saved to a file in case the link is too long for a terminal or browser.
 
 Security:
@@ -61,10 +62,10 @@ Security:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Token checks in `slack_auth.py` with a fake-friendly interface
-- [ ] `.env` reader and writer
-- [ ] Interview: bot name, manifest, link, tokens, `.env`, re-run behaviour
+- [x] Commit this plan and open the draft PR
+- [x] Token checks in `slack_auth.py` with a fake-friendly interface
+- [x] `.env` reader and writer
+- [x] Interview: bot name, manifest, link, tokens, `.env`, re-run behaviour
 - [ ] After #64 merges: channels, repos, agent preset, and `jotflow.toml`
 - [ ] Add tests
 - [ ] Update documentation: README quickstart pointer, `manifests/README.md`
@@ -74,7 +75,7 @@ Security:
 
 ## Validation
 
-To be filled in.
+- 2026-10-18, before #64: `make check` green, 97 tests. New: `tests/test_slack_auth.py`, `tests/test_envfile.py`, `tests/test_init.py`, with shared fakes in `tests/fakes.py`. Init sessions are scripted end to end with a fake Slack client; no network.
 
 ## Handoff notes
 
