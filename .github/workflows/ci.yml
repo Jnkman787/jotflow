@@ -48,6 +48,12 @@ jobs:
       - name: Test with coverage
         run: uv run pytest -q --cov --cov-report=term-missing
 
+      # Checks the floor again from the data file, so turning coverage off in
+      # pytest's options cannot pass silently: no data fails with "No data to
+      # report". The floor is still read from pyproject.toml.
+      - name: Coverage floor
+        run: uv run coverage report --format=total
+
   eol:
     name: Line endings
     runs-on: ubuntu-latest

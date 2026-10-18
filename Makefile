@@ -25,6 +25,7 @@ test: ## Run the test suite, without coverage
 
 cov: ## Run the tests with coverage; fails below the floor in pyproject.toml
 	uv run pytest -q --cov --cov-report=term-missing
+	uv run coverage report --format=total
 
 eol: ## Fail if any tracked file has CRLF line endings
 	@if git ls-files --eol | grep -E '^i/(crlf|mixed)|w/(crlf|mixed)'; then \
