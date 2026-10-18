@@ -17,7 +17,7 @@ JotFlow needs both tokens. Keep them secret and out of the repository. Token rot
 
 ## Add a missing scope
 
-If JotFlow or setup reports a missing scope, open the app's **OAuth & Permissions** page, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Reinstalling can issue a new bot token, so run `uv run jotflow init` again and paste it.
+If JotFlow or setup reports a missing scope, open the app's **OAuth & Permissions** page, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Reinstalling can issue a new bot token. If setup is still asking for the bot token, paste the new one there. If setup has already stopped, run `uv run jotflow init` again and paste it.
 
 ## Use a different bot name
 
