@@ -18,6 +18,7 @@ may decide. Ids, channel, run, and state are assigned by JotFlow and live on
 
 from __future__ import annotations
 
+import json
 import re
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -322,5 +323,9 @@ class TopicIndex(BaseModel):
     )
 
     def to_prompt(self) -> str:
-        """Compact JSON for a work packet: no spacing, no empty fields."""
-        return self.model_dump_json(exclude_none=True, exclude_defaults=False)
+        """Compact JSON for a work packet: no spacing, no null fields, and no ``more``
+        when nothing was left out. An empty ``topics`` list stays, as it says something."""
+        data = self.model_dump(mode="json", exclude_none=True)
+        if not data["more"]:
+            del data["more"]
+        return json.dumps(data, separators=(",", ":"), ensure_ascii=False)

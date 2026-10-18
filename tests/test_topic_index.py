@@ -115,6 +115,7 @@ async def test_the_index_is_capped(store: Store, clock: Clock) -> None:
     index = await build_index(store, CH, window_days=14, now=clock.now, limit=3)
     assert [t.title for t in index.topics] == ["Idea 4", "Idea 3", "Idea 2"]
     assert index.more == 2
+    assert json.loads(index.to_prompt())["more"] == 2
 
 
 @pytest.mark.parametrize(("window", "limit"), [(0, 50), (14, 0)])
@@ -133,6 +134,7 @@ async def test_compact_prompt_form(store: Store, clock: Clock) -> None:
     assert data["note"] == TOPIC_INDEX_NOTE
     assert data["topics"][0]["title"] == "Progress bar"
     assert "repo" not in data["topics"][0]
+    assert "more" not in data
     assert TopicIndex.model_validate_json(text) == index
 
 
