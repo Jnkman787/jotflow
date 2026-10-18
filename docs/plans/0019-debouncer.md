@@ -4,10 +4,10 @@
 
 - Issue: #19
 - Also serves: #53 (runs are queued through the store's one-run-per-thread rule), D9, #8
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: write `src/jotflow/orchestrator/debounce.py`
+- Draft PR: #127
+- Status: ready for review
+- Last verified: `make check` green locally on 2026-10-18: 1349 tests, `debounce.py` at 100%
+- Next safe action: review; #55 calls `note` from the Slack listeners and `flush` in its loop, sleeping until `next_due`
 
 ## Objective and done-when
 
@@ -15,12 +15,12 @@ A thread is handed to the agent only after it has been quiet for the channel's w
 
 Done when:
 
-- [ ] A burst of replies within the window yields one drafting run, not several
-- [ ] Loose top-level messages follow the documented strategy below
-- [ ] The window is configurable per channel in `jotflow.toml`
-- [ ] The bot's own messages never re-arm a thread's timer (#8)
-- [ ] A reply in a thread whose topic has expired revives that topic (D9)
-- [ ] `make check` passes, including the coverage floor
+- [x] A burst of replies within the window yields one drafting run, not several
+- [x] Loose top-level messages follow the documented strategy below
+- [x] The window is configurable per channel in `jotflow.toml`
+- [x] The bot's own messages never re-arm a thread's timer (#8)
+- [x] A reply in a thread whose topic has expired revives that topic (D9)
+- [x] `make check` passes, including the coverage floor
 
 **Out of scope:** wiring the debouncer into `jotflow run` with its Slack listeners, which comes with #55 along with the run loop. Starting runs: the debouncer only queues them, and `RunLifecycle.start_next` starts them (#107).
 
@@ -42,18 +42,25 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `Debouncer`: `note`, `flush`, `next_due`, reviving
-- [ ] Tests: bursts, loose posts, per-channel windows, bot messages, revival, coalescing with a running run
-- [ ] Docs: architecture Conversation rules, AGENTS.md layout
-- [ ] Also in this PR: the reviewer's optional nit on #111, so replay reports never quote a scripted call's input
-- [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] `Debouncer`: `note`, `flush`, `next_due`, reviving
+- [x] Tests: bursts, loose posts, per-channel windows, bot messages, revival, coalescing with a running run
+- [x] Docs: architecture Conversation rules, AGENTS.md layout
+- [x] Also in this PR: the reviewer's optional nit on #111, so replay reports never quote a scripted call's input
+- [x] CodeRabbit once, or skipped: see Validation
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `tests/test_debounce.py` runs against MemoryStore and SqliteStore. It covers:
+  - a top-level post as its own thread, and a burst of five replies yielding one queued run only after a full quiet window
+  - loose posts each getting their own run, and per-channel windows with `next_due`
+  - threads flushing in due order, and a burst during a running run queuing one follow-up
+  - only accepted messages counting
+  - the bot's own reply, through the real `EventFilter`, leaving the due time unchanged
+  - a reply reviving a 30-day-old topic into the index, a reply already placed by a person left alone, and a reply to an unplaced or chatter post linking nothing
+- The carried #111 nit has its own tests in `tests/test_replay.py`.
 
 ## Handoff notes
 

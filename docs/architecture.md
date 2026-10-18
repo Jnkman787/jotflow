@@ -242,7 +242,8 @@ Every mode change is announced in the channel. Approval by reaction is off by de
 Defaults that need no syntax (D9):
 
 - A loose top-level message starts a candidate topic. The agent may attach it to an existing one.
-- A reply in a thread whose topic has expired revives that topic.
+- A reply in a thread whose topic has expired revives that topic: the reply joins its top-level message's topic, which refreshes the topic's activity, unless someone already placed it.
+- A thread is drafted only after it has been quiet for its channel's `debounce_seconds` (120 by default, overridable per channel), so the first draft reflects a whole burst. Each loose top-level post is its own thread with its own timer and run; posts are never grouped by time or author. Only accepted messages re-arm a timer, so the bot's own messages never do (`src/jotflow/orchestrator/debounce.py`).
 - Expiry only removes a topic from the active index handed to the agent. Its record, a few ids linking messages to an issue, is kept indefinitely so ideas revisited months later still find their issue.
 - A follow-up reply in a thread with an issue produces an update proposal, gated like any other.
 - The agent sees the thread in question plus short excerpts of likely-related threads, so it can correlate on content rather than titles alone.

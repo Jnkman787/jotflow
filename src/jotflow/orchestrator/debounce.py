@@ -1,0 +1,103 @@
+"""The debouncer: queue a thread's drafting run once it has gone quiet (#19).
+
+A thread is not handed to the agent until no new message has arrived in it for
+its channel's window, ``debounce_seconds`` in jotflow.toml, which a channel may
+override. Every message pushes the thread's due time back, so the first draft
+reflects the whole burst.
+
+Loose top-level messages each start a candidate topic (D9): a top-level post
+is its own thread, keyed by its own ts (#104), with its own timer and its own
+run. The agent attaches it to an existing topic, or starts one, from the topic
+index and related excerpts. Posts are never grouped by time or author, which
+would merge unrelated ideas.
+
+Only accepted messages count. Ingest drops the bot's own messages, edits, and
+redeliveries before they get here (#8), so nothing JotFlow posts can re-arm a
+timer. Reactions do not start runs in v1.
+
+A reply in a thread whose top-level message already belongs to a topic joins
+that topic. Linking refreshes the topic's activity, so a topic that had aged
+out of the index comes back for the run (D9). The agent can still move it.
+
+The debouncer only queues runs, through the store, which coalesces a burst
+that lands while the thread's run is still running into one queued run.
+``RunLifecycle.start_next`` starts them (#107). Timers live in memory.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from jotflow.models import MessageRef, RunKind
+from jotflow.orchestrator.ingest import Accepted, Decision
+from jotflow.policy import Policy
+from jotflow.store.base import Clock, Store, utc_now
+
+log = logging.getLogger("jotflow.debounce")
+
+
+@dataclass(frozen=True)
+class Thread:
+    """A thread waiting out its quiet window."""
+
+    channel_id: str
+    thread_ts: str  # the parent's ts; a top-level post's own ts
+
+
+def thread_of(ref: MessageRef) -> Thread:
+    """The thread a message belongs to. A top-level post is its own thread."""
+    return Thread(ref.channel_id, ref.thread_ts or ref.ts)
+
+
+class Debouncer:
+    def __init__(self, store: Store, policy: Policy, *, clock: Clock = utc_now) -> None:
+        self._store = store
+        self._policy = policy
+        self._clock = clock
+        self._due: dict[Thread, datetime] = {}
+
+    def pending(self) -> dict[Thread, datetime]:
+        """Threads waiting out their window, with when each falls due."""
+        return dict(self._due)
+
+    async def note(self, decision: Decision) -> Thread | None:
+        """Take one ingest decision. Returns the thread it re-armed, if any."""
+        if not isinstance(decision, Accepted) or decision.kind != "message":
+            return None
+        ref = decision.ref
+        thread = thread_of(ref)
+        window = timedelta(seconds=self._policy.debounce_for(ref.channel_id))
+        self._due[thread] = self._clock() + window
+        if ref.thread_ts and ref.thread_ts != ref.ts:
+            await self._join_parents_topic(ref)
+        return thread
+
+    async def _join_parents_topic(self, reply: MessageRef) -> None:
+        parent = await self._store.get_message(reply.channel_id, reply.thread_ts or "")
+        if parent is None or parent.topic_id is None:
+            return
+        if await self._store.get_message(reply.channel_id, reply.ts) is not None:
+            return  # already placed, by the agent or a person: leave that decision
+
+        await self._store.link_message(reply, parent.topic_id, by="agent")
+
+    def next_due(self) -> datetime | None:
+        """When the next thread falls due, so a loop can sleep exactly that long."""
+        return min(self._due.values(), default=None)
+
+    async def flush(self, now: datetime | None = None) -> list[Thread]:
+        """Queue a drafting run for every thread whose window has passed."""
+        moment = now or self._clock()
+        ready = sorted(
+            (t for t, due in self._due.items() if due <= moment),
+            key=lambda t: (self._due[t], t.channel_id, t.thread_ts),
+        )
+        for thread in ready:
+            await self._store.enqueue_run(RunKind.DRAFTING, thread.channel_id, thread.thread_ts)
+            del self._due[thread]
+            log.info(
+                "thread %s in %s is quiet; drafting run queued", thread.thread_ts, thread.channel_id
+            )
+        return ready
