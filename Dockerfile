@@ -44,7 +44,10 @@ RUN groupadd --system --gid "${JOTFLOW_UID}" jotflow \
 
 COPY --from=builder /app/.venv /app/.venv
 
+# JOTFLOW_IMAGE marks JotFlow's own image. `jotflow check --live` refuses to
+# run here, because Compose's env_file would carry an opt-in left in .env.
 ENV PATH="/app/.venv/bin:${PATH}" \
+    JOTFLOW_IMAGE=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     JOTFLOW_DATABASE_PATH=/data/jotflow.db

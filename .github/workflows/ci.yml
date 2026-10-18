@@ -109,3 +109,18 @@ jobs:
             echo "::error::The policy file must be mounted read-only"
             exit 1
           fi
+
+      # The live check posts to Slack, so it refuses inside the image and runs
+      # on the host. The offline check still works here. Dummy tokens only.
+      - name: Live check refuses in the image
+        run: |
+          compose="docker compose -f docker-compose.yml -f docker-compose.policy.yml"
+          tokens="-e JOTFLOW_SLACK_BOT_TOKEN=xoxb-ci -e JOTFLOW_SLACK_APP_TOKEN=xapp-ci"
+          $compose run --rm $tokens jotflow jotflow check
+          if $compose run --rm $tokens -e JOTFLOW_LIVE_CHECK=1 jotflow jotflow check --live > live.out 2>&1; then
+            cat live.out
+            echo "::error::jotflow check --live must refuse inside the JotFlow image"
+            exit 1
+          fi
+          cat live.out
+          grep -q "run the live check on the host" live.out

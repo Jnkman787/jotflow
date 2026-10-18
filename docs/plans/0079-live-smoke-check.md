@@ -112,6 +112,15 @@ References: Permissions and Components in [architecture.md](../architecture.md);
 - After the review: 290 tests pass, with total coverage at 96.59% and `commands/check.py` at 100%.
 - Not done here: the live run against the sandbox workspace. That is the maintainer's, and it is why the PR says `Refs #79`.
 
+## Follow-up after #83
+
+Team lead decision, recorded on #79: the live check refuses inside JotFlow's own image. The follow-up PR is `fix(cli): refuse the live check inside the JotFlow image`, Refs #79.
+
+- **Image refusal.** The Dockerfile's runtime stage sets `JOTFLOW_IMAGE=1`, and `check --live` refuses when it is set: "run the live check on the host: JOTFLOW_LIVE_CHECK=1 make live-check". This closes the Compose path, where `env_file` would carry an opt-in left in `.env` into the container's environment. Plain `jotflow check` still works in the image. A devcontainer does not set the marker, so it is not blocked.
+- **Clearer message.** An opt-in left in `.env` now gets "remove the JOTFLOW_LIVE_CHECK line from .env and set it only for this one run".
+- **Ctrl-C.** Ctrl-C at the confirmation prompt prints "cancelled, nothing posted" and exits 130, instead of a traceback. This was security's note.
+- **Tests.** Unit tests cover all three. The image job in CI builds the image and checks two things: `jotflow check` passes inside it, and `jotflow check --live` refuses with the host instruction. Both use dummy tokens.
+
 ## Handoff notes
 
 - Run it from the repository folder, with JotFlow stopped, using `docker compose stop jotflow`:

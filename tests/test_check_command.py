@@ -111,7 +111,8 @@ def test_opt_in_left_in_dotenv_is_refused_even_with_the_variable_set(
     monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
     (workspace / ".env").write_text("JOTFLOW_LIVE_CHECK=1\n", encoding="utf-8")
     assert check_command.run(live_args()) == 2
-    assert "remove JOTFLOW_LIVE_CHECK from .env" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "remove the JOTFLOW_LIVE_CHECK line from .env and set it only for this one run" in err
     assert no_slack == []
 
 
@@ -239,3 +240,46 @@ def test_make_slack_builds_the_real_adapter(workspace: Path) -> None:
     from jotflow.live_check import BoltLiveSlack
 
     assert isinstance(check_command.make_slack(load_settings()), BoltLiveSlack)
+
+
+def test_live_check_refuses_inside_the_jotflow_image(
+    workspace: Path,
+    no_slack: list[Any],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JOTFLOW_IMAGE", "1")
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    assert check_command.run(live_args()) == 2
+    err = capsys.readouterr().err
+    assert "run the live check on the host: JOTFLOW_LIVE_CHECK=1 make live-check" in err
+    assert no_slack == []
+
+
+def test_offline_check_still_works_inside_the_image(
+    workspace: Path,
+    no_slack: list[Any],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JOTFLOW_IMAGE", "1")
+    assert main(["check"]) == 0
+    assert "ok    configuration" in capsys.readouterr().out
+
+
+def test_ctrl_c_at_the_prompt_cancels_cleanly(
+    workspace: Path,
+    no_slack: list[Any],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    monkeypatch.setattr("sys.stdin", FakeStdin(tty=True))
+
+    def interrupted(prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", interrupted)
+    assert check_command.run(live_args()) == check_command.EXIT_CANCELLED
+    assert "cancelled, nothing posted" in capsys.readouterr().err
+    assert no_slack == []
