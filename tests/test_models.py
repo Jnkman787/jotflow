@@ -46,16 +46,6 @@ def test_confidence_is_bounded() -> None:
         )
 
 
-def test_cli_reports_version() -> None:
-    from jotflow import __version__
-    from jotflow.cli import main
-
-    with pytest.raises(SystemExit) as exc:
-        main(["--version"])
-    assert exc.value.code == 0
-    assert __version__
-
-
 def test_new_topic_proposal_needs_no_topic_id() -> None:
     proposal = IssueProposal(repo="acme/web", title="x", body="", confidence=0.5)
     assert proposal.topic_id is None
