@@ -5,8 +5,8 @@
 - Issue: #17
 - Also serves: #18 (its last box, "used by the replay tests")
 - Draft PR: #111
-- Status: blocked on #104 (run records), #105 (grants and tokens), #106 (read tools), #109 (write tools)
-- Last verified: plan written against the plans of the PRs above, no code yet
+- Status: blocked on #106 (read tools); #104, #105, and #109 have merged
+- Last verified: design re-checked against merged #109 on 2026-10-18, no code yet
 - Next safe action: once those merge, write `src/jotflow/replay.py` against their merged interfaces and check this design still matches
 
 ## Objective and done-when
@@ -45,6 +45,15 @@ The command:
 - Output follows the redaction rule: the report names messages by `ts`, never by their text.
 
 Files: `src/jotflow/replay.py` holds the pipeline and report, and `src/jotflow/commands/replay.py` the CLI. Tests are in `tests/test_replay.py`. The README gains a short "See it without Slack" section.
+
+### Checked against merged #109 (2026-10-18)
+
+The write tools are `WriteTools(store, policy, poster)`, with handlers `propose_issue`, `propose_update`, `link_message`, and `ask_channel`, each taking `(grant, arguments)`. `ThreadPoster.post(channel_id, thread_ts, text)` is the protocol replay fakes. Two differences from the fixture format need bridging:
+
+- **`link_message` takes `LinkMessageArgs`:** the `ts`, the decision, a `topic_id` for an existing topic, and a `title` for a new one. The fixture's link calls carry a `Classification`, which has a message ref but no title. Replay converts the ref to its `ts` and resolves `key:` ids. For a new topic it needs a title, so the fixture format gains an optional `title` on `LinkMessageCall`. The loader requires it when the decision is `new_topic`, and every built-in fixture gets one. This is an additive change within `jotflow-thread/1`.
+- **`link_message` only accepts a `ts` the run's packet served** (`Store.packet_ref`). `get_work` (#106) records the packet with `Store.record_packet`. Replay goes through `get_work` once #106 merges; until then the design does not change, only the step that records the packet.
+
+Proposals take `ProposeIssueArgs` and `ProposeUpdateArgs`, the fixture models plus `participants`. Replay fills `participants` from the users whose messages are in the thread.
 
 ## Risks and open questions
 
