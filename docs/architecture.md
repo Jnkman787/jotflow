@@ -328,7 +328,7 @@ Python 3.12 or newer.
 | Concern | Choice | Why |
 |---|---|---|
 | Slack | slack-bolt (AsyncApp, Socket Mode) | Maintained by Slack. Socket Mode means no public URL for self-hosted installs. |
-| MCP | the official `mcp` package, FastMCP server over Streamable HTTP | Tool schemas derive from the same Pydantic models used everywhere else. |
+| MCP | the official `mcp` package (2.x), its low-level `Server` over Streamable HTTP | Tool schemas derive from the same Pydantic models used everywhere else. Not `MCPServer`, the 2.x name for FastMCP: it always registers prompt, resource, and subscription handlers, so the server would advertise capabilities JotFlow must not offer. |
 | GitHub | none | JotFlow's code never uses GitHub credentials. The team's agent performs reads and writes with its own tooling. |
 | State | SQLite via aiosqlite | Pointers and run records. Postgres stays possible behind the same interface. |
 | Tooling | uv, ruff, mypy strict, pytest | Locked dependencies, one formatter, typed contracts. |

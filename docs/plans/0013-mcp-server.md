@@ -7,7 +7,7 @@
 - Draft PR: #97
 - Status: ready for review
 - Last verified: rebased on main at 80a93dc; `make check` green, 496 tests, 97.6% coverage; CI green on #97
-- Next safe action: architect reviews #97; after merge, tick the first #13 box
+- Next safe action: merge #97 after the lead's final look; then tick the first #13 box
 
 ## Objective and done-when
 
@@ -93,7 +93,7 @@ Alternatives considered:
 
 ## Validation
 
-- `make check` passes: ruff, mypy strict, and 467 tests with 98% total (496 and 97.6% after rebasing on main) line and branch coverage. `whiteboard/gate.py`, `tokens.py`, and `tools.py` are at 100%, and `server.py` at 97%. The two lines left are the no-grant guard, reachable only without the gate, and a start that ends without an error.
+- `make check` passes: ruff, mypy strict, and 467 tests with 98% total (497 and 97.6% after rebasing on main and the review changes) line and branch coverage. `whiteboard/gate.py`, `tokens.py`, and `tools.py` are at 100%, and `server.py` at 97%. The two lines left are the no-grant guard, reachable only without the gate, and a start that ends without an error.
 - `tests/test_mcp_server.py`, 48 tests, all in process through `httpx2.ASGITransport` except the two lifecycle tests on loopback:
   - `server/discover` returns `supportedVersions: ["2026-07-28"]` and capabilities exactly `{"tools": {"listChanged": false}}`, with no `Mcp-Session-Id`
   - the SDK's own `Client`, pinned to 2026-07-28, connects and lists no tools
@@ -113,8 +113,23 @@ Alternatives considered:
 - CodeRabbit: skipped. The free CLI allowance was used up ("Rate limit exceeded").
 - `uv lock` adds no package. `uvicorn` and `starlette` move from transitive to declared, `httpx2` joins the dev group, and `mcp` is pinned to `>=2.3,<3` because the code uses the 2.x API.
 
+## Review changes
+
+Architect review on 2026-10-18 found nothing blocking. Taken in this PR:
+
+- The Stack table in architecture.md said "FastMCP server". It now names the low-level `Server` and the reason, so nobody switches it back to `MCPServer`.
+- `McpServer.start()` has a 10 second deadline. A lifespan startup that hangs is cancelled and raises `McpStartError`, so `jotflow run` cannot hang at startup.
+- README Troubleshooting has a row for exit code 3, the port in use.
+
 ## Handoff notes
 
 - #16 implements `TokenCheck.check()` and passes it to `build_app(tokens=...)` in `commands/run.make_mcp_server`. Tool handlers receive the `Grant`, and run-kind scoping belongs there or in the call handler.
 - #14 and #15 add `ToolSpec` entries to `whiteboard/tools.TOOLS`, with Pydantic input models from `models.py`. The registry check and schema derivation are already tested.
+- Shape agreed with architect for #16, so it does not need rework:
+  - `Grant` gains `proposal_id: str | None`, for execution tokens scoped to one approved proposal, and `thread_ts: str | None` for drafting.
+  - Run-kind authorization lives in the registry: `ToolSpec.kinds: frozenset[RunKind]`. `call_tool` checks it before validating arguments, and `list_tools` lists only the grant kind's tools. The list is static per kind, so there is still no `list_changed`.
+  - The issuing side is a `TokenRegistry` with `issue(grant, ttl) -> str`, `revoke(run_id)`, and `check(token)`. It is in memory, so tokens die on restart and re-queued runs get fresh ones. `check` stays synchronous with no I/O.
+  - Optional: `ToolSpec.output_model`, so each tool advertises an `outputSchema` matching its `structuredContent`.
+- For #15: the 30 second timeout cancels a handler mid-call. A write tool cancelled after the store commits but before the response lets the agent retry and duplicate the write. Commit inside a shielded scope, or give write calls an idempotency key such as run id plus a per-run call counter.
+- Shutdown order for M3: stop Slack intake, then end or abort runs and revoke their tokens, then stop the MCP server. Today's order, Slack then MCP, already points that way.
 - M3 (#54) sets `JOTFLOW_MCP_HOST` to listen on the `agents` network and `JOTFLOW_MCP_ALLOWED_HOSTS=jotflow`. It also checks that the shipped agent CLIs speak 2026-07-28. If one only speaks the handshake era, adding `2025-11-25` means sessions, which must be bound to the token, per the notes on #16.

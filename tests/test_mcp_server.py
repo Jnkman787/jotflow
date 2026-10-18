@@ -544,3 +544,15 @@ async def test_a_taken_port_is_a_clear_start_error() -> None:
         server = McpServer(build_app(port=port), "127.0.0.1", port)
         with pytest.raises(McpStartError, match=f"could not listen on 127.0.0.1:{port}"):
             await server.start()
+
+
+async def test_a_startup_that_hangs_is_a_clear_start_error() -> None:
+    async def hangs(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            await receive()  # lifespan.startup arrives, and is never answered
+            await asyncio.sleep(10)
+
+    port = _free_port()
+    server = McpServer(hangs, "127.0.0.1", port, startup_timeout=0.2)
+    with pytest.raises(McpStartError, match=r"did not start within 0\.2 seconds"):
+        await server.start()

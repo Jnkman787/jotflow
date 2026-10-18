@@ -51,6 +51,7 @@ PATH = "/mcp"
 PINNED_VERSIONS: tuple[str, ...] = ("2026-07-28",)
 MAX_BODY_BYTES = 64 * 1024
 REQUEST_TIMEOUT_SECONDS = 30.0
+STARTUP_TIMEOUT_SECONDS = 10.0
 LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
 
 if not set(PINNED_VERSIONS) <= set(MODERN_PROTOCOL_VERSIONS):  # pragma: no cover
@@ -172,6 +173,7 @@ class McpServer:
     app: ASGIApp
     host: str
     port: int
+    startup_timeout: float = STARTUP_TIMEOUT_SECONDS
     _server: uvicorn.Server | None = field(default=None, init=False)
     _task: asyncio.Task[None] | None = field(default=None, init=False)
 
@@ -203,10 +205,22 @@ class McpServer:
                 ) from exc
 
         self._task = asyncio.create_task(serve())
+        deadline = asyncio.get_running_loop().time() + self.startup_timeout
         while not server.started:
             if self._task.done():
                 self._task.result()  # raises McpStartError
                 raise McpStartError(f"MCP server on {self.host}:{self.port} stopped at startup")
+            if asyncio.get_running_loop().time() > deadline:
+                # A hung lifespan never sees should_exit, so cancel instead.
+                self._task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, McpStartError):
+                    await self._task
+                self._server = None
+                self._task = None
+                raise McpStartError(
+                    f"MCP server on {self.host}:{self.port} did not start within "
+                    f"{self.startup_timeout:g} seconds"
+                )
             await asyncio.sleep(0.01)
         log.info("MCP server listening on %s:%d%s", self.host, self.port, PATH)
 
