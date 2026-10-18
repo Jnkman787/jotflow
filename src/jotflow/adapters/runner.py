@@ -73,12 +73,15 @@ KILL_GRACE_SECONDS = 5.0
 TIMEOUT_GRACE_SECONDS = 60
 DIR_PREFIX = "jotflow-run-"
 
+# Set by the runner for every run; a preset's extra env never replaces them.
+RUNNER_SET_ENV = frozenset({"HOME", "TMPDIR"})
 # Always passed through, when set; nothing else from the runner's own environment.
 BASE_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "TERM", "NODE_OPTIONS", "SSL_CERT_FILE")
 _ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 # Never handed to an agent, even if a team lists them.
 _FORBIDDEN_ENV = re.compile(r"^JOTFLOW_|^SLACK_|_TOKEN$|^GH_|^GITHUB_")
 _RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_TOKEN_BODY = re.compile(r"[A-Za-z0-9_-]+")
 
 
 CONVERSATION_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
@@ -106,7 +109,11 @@ class LaunchRequest(BaseModel):
     @field_validator("token")
     @classmethod
     def _run_token(cls, value: str) -> str:
-        if not value.startswith(TOKEN_PREFIX) or any(c.isspace() for c in value):
+        # URL-safe characters only, as issued: nothing an agent CLI's ${VAR}
+        # expansion in the MCP config could act on.
+        if not value.startswith(TOKEN_PREFIX) or not _TOKEN_BODY.fullmatch(
+            value[len(TOKEN_PREFIX) :]
+        ):
             raise ValueError("token is not a JotFlow run token")
         return value
 
@@ -245,9 +252,15 @@ def child_env(
     github_token_env: bool = True,
 ) -> dict[str, str]:
     """The agent's whole environment. Only what is named here, from ``environ``,
-    plus a preset's ``extra``, which never overrides the runner's own names."""
-    env = {name: environ[name] for name in (*BASE_ENV, *config.env_allow) if name in environ}
-    env.update({k: v for k, v in (extra or {}).items() if not _FORBIDDEN_ENV.search(k)})
+    plus a preset's ``extra``, which never sets a base or allowlisted name, nor
+    any name the runner sets itself."""
+    passed = (*BASE_ENV, *config.env_allow)
+    env = {
+        k: v
+        for k, v in (extra or {}).items()
+        if k not in passed and k not in RUNNER_SET_ENV and not _FORBIDDEN_ENV.search(k)
+    }
+    env.update({name: environ[name] for name in passed if name in environ})
     token = config.github_token(kind)
     if token is None:  # pragma: no cover - launch refuses this first
         raise ConfigError(f"no GitHub token for {kind.value} runs")

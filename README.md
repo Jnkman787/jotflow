@@ -268,7 +268,7 @@ This starts JotFlow. The agent containers, where your team's agent will draft is
 There are two agent containers, so the GitHub token that can write never sits where drafting happens. When you choose a preset, setup writes their files next to `.env`, from `agent.env.example` and `agent-exec.env.example`, readable only by you:
 
 - **`agent.env`** is for drafting and questions. Fill in a read-only GitHub token and the model login, as its comments describe.
-- **`agent-exec.env`** is for writing approved issues. Fill in a GitHub token that can write issues and the model login.
+- **`agent-exec.env`** is for writing approved issues. Fill in a GitHub token that can write issues and the model login. That token can create, edit, or close any issue in any repo it reaches, so make it a fine-grained token limited to exactly the repos your channels feed, with Issues read and write and nothing else. See [docs/presets.md](docs/presets.md).
 
 Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Once both GitHub tokens are filled in, run `uv run jotflow init` again: it keeps the secrets and adds `COMPOSE_PROFILES=agent` to `.env`, so `docker compose up -d` starts both agent containers too. Neither file holds Slack tokens, and neither agent sees `.env`.
 
