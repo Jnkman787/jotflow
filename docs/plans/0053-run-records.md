@@ -6,7 +6,7 @@
 - Draft PR: #104
 - Status: completed
 - Last verified: `make check` green locally after rebasing onto #97: 831 tests, store modules at 100%
-- Next safe action: review and merge #104. If product's #103 merges first, renumber the runs migration to 3 before merging
+- Next safe action: review and merge #104; then the run-timeout ceiling follow-up, capping at `whiteboard.tokens.MAX_TOKEN_TTL_SECONDS`
 
 ## Objective and done-when
 
@@ -75,7 +75,7 @@ stateDiagram-v2
 
 **Configuration.** `[agent] max_concurrent_runs` in `jotflow.toml`, default 2, from 1 to 32. Default timeouts are constants for now: drafting 10 minutes, execution 5 minutes.
 
-**Migration.** The `runs` table is the next free migration, version 2 today. Product's #102 also needs a migration, and whichever merges first takes 2; the other renumbers before merging. Migration numbers stay 1 to N with no gaps.
+**Migration.** The `runs` table is migration 3. Product's #103, for #102, merged first and took 2, as agreed: first to merge takes the lower number. Migration numbers stay 1 to N with no gaps.
 
 **Privacy.** No column holds message text. `error` is the agent's failure reason, bounded to 2000 characters and documented as untrusted. `tests/test_store_schema.py` checks the new table.
 
@@ -139,9 +139,18 @@ Alternatives considered:
   The same rule now applies to proposals: `thread_ts` is required, a top-level post uses its own ts, and `check_new_proposal` rejects an empty one. The silent skips are gone. `thread_proposals` and `supersede_pending` take a `str` thread and match it exactly. No migration is needed, because the model and the check guard every write. A contract test rejects `None` and `""`.
 - After both rounds of review: 849 tests pass, and every store module is at 100%.
 
+- **Rebase onto `main`, after #103, #105, and #110.**
+  - The branch was squashed to one commit first.
+  - The runs table became migration 3.
+  - `supersede_pending` keeps #103's draft clearing together with the exact thread match.
+  - The example config keeps #108's commented-out preset and adds `max_concurrent_runs`.
+  - The config table lists the topic window and the run cap.
+  - 951 tests pass.
+- The team lead decided to keep the recovery that queues approved proposals with no run, and noted on #30 that #104 does it.
+
 ## Handoff notes
 
-- **Migration number.** The runs table is migration 2. If product's #103 merges first, renumber this to 3; `migrate` refuses gaps, so a mistake fails loudly.
+- **Migration number.** The runs table is migration 3, after #103's migration 2. `migrate` refuses gaps, so a mistake fails loudly.
 - **For the runner, #21:**
   - At startup, call `recover_runs()` once, before anything claims.
   - Loop: `claim_next_run(max_running=policy.agent.max_concurrent_runs)`, launch, then `finish_run`.
