@@ -5,7 +5,7 @@
 - Issue: #5
 - Draft PR: #61
 - Status: completed
-- Last verified: `make check` green locally on 2026-10-18 (ruff, mypy strict, 32 tests); CI on #61
+- Last verified: `make check` green locally on 2026-10-18 (ruff, mypy strict, 35 tests after rebase on #63); CI on #61
 - Next safe action: in the sandbox workspace, create an app from `manifests/slack-app.json` and check the two live criteria on #5
 
 ## Objective and done-when
@@ -60,7 +60,7 @@ Stays open on #5 after this PR, because it needs the live sandbox workspace:
 
 ## Validation
 
-- `make check`: ruff lint and format, mypy strict, and pytest all pass; 32 tests, 28 of them new in `tests/test_slack_manifest.py`.
+- `make check`: ruff lint and format, mypy strict, and pytest all pass; 35 tests, 28 of them new in `tests/test_slack_manifest.py`.
 - `make manifest` regenerates `manifests/slack-app.json`; `test_checked_in_manifest_matches_renderer` guards against drift.
 - Not yet done: creating an app from the manifest in the sandbox workspace and reading a private channel. Both stay open on #5.
 
