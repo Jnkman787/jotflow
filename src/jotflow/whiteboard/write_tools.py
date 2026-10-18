@@ -58,6 +58,9 @@ ASKING = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
 EXECUTION = frozenset({RunKind.EXECUTION})
 
 PROPOSE_TOOLS = ("propose_issue", "propose_update")
+# A result lands while the write is in progress: executing, or reconciling when a
+# retry after an interrupted run finds the marker it left (or gives up).
+RESULT_STATES = frozenset({ProposalState.EXECUTING, ProposalState.RECONCILING})
 
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 # <!channel>, <!here>, <!everyone>, <!subteam^S123|@team>, <!date...>: any special mention.
@@ -477,12 +480,12 @@ class WriteTools:
             to = ProposalState.APPLIED if result.issue_url else ProposalState.FAILED
             try:
                 updated = await self._store.transition(
-                    proposal_id, to, expected={ProposalState.EXECUTING}, result=result
+                    proposal_id, to, expected=RESULT_STATES, result=result
                 )
             except TransitionError:
                 raise ToolError(
-                    f"proposal {proposal_id} is {record.state.value}, not executing; "
-                    "a result is recorded once"
+                    f"proposal {proposal_id} is {record.state.value}, "
+                    "not executing or reconciling; a result is recorded once"
                 ) from None
             except ValueError:
                 raise ToolError(

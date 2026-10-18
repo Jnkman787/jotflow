@@ -61,7 +61,7 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 | `propose_update` | Only for the issue the topic is already linked to, with the same repo, label, source, and assignee rules |
 | `link_message` | Only messages the run's `get_work` packet served. A person's earlier decision always stands. At most 200 per run. |
 | `ask_channel` | Posts only into the run's own thread, with broadcast mentions removed and Slack markup escaped. Never unfurls or turns names into mentions. At most 2 per run, and one per thread every 30 seconds across runs. |
-| `record_result` | Execution runs only, for the grant's own proposal while it is executing. An issue URL must match the approved repo and issue. A result is recorded once. |
+| `record_result` | Execution runs only, for the grant's own proposal while it is executing, or reconciling after a restart. An issue URL must match the approved repo and issue. A result is recorded once. |
 
 Every call is idempotent. A repeat with the same arguments returns the first result and writes nothing, so a retry after the request timeout cannot duplicate a proposal or a question. The write and its ledger entry run in a cancellation-shielded scope, so the timeout cannot cut them apart. The ledger holds ids and states, never message text. A refusal, such as a cap or a topic outside the channel, comes back as a tool result marked as an error, with a reason written in code.
 

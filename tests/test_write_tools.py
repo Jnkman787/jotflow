@@ -530,7 +530,9 @@ async def test_a_result_is_recorded_once(tools: WriteTools, store: MemoryStore) 
     _, _, grant = await executing(tools, store)
     first = await tools.record_result(grant, RecordResultArgs(issue_url=URL))
     assert await tools.record_result(grant, RecordResultArgs(issue_url=URL)) == first
-    with pytest.raises(ToolError, match="is applied, not executing; a result is recorded once"):
+    with pytest.raises(
+        ToolError, match="is applied, not executing or reconciling; a result is recorded once"
+    ):
         await tools.record_result(grant, RecordResultArgs(error="changed my mind"))
 
 
@@ -555,13 +557,36 @@ async def test_an_error_result_fails_the_proposal(tools: WriteTools, store: Memo
     assert result.state is ProposalState.FAILED
 
 
+async def reconciling(tools: WriteTools, store: MemoryStore) -> tuple[str, Grant]:
+    topic_id, proposal_id, grant = await executing(tools, store)
+    # A restart interrupted the first execution run; recovery moves the proposal on.
+    await store.transition(proposal_id, ProposalState.RECONCILING)
+    return topic_id, grant
+
+
+async def test_a_reconciling_run_that_finds_its_marker_applies(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    topic_id, grant = await reconciling(tools, store)
+    result: Any = await tools.record_result(grant, RecordResultArgs(issue_url=URL))
+    assert result.state is ProposalState.APPLIED
+    topic = await store.get_topic(topic_id)
+    assert topic is not None and topic.topic.issue_number == 7
+
+
+async def test_a_reconciling_run_can_give_up(tools: WriteTools, store: MemoryStore) -> None:
+    _, grant = await reconciling(tools, store)
+    result: Any = await tools.record_result(grant, RecordResultArgs(error="retry limit"))
+    assert result.state is ProposalState.FAILED
+
+
 async def test_only_an_executing_proposal_takes_a_result(
     tools: WriteTools, store: MemoryStore
 ) -> None:
     topic_id = await new_topic(tools)
     proposed: Any = await tools.propose_issue(DRAFT, issue(topic_id))
     grant = Grant("run-x", RunKind.EXECUTION, CH, proposal_id=proposed.proposal_id)
-    with pytest.raises(ToolError, match="is pending, not executing"):
+    with pytest.raises(ToolError, match="is pending, not executing or reconciling"):
         await tools.record_result(grant, RecordResultArgs(issue_url=URL))
 
 
