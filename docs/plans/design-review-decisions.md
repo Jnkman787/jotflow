@@ -4,9 +4,9 @@
 
 - Issue: #51
 - Draft PR: #52
-- Status: implementing
-- Last verified: docs written, not yet reviewed
-- Next safe action: update affected issues and create the new ones listed in roadmap.md
+- Status: ready for review
+- Last verified: product, architect, and security reviews applied
+- Next safe action: maintainer review and merge
 
 ## Objective and done-when
 
@@ -38,14 +38,17 @@ Docs only. Each decision gets a row in the roadmap decisions table with the reas
 - [x] architecture.md: apply every decision, fix stale and overstated claims
 - [x] SECURITY.md: replace the GitHub writer reference
 - [x] README, AGENTS.md, CONTRIBUTING.md: reword the GitHub credentials principle
-- [ ] Update affected issues and create new ones
-- [ ] Teammate review of the diff
+- [x] Update affected issues and create new ones
+- [x] Teammate review of the diff
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- Product review: five fixes applied (keyword acknowledgement, re: handles in link replies, newcomer tip, init records the agent preset, README Using it section) plus the optional D2 wording.
+- Security review: three fixes applied (open-mode risk stated plainly with an auto-mode warning, read access can still leak repo content into Slack, drafting guarantee reworded as preset configuration with two tokens).
+- Architect review: six fixes applied (runner in the agent container instead of the Docker socket, internal-network binding, two GitHub tokens chosen per run kind, random marker found by listing rather than search, explicit proposal state transitions and a per-thread lock covering execution, question-run token). Overlapping issue #33 closed as superseded by #56.
+- Issues: 23 existing issues annotated, 5 more after the mechanics review, 8 new issues created (#53 to #60) and attached to their epics.
 
 ## Handoff notes
 
-None yet.
+Nothing outstanding. Code changes implied by these decisions are tracked in their issues, starting with #5, #6, and #8 in milestone one.

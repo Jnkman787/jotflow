@@ -45,6 +45,7 @@ Every call carries a token, and what a token may do depends on who holds it:
 |---|---|---|
 | Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel` |
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
+| Question run (M5, D12) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `ask_channel` (answers in the source thread only) |
 | Operator (M5, D12) | A person, created and revoked by an admin, named channels only | `list_topics`, `get_topic` |
 
 Tokens are short-lived for runs and revocable for operators. The server validates `Host` and `Origin` headers so a web page cannot reach it from a browser.
@@ -57,7 +58,7 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 
 **Agent output contract.** The agent acts only by calling the whiteboard MCP tools. JotFlow records each call as it happens; the agent's stdout is ignored. The prompt handed to the agent is minimal: a run id and the instruction to call `get_work` and then act.
 
-**Execution runs.** JotFlow's code never uses GitHub credentials. When a proposal is approved, or immediately in `auto` mode, JotFlow launches the agent again. Its work packet contains only the approved structured fields, never raw Slack text. The agent first searches the target repo for the proposal's hidden marker, so a retry never creates a second issue, then performs the write with the GitHub access the team gave it and calls `record_result` with the issue URL. JotFlow checks that the URL points at the approved repo, stores it, replies in the Slack thread, and updates the card. A team may configure a cheaper model for execution runs, since they make a single write.
+**Execution runs.** JotFlow's code never uses GitHub credentials. When a proposal is approved, or immediately in `auto` mode, JotFlow launches the agent again. Its work packet contains only the approved structured fields, never raw Slack text. Every proposal carries a random marker id, written into the issue body or comment as a hidden HTML comment; it is random so it reveals nothing even with `issue_links = "none"`. Before writing, the agent lists the target repo's recently created issues, or the issue's recent comments for an update, and looks for the marker. It lists rather than searches because GitHub's search index lags and a quick retry could miss a fresh issue. Then it performs the write with the GitHub access the team gave it and calls `record_result` with the issue URL. JotFlow checks that the URL points at the approved repo, stores it, replies in the Slack thread, and updates the card. A team may configure a cheaper model for execution runs, since they make a single write.
 
 ## Deployment
 
@@ -79,6 +80,12 @@ flowchart LR
     agent -- "MCP over HTTP, per-run token" --> orch
     agent --> gh["GitHub"]
 ```
+
+**How runs start.** JotFlow never mounts the Docker socket, which would give it root on the host and reach into the agent's container. Instead, the agent container runs a small **runner** that listens on the internal Compose network. To start a run, JotFlow sends the runner a run id, run kind, and per-run token; the runner launches the agent CLI with the matching preset and token, and the agent calls back over MCP. The runner accepts only those three fields, never a command. This is part of v1 and separate from the post-v1 HTTP adapter, which lets the runner live on another machine.
+
+**Network.** The MCP server and the runner listen only on the internal Compose network, with no ports published to the host. The MCP server's `Host` allowlist includes its Compose service name. Outside Compose, the MCP server defaults to `127.0.0.1`.
+
+**GitHub tokens.** The agent container holds two GitHub tokens, a read-only one and a write one. The runner passes the read-only token to drafting and question runs and the write token only to execution runs, so read-only drafting does not rest on CLI tool settings alone. Where the agent reaches GitHub through GitHub's MCP server, its read-only mode can serve the same purpose.
 
 The agent container receives an explicit allowlist of environment variables. It never sees JotFlow's `.env`, Slack tokens, or database. JotFlow's container never holds the agent's GitHub token. A prompt-injected agent therefore cannot reach JotFlow's Slack tokens. It can still misuse its own GitHub access within its run kind's tool allowlist; in particular, read-only access during drafting can copy private repo content into a proposal body or a clarifying question in Slack. Channel repo mappings and the agent's read token should cover only repos whose content may be discussed in that channel.
 
@@ -169,10 +176,29 @@ This is the novel and risky piece. The agent, not the orchestrator, decides wher
 Every agent run is recorded in the team's own database (D8).
 
 - A run has a kind (drafting, execution, and from M5 question), a status, a deadline, and its linked proposal.
-- At most one run per thread at a time. Messages arriving during a run trigger a fresh run afterwards, and the newer proposal supersedes the older pending one.
+- At most one run per thread at a time, of any kind, including execution. A follow-up reply arriving while an issue is being created waits until the issue number exists, so it can become an update proposal rather than a second new issue. Messages arriving during a run trigger a fresh run afterwards, and the newer proposal supersedes the older pending one.
 - A total concurrency cap limits how many agent processes run at once.
 - On restart, interrupted drafting runs are re-queued and interrupted execution runs are reconciled: the next attempt checks for the proposal's hidden marker before writing.
-- Proposal states: pending, approved, executing, applied, rejected, superseded, failed.
+- Proposal states and transitions:
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: drafting run proposes
+    pending --> approved: Approve, or automatically in auto mode
+    pending --> rejected: rejected or skipped
+    pending --> superseded: newer proposal on same thread
+    approved --> executing: execution run starts
+    executing --> applied: record_result with matching URL
+    executing --> reconciling: timeout, crash, or restart
+    reconciling --> applied: marker found in repo
+    reconciling --> approved: marker absent, retry allowed
+    reconciling --> failed: retry limit reached
+    executing --> failed: agent reports an error
+    failed --> approved: a person retries from the card
+    applied --> [*]
+```
+
+In `auto` mode a validated proposal moves from pending to approved without a person, and the card records "approved by auto mode".
 
 ## Data and privacy
 
