@@ -84,4 +84,4 @@ Alternatives considered: a structlog dependency, rejected because it adds a depe
 ## Handoff notes
 
 - `configure_logging` and `THIRD_PARTY_LOGGERS` now live in `jotflow.logs`. `commands/run.py` re-exports `THIRD_PARTY_LOGGERS`, so existing imports keep working.
-- New token formats go in `_SECRETS` in `logs.py`, with a line in the test's `SECRETS` table.
+- New token formats go in `_SECRETS` in `logs.py`, with a line in the test's `SECRETS` table. Build test tokens from pieces at runtime: GitHub push protection rejected an earlier push of this branch because two made-up Slack tokens were written out whole in the test.
