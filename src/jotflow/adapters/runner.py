@@ -1,0 +1,468 @@
+"""The runner inside the agent container (#54, D6).
+
+JotFlow never mounts the Docker socket. To start a run it asks this runner,
+over the internal Compose network, with exactly three fields: the run id, the
+run kind, and the run's MCP token. The runner then starts the team's agent CLI
+as a child process with only what that run may have:
+
+- a private directory, mode 0700, holding the MCP config, mode 0600, with the
+  server URL and the token as an ``Authorization`` header. The token is never
+  in argv or the environment, where tools and CLIs can print it.
+- an environment allowlist: a few base variables, the model-login variables
+  the team names, and one GitHub token chosen by run kind. Drafting and
+  question runs get the read-only token, and only execution runs get the
+  write token. A missing token refuses the run; there is no fallback.
+- a time limit, after which the whole process group is killed
+
+The runner authenticates JotFlow with a shared secret, compared in constant
+time and never passed to the agent. It refuses any ``Origin``, any ``Host`` off
+its allowlist, query strings, and large bodies, like the MCP gate does. The
+agent's own output is discarded, since results come only through MCP tools (D1)
+and the output may quote Slack text.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hmac
+import json
+import logging
+import os
+import re
+import shutil
+import signal
+import tempfile
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from jotflow.models import RunKind
+from jotflow.store.base import DEFAULT_RUN_TIMEOUTS
+from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, MAX_TOKEN_TTL_SECONDS, TOKEN_PREFIX
+
+log = logging.getLogger("jotflow.runner")
+
+RUNNER_PORT = 8766
+MAX_BODY_BYTES = 4 * 1024
+MAX_LIVE_RUNS = 8
+# How long after SIGTERM a run's process group has before SIGKILL.
+KILL_GRACE_SECONDS = 5.0
+# A little longer than JotFlow's own limit, which also asks the runner to stop.
+TIMEOUT_GRACE_SECONDS = 60
+DIR_PREFIX = "jotflow-run-"
+
+# Always passed through, when set; nothing else from the runner's own environment.
+BASE_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "TERM", "NODE_OPTIONS", "SSL_CERT_FILE")
+_ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+# Never handed to an agent, even if a team lists them.
+_FORBIDDEN_ENV = re.compile(r"^JOTFLOW_|^SLACK_|_TOKEN$|^GH_|^GITHUB_")
+_RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+CONVERSATION_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+EXECUTION_KINDS = frozenset({RunKind.EXECUTION})
+
+
+class RunState(StrEnum):
+    STARTING = "starting"
+    RUNNING = "running"
+    EXITED = "exited"
+    TIMED_OUT = "timed_out"
+    KILLED = "killed"
+    FAILED = "failed"
+
+
+class LaunchRequest(BaseModel):
+    """What JotFlow sends to start a run: never a command."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(pattern=rf"^{_RUN_ID.pattern}$")  # anchored: Pydantic searches
+    kind: RunKind
+    token: str = Field(min_length=len(TOKEN_PREFIX) + 1, max_length=MAX_TOKEN_LENGTH)
+
+    @field_validator("token")
+    @classmethod
+    def _run_token(cls, value: str) -> str:
+        if not value.startswith(TOKEN_PREFIX) or any(c.isspace() for c in value):
+            raise ValueError("token is not a JotFlow run token")
+        return value
+
+
+class ConfigError(Exception):
+    """The runner's own configuration is unusable. Raised at startup."""
+
+
+@dataclass(frozen=True)
+class RunnerConfig:
+    """What the runner needs, from its own environment, never JotFlow's.
+
+    A runner serves either conversation runs (drafting and question), holding
+    only the read-only GitHub token, or execution runs, holding only the write
+    token. Same-uid processes in one container can read each other's
+    ``/proc/<pid>/environ`` and run directories, so the write token must never
+    exist in a container a drafting run can reach. Within one kind that is
+    accepted: those runs hold the same token anyway.
+    """
+
+    secret: str = field(repr=False)
+    mcp_url: str
+    command: tuple[str, ...]
+    kinds: frozenset[RunKind] = CONVERSATION_KINDS
+    read_token: str | None = field(default=None, repr=False)
+    write_token: str | None = field(default=None, repr=False)
+    env_allow: tuple[str, ...] = ()
+    allowed_hosts: frozenset[str] = frozenset()
+    max_live: int = MAX_LIVE_RUNS
+    workdir: Path | None = None
+
+    def __post_init__(self) -> None:
+        if len(self.secret) < 32:
+            raise ConfigError("the runner secret must be at least 32 characters")
+        if not self.command:
+            raise ConfigError("the agent command is empty")
+        if not self.mcp_url.startswith(("http://", "https://")):
+            raise ConfigError("the MCP URL must be http or https")
+        if self.kinds not in (CONVERSATION_KINDS, EXECUTION_KINDS):
+            raise ConfigError(
+                "a runner serves either drafting and question runs, or execution runs only"
+            )
+        if self.serves_execution:
+            if self.write_token is None or self.read_token is not None:
+                raise ConfigError(
+                    "an execution runner holds the write GitHub token and never the read one"
+                )
+        elif self.read_token is None or self.write_token is not None:
+            raise ConfigError(
+                "a drafting and question runner holds the read GitHub token and never the write one"
+            )
+        for name in self.env_allow:
+            if not _ENV_NAME.fullmatch(name):
+                raise ConfigError(f"{name!r} is not an environment variable name")
+            if _FORBIDDEN_ENV.search(name):
+                raise ConfigError(
+                    f"{name} may not be passed to the agent: JotFlow, Slack, and GitHub "
+                    "variables are set by the runner itself"
+                )
+
+    @property
+    def serves_execution(self) -> bool:
+        return self.kinds == EXECUTION_KINDS
+
+    @property
+    def live_limit(self) -> int:
+        """Execution runs go one at a time; conversation runs up to ``max_live``."""
+        return 1 if self.serves_execution else self.max_live
+
+    def github_token(self, kind: RunKind) -> str | None:
+        """The one GitHub token a run of ``kind`` gets. No fallback between them."""
+        if kind not in self.kinds:
+            return None
+        return self.write_token if kind is RunKind.EXECUTION else self.read_token
+
+
+def parse_command(raw: str) -> tuple[str, ...]:
+    """``JOTFLOW_AGENT_COMMAND``: a JSON list of strings, run with no shell."""
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise ConfigError("JOTFLOW_AGENT_COMMAND must be a JSON list of strings") from None
+    if not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value):
+        raise ConfigError("JOTFLOW_AGENT_COMMAND must be a JSON list of strings")
+    return tuple(value)
+
+
+def mcp_config(url: str, token: str) -> dict[str, Any]:
+    """The per-run MCP config, in the ``mcpServers`` shape agent CLIs read."""
+    return {
+        "mcpServers": {
+            "jotflow": {
+                "type": "http",
+                "url": url,
+                "headers": {"Authorization": f"Bearer {token}"},
+            }
+        }
+    }
+
+
+def child_env(
+    config: RunnerConfig, kind: RunKind, run_id: str, run_dir: Path, environ: Mapping[str, str]
+) -> dict[str, str]:
+    """The agent's whole environment. Only what is named here, from ``environ``."""
+    env = {name: environ[name] for name in (*BASE_ENV, *config.env_allow) if name in environ}
+    token = config.github_token(kind)
+    if token is None:  # pragma: no cover - launch refuses this first
+        raise ConfigError(f"no GitHub token for {kind.value} runs")
+    env.update(
+        {
+            # HOME stays the agent user's own, where the CLI keeps its model login;
+            # only scratch files go to the run's private directory.
+            "HOME": environ.get("HOME", str(run_dir)),
+            "TMPDIR": str(run_dir),
+            "GITHUB_TOKEN": token,
+            "GH_TOKEN": token,
+            "JOTFLOW_RUN_ID": run_id,
+            "JOTFLOW_RUN_KIND": kind.value,
+            "JOTFLOW_MCP_CONFIG": str(run_dir / "mcp.json"),
+        }
+    )
+    return env
+
+
+def argv_for(command: Sequence[str], run_id: str, config_path: Path) -> list[str]:
+    """Fill ``{mcp_config}`` and ``{run_id}`` in each argument. No shell, no other fields."""
+    return [
+        part.replace("{mcp_config}", str(config_path)).replace("{run_id}", run_id)
+        for part in command
+    ]
+
+
+def time_limit(kind: RunKind) -> float:
+    seconds = DEFAULT_RUN_TIMEOUTS[kind].total_seconds() + TIMEOUT_GRACE_SECONDS
+    return float(min(seconds, MAX_TOKEN_TTL_SECONDS))
+
+
+def remove_stale(workdir: Path | None) -> int:
+    """Remove run directories a previous runner left behind. Returns how many."""
+    root = workdir or Path(tempfile.gettempdir())
+    removed = 0
+    for entry in root.glob(f"{DIR_PREFIX}*"):
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+@dataclass
+class _Run:
+    run_id: str
+    kind: RunKind
+    state: RunState = RunState.STARTING
+    exit_code: int | None = None
+    process: asyncio.subprocess.Process | None = None
+    task: asyncio.Task[None] | None = None
+    stop: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def view(self) -> dict[str, Any]:
+        return {"run_id": self.run_id, "state": self.state.value, "exit_code": self.exit_code}
+
+
+LIVE = frozenset({RunState.STARTING, RunState.RUNNING})
+
+
+class Runner:
+    """Starts, watches, and stops agent runs. One per agent container."""
+
+    def __init__(
+        self,
+        config: RunnerConfig,
+        *,
+        environ: Mapping[str, str] | None = None,
+        limit: Callable[[RunKind], float] = time_limit,
+        kill_grace: float = KILL_GRACE_SECONDS,
+    ) -> None:
+        self._config = config
+        self._environ = dict(os.environ if environ is None else environ)
+        self._limit = limit
+        self._kill_grace = kill_grace
+        self._runs: dict[str, _Run] = {}
+
+    def get(self, run_id: str) -> dict[str, Any] | None:
+        run = self._runs.get(run_id)
+        return None if run is None else run.view()
+
+    def live(self) -> int:
+        return sum(1 for run in self._runs.values() if run.state in LIVE)
+
+    async def launch(self, request: LaunchRequest) -> dict[str, Any]:
+        """Start a run. Raises :class:`LaunchRefused` if it may not start."""
+        if request.kind not in self._config.kinds:
+            served = " and ".join(sorted(k.value for k in self._config.kinds))
+            raise LaunchRefused(403, f"this runner serves only {served} runs")
+        existing = self._runs.get(request.run_id)
+        if existing is not None:
+            raise LaunchRefused(409, f"run {request.run_id} was already launched")
+        if self.live() >= self._config.live_limit:
+            raise LaunchRefused(429, "the runner is at its limit of live runs")
+        if self._config.github_token(request.kind) is None:  # pragma: no cover - config refuses
+            raise LaunchRefused(503, f"no GitHub token is configured for {request.kind.value} runs")
+        run = _Run(request.run_id, request.kind)
+        self._runs[request.run_id] = run
+        # Keep finished runs from growing without bound.
+        for old in [r for r in self._runs.values() if r.state not in LIVE][
+            : -self._config.max_live * 4
+        ]:
+            del self._runs[old.run_id]
+        run.task = asyncio.create_task(self._run(run, request.token))
+        log.info("run %s launching (%s)", run.run_id, run.kind.value)
+        return run.view()
+
+    async def stop(self, run_id: str) -> dict[str, Any] | None:
+        run = self._runs.get(run_id)
+        if run is None:
+            return None
+        run.stop.set()
+        if run.task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await run.task
+        return run.view()
+
+    async def close(self) -> None:
+        """Stop every live run, for the runner's own shutdown."""
+        await asyncio.gather(
+            *(self.stop(r.run_id) for r in list(self._runs.values()) if r.state in LIVE)
+        )
+
+    async def _run(self, run: _Run, token: str) -> None:
+        run_dir = Path(tempfile.mkdtemp(prefix=DIR_PREFIX, dir=self._config.workdir))
+        try:
+            config_path = run_dir / "mcp.json"
+            fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(mcp_config(self._config.mcp_url, token), handle)
+            env = child_env(self._config, run.kind, run.run_id, run_dir, self._environ)
+            try:
+                run.process = await asyncio.create_subprocess_exec(
+                    *argv_for(self._config.command, run.run_id, config_path),
+                    cwd=run_dir,
+                    env=env,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                run.state = RunState.FAILED
+                log.error("run %s could not start the agent (%s)", run.run_id, type(exc).__name__)
+                return
+            run.state = RunState.RUNNING
+            await self._watch(run)
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            log.info("run %s ended (%s)", run.run_id, run.state.value)
+
+    async def _watch(self, run: _Run) -> None:
+        process = run.process
+        if process is None:  # pragma: no cover - _run sets it before watching
+            return
+        waiting = asyncio.create_task(process.wait())
+        stopping = asyncio.create_task(run.stop.wait())
+        done, _ = await asyncio.wait(
+            {waiting, stopping}, timeout=self._limit(run.kind), return_when=asyncio.FIRST_COMPLETED
+        )
+        stopping.cancel()
+        if waiting in done:
+            run.exit_code = waiting.result()
+            run.state = RunState.EXITED
+            return
+        run.state = RunState.KILLED if stopping in done else RunState.TIMED_OUT
+        await self._kill(process)
+        run.exit_code = await waiting
+
+    async def _kill(self, process: asyncio.subprocess.Process) -> None:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, sig)
+            try:
+                await asyncio.wait_for(asyncio.shield(process.wait()), self._kill_grace)
+                return
+            except TimeoutError:
+                continue
+
+
+class LaunchRefused(Exception):
+    def __init__(self, status: int, reason: str) -> None:
+        super().__init__(reason)
+        self.status = status
+        self.reason = reason
+
+
+class RunnerGate:
+    """The runner's front door: the same strictness as the MCP gate, plus the secret."""
+
+    def __init__(self, app: ASGIApp, *, secret: str, allowed_hosts: Collection[str]) -> None:
+        self._app = app
+        self._secret = secret.encode()
+        self._hosts = frozenset(h.lower() for h in allowed_hosts)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        problem = self._refusal(scope)
+        if problem is not None:
+            status, reason = problem
+            await JSONResponse({"error": reason}, status_code=status)(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+    def _refusal(self, scope: Scope) -> tuple[int, str] | None:
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+        if "origin" in headers:
+            return 403, "requests with an Origin header are refused"
+        if headers.get("host", "").lower() not in self._hosts:
+            return 403, "Host is not allowed"
+        if scope.get("query_string"):
+            return 400, "query strings are not accepted"
+        length = headers.get("content-length")
+        if length is not None and (not length.isdigit() or int(length) > MAX_BODY_BYTES):
+            return 413, "request body is too large"
+        scheme, _, presented = headers.get("authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(presented.encode(), self._secret):
+            return 401, "the runner secret is missing or wrong"
+        return None
+
+
+def build_runner_app(runner: Runner, config: RunnerConfig) -> ASGIApp:
+    """The runner's HTTP app: POST /runs, GET /runs/{id}, DELETE /runs/{id}."""
+
+    async def launch(request: Request) -> Response:
+        # Read with a cap, so a chunked body without a length cannot grow unbounded.
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            launch_request = LaunchRequest.model_validate_json(body)
+        except ValidationError:
+            return JSONResponse(
+                {"error": "expected exactly run_id, kind, and a JotFlow run token"},
+                status_code=400,
+            )
+        try:
+            view = await runner.launch(launch_request)
+        except LaunchRefused as refused:
+            return JSONResponse({"error": refused.reason}, status_code=refused.status)
+        return JSONResponse(view, status_code=202)
+
+    async def status(request: Request) -> Response:
+        view = runner.get(request.path_params["run_id"])
+        if view is None:
+            return JSONResponse({"error": "no such run"}, status_code=404)
+        return JSONResponse(view)
+
+    async def stop(request: Request) -> Response:
+        view = await runner.stop(request.path_params["run_id"])
+        if view is None:
+            return JSONResponse({"error": "no such run"}, status_code=404)
+        return JSONResponse(view)
+
+    app = Starlette(
+        routes=[
+            Route("/runs", launch, methods=["POST"]),
+            Route("/runs/{run_id}", status, methods=["GET"]),
+            Route("/runs/{run_id}", stop, methods=["DELETE"]),
+        ]
+    )
+    return RunnerGate(app, secret=config.secret, allowed_hosts=config.allowed_hosts)

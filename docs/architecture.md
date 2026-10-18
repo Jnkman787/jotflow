@@ -130,6 +130,23 @@ The team decides where both containers run. The only requirements are that JotFl
 
 **The JotFlow image.** The `Dockerfile` builds from `uv.lock` and ships only the virtual environment: no uv, no Node, no agent CLI. It runs as an unprivileged user (uid 10001). `docker-compose.yml` mounts a named volume at `/data` for the database, keeps the root filesystem read-only, drops all capabilities, and publishes no ports. JotFlow joins two networks: `egress` for Slack, and `agents`, which is internal and has no route out. The M3 agent service joins only `agents` plus whatever egress its model and GitHub access need.
 
+**The agent containers.** `Dockerfile.agent` builds one image for two Compose services, from the same pinned Python base plus Debian's Node and npm for the agent CLIs. The CLIs install through the `AGENT_NPM_PACKAGES` build argument, which presets pin.
+
+| Service | Runs | Env file | GitHub token | Home volume |
+|---|---|---|---|---|
+| `agent` | drafting and question | `agent.env` | read-only | `agent-home` |
+| `agent-exec` | execution only, one at a time | `agent-exec.env` | write | `agent-exec-home` |
+
+Two services, not one, because runs share a uid. A same-uid process can read another's `/proc/<pid>/environ`, the runner's included, and its run directory, and Linux does not stop that. In one container, a drafting run with nothing more than a file-read tool could therefore read the write token. Split by kind, the write token never exists in a container a drafting run can reach, and a drafting run cannot plant files in the home an execution run loads. Within one service, runs can read each other's environment and run directory. That is accepted, because they hold the same token.
+
+Both services run as uid 10002 with a read-only root, `/tmp` in memory, all capabilities dropped, and `no-new-privileges`. Neither gets `.env` or any bind mount. Each has its own internal network to JotFlow, `agents` or `agents-exec`, so the drafting container cannot reach `agent-exec` at all, and its own egress for the model API and GitHub. Neither publishes a port. Both sit behind the Compose profile `agent`, so they start only once a team sets `COMPOSE_PROFILES=agent`. In each, `jotflow runner` listens on port 8766, at `agent:8766` and `agent-exec:8766`, and refuses run kinds its service does not serve. JotFlow's client (#21) routes each run by kind. A runner refuses to start if its env file holds the other kind's token:
+
+- **The request.** JotFlow starts a run with `POST /runs`, carrying exactly the run id, run kind, and run token. It follows the run with `GET /runs/{id}` and stops it with `DELETE /runs/{id}`. Every call carries that runner's own secret, compared in constant time and never given to the agent. The two runners have different secrets: `agent.env`'s matches `JOTFLOW_RUNNER_SECRET` in `.env`, and `agent-exec.env`'s matches `JOTFLOW_RUNNER_EXEC_SECRET`. A drafting run that reads its own runner's secret from `/proc` therefore still cannot start anything on `agent-exec`. The runner refuses an `Origin` header, a `Host` off its allowlist, a query string, and a body over 4 KiB, chunked or not, as the MCP gate does.
+- **The run's own directory.** Each run gets a directory (0700) under `/tmp`, holding its MCP config (0600) with the server URL and the token as an `Authorization` header. The token never appears in the command line or the environment, so it stays out of anything the CLI prints. Runs in the same service can still read it, as above. The directory is removed when the run ends, and leftovers are removed when the runner starts.
+- **The environment.** The agent process gets only an allowlist: `PATH` and a few locale variables, `HOME` for its service's login volume, the variables `JOTFLOW_AGENT_ENV_ALLOW` names, and its service's one GitHub token as `GITHUB_TOKEN` and `GH_TOKEN`. JotFlow, Slack, and GitHub variable names cannot be allowlisted.
+- **The command.** It is `JOTFLOW_AGENT_COMMAND`, a JSON list with `{mcp_config}` and `{run_id}` placeholders, run without a shell. Presets (#22) will name it instead. The agent's output is discarded: results come only through MCP tools (D1), and the output may quote Slack text.
+- **Ending a run.** A run past its time limit, or one JotFlow stops, loses its whole process group: SIGTERM, then SIGKILL. When the runner itself stops, it stops every live run.
+
 **The policy file in Compose.** `docker-compose.policy.yml` mounts the team's `jotflow.toml` read-only at `/etc/jotflow/jotflow.toml` and points `JOTFLOW_CONFIG` at it. Start JotFlow with both files, or set `COMPOSE_FILE` so plain `docker compose up -d` uses both:
 
 ```

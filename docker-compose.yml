@@ -1,8 +1,9 @@
 # JotFlow deployment. See the Deployment section of docs/architecture.md.
 #
-# Today this runs the JotFlow container only. In M3 the agent container joins
-# the internal `agents` network as a second service (D6, #54). JotFlow never
-# mounts the Docker socket, and no ports are published to the host.
+# Two containers (D6): JotFlow, with Slack's tokens in .env, and the team's
+# agent, with its own agent.env and never JotFlow's. They meet only on the
+# internal `agents` network. JotFlow never mounts the Docker socket, and no
+# ports are published to the host.
 
 name: jotflow
 
@@ -14,11 +15,17 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # Listen on the internal network too, so the agent can reach MCP, and
+      # answer only to the Compose service name besides loopback.
+      JOTFLOW_MCP_HOST: 0.0.0.0
+      JOTFLOW_MCP_ALLOWED_HOSTS: jotflow
     volumes:
       - jotflow-data:/data
     networks:
       - egress
       - agents
+      - agents-exec
     read_only: true
     tmpfs:
       - /tmp
@@ -27,13 +34,83 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # Two agent services, so the write GitHub token never exists in a container a
+  # drafting run can reach: runs share one uid, and a same-uid process can read
+  # another's /proc/<pid>/environ and run directory (D6, #54).
+  #
+  # Off until the team sets them up: add COMPOSE_PROFILES=agent to .env once
+  # agent.env and agent-exec.env are filled in.
+  agent:
+    profiles: [agent]
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: jotflow-agent:local
+    restart: unless-stopped
+    # Drafting and question runs: the read-only GitHub token and the model
+    # login. Never .env, and never the write token.
+    env_file:
+      - path: agent.env
+        required: false
+    environment:
+      JOTFLOW_RUNNER_KINDS: drafting,question
+      JOTFLOW_RUNNER_ALLOWED_HOSTS: agent
+    volumes:
+      # This service's own home, for the CLI's model login.
+      - agent-home:/home/agent
+    networks:
+      - agents
+      - agent-egress
+    read_only: true
+    tmpfs:
+      # Each run's private directory and MCP config live here, never on disk.
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  agent-exec:
+    profiles: [agent]
+    image: jotflow-agent:local
+    restart: unless-stopped
+    # Execution runs only, one at a time: the write GitHub token and the model
+    # login. Never .env, and never the read token.
+    env_file:
+      - path: agent-exec.env
+        required: false
+    environment:
+      JOTFLOW_RUNNER_KINDS: execution
+      JOTFLOW_RUNNER_ALLOWED_HOSTS: agent-exec
+    volumes:
+      # A separate home: nothing a drafting run writes can reach an execution run.
+      - agent-exec-home:/home/agent
+    networks:
+      - agents-exec
+      - agent-exec-egress
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   jotflow-data:
+  agent-home:
+  agent-exec-home:
 
 networks:
   # Outbound access, for Slack's Socket Mode connection.
   egress:
-  # No route out of the host. The M3 agent runner and JotFlow's MCP server
-  # meet here; nothing on this network is published.
+  # No route out of the host. Each agent service meets JotFlow on its own
+  # internal network, so the drafting agent cannot reach agent-exec at all.
+  # Nothing on these networks is published.
   agents:
     internal: true
+  agents-exec:
+    internal: true
+  # Each agent's own way out, for its model API and GitHub.
+  agent-egress:
+  agent-exec-egress:

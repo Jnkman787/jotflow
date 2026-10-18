@@ -260,6 +260,14 @@ On Windows in PowerShell, setup has already added the `COMPOSE_PATH_SEPARATOR=:`
 docker compose up -d
 ```
 
+This starts JotFlow. The agent containers, where your team's agent will draft issues and write the approved ones, are off until you set them up; agent runs arrive in milestone 3. There are two, so the GitHub token that can write never sits where drafting happens. To set them up:
+
+1. Copy `agent.env.example` to `agent.env`. It holds the model login and a read-only GitHub token.
+2. Copy `agent-exec.env.example` to `agent-exec.env`. It holds the model login and a GitHub token that can write issues.
+3. Give both files mode 0600 and fill them in as their comments describe. Each gets its own runner secret, and `.env` holds both, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. Then add `COMPOSE_PROFILES=agent` to `.env`.
+
+Neither file holds Slack tokens, and neither agent sees `.env`.
+
 The first start builds JotFlow's image, which takes a minute or two.
 
 ### 6. See it working
