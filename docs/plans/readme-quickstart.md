@@ -4,7 +4,7 @@
 
 - Issue: #10
 - Draft PR: #71
-- Status: implementing
+- Status: completed
 - Last verified: README written and every quoted string checked against main on 2026-10-18
 - Next safe action: follow the README on a fresh clone in the sandbox workspace for the live criterion on #10
 
@@ -49,15 +49,16 @@ Stays open on #10, because it needs the live sandbox workspace:
 - [x] Troubleshooting table
 - [x] Status note, "Using it", and "What a team needs" brought in line
 - [x] Check every quoted message and command against the code
-- [ ] CodeRabbit review, once, if the allowance has reset
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] CodeRabbit review: skipped, see Validation
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
 - Every prompt, message, and log line the README quotes was checked against the code on main: init's prompts and closing lines in `commands/init.py`, the token errors in `slack_auth.py`, `jotflow run`'s configuration errors in `commands/run.py`, and the startup and event log lines in `orchestrator/slack.py` and `orchestrator/ingest.py`. The transcript was produced by running init against the fake Slack client.
 - Corrections made during that check: the transcript gained init's `COMPOSE_FILE` line, the log lines gained their timestamp prefix, `/invite` uses the bot's handle rather than its display name, and the file-not-found message uses the code's backticks.
 - `make check` green; the change is docs only.
+- CodeRabbit: skipped. The first run hit the free-allowance rate limit; under the maintainer's rule not to wait for it, the retry was stopped.
 - Security review of #71: 4 items, all taken. A troubleshooting row for the directory Docker Desktop creates when `jotflow.toml` is missing; a note that `.env`'s owner-only mode is not enforced on Windows drives, with the advice to clone into the Linux home directory in WSL; a reminder to remove channel ids and workspace names before pasting logs publicly; and a pointer to revoking leaked tokens.
 - Team lead review of #71: the status note no longer claims a working Slack connection, since the live check has not happened; the recovery row now stops Compose first and starts it again after `jotflow init`.
 
