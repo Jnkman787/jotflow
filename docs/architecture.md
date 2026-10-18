@@ -198,7 +198,9 @@ Rules:
 
 - The colon is required, so sentences like "Skip button is broken" are never read as commands. Typos are tolerated only on keywords of four or more letters.
 - JotFlow confirms a recognised keyword with a reaction on the message, so the poster knows it was understood. Reactions never restart the wait before drafting.
-- Every keyword has an equivalent reaction, for people who forget or prefer clicking. Reactions from guests and external users are ignored.
+- Every keyword has an equivalent reaction, for people who forget or prefer clicking. Reactions from guests and external users are ignored. So far only `skip:` has one, :no_entry_sign:. `re:` has none, because it needs an issue number.
+- A `re:` that names an issue outside the channel's repos is refused, with a thread reply that says why. One that names an issue with no topic yet starts a topic for it.
+- `re:` and `skip:` are stored as the poster's own decision, which the agent cannot overrule. JotFlow applies them before the debouncer joins a reply to its parent's topic, and a skip reaction that arrives later still overrides that join.
 - JotFlow strips the keyword before the agent sees the text, and passes the rest as untrusted thread content. A keyword never adds instructions to the agent's prompt.
 - No keyword can skip approval or change the channel mode.
 - Acting on someone else's message: with approvers off, anyone may, and JotFlow posts a visible note in the thread that the author can undo. With approvers on, only the author or an approver may.
@@ -425,7 +427,7 @@ src/jotflow/
   config.py       environment-driven settings, no secrets in the repo
   policy.py       jotflow.toml schema, loader, and allowlist lookups
   cli.py          entry point
-  orchestrator/   event ingest, keywords, debouncing, topic index, run lifecycle, approval cards
+  orchestrator/   event ingest, keywords and their handler, debouncing, topic index, run lifecycle, approval cards
   whiteboard/     the MCP server and token scoping
   adapters/       agent runners and presets
   execution/      execution runs and result checks

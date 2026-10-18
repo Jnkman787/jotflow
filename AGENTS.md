@@ -39,7 +39,7 @@ src/jotflow/
   store/          local state behind the Store interface: SQLite, plus an in-memory store for tests
   testing/        saved Slack threads for tests, replay, and demos; format in testing/threads/README.md
   replay.py       runs a saved thread through the real pipeline with a scripted agent (`jotflow replay`)
-  orchestrator/   event ingest, debouncing, topic index, run lifecycle and tokens, proposal lifecycle, approval cards
+  orchestrator/   event ingest, keywords and their handler, debouncing, topic index, run lifecycle and tokens, proposal lifecycle, approval cards
   whiteboard/     the MCP server: gate (transport rules, audit), token interface, fixed tool registry
   adapters/       agent runners and presets; runner.py is the agent container's runner
   execution/      execution runs: hands approved proposals back to the agent, checks results

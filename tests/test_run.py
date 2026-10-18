@@ -64,6 +64,14 @@ class FakeClient:
 class FakeApp:
     def __init__(self) -> None:
         self.listeners: dict[str, Callable[..., Any]] = {}
+        self.commands: dict[str, Callable[..., Any]] = {}
+
+    def command(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+            self.commands[name] = fn
+            return fn
+
+        return register
 
     def event(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def register(fn: Callable[..., Any]) -> Callable[..., Any]:

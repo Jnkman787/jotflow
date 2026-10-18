@@ -4,10 +4,10 @@
 
 - Issue: #56
 - Also serves: D10, D11, D7, #20 (the keyword module), #19 (the debouncer's join), #129 (replay's `re:` exception)
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: extend `src/jotflow/orchestrator/keywords.py`
+- Draft PR: #135
+- Status: ready for review
+- Last verified: 2026-10-18, `make check` passes on the branch rebased onto main
+- Next safe action: review; wiring the handler into `jotflow run` follows with #55
 
 ## Objective and done-when
 
@@ -15,24 +15,25 @@ People can steer JotFlow with a keyword at the start of a message, or the equiva
 
 Done when:
 
-- [ ] "Skip button is broken" is not treated as a keyword; typos are tolerated only on keywords of four or more letters, colon still required
-- [ ] `re:` outside the channel's repos is refused with a reason; `re: 42` works when the channel has one repo and `re: web#42` otherwise (D11)
-- [ ] Guest and external-user reactions are ignored
-- [ ] No keyword can skip approval or change the mode
-- [ ] `/jotflow help` lists the keywords
-- [ ] A `skip:` reply ends up as person-marked chatter, and an `re:` reply is linked to the named issue's topic, whichever order the keyword handler and the debouncer's join run in (reviewer, from #127)
-- [ ] Replay applies `re:` and `skip:` through the same handler and no longer sets `re:` messages aside in its topic comparison (lead, from #132)
-- [ ] `make check` passes, including the coverage floor
+- [x] "Skip button is broken" is not treated as a keyword; typos are tolerated only on keywords of four or more letters, colon still required
+- [x] `re:` outside the channel's repos is refused with a reason; `re: 42` works when the channel has one repo and `re: web#42` otherwise (D11)
+- [x] Guest and external-user reactions are ignored
+- [x] No keyword can skip approval or change the mode
+- [x] `/jotflow help` lists the keywords
+- [x] A `skip:` reply ends up as person-marked chatter, and an `re:` reply is linked to the named issue's topic, whichever order the keyword handler and the debouncer's join run in (reviewer, from #127)
+- [x] Replay applies `re:` and `skip:` through the same handler and no longer sets `re:` messages aside in its topic comparison (lead, from #132)
+- [x] `make check` passes, including the coverage floor
 
 **Out of scope, as follow-ups:**
 - Wiring the handler into `jotflow run` comes with #55, which owns opening the store in `serve()`. This PR registers only `/jotflow help`, which needs no store.
-- Undoing someone else's skip by removing the reaction needs the `reaction_removed` event, a manifest change that teams would reinstall for. For now the visible note says how to ask for an undo.
-- `idea:` and `bug:` given as reactions have no effect yet: the hint reaches the agent from the message text, and a reaction has nowhere to be stored. The confirmation reaction says the keyword was understood only when it was acted on.
+- Undoing someone else's skip by removing the reaction needs the `reaction_removed` event, a manifest change that teams would reinstall for. For now the visible note says how to ask for an undo. Follow-up: #138.
+- `idea:` and `bug:` given as reactions have no effect yet: the hint reaches the agent from the message text, and a reaction has nowhere to be stored. The confirmation reaction says the keyword was understood only when it was acted on. Follow-up: #139.
+- The rest of #80's help surfaces: the pinned guide, the newcomer tip, and near-miss nudges. `help_text()` is the one source #80 builds on.
 
 ## Design
 
 - **`keywords.py`**, extended, never a second parser:
-  - `split_keyword` keeps its signature and result, `(keyword, rest)`. It gains D10's typo tolerance: the first word, with its colon, may be one edit from a keyword of four or more letters (`idea`, `skip`). The edit is a substitution, insertion, deletion, or swap of two adjacent letters. `re` and `bug` must be exact. Pending the architect's agreement; see Risks.
+  - `split_keyword` keeps its signature and result, `(keyword, rest)`. It gains D10's typo tolerance: the first word, with its colon, may be one wrong letter or one swap of two neighbouring letters away from a keyword of four or more letters (`idea`, `skip`). The word must keep its length, so `ideas:` stays ordinary text, as #20's pinned test requires. `re` and `bug` must be exact.
   - `parse_reference(text, channel) -> IssueReference`, or `ReferenceError` with a reason. It accepts `42` when the channel has one repo, and `nickname#42` or `owner/name#42` otherwise. A repo the channel does not list, or a missing or zero number, is refused.
   - `REACTIONS`: `no_entry_sign` means skip. `re:` has no reaction, because it needs an issue number.
 - **`KeywordHandler(store, policy, slack)`**, in `orchestrator/keyword_handler.py`:
@@ -54,28 +55,31 @@ Done when:
 
 ## Risks and open questions
 
-- Typo tolerance inside `split_keyword` changes what the live packet strips and hints. I've asked the architect, who wrote the module. If they prefer, the tolerance goes in a separate `parse_keyword` that only the handler uses.
+- Typo tolerance inside `split_keyword` changes what the live packet strips and hints, so the packet and the handler agree. I asked the architect, who wrote the module, and kept insertions and deletions out so #20's tests hold unchanged.
 - A typo like `sip:` becomes `skip`. D10 accepts that trade for four-letter keywords.
 
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `keywords.py`: typo tolerance, `parse_reference`, `REACTIONS`
-- [ ] `KeywordHandler` and its `Slack` protocol
-- [ ] `/jotflow help`
-- [ ] Replay through the handler; drop the `re:` set-aside
-- [ ] Tests, both orders with the debouncer
-- [ ] Docs: architecture Intent keywords, AGENTS.md layout, README "Using it"
-- [ ] Follow-up issues: undo by removing a reaction; hint reactions
+- [x] Commit this plan and open the draft PR
+- [x] `keywords.py`: typo tolerance, `parse_reference`, `REACTIONS`
+- [x] `KeywordHandler` and its `Slack` protocol
+- [x] `/jotflow help`
+- [x] Replay through the handler; drop the `re:` set-aside
+- [x] Tests, both orders with the debouncer
+- [x] Docs: architecture Intent keywords, AGENTS.md layout, README "Using it"
+- [x] Follow-up issues: undo by removing a reaction; hint reactions
 - [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
+- [x] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes: end-of-line check, ruff lint and format, mypy strict, and the tests with the coverage floor.
+- `tests/test_keyword_handler.py` runs every store-backed case on MemoryStore and SqliteStore. It covers typos, reference resolution and refusals, both orders with `Debouncer.note` for `skip:` and `re:`, a skip reaction after the join, the approver rule, guests and external users, and a recording store that shows no keyword approves or changes the mode.
+- `jotflow replay` on the keywords fixture matches with no set-aside. `tests/test_replay.py` shows an `re:` naming the wrong repo now fails the topics check.
 
 ## Handoff notes
 
-None yet.
+- #55 wires `KeywordHandler` into `jotflow run`: call `on_message` before `Debouncer.note`, and `on_reaction` for accepted reactions. `BoltKeywordSlack` needs the workspace's team id.
+- The fixture validator in `testing/threads.py` still leaves `re:` messages out when it checks what the script links. That is correct: the agent never links them, the handler does.

@@ -12,6 +12,8 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
+from jotflow.orchestrator.keyword_handler import help_text
+from jotflow.slack_manifest import SLASH_COMMAND
 
 log = logging.getLogger("jotflow.slack")
 
@@ -101,6 +103,19 @@ def register_handlers(
 
     app.event("message")(on_event)
     app.event("reaction_added")(on_event)
+
+
+def register_commands(app: AsyncApp) -> None:
+    """Answer ``/jotflow`` privately. Only ``help`` exists so far; it lists the keywords."""
+
+    async def on_command(ack: Any, command: dict[str, Any]) -> None:
+        text = str(command.get("text") or "").strip().lower()
+        if text in ("", "help"):
+            await ack(help_text())
+        else:
+            await ack("Only /jotflow help exists so far. It lists the keywords.")
+
+    app.command(SLASH_COMMAND)(on_command)
 
 
 class SlackThreadPoster:
