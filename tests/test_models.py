@@ -1,13 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from upshot.models import IssueChanges, IssueProposal, UpdateProposal
+from jotflow.models import IssueChanges, IssueProposal, UpdateProposal
 
 
 def test_issue_proposal_round_trips() -> None:
     proposal = IssueProposal(
         topic_id="t1",
-        repo="Jnkman787/upshot",
+        repo="Jnkman787/jotflow",
         title="Add a progress bar to onboarding",
         body="Raised in #product.",
         labels=["enhancement"],
@@ -33,8 +33,8 @@ def test_confidence_is_bounded() -> None:
 
 
 def test_cli_reports_version() -> None:
-    from upshot import __version__
-    from upshot.cli import main
+    from jotflow import __version__
+    from jotflow.cli import main
 
     with pytest.raises(SystemExit) as exc:
         main(["--version"])

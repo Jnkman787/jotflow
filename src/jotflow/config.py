@@ -12,13 +12,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="UPSHOT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="JOTFLOW_", env_file=".env", extra="ignore")
 
     # Slack
     slack_bot_token: SecretStr
     slack_app_token: SecretStr = Field(description="App-level token for Socket Mode (xapp-...)")
 
-    # GitHub App installed by the team on the repositories Upshot may write to
+    # GitHub App installed by the team on the repositories JotFlow may write to
     github_app_id: int
     github_app_private_key: SecretStr
     github_installation_id: int
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     mcp_port: int = 8765
 
     # Local state. Pointers only; see docs/architecture.md.
-    database_path: str = "upshot.db"
+    database_path: str = "jotflow.db"
 
     # Agent adapter: a command template run in headless mode with the MCP server attached
     agent_command: str = Field(

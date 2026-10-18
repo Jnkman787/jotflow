@@ -4,7 +4,7 @@ Instructions for coding agents working in this repository: Claude Code, Codex CL
 
 ## Scope
 
-Upshot is a self-hosted Slack app that exposes an MCP server. It watches a Slack channel, groups messages into topics, and has the team's own agent draft GitHub issues through Upshot's tools. A human approves, then the agent performs the GitHub write with its own access.
+JotFlow is a self-hosted Slack app that exposes an MCP server. It watches a Slack channel, groups messages into topics, and has the team's own agent draft GitHub issues through JotFlow's tools. A human approves, then the agent performs the GitHub write with its own access.
 
 Read before changing behaviour:
 
@@ -13,10 +13,10 @@ Read before changing behaviour:
 
 ## Principles that are not up for debate
 
-- Upshot never holds GitHub credentials. The team's agent performs every GitHub write, and only for a proposal Upshot has handed it after approval or in `auto` mode.
-- The agent acts only through Upshot's MCP tools. Its stdout is never parsed for results.
-- Upshot stores pointers, not message content. No column, log line, or file may hold a Slack message body.
-- Upshot never calls an LLM itself. The team supplies the agent.
+- JotFlow never holds GitHub credentials. The team's agent performs every GitHub write, and only for a proposal JotFlow has handed it after approval or in `auto` mode.
+- The agent acts only through JotFlow's MCP tools. Its stdout is never parsed for results.
+- JotFlow stores pointers, not message content. No column, log line, or file may hold a Slack message body.
+- JotFlow never calls an LLM itself. The team supplies the agent.
 - No hosted component and no telemetry.
 
 A change that conflicts with one of these needs an architecture change agreed in an issue first.
@@ -24,7 +24,7 @@ A change that conflicts with one of these needs an architecture change agreed in
 ## Layout
 
 ```
-src/upshot/
+src/jotflow/
   models.py       shared contracts: proposals, classifications, topics, channel modes
   config.py       environment-driven settings
   cli.py          entry point
@@ -44,7 +44,7 @@ docs/             architecture, roadmap, plans
 | `make check` | Lint, format check, type check, and tests: what CI runs |
 | `make test` | Tests only |
 | `make format` | Apply ruff formatting and safe fixes |
-| `make run` | Run the `upshot` CLI |
+| `make run` | Run the `jotflow` CLI |
 
 Run `make check` before pushing. CI runs the same checks on Python 3.12 and 3.13.
 

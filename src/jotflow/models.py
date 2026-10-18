@@ -33,7 +33,7 @@ class ProposalState(StrEnum):
 
 
 class MessageRef(BaseModel):
-    """A pointer to a Slack message. Upshot stores these, never message bodies."""
+    """A pointer to a Slack message. JotFlow stores these, never message bodies."""
 
     channel_id: str
     ts: str = Field(description="Slack message timestamp, unique within a channel")
@@ -101,7 +101,7 @@ class Topic(BaseModel):
 
     id: str
     channel_id: str
-    title: str = Field(description="Short generated title; the only derived text Upshot stores")
+    title: str = Field(description="Short generated title; the only derived text JotFlow stores")
     repo: str | None = None
     issue_number: int | None = None
     messages: list[MessageRef] = Field(default_factory=list)

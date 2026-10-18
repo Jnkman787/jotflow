@@ -25,8 +25,8 @@ test: ## Run the test suite
 
 check: lint format-check typecheck test ## Everything CI runs
 
-run: ## Run the upshot CLI
-	uv run upshot
+run: ## Run the jotflow CLI
+	uv run jotflow
 
 clean: ## Remove caches and build output
 	rm -rf .pytest_cache .mypy_cache .ruff_cache dist build
