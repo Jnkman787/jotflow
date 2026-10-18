@@ -40,9 +40,9 @@ from jotflow.models import (
     RunKind,
     UpdateProposal,
 )
-from jotflow.policy import Policy, PolicyViolation
+from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
-from jotflow.store.base import utc_now
+from jotflow.store.base import check_github_login, utc_now
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
 
@@ -194,6 +194,19 @@ def clean_question(text: str) -> str:
     if not cleaned:
         raise ToolError("the question is empty once broadcast mentions are removed")
     return cleaned
+
+
+def _check_removals(labels: list[str], assignees: list[str]) -> None:
+    """Removals need no allowlist, but they still reach the card and GitHub."""
+    for label in labels:
+        problem = label_problem(label)
+        if problem is not None:
+            raise ToolError(f"a label to remove {problem}")
+    for login in assignees:
+        try:
+            check_github_login(login)
+        except ValueError:
+            raise ToolError("an assignee to remove is not a GitHub login") from None
 
 
 class _RunLocks:
@@ -379,6 +392,7 @@ class WriteTools:
                     f"topic {args.topic_id} is not linked to {repo}#{args.issue_number}"
                 )
             await self._check_assignees(args.changes.add_assignees, args.participants)
+            _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
             changes = args.changes.model_copy(update={"add_labels": labels})
             draft = UpdateProposal.model_validate(
                 {
@@ -409,6 +423,9 @@ class WriteTools:
                         topic = await self._store.create_topic(grant.channel_id, args.title or "")
                     except ValueError:
                         raise ToolError("that title has no words left once cleaned") from None
+                    # Two store writes. Both run in the shielded block, so a timeout
+                    # cannot split them; only a store failure in between could leave
+                    # an empty topic, which nothing links to and which then expires.
                     topic_id = topic.topic.id
                 else:
                     topic_id = args.topic_id or ""

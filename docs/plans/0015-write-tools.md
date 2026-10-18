@@ -67,7 +67,7 @@ References: D1, D5, D7, D8, and D13 in [roadmap.md](../roadmap.md); the tool and
 **Shared edits with #14**, agreed with architect on 2026-10-18:
 
 - `whiteboard/tools.py`: #14 adds `ToolError`, which the server turns into `CallToolResult(is_error=True)`, and `READ_TOOLS`. This PR adds `WRITE_TOOLS`, and `TOOLS` becomes both. Whichever PR merges second rebases; the conflict is one line.
-- `server.py`: #14 owns the `ToolError` path and `output_model`. This PR changes nothing there.
+- `server.py`: the `ToolError` path is in both #106 and this PR, in the same shape. #109 merges first, and #106's rebase keeps one copy. `output_model` is #106's.
 - Packet membership: a `packet_messages(run_id, channel_id, ts)` table with `record_packet(run_id, refs)` and `in_packet(run_id, channel_id, ts)`. A drafting `get_work` records exactly the refs it serves. Execution packets serve no messages and record none. Whichever of #106 and #109 merges first adds the table and its migration, after #104's runs migration, and the other uses it.
 - Idempotency: architect agreed the ledger key is run id plus the hash of tool and canonical arguments, with the counter only for caps and the write shielded.
 
@@ -116,6 +116,8 @@ Alternatives considered:
   - over the wire: a drafting token lists the four drafting tools, an execution token lists only `record_result`, and a refusal arrives as `isError: true` with the code-written reason.
 
 ## Handoff notes
+
+- Reviewer findings on f934071, all taken: `remove_labels` now passes `label_problem` (no allowlist, since removing any label is fine), `remove_assignees` must be GitHub logins, and a comment explains the two store writes for a new topic.
 
 - #107: pass `write_tools(store, policy, SlackThreadPoster(app.client))` alongside the read tools into `build_app(tools=...)`. Move a proposal to executing when claiming its execution run, and revoke the run's token when it ends.
 - #14: `get_work` for drafting calls `store.record_packet(run_id, refs)`, with each ref's own `thread_ts`. Related-thread excerpts included only if linking them should be allowed. `ToolError` and its result path are now in `tools.py` and `server.py` in the shape the #14 plan described, so rebase onto them.

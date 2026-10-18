@@ -390,6 +390,34 @@ async def test_propose_update_targets_only_the_topics_own_issue(
             await tools.propose_update(DRAFT, update(topic_id, **wrong))
 
 
+@pytest.mark.parametrize(
+    ("changes", "problem"),
+    [
+        ({"comment": "x", "remove_labels": ["b\u200bug"]}, "a label to remove must not contain"),
+        ({"comment": "x", "remove_labels": ["bug\u202e"]}, "a label to remove must not contain"),
+        ({"comment": "x", "remove_labels": [" bug"]}, "a label to remove must not start"),
+        ({"comment": "x", "remove_assignees": ["not a login"]}, "not a GitHub login"),
+    ],
+)
+async def test_removals_are_checked_without_an_allowlist(
+    tools: WriteTools, store: MemoryStore, changes: dict[str, Any], problem: str
+) -> None:
+    topic_id = await new_topic(tools)
+    await store.set_topic_issue(topic_id, "acme-co/web", 42)
+    with pytest.raises(ToolError, match=problem):
+        await tools.propose_update(DRAFT, update(topic_id, changes=changes))
+
+
+async def test_removing_a_label_outside_the_list_is_fine(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    topic_id = await new_topic(tools)
+    await store.set_topic_issue(topic_id, "acme-co/web", 42)
+    changes = {"comment": "x", "remove_labels": ["wontfix"], "remove_assignees": ["acme-bob"]}
+    result: Any = await tools.propose_update(DRAFT, update(topic_id, changes=changes))
+    assert result.state is ProposalState.PENDING
+
+
 async def test_propose_update_on_a_topic_without_an_issue(tools: WriteTools) -> None:
     topic_id = await new_topic(tools)
     with pytest.raises(ToolError, match="is not linked to acme-co/web#42"):
