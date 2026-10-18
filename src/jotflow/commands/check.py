@@ -29,12 +29,12 @@ from pathlib import Path
 
 from jotflow.commands.run import (
     SettingsError,
-    configure_logging,
     load_settings,
 )
 from jotflow.config import Settings
 from jotflow.envfile import read_env
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
+from jotflow.logs import configure_logging
 from jotflow.policy import Policy, PolicyError, load_policy
 
 EXIT_OK = 0
