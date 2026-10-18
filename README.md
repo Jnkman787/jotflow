@@ -14,18 +14,73 @@ Upshot is a self-hosted, agent-agnostic bridge between a shared Slack channel an
 
 ## How it works
 
-```
-Slack channel  ──events──▶  Upshot orchestrator  ──MCP──▶  your agent (Claude Code, Codex, Gemini CLI, ...)
-      ▲                              ▲                              │             │
-      │                              └──── proposals, results ──────┘             │ your agent's own GitHub access
-      └── approval cards, replies                                                 ▼
-                                                                          issues, comments, labels, assignees
+Upshot is one self-hosted program wearing two hats: a Slack app that listens to your channel, and an MCP server that your own agent plugs into. Your agent brings its own GitHub access and does the actual writing. Upshot never touches GitHub.
+
+```mermaid
+flowchart LR
+    subgraph slack["Slack workspace"]
+        ch["#ideas channel<br/>anyone on the team"]
+    end
+
+    subgraph upshot["Upshot &nbsp;·&nbsp; self-hosted, one process"]
+        direction TB
+        app["Slack app hat<br/>listens for messages,<br/>posts cards and replies"]
+        core["Orchestrator<br/>waits for threads to settle,<br/>tracks topics, holds proposals"]
+        mcp["MCP server hat<br/>get_work · propose_issue ·<br/>link_message · record_result"]
+        db[("Pointers only<br/>no message bodies")]
+        app --> core --> mcp
+        core --- db
+    end
+
+    subgraph yours["Your side"]
+        agent["Your agent<br/>Claude Code · Codex · Gemini CLI · ..."]
+        gh["Your GitHub repos"]
+    end
+
+    ch -- "messages, replies, reactions" --> app
+    app -- "proposal cards, issue links" --> ch
+    core -- "starts a run" --> agent
+    agent <-- "MCP tools" --> mcp
+    agent -- "your agent's own GitHub access" --> gh
 ```
 
-1. **Orchestrator.** A long-running service that subscribes to Slack events, debounces a burst of messages until the thread goes quiet, and hands the agent a compact packet: the new messages plus an index of currently active topics.
-2. **Whiteboard MCP server.** The orchestrator exposes its state and actions as Model Context Protocol tools: list active topics, read a topic's history, search for duplicate issues, propose an issue, propose an update, link a message to a topic, ask the channel a question. Any MCP-capable agent can drive it.
-3. **Agent adapters.** Thin runners that launch the team's agent in headless mode with the MCP server attached. The first adapter is a generic command template with presets for the major agent CLIs.
-4. **Approval gate.** Each channel runs in `propose` mode (the bot posts a card with repo, title, assignees, labels, and size, and waits for Approve or Request Changes) or `auto` mode (the write happens immediately and a summary card follows). Once a proposal is approved, Upshot hands it back to your agent, which creates or updates the issue with its own GitHub access and reports the result. The mode applies to the full lifecycle: creation, description edits, comments, assignment, and labels.
+One idea, start to finish:
+
+```mermaid
+sequenceDiagram
+    actor T as Teammate
+    participant S as Slack
+    participant U as Upshot
+    participant A as Your agent
+    participant G as GitHub
+
+    T->>S: "Onboarding needs a progress bar" + a few replies
+    S->>U: message events
+    Note over U: thread goes quiet → start a drafting run
+    U->>A: run id + "call get_work, then act"
+    A->>U: get_work → thread text + active topics
+    A->>G: search for duplicates (your access)
+    A->>U: propose_issue(repo, title, body, labels, assignees)
+    U->>S: proposal card in the thread
+    T->>S: Approve
+    S->>U: approved
+    Note over U: start an execution run
+    U->>A: run id for the approved proposal
+    A->>U: get_work → the approved proposal
+    A->>G: create the issue (your access)
+    A->>U: record_result(issue URL)
+    U->>S: reply with the issue link
+```
+
+In `auto` mode the Approve step is skipped and the card is posted after the issue exists. Follow-up replies in the thread run the same loop and produce update proposals instead of new issues.
+
+The pieces:
+
+1. **Slack app.** Each team creates their own from the included manifest, named and iconed however they like. It is how Upshot hears messages and posts back. Slack only talks to installed apps, so this part is unavoidable.
+2. **Orchestrator.** Waits for a thread to settle before acting, keeps a per-channel index of active topics so related messages land on the same issue, and holds proposals until they are approved.
+3. **Whiteboard MCP server.** The agent's only way to act. Tools to fetch the work, propose an issue or an update, link a message to a topic, ask the channel a question, and report the result of a write. Any MCP-capable agent can drive it.
+4. **Your agent.** Launched by Upshot in headless mode with the MCP server attached, using a preset for your CLI of choice. It reads, drafts, searches your repos for duplicates, and performs the GitHub writes with the access you already gave it.
+5. **Approval gate.** Each channel is in `propose`, `auto`, or `paused` mode. It covers the whole lifecycle: creation, description edits, comments, assignment, and labels.
 
 ## What a team needs
 
