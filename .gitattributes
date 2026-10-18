@@ -1,0 +1,18 @@
+# Every text file in this repository uses LF line endings, on every platform
+# and with every Git client, whatever core.autocrlf says. See AGENTS.md.
+* text=auto eol=lf
+
+# Never touch binary files.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.tgz  binary
+*.whl  binary
+*.db   binary
+*.sqlite binary

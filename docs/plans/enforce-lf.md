@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #74
-- Draft PR: to be opened with this plan
+- Draft PR: #75
 - Status: implementing
 - Last verified: audit of the index on origin/main, 2026-10-18
 - Next safe action: add `.gitattributes`, `.editorconfig`, the ruff setting, and the CI check
