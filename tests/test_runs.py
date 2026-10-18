@@ -396,6 +396,8 @@ async def test_a_stop_between_claim_and_move_is_recovered_once(
     assert registry.check(token) is None
     interrupted = await store.get_run(claimed.id)
     assert interrupted is not None and interrupted.status is RunStatus.INTERRUPTED
+    still = await store.get_proposal("p1")
+    assert still is not None and still.state is ProposalState.APPROVED
     queued = [
         r
         for r in await store.thread_runs(CH, THREAD)
