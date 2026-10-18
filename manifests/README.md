@@ -6,10 +6,11 @@
 
 1. Go to <https://api.slack.com/apps>, choose **Create New App**, then **From a manifest**.
 2. Pick your workspace and paste the contents of `slack-app.json`. Slack accepts JSON.
-3. Create the app, then choose **Install to Workspace** and click **Allow**.
-4. Set an icon under **Basic Information** if you like. Slack does not take icons from a manifest.
+3. Create the app. Under **Basic Information**, in **App-Level Tokens**, generate a token with the `connections:write` scope. It starts with `xapp-`, and Socket Mode uses it to connect.
+4. Choose **Install to Workspace** and click **Allow**. Then copy the **Bot User OAuth Token** from **OAuth & Permissions**. It starts with `xoxb-`.
+5. Set an icon under **Basic Information** if you like. Slack does not take icons from a manifest.
 
-`jotflow init` (#7) will wrap these steps and collect the tokens for you.
+JotFlow needs both tokens. Keep them secret and out of the repository. `jotflow init` (#7) will wrap these steps, validate the tokens, and write them to your `.env`.
 
 ## Use a different bot name
 
