@@ -39,6 +39,7 @@ from pydantic import ValidationError
 from starlette.types import ASGIApp
 
 from jotflow import __version__
+from jotflow.models import RunKind
 from jotflow.whiteboard.gate import GRANT_KEY, Gate
 from jotflow.whiteboard.tokens import Grant, RejectAllTokens, TokenCheck
 from jotflow.whiteboard.tools import TOOLS, ToolSpec, checked_registry
@@ -87,25 +88,32 @@ def _grant(ctx: ServerRequestContext[Any, Any]) -> Grant:
 def build_server(tools: Sequence[ToolSpec] = TOOLS) -> Server[Any]:
     """The MCP server with exactly ``tools``, which are fixed for its lifetime."""
     registry = checked_registry(tools)
-    listing = ListToolsResult(
-        tools=[
-            Tool(name=t.name, description=t.description, input_schema=t.input_schema())
-            for t in registry.values()
-        ]
-    )
+    # Each run kind's list is fixed at startup, so a run's tools never change.
+    listings = {
+        kind: ListToolsResult(
+            tools=[
+                Tool(name=t.name, description=t.description, input_schema=t.input_schema())
+                for t in registry.values()
+                if kind in t.kinds
+            ]
+        )
+        for kind in RunKind
+    }
 
     async def list_tools(
         ctx: ServerRequestContext[Any, Any], params: PaginatedRequestParams | None
     ) -> ListToolsResult:
-        return listing
+        return listings[_grant(ctx).kind]
 
     async def call_tool(
         ctx: ServerRequestContext[Any, Any], params: CallToolRequestParams
     ) -> CallToolResult:
-        spec = registry.get(params.name)
-        if spec is None:
-            raise MCPError(INVALID_PARAMS, f"unknown tool {params.name!r}")
         grant = _grant(ctx)
+        spec = registry.get(params.name)
+        if spec is None or grant.kind not in spec.kinds:
+            # Out-of-kind looks the same as unknown, so a run cannot probe
+            # which tools other kinds have.
+            raise MCPError(INVALID_PARAMS, f"unknown tool {params.name!r}")
         try:
             arguments = spec.input_model.model_validate(params.arguments or {})
         except ValidationError as exc:

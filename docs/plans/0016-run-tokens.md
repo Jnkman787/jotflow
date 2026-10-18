@@ -4,10 +4,10 @@
 
 - Issue: #16
 - Also serves: #53, whose run lifecycle issues and revokes these tokens
-- Draft PR: pending
-- Status: planning
-- Last verified: plan written on 2026-10-18 on main at 2b03ef2, nothing built yet
-- Next safe action: commit this plan, push, open the draft PR
+- Draft PR: #105
+- Status: implementing
+- Last verified: `make check` green locally on 2026-10-18, 768 tests, 98.2% coverage
+- Next safe action: CodeRabbit or skip, CI on #105, check closingIssuesReferences, mark ready
 
 ## Objective and done-when
 
@@ -15,17 +15,17 @@ Give each agent run its own short-lived bearer token, scoped to that run's kind,
 
 The issue's boxes:
 
-- [ ] Calls without a token or with another run's token are rejected. A token resolves only to its own run's grant, and a call to a tool its run kind may not use is refused.
-- [ ] Tokens expire when the run ends, through `revoke(run_id)`, or after a time limit
-- [ ] The token never appears in logs, reprs, or error messages
+- [x] Calls without a token or with another run's token are rejected. A token resolves only to its own run's grant, and a call to a tool its run kind may not use is refused.
+- [x] Tokens expire when the run ends, through `revoke(run_id)`, or after a time limit
+- [x] The token never appears in logs, reprs, or error messages
 
 Also, from the notes on #16:
 
-- [ ] Tokens come from `secrets`, carry a recognisable prefix so secret scanners can spot a leaked one, and are kept only as SHA-256 digests in memory
-- [ ] `check` compares in constant time, is synchronous, and does no I/O
-- [ ] `Grant` gains `proposal_id` and `thread_ts`. An execution grant must name its proposal.
-- [ ] `ToolSpec.kinds` declares which run kinds may call a tool. `tools/call` refuses other kinds before validating arguments, and `tools/list` shows a run only its kind's tools, which stay fixed, so there is still no `list_changed`.
-- [ ] `jotflow run` creates one in-memory registry and hands it to the MCP server. It issues nothing yet, because nothing starts runs until M3, so the server stays unreachable in practice.
+- [x] Tokens come from `secrets`, carry a recognisable prefix so secret scanners can spot a leaked one, and are kept only as SHA-256 digests in memory
+- [x] `check` compares in constant time, is synchronous, and does no I/O
+- [x] `Grant` gains `proposal_id` and `thread_ts`. An execution grant must name its proposal.
+- [x] `ToolSpec.kinds` declares which run kinds may call a tool. `tools/call` refuses other kinds before validating arguments, and `tools/list` shows a run only its kind's tools, which stay fixed, so there is still no `list_changed`.
+- [x] `jotflow run` creates one in-memory registry and hands it to the MCP server. It issues nothing yet, because nothing starts runs until M3, so the server stays unreachable in practice.
 
 **Out of scope:** starting runs and passing tokens to agents (#21, #53, #54), the operator token (M5, D12), and the tools themselves (#14, #15). Channel and proposal scoping inside each tool is the tool's job, using the grant, and lands with #14 and #15.
 
@@ -66,20 +66,36 @@ Alternatives considered:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `Grant` fields and `TokenRegistry`
-- [ ] `ToolSpec.kinds`, kind-filtered list and call
-- [ ] Registry created in `jotflow run` and passed to the server
-- [ ] Tests: issue, check, expiry, revoke, reissue, caps, no token in logs or reprs, kind scoping through the real endpoint
-- [ ] Update documentation: architecture token section, AGENTS layout if needed
-- [ ] `make check` passes, coverage at or above the floor
+- [x] Commit this plan and open the draft PR
+- [x] `Grant` fields and `TokenRegistry`
+- [x] `ToolSpec.kinds`, kind-filtered list and call
+- [x] Registry created in `jotflow run` and passed to the server
+- [x] Tests: issue, check, expiry, revoke, reissue, caps, no token in logs or reprs, kind scoping through the real endpoint
+- [x] Update documentation: architecture token section, AGENTS layout if needed
+- [x] `make check` passes, coverage at or above the floor
 - [ ] CodeRabbit local review, or skipped
 - [ ] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
-To be filled in.
+- `make check` passes: ruff, mypy strict, and 768 tests with 98.2% total coverage. `tokens.py` and `tools.py` are at 100%.
+- `tests/test_tokens.py`, 22 tests:
+  - grant rules: an execution grant must name its proposal, other kinds may not, and every grant needs a run and a channel
+  - the registry satisfies `TokenCheck`
+  - tokens are prefixed, unique, and resolve only to their own run's grant
+  - empty, bare-prefix, unissued, unprefixed, and oversized tokens are refused
+  - expiry happens at the ttl boundary and drops the entry
+  - revoke ends only that run's token. Reissuing kills the old token. ttl must be positive and at most two hours.
+  - live tokens are bounded, and expired ones free space
+  - neither `repr` nor the registry's fields contain the token or its random part
+- `tests/test_mcp_server.py`, 3 new end-to-end tests through the real gate and SDK:
+  - two runs' tokens each reach the tool with their own grant
+  - an execution token lists no drafting tools, and calling one gets exactly the unknown-tool error
+  - revoked and expired tokens get 401, and neither token appears in the audit log or the response
+- `checked_registry` refuses a tool that names no run kind.
 
 ## Handoff notes
 
-None yet.
+- #53 calls `TokenRegistry.issue(grant, ttl)` when it starts a run and `revoke(run_id)` when the run ends, fails, times out, or is aborted at shutdown. `serve()` in `commands/run.py` creates the registry, so #53 takes it from there.
+- #14 and #15 give each `ToolSpec` its `kinds` from the token table, and scope by `grant.channel_id`, `grant.thread_ts`, and `grant.proposal_id` inside the handler. Execution tools must refuse any proposal but `grant.proposal_id`.
+- Shutdown order for M3 stays: stop Slack intake, then end runs and revoke their tokens, then stop the MCP server.

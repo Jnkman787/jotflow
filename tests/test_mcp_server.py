@@ -33,7 +33,7 @@ from jotflow.whiteboard.server import (
     allowed_hosts,
     build_app,
 )
-from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, Grant, RejectAllTokens
+from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, Grant, RejectAllTokens, TokenRegistry
 from jotflow.whiteboard.tools import TOOLS, RegistryError, ToolSpec, checked_registry
 
 PORT = 8765
@@ -67,8 +67,13 @@ async def echo(grant: Grant, arguments: Any) -> BaseModel:
     return EchoOut(text=arguments.text * arguments.times, run_id=grant.run_id)
 
 
+DRAFTING = frozenset({RunKind.DRAFTING})
 ECHO = ToolSpec(
-    name="echo", description="Repeat text. For tests only.", input_model=EchoIn, handler=echo
+    name="echo",
+    description="Repeat text. For tests only.",
+    input_model=EchoIn,
+    handler=echo,
+    kinds=DRAFTING,
 )
 
 
@@ -475,12 +480,16 @@ async def _noop(grant: Grant, arguments: Any) -> BaseModel:  # pragma: no cover
 @pytest.mark.parametrize(
     ("tools", "problem"),
     [
-        ([ToolSpec("bad name", "d", EchoIn, _noop)], "breaks the MCP naming rule"),
+        ([ToolSpec("bad name", "d", EchoIn, _noop, DRAFTING)], "breaks the MCP naming rule"),
         (
-            [ToolSpec("a", "d", EchoIn, _noop), ToolSpec("a", "d", EchoIn, _noop)],
+            [
+                ToolSpec("a", "d", EchoIn, _noop, DRAFTING),
+                ToolSpec("a", "d", EchoIn, _noop, DRAFTING),
+            ],
             "registered twice",
         ),
-        ([ToolSpec("a", "  ", EchoIn, _noop)], "has no description"),
+        ([ToolSpec("a", "  ", EchoIn, _noop, DRAFTING)], "has no description"),
+        ([ToolSpec("a", "d", EchoIn, _noop)], "names no run kind"),
     ],
 )
 def test_a_malformed_registry_fails_at_startup(tools: list[ToolSpec], problem: str) -> None:
@@ -556,3 +565,71 @@ async def test_a_startup_that_hangs_is_a_clear_start_error() -> None:
     server = McpServer(hangs, "127.0.0.1", port, startup_timeout=0.2)
     with pytest.raises(McpStartError, match=r"did not start within 0\.2 seconds"):
         await server.start()
+
+
+# Per-run tokens through the real endpoint (#16).
+
+EXECUTION_GRANT = Grant(
+    run_id="run-exec", kind=RunKind.EXECUTION, channel_id="C0EXAMPLE1", proposal_id="prop-1"
+)
+
+
+async def test_issued_tokens_admit_their_own_run_only() -> None:
+    registry = TokenRegistry()
+    drafting = registry.issue(GRANT, 60)
+    other = registry.issue(Grant(run_id="run-2", kind=RunKind.DRAFTING, channel_id="C0EX"), 60)
+    async with client_for(tokens=registry, tools=[ECHO]) as http:
+        mine = await post(
+            http,
+            "tools/call",
+            {"name": "echo", "arguments": {"text": "a"}},
+            Authorization=f"Bearer {drafting}",
+        )
+        theirs = await post(
+            http,
+            "tools/call",
+            {"name": "echo", "arguments": {"text": "a"}},
+            Authorization=f"Bearer {other}",
+        )
+    assert mine.json()["result"]["structuredContent"]["run_id"] == "run-1"
+    assert theirs.json()["result"]["structuredContent"]["run_id"] == "run-2"
+
+
+async def test_a_run_lists_and_calls_only_its_kinds_tools() -> None:
+    registry = TokenRegistry()
+    execution = registry.issue(EXECUTION_GRANT, 60)
+    async with client_for(tokens=registry, tools=[ECHO]) as http:
+        listed = await post(http, "tools/list", Authorization=f"Bearer {execution}")
+        called = await post(
+            http,
+            "tools/call",
+            {"name": "echo", "arguments": {"text": "a"}},
+            Authorization=f"Bearer {execution}",
+        )
+        unknown = await post(
+            http,
+            "tools/call",
+            {"name": "nope", "arguments": {}},
+            Authorization=f"Bearer {execution}",
+        )
+    assert listed.json()["result"]["tools"] == []
+    # An out-of-kind tool is indistinguishable from one that does not exist.
+    assert called.json()["error"] == {**unknown.json()["error"], "message": "unknown tool 'echo'"}
+
+
+async def test_a_revoked_or_expired_token_is_401(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="jotflow.mcp.audit")
+    now = [0.0]
+    registry = TokenRegistry(clock=lambda: now[0])
+    revoked = registry.issue(GRANT, 60)
+    expiring = registry.issue(EXECUTION_GRANT, 60)
+    registry.revoke(GRANT.run_id)
+    now[0] = 61
+    async with client_for(tokens=registry) as http:
+        first = await post(http, "server/discover", Authorization=f"Bearer {revoked}")
+        second = await post(http, "server/discover", Authorization=f"Bearer {expiring}")
+    assert (first.status_code, second.status_code) == (401, 401)
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    for token in (revoked, expiring):
+        assert token not in log
+        assert token not in first.text + second.text

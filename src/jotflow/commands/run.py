@@ -34,6 +34,7 @@ from jotflow.orchestrator.slack import (
 )
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.whiteboard.server import McpServer, McpStartError, build_app
+from jotflow.whiteboard.tokens import TokenRegistry
 
 log = logging.getLogger("jotflow.run")
 
@@ -134,9 +135,13 @@ async def run_until_stopped(connection: Connection, stop: asyncio.Event) -> None
         log.info("disconnected")
 
 
-def make_mcp_server(settings: Settings) -> McpServer:
-    """The whiteboard MCP server for these settings. Every token is refused until #16."""
-    app = build_app(port=settings.mcp_port, extra_hosts=settings.mcp_allowed_hosts)
+def make_mcp_server(settings: Settings, tokens: TokenRegistry) -> McpServer:
+    """The whiteboard MCP server, admitting only tokens ``tokens`` issued.
+
+    The run lifecycle (#53) issues a token per run and revokes it when the run
+    ends. Until runs exist nothing is issued, so nothing is reachable.
+    """
+    app = build_app(port=settings.mcp_port, extra_hosts=settings.mcp_allowed_hosts, tokens=tokens)
     return McpServer(app, settings.mcp_host, settings.mcp_port)
 
 
@@ -154,7 +159,8 @@ async def serve(settings: Settings, policy: Policy) -> int:
     register_handlers(app, EventFilter(policy.channels, identity))
     log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
 
-    mcp = make_mcp_server(settings)
+    tokens = TokenRegistry()
+    mcp = make_mcp_server(settings, tokens)
     try:
         await mcp.start()
     except McpStartError as exc:
