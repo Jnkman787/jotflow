@@ -310,6 +310,7 @@ def test_rerun_rewrite_keeps_other_settings_and_backs_up(options: InitOptions) -
     assert after.issue_links == before.issue_links
     assert after.approval == before.approval
     assert options.config_file.with_name("jotflow.toml.bak").read_text() == original
+    assert "a channel you leave out is removed" in script.text
 
 
 def test_invalid_existing_policy_can_be_kept(options: InitOptions) -> None:

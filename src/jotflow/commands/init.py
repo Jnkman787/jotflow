@@ -366,6 +366,12 @@ def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:
 def _ask_policy(console: Console, existing: Policy | None) -> Policy:
     console.say()
     console.say("Now the channels JotFlow watches and the repos each one feeds.")
+    if existing is not None:
+        listed = ", ".join(existing.channels)
+        console.say(
+            f"Currently listed: {listed}. List each channel to keep; "
+            "a channel you leave out is removed."
+        )
     console.say(
         "Find a channel's id in Slack under the channel name, then About; "
         "it starts with C, or G for some private channels. A channel link works too."
@@ -444,7 +450,8 @@ def _write_text_atomic(path: Path, text: str, mode: int = 0o644) -> None:
     directory = path.parent if str(path.parent) else Path(".")
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=directory)
     try:
-        os.fchmod(fd, mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
         os.replace(temp_name, path)

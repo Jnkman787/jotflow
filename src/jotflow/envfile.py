@@ -84,7 +84,8 @@ def write_env(path: Path, updates: Mapping[str, str]) -> None:
     directory = path.parent if str(path.parent) else Path(".")
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=directory)
     try:
-        os.fchmod(fd, FILE_MODE)
+        if hasattr(os, "fchmod"):  # not on Windows before Python 3.13
+            os.fchmod(fd, FILE_MODE)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(new_text)
         os.replace(temp_name, path)

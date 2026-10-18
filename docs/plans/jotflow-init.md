@@ -73,14 +73,15 @@ Security:
 - [x] After #64 merges: channels, repos, agent preset, and `jotflow.toml`
 - [x] Add tests
 - [x] Update documentation: `manifests/README.md`, the Configuration section of architecture.md, AGENTS.md layout. The README quickstart is #10.
-- [ ] CodeRabbit review, once
+- [x] CodeRabbit review, once: skipped for the rate limit, see Validation
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
 - 2026-10-18, before #64: `make check` green, 97 tests. New: `tests/test_slack_auth.py`, `tests/test_envfile.py`, `tests/test_init.py`, with shared fakes in `tests/fakes.py`. Init sessions are scripted end to end with a fake Slack client; no network.
 - 2026-10-18, after rebasing on #64: `make check` green, 184 tests. New: `tests/test_policy_writer.py` round-trips `jotflow.example.toml` and awkward strings; `tests/test_init.py` covers the policy interview, pasted links, duplicates, re-runs with keep, rewrite, and backup, invalid existing files, and stopping part-way.
+- CodeRabbit: skipped. The local CLI hit its free-allowance rate limit (all 3 included reviews used, reset in about 26 minutes). In its place I reviewed the diff myself and fixed two things: a rewrite now says that channels left out are removed, and the owner-only file mode is set only where `os.fchmod` exists, which is not on Windows before Python 3.13.
 - Found while testing: uppercasing a typed channel id would have accepted `general` as `GENERAL`, a valid-looking private channel id. Ids are now taken as typed.
 
 ## Handoff notes
