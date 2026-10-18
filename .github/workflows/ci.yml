@@ -288,7 +288,10 @@ jobs:
           print("agent cannot reach agent-exec ok")'
           # The check above is not vacuous: from the agents-exec network, where
           # JotFlow sits, agent-exec is reachable.
-          docker run --rm --network jotflow_agents-exec jotflow-agent:local python -c '
+          # Compose prefixes network names with the project name; ask it.
+          exec_net="$(docker compose --profile agent config --format json \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["networks"]["agents-exec"]["name"])')"
+          docker run --rm --network "$exec_net" jotflow-agent:local python -c '
           import socket
           socket.create_connection(("agent-exec", 8766), 3).close()
           print("agents-exec reaches agent-exec ok")'
