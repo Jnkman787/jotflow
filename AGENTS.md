@@ -31,7 +31,8 @@ src/jotflow/
   policy.py       jotflow.toml schema and loader: channels, repos, labels, approvers
   policy_writer.py  writes a Policy back to jotflow.toml; output always reloads
   cli.py          entry point
-  commands/       one module per CLI subcommand, such as init and run
+  commands/       one module per CLI subcommand: init, run, check
+  live_check.py   the opt-in live Slack round trip behind `jotflow check --live`
   slack_manifest.py  renders the Slack app manifest; default checked in under manifests/
   slack_auth.py   checks Slack tokens behind a small protocol tests can fake
   envfile.py      reads and updates .env without disturbing other lines
@@ -54,6 +55,7 @@ docs/             architecture, roadmap, plans
 | `make cov` | Tests with the coverage report; fails below the floor |
 | `make format` | Apply ruff formatting and safe fixes |
 | `make run` | Run the `jotflow` CLI |
+| `make live-check` | Opt-in live round trip against your own workspace: `JOTFLOW_LIVE_CHECK=1 make live-check`. Never in CI |
 | `make manifest` | Regenerate `manifests/slack-app.json` from the renderer |
 
 Run `make check` before pushing. CI runs the same checks on Python 3.12, 3.13, and 3.14; the container image uses 3.14, so keep it in the matrix.

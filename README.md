@@ -208,6 +208,14 @@ To run JotFlow without Docker, use `uv run jotflow run` from the same directory 
 
 ## Troubleshooting
 
+**Verify a fresh install** with the live check. It posts one marked test message to a channel listed in `jotflow.toml`, confirms JotFlow receives it and logs it without its text, then deletes it. It runs only when you opt in for that run:
+
+```sh
+JOTFLOW_LIVE_CHECK=1 uv run jotflow check --live
+```
+
+Each step prints `ok` or `FAIL` with what to fix. If `jotflow.toml` lists several channels, pick one with `--channel C0123ABCD`. `uv run jotflow check` without `--live` only checks `.env` and `jotflow.toml`, and posts nothing. The live check refuses to run when `CI` is set, so it never runs in a pipeline.
+
 Every error names what to fix. The common ones:
 
 | You see | What to do |
@@ -227,6 +235,7 @@ Every error names what to fix. The common ones:
 | `not a member of channel C0EXAMPLE1; invite the bot there with /invite @idea_bot` | Invite the bot to that channel. JotFlow keeps running and watches the channels it is in. |
 | `could not look up channel ... the app needs the channels:read and groups:read scopes` | The app was created from an older manifest. Add the two scopes under **OAuth & Permissions** and reinstall the app. If Slack shows a new bot token, run `jotflow init` again to save it. |
 | `Slack rejected the bot token (...)` or `Slack refused the Socket Mode connection (...)` | A token was revoked or the app was reinstalled. Run `jotflow init` again to save fresh tokens. |
+| `FAIL  receive: no event for the test message` from the live check | The app is not getting message events. Check **Event Subscriptions** for `message.channels` and `message.groups`, and that Socket Mode is on, then reinstall the app. |
 | No `message` lines appear | Check that the channel's id is in `jotflow.toml` and that the bot is in the channel. JotFlow ignores channels it isn't configured for and its own messages. |
 | On Windows, Compose ignores the `COMPOSE_FILE` line | Compose separates file names with `;` on Windows. Add `COMPOSE_PATH_SEPARATOR=:` to `.env`, or use WSL. |
 

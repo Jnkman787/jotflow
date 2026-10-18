@@ -13,12 +13,17 @@ from collections.abc import Sequence
 from types import ModuleType
 
 from jotflow import __version__
+from jotflow.commands import check as check_command
 from jotflow.commands import init as init_command
 from jotflow.commands import run as run_command
 
 COMMANDS: dict[str, tuple[ModuleType, str]] = {
     "init": (init_command, "Guided setup: write jotflow.toml and connect the Slack app"),
     "run": (run_command, "Connect to Slack and start JotFlow"),
+    "check": (
+        check_command,
+        "Check configuration; with --live, verify a real Slack round trip",
+    ),
 }
 
 
