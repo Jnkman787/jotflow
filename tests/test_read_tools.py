@@ -164,6 +164,17 @@ def test_the_work_schema_labels_untrusted_fields(store: MemoryStore, clock: Cloc
     assert "Untrusted data written in Slack" in schema
 
 
+@pytest.mark.parametrize("name", ["get_work", "list_topics"])
+def test_index_titles_are_untrusted_in_the_schema(
+    store: MemoryStore, clock: Clock, name: str
+) -> None:
+    schema = tools(store, clock)[name].output_schema()
+    assert schema is not None
+    summary = schema["$defs"]["TopicSummary"]["properties"]["title"]
+    assert summary["$ref"].endswith("/UntrustedText")
+    assert schema["$defs"]["UntrustedText"]["description"].startswith("Untrusted data")
+
+
 def test_no_arguments_means_none(store: MemoryStore, clock: Clock) -> None:
     with pytest.raises(ValueError):
         NoArguments.model_validate({"channel_id": OTHER})
@@ -319,19 +330,32 @@ async def test_execution_work_is_the_approved_proposal_only(
     assert work.execution.notice == EXECUTION_NOTICE
     assert (work.execution.proposal_id, work.execution.repo) == ("p1", "acme-co/web")
     assert work.execution.proposal.title == "Progress bar"
-    assert work.execution.check_marker_first is False
+    assert "always list the repo's recent issues and comments" in work.execution.notice
     assert SAID not in work.model_dump_json()
 
 
-async def test_a_reconciling_proposal_says_check_the_marker_first(
+async def test_every_execution_packet_says_check_the_marker_first(
+    store: MemoryStore, clock: Clock
+) -> None:
+    # Not only when reconciling: an approved proposal may have been partly written too.
+    await approved(store)
+    grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
+    work: Work = await call(tools(store, clock)["get_work"], grant)
+    assert work.execution is not None
+    assert "look for the marker" in work.execution.notice
+    assert "check_marker_first" not in work.model_dump()["execution"]
+
+
+async def test_a_draft_that_no_longer_matches_its_approval_is_refused(
     store: MemoryStore, clock: Clock
 ) -> None:
     await approved(store)
     grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
-    await store.transition("p1", ProposalState.EXECUTING)
-    await store.transition("p1", ProposalState.RECONCILING)
-    work: Work = await call(tools(store, clock)["get_work"], grant)
-    assert work.execution is not None and work.execution.check_marker_first is True
+    stored = store._proposals["p1"]
+    changed = stored.proposal.model_copy(update={"title": "Something else"})
+    store._proposals["p1"] = stored.model_copy(update={"proposal": changed})
+    with pytest.raises(ToolError, match="no longer matches what was approved"):
+        await call(tools(store, clock)["get_work"], grant)
 
 
 async def test_a_settled_proposal_has_nothing_to_write(store: MemoryStore, clock: Clock) -> None:
@@ -367,14 +391,38 @@ async def test_a_question_run_gets_its_conversation(store: MemoryStore, clock: C
     assert work.conversation.thread.thread_ts == POST
 
 
-async def test_get_work_records_every_pointer_it_serves(store: MemoryStore, clock: Clock) -> None:
+async def test_get_work_records_only_the_runs_own_thread(store: MemoryStore, clock: Clock) -> None:
     grant = await running(store)
     await call(tools(store, clock)["get_work"], grant)
     served = await store.packet_ref(grant.run_id, CH, POST)
     assert served is not None and served.thread_ts == POST
-    excerpt = await store.packet_ref(grant.run_id, CH, "1760700050.000200")
-    assert excerpt is not None and excerpt.thread_ts == "1760700000.000100"
+    # The related excerpt is context only: never recorded, so never linkable.
+    assert await store.packet_ref(grant.run_id, CH, "1760700050.000200") is None
     assert await store.packet_ref(grant.run_id, CH, "1760799999.000999") is None
+
+
+async def test_link_message_accepts_only_what_get_work_served(
+    store: MemoryStore, clock: Clock
+) -> None:
+    from jotflow.whiteboard.write_tools import LinkMessageArgs, write_tools
+
+    class NoPoster:
+        async def post(self, channel_id: str, thread_ts: str, text: str) -> str:
+            raise AssertionError("link_message never posts")
+
+    grant = await running(store)
+    await call(tools(store, clock)["get_work"], grant)
+    link = checked_registry(write_tools(store, POLICY, NoPoster(), clock=clock))["link_message"]
+
+    def chatter(ts: str) -> LinkMessageArgs:
+        return LinkMessageArgs(ts=ts, decision="chatter", confidence=0.9)
+
+    accepted = await link.handler(grant, chatter(POST))
+    assert accepted is not None
+    with pytest.raises(ToolError):
+        await link.handler(grant, chatter("1760700050.000200"))  # a related excerpt
+    with pytest.raises(ToolError):
+        await link.handler(grant, chatter("1760799999.000999"))  # never served
 
 
 async def test_an_execution_packet_records_no_slack_pointers(

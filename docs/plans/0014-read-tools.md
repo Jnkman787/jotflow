@@ -58,7 +58,7 @@ Each `ToolSpec` declares these `kinds` (#105). The server lists only the grant's
 - **Execution:** reads the proposal from the store. It must be approved, executing, or reconciling. The packet holds:
   - the proposal id, which is also the hidden marker to search for
   - the repo, and the structured draft or update
-  - `check_marker_first`, true when reconciling
+  - a notice telling every execution run to look for the marker before writing (review change: this replaced a `check_marker_first` field)
   - no Slack text at all
 
 **Labelling.** Untrusted fields use one wrapper model, `UntrustedText(text, source)`, with a schema description saying what it is. So the label shows in the output schema the agent sees, through `ToolSpec.output_model` if #105 adds it, and on every value. Keyword prefixes such as `idea:` are stripped by #20 before text reaches the packet (D10).
@@ -102,16 +102,27 @@ Alternative considered: taking `channel_id` as an argument and checking it again
   - the placeholder source failing with "#20"
   - refusals for an unknown, queued, finished, or overdue run, and a grant that does not match its run on kind, channel, or thread
   - an execution packet holding only the approved proposal, with no Slack text
-  - a reconciling proposal setting `check_marker_first`
+  - every execution notice requiring the marker check
   - a settled proposal, another proposal's grant, and a proposal in another channel
 - CodeRabbit: skipped, rate limit.
+- After review: `test_read_tools.py` has 31 tests.
 - `tests/test_mcp_server.py` adds two tests: a `ToolError` comes back as an `isError` result with no protocol error, and an `output_model` is advertised as `outputSchema`.
+
+### Review changes (reviewer at 6891965, security's second look, team lead)
+
+- **Blocker: index titles were not wrapped.** `TopicSummary.title` is now `UntrustedText`, and `UntrustedText` moved to `models.py` so the topic index (#110) can use it. `to_prompt` keeps the label on every title. A test checks that the `get_work` and `list_topics` schemas mark index titles untrusted.
+- **Blocker: `check_marker_first` contradicted D8.** The field is gone. `EXECUTION_NOTICE` tells every execution run to list recent issues and comments and look for the marker before writing.
+- **Nit: content check.** `get_work` refuses an execution proposal whose draft no longer matches its locked content hash (D7).
+- **Nit: `get_work(run_id)` wording.** The architecture's agent output contract and D1 now say `get_work` takes no arguments, because the token names the run.
+- **Security's note: schema mode.** Output schemas use `model_json_schema(mode="serialization")`, matching what `model_dump(mode="json")` sends.
+- **Team lead's correction: packet recording.** `get_work` records only the run's own thread through `record_packet`, not related excerpts, so a run's links stay inside the thread its token names. A test calls #109's real `link_message`: a served message is accepted, and a related excerpt or an unserved message is refused.
+- `ToolError` came from #109, which merged first.
 
 ## Handoff notes
 
 - **Deviation from the plan.** The architecture token table lets question runs call `get_work`, so they get the same conversation packet as drafting. The packet section is named `conversation`, not `drafting`, so it fits both kinds.
 - **Not wired into `jotflow run` yet.** `serve()` opens no store today. The run lifecycle work, #107 or #21, opens it, and adds `*read_tools(store, policy, source)` beside security's `*write_tools(...)` in `make_mcp_server`. Nothing issues tokens until then, so the tools are unreachable either way.
 - **For #20.** Implement `WorkSource.thread`, which returns a `WorkThread` with every author and text wrapped in `UntrustedText`, and keyword prefixes stripped. Also implement `related`.
-- **Packet pointers, for #15.** `get_work` calls #109's `record_packet(run_id, refs)` with every message ref it serves: the thread's messages, and each related excerpt with its own `thread_ts`. `RelatedExcerpt` gained a `ts` field for that. `link_message` then accepts only served messages, through `packet_ref`. An execution packet records none.
+- **Packet pointers, for #15.** `get_work` records the run's own thread through `record_packet`, and nothing else: related excerpts and execution packets record none. `RelatedExcerpt` still carries a `ts` pointer for context.
 - **Reviewer nit on #112, folded in here.** The 2-hour cap is now `models.MAX_RUN_SECONDS`. `whiteboard.tokens.MAX_TOKEN_TTL_SECONDS` and the store's `MAX_RUN_TIMEOUT_SECONDS` both read it, `Run.timeout_seconds` uses it, and the store no longer imports the whiteboard layer. The ttl clamp for a 2-hour run plus grace is #107's.
 - **`ToolError`** came from #109, which landed first; this PR adds only `output_model` and the output schema.
