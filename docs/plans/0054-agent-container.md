@@ -5,9 +5,9 @@
 - Issue: #54
 - Also serves: #21, which calls this runner from JotFlow's side
 - Draft PR: #123
-- Status: implementing
+- Status: ready for review
 - Last verified: `make check` green, 1281 tests, 98.3% coverage; the agent image was built and smoke-tested locally
-- Next safe action: CodeRabbit or skip, CI on #123, mark ready
+- Next safe action: reviewer reviews #123; security owns it, so reviewer may route it back for a look
 
 ## Objective and done-when
 
@@ -97,7 +97,7 @@ Alternatives considered:
 - [x] Update documentation: Deployment, README setup for `agent.env`
 - [x] `make check` passes
 - [x] CodeRabbit local review, or skipped: skipped, rate limit
-- [ ] `closingIssuesReferences` checked, then mark the PR ready
+- [x] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
