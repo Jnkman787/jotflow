@@ -51,6 +51,7 @@ Done when:
   - the real work packet refuses a `skip:` thread and strips `idea:` into a hint
   - the fixture reader returns the parent first, honours `limit`, and gives display names in Slack's shapes
 - The old fixture source and the "not run" path are removed, with their tests.
+- CodeRabbit: skipped, rate-limited.
 
 ## Handoff notes
 
