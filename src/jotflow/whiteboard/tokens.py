@@ -8,13 +8,13 @@ issues one token per agent run and revokes it when the run ends.
 Tokens live only in memory. A restart kills every run, and re-queued runs get
 fresh tokens (D8), so nothing is persisted and ``check`` never does I/O. The
 registry keeps only SHA-256 digests, so neither a dump of it nor a stray
-``repr`` holds a usable token.
+``repr`` holds a usable token. Looking a token up by its digest is what keeps
+``check`` from leaking timing about stored tokens.
 """
 
 from __future__ import annotations
 
 import hashlib
-import hmac
 import secrets
 import time
 from collections.abc import Callable
@@ -39,10 +39,11 @@ Clock = Callable[[], float]
 class Grant:
     """What a valid token allows: one run, of one kind, in one channel.
 
-    Drafting and question runs are bound to the thread they work on.
-    ``thread_ts=None`` means the channel's loose top-level posts, never "any
-    thread": tools compare ``thread_ts`` exactly, ``None`` included. An
-    execution run is bound to the one approved proposal it executes.
+    Drafting and question runs are bound to the one thread they work on. A
+    run for a top-level post uses the post's own ts, as Slack does for a
+    thread's parent, so ``thread_ts`` is never ``None`` for them and tools
+    compare it exactly. An execution run is bound to the one approved
+    proposal it executes and needs no thread.
     """
 
     run_id: str
@@ -58,14 +59,16 @@ class Grant:
             raise ValueError("an execution grant must name its proposal")
         if self.kind is not RunKind.EXECUTION and self.proposal_id is not None:
             raise ValueError("only an execution grant names a proposal")
+        if self.kind in (RunKind.DRAFTING, RunKind.QUESTION) and not self.thread_ts:
+            raise ValueError(f"a {self.kind.value} grant must name its thread")
 
 
 class TokenCheck(Protocol):
     def check(self, token: str) -> Grant | None:
         """The grant ``token`` stands for, or ``None`` to refuse it.
 
-        Implementations compare in constant time, never log the token, and do
-        no I/O, so a slow store cannot slow the gate.
+        Implementations must not leak timing about stored tokens, never log
+        the token, and do no I/O, so a slow store cannot slow the gate.
         """
         ...
 
@@ -125,9 +128,11 @@ class TokenRegistry:
     def check(self, token: str) -> Grant | None:
         if not token.startswith(TOKEN_PREFIX) or len(token) > MAX_TOKEN_LENGTH:
             return None
-        digest = _digest(token)
-        entry = self._by_digest.get(digest)
-        if entry is None or not hmac.compare_digest(entry.digest, digest):
+        # The lookup is keyed by the SHA-256 of the presented token, so its
+        # timing reveals nothing about any stored token; no separate
+        # constant-time compare is needed.
+        entry = self._by_digest.get(_digest(token))
+        if entry is None:
             return None
         if self.clock() >= entry.expires_at:
             self._drop(entry)

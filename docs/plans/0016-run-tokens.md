@@ -22,8 +22,8 @@ The issue's boxes:
 Also, from the notes on #16:
 
 - [x] Tokens come from `secrets`, carry a recognisable prefix so secret scanners can spot a leaked one, and are kept only as SHA-256 digests in memory
-- [x] `check` compares in constant time, is synchronous, and does no I/O
-- [x] `Grant` gains `proposal_id` and `thread_ts`. An execution grant must name its proposal. `thread_ts=None` on a drafting grant means the loose top-level posts and is compared exactly.
+- [x] `check` leaks no timing about stored tokens, because the lookup is by digest; it is synchronous and does no I/O
+- [x] `Grant` gains `proposal_id` and `thread_ts`. An execution grant must name its proposal. Drafting and question grants must name their thread; a top-level post's run uses the post's own ts.
 - [x] `ToolSpec.kinds` declares which run kinds may call a tool. `tools/call` refuses other kinds before validating arguments, and `tools/list` shows a run only its kind's tools, which stay fixed, so there is still no `list_changed`.
 - [x] `jotflow run` creates one in-memory registry and hands it to the MCP server. It issues nothing yet, because nothing starts runs until M3, so the server stays unreachable in practice.
 
@@ -93,11 +93,12 @@ Alternatives considered:
   - an execution token lists no drafting tools, and calling one gets exactly the unknown-tool error
   - revoked and expired tokens get 401, and neither token appears in the audit log or the response
 - `checked_registry` refuses a tool that names no run kind.
-- CodeRabbit (local CLI): 1 finding, fixed and then reverted after architect's review. It asked that drafting grants require a thread. #53 runs a drafting run for the channel's loose top-level posts with no thread, and the store treats those as one thread. So `thread_ts=None` stays valid and means the loose posts, never any thread. Tools must compare it exactly, `None` included. 769 tests in total.
+- CodeRabbit (local CLI): 1 finding, fixed: drafting and question grants must name their thread. It was briefly reverted to match #104's channel-wide bucket for loose posts. Reviewer blocked that because it widened a loose post's token to every loose post in the channel, and the lead settled the rule. A top-level post's run uses the post's own ts, so `thread_ts` is never `None` for drafting or question grants, and #104 makes it NOT NULL to match. 773 tests in total.
+- Reviewer nit, taken: the `compare_digest` after the digest lookup always compared equal strings. It is gone, with a comment saying the digest lookup is what keeps timing from leaking.
 
 ## Handoff notes
 
 - #53 calls `TokenRegistry.issue(grant, ttl)` when it starts a run and `revoke(run_id)` when the run ends, fails, times out, or is aborted at shutdown. `serve()` in `commands/run.py` creates the registry, so #53 takes it from there.
-- #14 and #15 give each `ToolSpec` its `kinds` from the token table, and scope by `grant.channel_id`, `grant.thread_ts` (exact match, `None` included), and `grant.proposal_id` inside the handler. Execution tools must refuse any proposal but `grant.proposal_id`.
+- #14 and #15 give each `ToolSpec` its `kinds` from the token table, and scope by `grant.channel_id`, `grant.thread_ts` (exact match; never `None` for drafting or question runs), and `grant.proposal_id` inside the handler. Execution tools must refuse any proposal but `grant.proposal_id`.
 - Token lifetime: the runner (#21) issues with `ttl = run.deadline - now` plus a small grace, capped at `MAX_TOKEN_TTL_SECONDS`, so a run never outlives its token. #53's store caps run timeouts at the same constant.
 - Shutdown order for M3 stays: stop Slack intake, then end runs and revoke their tokens, then stop the MCP server.
