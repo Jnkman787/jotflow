@@ -58,6 +58,7 @@ No token is stored or logged. The registry keeps only digests (#105). `StartedRu
   - The token lasts exactly to the deadline plus grace, its lifetime is capped at 2 hours and never zero, and a run timeout over 2 hours is refused.
   - A token failure after the claim fails the run with a fixed reason.
   - The token is in no database file, no log line, and no `repr`.
+- CodeRabbit: skipped. The CLI failed to connect ("Provider identity could not be verified").
 
 ## Handoff notes
 
