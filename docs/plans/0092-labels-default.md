@@ -5,7 +5,7 @@
 - Issue: #92
 - Draft PR: #94
 - Status: completed
-- Last verified: `make check` green locally on Python 3.12 after the review changes and rebasing onto #95: 417 tests, 97.36% coverage
+- Last verified: `make check` green locally on Python 3.12 after the review changes and rebasing onto #95: 437 tests, 97.39% coverage
 - Next safe action: review and merge #94; #93 (product's init wording) rebases over it, or the other way round
 
 ## Objective and done-when
@@ -87,8 +87,9 @@ Alternatives considered:
   1. Reject an explicit `labels = []`. This contradicted #92's "empty or missing means any", so it went to the team lead, who decided to reject it. It is done: `labels` became optional (`None`) and an empty list is an error.
   2. Unsafe label text: taken. One rule, `label_problem`, now applies both to labels in `jotflow.toml` and to labels a proposal sets. It rejects control characters, line breaks, Unicode line and paragraph separators, bidirectional overrides and isolates, and leading or trailing spaces, as well as the length limit. Emoji, including zero-width joiner sequences, stay allowed.
   3. Wording: taken. The docs and example state "never invent a label" as an explicit rule for the agent, which its instructions carry and JotFlow cannot enforce. The team lead asked for it to be stated as a rule. The architecture doc says the execution run checks each label exists before applying it, because GitHub would otherwise create a missing one.
+- Security's follow-up nit, taken by team lead decision: invisible format characters (Unicode category Cf) are rejected, such as U+200B zero-width space, U+FEFF, U+2060, and the soft hyphen, so "bug" and "b\u200bug" cannot look identical on a card. The zero-width joiner U+200D is allowed only between two emoji parts. The part before it may be a symbol, a skin-tone modifier, or the emoji variation selector, so woman technologist, skin-tone variants, and the rainbow flag still pass. A joiner at either end or next to a letter is rejected.
 - The team lead posts the dated notes security asked for: for #26, escape labels as plain text and mark unrestricted ones; for #31, check that each label exists and fail rather than create one. The lead also updates #92's text for the empty-list decision.
-- After the review changes and the rebase onto #95, the fixture threads: 417 tests pass, with total coverage at 97.36%. #95's fixture test and README were updated for the "label list" wording.
+- After the review changes and the rebase onto #95, the fixture threads: 437 tests pass, with total coverage at 97.39%. #95's fixture test and README were updated for the "label list" wording.
 - Product was told the exact `init.py` changes, for its #93 rewording of init prompts.
 
 ## Handoff notes

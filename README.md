@@ -129,7 +129,7 @@ Setup starts by saying what it will do, and explains every question just before 
    - **each GitHub repo** that channel feeds, as `owner/name`: the part after `github.com/` in its URL. For example `https://github.com/acme-co/web` is `acme-co/web`. Pasting the link works too.
    - **a nickname**, a short word people type to point at the repo, as in `re: web#42`.
    - **what it covers**, in one sentence, for example `The customer-facing website`. When a channel feeds several repos, the agent uses these sentences to choose one.
-   - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo; the agent's instructions say never to invent a label, which JotFlow cannot check itself. A comma-separated list, for example `bug, enhancement`, narrows it to just those.
+   - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo; the agent's instructions say never to invent a label, which JotFlow cannot check itself. A comma-separated list, for example `bug, enhancement`, narrows it to just those. In `jotflow.toml`, leave the `labels` line out to allow any label; `labels = []` is an error.
 6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which CLI it is so it can start it correctly, for example `claude-code`. Type `none` to connect without agent runs for now; they arrive in milestone 3.
 
 A session looks like this, shortened. Your answers are on the right of each prompt.
