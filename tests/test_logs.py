@@ -211,3 +211,46 @@ def test_escaped_json_keeps_what_follows_the_text_value() -> None:
     out = redact(json.dumps({"body": inner}))
     assert "swordfish" not in out
     assert "1.000100" in out
+
+
+CONTENT_KEYS = (
+    "text",
+    "fallback",
+    "pretext",
+    "title",
+    "value",
+    "footer",
+    "comment",
+    "preview",
+    "plain_text",
+)
+
+
+@pytest.mark.parametrize("key", CONTENT_KEYS)
+@pytest.mark.parametrize(
+    "shape",
+    [
+        lambda key: json.dumps({"attachments": [{key: SECRET_TEXT}]}),
+        lambda key: repr({"initial_comment": {key: SECRET_TEXT}}),
+        lambda key: json.dumps({"event": json.dumps({key: SECRET_TEXT})}),
+    ],
+    ids=["json", "repr", "nested-json"],
+)
+def test_every_content_field_is_redacted(key: str, shape: object) -> None:
+    line = shape(key)  # type: ignore[operator]
+    out = redact(line)
+    assert "swordfish" not in out
+    assert "swordfish" in redact(line, bodies=True)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "run 1a2b started (drafting)",
+        "MCP server listening on 127.0.0.1:8765/mcp",
+        "ignored: subtype 'channel_join' channel=C0EXAMPLE1",
+        "subtitle=ok valued=1 commentary=none",
+    ],
+)
+def test_lines_without_content_fields_are_unchanged(line: str) -> None:
+    assert redact(line) == line

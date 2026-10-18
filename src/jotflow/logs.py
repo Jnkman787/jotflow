@@ -9,8 +9,9 @@ Two kinds of redaction:
 
 - **Secrets, always.** Slack, GitHub, and JotFlow run tokens, bearer values,
   and private keys are replaced, even with ``--log-bodies``.
-- **Message text, by default.** Slack payload ``text`` fields in library lines
-  are replaced. JotFlow's own modules never log text in the first place.
+- **Message text, by default.** Slack payload fields that carry what people
+  wrote, ``text`` and the attachment, unfurl, and file fields, are replaced in
+  library lines. JotFlow's own modules never log text in the first place.
 
 Third-party loggers, which print whole payloads at DEBUG, stay capped at INFO.
 ``jotflow run --log-bodies`` lifts that cap and the text redaction for local
@@ -57,19 +58,23 @@ _SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1[redacted token]"),
 )
 
+# Fields where Slack carries what people wrote: message text, and the attachment,
+# unfurl, block, and shared-file fields that bots and integrations fill in.
+_KEYS = r"(?:text|fallback|pretext|title|value|footer|comment|preview|plain_text)"
+
 _TEXT_FIELDS: tuple[tuple[re.Pattern[str], str], ...] = (
     # JSON: "text": "..."
-    (re.compile(r'("text"\s*:\s*)"(?:\\.|[^"\\])*"'), rf'\1"{REDACTED}"'),
+    (re.compile(rf'("{_KEYS}"\s*:\s*)"(?:\\.|[^"\\])*"'), rf'\1"{REDACTED}"'),
     # JSON serialized inside a JSON string: \"text\": \"...\". The value ends at the
     # first \" whose backslash is not itself escaped, so \\\" inside it is skipped.
-    (re.compile(r'(\\"text\\"\s*:\s*\\").*?(?<!\\)\\"'), rf'\1{REDACTED}\\"'),
+    (re.compile(rf'(\\"{_KEYS}\\"\s*:\s*\\").*?(?<!\\)\\"'), rf'\1{REDACTED}\\"'),
     # Python reprs: 'text': '...' or 'text': "..."
-    (re.compile(r"('text'\s*:\s*)'(?:\\.|[^'\\])*'"), rf"\1'{REDACTED}'"),
-    (re.compile(r"""('text'\s*:\s*)"(?:\\.|[^"\\])*\""""), rf'\1"{REDACTED}"'),
+    (re.compile(rf"('{_KEYS}'\s*:\s*)'(?:\\.|[^'\\])*'"), rf"\1'{REDACTED}'"),
+    (re.compile(rf"""('{_KEYS}'\s*:\s*)"(?:\\.|[^"\\])*\""""), rf'\1"{REDACTED}"'),
     # Keyword reprs and form bodies: text=...
-    (re.compile(r"(\btext=)'(?:\\.|[^'\\])*'"), rf"\1'{REDACTED}'"),
-    (re.compile(r'(\btext=)"(?:\\.|[^"\\])*"'), rf'\1"{REDACTED}"'),
-    (re.compile(r"(\btext=)(?!['\"\[])[^&\s,)]*"), rf"\1{REDACTED}"),
+    (re.compile(rf"(\b{_KEYS}=)'(?:\\.|[^'\\])*'"), rf"\1'{REDACTED}'"),
+    (re.compile(rf'(\b{_KEYS}=)"(?:\\.|[^"\\])*"'), rf'\1"{REDACTED}"'),
+    (re.compile(rf"(\b{_KEYS}=)(?!['\"\[])[^&\s,)]*"), rf"\1{REDACTED}"),
 )
 
 

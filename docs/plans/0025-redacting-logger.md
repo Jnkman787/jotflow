@@ -26,7 +26,7 @@ Refined:
   - GitHub tokens: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`
   - `Authorization: Bearer` values
   - PEM private keys
-- [x] Slack payload text fields are replaced in third-party lines: `"text"`, `'text'`, and `text=` in JSON, Python reprs, and form bodies. JotFlow's own modules never log text, as tests already enforce.
+- [x] Slack payload fields that carry what people wrote are replaced in third-party lines, in JSON, nested JSON, Python reprs, keyword reprs, and form bodies. The fields are `text`, and the attachment, unfurl, block, and file fields `fallback`, `pretext`, `title`, `value`, `footer`, `comment`, `preview`, and `plain_text`. JotFlow's own modules never log text, as tests already enforce.
 - [x] Third-party loggers stay capped at INFO, so library debug dumps of whole payloads never reach the output by default
 - [x] A `--log-bodies` flag on `jotflow run` lifts the cap and the text redaction for local development:
   - it prints a loud warning at startup
@@ -70,6 +70,7 @@ Alternatives considered: a structlog dependency, rejected because it adds a depe
 
 ## Validation
 
+- Reviewer blocker on d14fc27, fixed: only `text` keys were redacted, while attachments, unfurls, and shared files carry content in `fallback`, `pretext`, `title`, `value`, `footer`, `comment`, `preview`, and `plain_text`. One `_KEYS` alternation now drives all seven forms. Tests cover each key in JSON, repr, and nested JSON, and ordinary lines such as `subtitle=` stay unchanged. 1158 tests in total.
 - CodeRabbit (local CLI): 2 findings, both fixed. First, JSON serialized inside a JSON string escaped its `text` field past the pattern; a new pattern and a test with an escaped quote inside the value cover it. Second, the `--log-bodies` warning was hidden at `--log-level error`; it now goes straight to stderr when the level would hide it, with a test.
 - `make check` passes: 1127 tests, 98.5% total coverage, and `logs.py` at 100%.
 - `tests/test_logs.py`, 44 tests:
