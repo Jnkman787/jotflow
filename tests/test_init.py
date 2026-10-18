@@ -364,6 +364,7 @@ def test_compose_file_is_written_once(options: InitOptions) -> None:
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     first = options.env_file.read_text()
     assert first.count(f"{COMPOSE_FILE_KEY}=") == 1
+    assert "docker compose up -d" in script.text
     # a re-run keeping everything leaves .env byte for byte the same
     script = Script(answers=["", "", ""])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0

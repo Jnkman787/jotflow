@@ -15,7 +15,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from email.message import Message
+from typing import IO, Any, Protocol
 
 from jotflow.slack_manifest import BOT_SCOPES
 
@@ -52,33 +53,79 @@ class SlackUnreachableError(Exception):
     """Slack could not be reached at all."""
 
 
+MAX_RESPONSE_BYTES = 1_000_000
+
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Slack's Web API never redirects, so a redirect is treated as an error.
+
+    Following one could hand the token to whatever host the redirect names.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
+class Opener(Protocol):
+    def open(self, request: urllib.request.Request, /, *, timeout: float) -> Any:
+        """Send ``request`` and return a response usable as a context manager."""
+
+
+def _default_opener() -> Opener:
+    opener: Opener = urllib.request.build_opener(_RefuseRedirects())
+    return opener
+
+
 class HttpSlackApi:
     """The real client: a POST to Slack's Web API using the standard library."""
 
-    def __init__(self, base_url: str = SLACK_API_URL, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        base_url: str = SLACK_API_URL,
+        timeout: float = 10.0,
+        opener: Opener | None = None,
+    ) -> None:
+        if not base_url.startswith("https://"):
+            raise ValueError(
+                "the Slack API URL must use https://, so tokens are never sent in clear"
+            )
         self._base_url = base_url
         self._timeout = timeout
+        self._opener = opener or _default_opener()
 
     def call(self, method: str, token: str) -> ApiResult:
         request = urllib.request.Request(
             self._base_url + method,
             data=b"",
             method="POST",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+        # Unredirected: never copied onto a follow-up request to another URL.
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                raw = response.read()
+            with self._opener.open(request, timeout=self._timeout) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
                 header = response.headers.get("X-OAuth-Scopes")
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
                 return ApiResult({"ok": False, "error": "ratelimited"})
+            if 300 <= exc.code < 400:
+                raise SlackUnreachableError(
+                    f"Slack answered {method} with a redirect, which JotFlow does not follow"
+                ) from None
             raise SlackUnreachableError(f"Slack answered HTTP {exc.code} for {method}") from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise SlackUnreachableError(f"could not reach Slack: {exc}") from None
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise SlackUnreachableError(f"Slack's response to {method} was unexpectedly large")
         try:
             body = json.loads(raw)
         except ValueError:

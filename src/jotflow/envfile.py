@@ -88,6 +88,8 @@ def write_env(path: Path, updates: Mapping[str, str]) -> None:
             os.fchmod(fd, FILE_MODE)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(new_text)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temp_name, path)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)

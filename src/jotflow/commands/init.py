@@ -470,6 +470,8 @@ def _write_text_atomic(path: Path, text: str, mode: int = POLICY_FILE_MODE) -> N
             os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temp_name, path)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)
@@ -535,6 +537,10 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
         updates[COMPOSE_FILE_KEY] = COMPOSE_FILE_VALUE
     write_env(options.env_file, updates)
     console.say(f"Saved both tokens to {options.env_file}. Only your user can read that file.")
+    if COMPOSE_FILE_KEY in updates:
+        console.say(
+            f"  Also set {COMPOSE_FILE_KEY} there, so `docker compose up -d` mounts jotflow.toml."
+        )
     if compose_file is not None and compose_file != COMPOSE_FILE_VALUE:
         console.say(
             f"  Left your {COMPOSE_FILE_KEY}={compose_file} as it is. For Docker to mount "

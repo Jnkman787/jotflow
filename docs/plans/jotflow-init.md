@@ -5,7 +5,7 @@
 - Issue: #7
 - Draft PR: #67
 - Status: completed
-- Last verified: `make check` green locally on 2026-10-18 after rebasing on #66, #68 and #69, 233 tests
+- Last verified: `make check` green locally on 2026-10-18 after the security review, 237 tests
 - Next safe action: in the sandbox workspace, run `jotflow init` on a fresh clone and time it, for the live criterion on #7
 
 ## Objective and done-when
@@ -84,6 +84,8 @@ Security:
 - 2026-10-18, after rebasing on #64: `make check` green, 184 tests. New: `tests/test_policy_writer.py` round-trips `jotflow.example.toml` and awkward strings; `tests/test_init.py` covers the policy interview, pasted links, duplicates, re-runs with keep, rewrite, and backup, invalid existing files, and stopping part-way.
 - CodeRabbit: skipped. The local CLI hit its free-allowance rate limit (all 3 included reviews used, reset in about 26 minutes). In its place I reviewed the diff myself and fixed two things: a rewrite now says that channels left out are removed, and the owner-only file mode is set only where `os.fchmod` exists, which is not on Windows before Python 3.13.
 - 2026-10-18, after rebasing on #66, #68 and #69: `make check` green, 233 tests. New tests cover the policy file mode, the unreadable-policy warning, and `COMPOSE_FILE` being written once and a custom value being kept.
+- Security review of #67: 6 items, all taken. (1) The bot token could follow a redirect to another host, because urllib copies request headers onto redirects. `Authorization` is now an unredirected header, and the opener refuses redirects outright, since Slack's Web API never redirects. A test drives urllib's own redirect handling with a local stub. (2) `HttpSlackApi` refuses a non-https base URL. (3) Responses are capped at 1 MB. (4) `jotflow.toml.bak` is gitignored. (5) `.env` and `jotflow.toml` are flushed and fsynced before the atomic replace. (6) `COMPOSE_FILE` was already in; init's closing output now mentions it.
+- Found while testing the redirect fix: the first version of that test let urllib's real HTTPS handler run before the stub and reach slack.com. The stub now runs first, and the auth and init tests pass with sockets blocked.
 - Found while testing: uppercasing a typed channel id would have accepted `general` as `GENERAL`, a valid-looking private channel id. Ids are now taken as typed.
 
 ## Handoff notes
