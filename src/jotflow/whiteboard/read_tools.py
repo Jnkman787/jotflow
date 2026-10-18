@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -69,11 +69,31 @@ class GetTopicInput(_Input):
     topic_id: str = Field(min_length=1, max_length=64, description="A topic id from list_topics")
 
 
+class Mention(BaseModel):
+    """A person mentioned in a message, read as a name with the id kept alongside (#35)."""
+
+    user_id: str = Field(description="Slack user id, for matching an identity link")
+    display_name: UntrustedText = Field(description="The person's Slack display name")
+
+
 class ThreadMessage(BaseModel):
     ts: str = Field(description="Slack timestamp of the message, a pointer")
     user_id: str | None = Field(default=None, description="Slack user id of the author")
     author: UntrustedText = Field(description="The author's display name; untrusted")
     text: UntrustedText = Field(description="What the message says; untrusted")
+    hint: Literal["idea", "bug", "re"] | None = Field(
+        default=None,
+        description="The keyword the author started with, removed from text; a hint only",
+    )
+    mentions: list[Mention] = Field(
+        default_factory=list, description="People mentioned in the message, in order"
+    )
+    topic_id: str | None = Field(
+        default=None, description="The topic this message is already linked to, if any"
+    )
+    from_jotflow: bool = Field(
+        default=False, description="True for JotFlow's own messages, such as its questions"
+    )
 
 
 class WorkThread(BaseModel):
@@ -82,6 +102,9 @@ class WorkThread(BaseModel):
     channel_id: str
     thread_ts: str = Field(description="The thread's parent ts; a top-level post's own ts")
     messages: list[ThreadMessage]
+    omitted: int = Field(
+        default=0, ge=0, description="Messages left out of a very long thread, from its middle"
+    )
 
 
 class RelatedExcerpt(BaseModel):

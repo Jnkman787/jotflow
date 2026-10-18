@@ -4,10 +4,10 @@
 
 - Issue: #20
 - Also serves: #56, for the strict keyword prefix only; #14's `WorkSource` interface
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then write `orchestrator/keywords.py`
+- Draft PR: #125
+- Status: completed
+- Last verified: `make check` green locally: 1273 tests, `packet.py` at 99%, `keywords.py` at 100%
+- Next safe action: review and merge #125. #55 wires `SlackWorkSource(BoltSlackReader(app.client), store, bot=identity)` into `read_tools`
 
 ## Objective and done-when
 
@@ -15,16 +15,16 @@ When a drafting or question run calls `get_work`, JotFlow fetches the run's thre
 
 Done when:
 
-- [ ] The packet contains only the thread in question, fetched with `conversations.replies`. No channel history is ever read.
-- [ ] Text is not persisted anywhere: not in the store, not in logs, not in a cache
-- [ ] Slack rate-limit responses are retried with backoff that honours `Retry-After`, then fail clearly
-- [ ] `skip:` messages are excluded, and a `skip:` root excludes the whole thread. Messages a person marked as chatter are excluded too.
-- [ ] Keyword prefixes (`idea:`, `bug:`, `re:`) are stripped from the text the agent sees, and passed as a separate hint field
-- [ ] `<@U…>` mentions read as display names, with the Slack user id kept alongside. Authors carry a display name and user id too.
-- [ ] Very long threads are trimmed: the root, the first replies, and the most recent replies are kept, with a note saying how many were left out. Each message and the whole packet have a size cap.
-- [ ] Related-thread excerpts: short excerpts from the channel's other active topic threads, ranked by word overlap with this thread, capped
-- [ ] Several topics in one thread: each message says which topic it is already linked to, if any
-- [ ] `make check` passes
+- [x] The packet contains only the thread in question, fetched with `conversations.replies`. No channel history is ever read.
+- [x] Text is not persisted anywhere: not in the store, not in logs, not in a cache
+- [x] Slack rate-limit responses are retried with backoff that honours `Retry-After`, then fail clearly
+- [x] `skip:` messages are excluded, and a `skip:` root excludes the whole thread. Messages a person marked as chatter are excluded too.
+- [x] Keyword prefixes (`idea:`, `bug:`, `re:`) are stripped from the text the agent sees, and passed as a separate hint field
+- [x] `<@U…>` mentions read as display names, with the Slack user id kept alongside. Authors carry a display name and user id too.
+- [x] Very long threads are trimmed: the root, the first replies, and the most recent replies are kept, with a note saying how many were left out. Each message and the whole packet have a size cap.
+- [x] Related-thread excerpts: short excerpts from the channel's other active topic threads, ranked by word overlap with this thread, capped
+- [x] Several topics in one thread: each message says which topic it is already linked to, if any
+- [x] `make check` passes
 
 **Out of scope:**
 
@@ -81,22 +81,48 @@ Alternatives considered:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `keywords.py` strict prefix
-- [ ] Slack call helper with rate-limit backoff
-- [ ] `SlackWorkSource.thread`: fetch, filter, strip, resolve, trim
-- [ ] `SlackWorkSource.related`: rank, fetch roots, excerpt
-- [ ] Model additions in `read_tools.py`
-- [ ] Add or update tests, including the no-persistence test
-- [ ] Update documentation: the architecture Data and privacy section and the work packet
-- [ ] `make check` passes
-- [ ] Local CodeRabbit review, or skipped
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] `keywords.py` strict prefix
+- [x] Slack call helper with rate-limit backoff
+- [x] `SlackWorkSource.thread`: fetch, filter, strip, resolve, trim
+- [x] `SlackWorkSource.related`: rank, fetch roots, excerpt
+- [x] Model additions in `read_tools.py`
+- [x] Add or update tests, including the no-persistence test
+- [x] Update documentation: the architecture Data and privacy section and the work packet
+- [x] `make check` passes
+- [x] Local CodeRabbit review, or skipped
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes, with 1273 tests. `orchestrator/packet.py` is at 99%, and `orchestrator/keywords.py` at 100%.
+- `tests/test_packet.py`, 40 tests, all against a fake `SlackReader` that logs every call, so no network. They cover:
+  - **Keywords:** the strict prefix, including "Skip button is broken" and "ideas:" as plain text.
+  - **Markup:** Slack markup to plain text, covering mentions, channels, links, `<!here>`, user groups, and entities.
+  - **Only the thread is read:** the log shows only `replies` for the run's ts, plus `user` lookups.
+  - **Filtering:**
+    - keyword hints are stripped from the text
+    - `skip:` messages are dropped, with their text absent from the packet
+    - a `skip:` root refuses the whole thread
+    - a person's chatter mark drops a message, while the agent's does not
+    - per-message topic links are shown, for several topics in one thread
+    - JotFlow's own messages are marked, other bots are kept, and joins are dropped
+  - **Names:**
+    - names are resolved, with ids kept, and fall back to the id
+    - each person is looked up once, and the cache expires and is bounded, holding names only
+  - **Long threads:** paging, trimming to root, head, and tail with the omitted count, and the per-message and packet caps.
+  - **Rate limits:** `Retry-After` honoured, doubling without it, a cap on long waits, a bad header, a clear failure after the attempts run out, and other errors failing at once.
+  - **Related excerpts:**
+    - ranked by shared title words, excluding the run's own thread and anything with no overlap
+    - capped and cut, with `skip:` roots, person-chatter roots, and failing threads left out
+    - mentions resolved in excerpts
+    - an unreadable thread giving no excerpts
+  - **The real adapter:** `BoltSlackReader` asks for exactly one thread and one user.
+- **No persistence:** a `SqliteStore` file runs a full `get_work` through `read_tools` with this source. The secret text is in the packet served to the agent, and absent from every database file afterwards.
+- CodeRabbit: see the PR.
 
 ## Handoff notes
 
-None yet.
+- **For #55.** Build the source as `SlackWorkSource(BoltSlackReader(app.client), store, bot=identity)` and pass it to `read_tools`. `bot` is the `BotIdentity` from `fetch_identity`, so JotFlow's own questions are marked `from_jotflow`.
+- **For #56.** Extend `orchestrator/keywords.py`, and keep `split_keyword` as the single prefix rule. A `skip` reaction should call `store.mark_chatter(ref, by="person")`; the packet already excludes those messages.
+- **Tuning.** The caps are module constants in `packet.py`. Related-thread ranking is word overlap with topic titles, which is deliberately simple for v1.
