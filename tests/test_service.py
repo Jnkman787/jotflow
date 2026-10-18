@@ -634,3 +634,59 @@ async def test_a_keyword_error_is_logged_and_the_debouncer_still_runs(
     finally:
         await rig.orchestrator.stop()
     assert "could not apply a keyword" in caplog.text
+
+
+async def _until_flushed(rig: Rig) -> None:
+    await asyncio.sleep(1.3)  # past the one-second debounce, with flushes every 10 ms
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_message_queues_no_drafting_run() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        root = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX"}
+        await _deliver(app, {**root, "text": "skip: just testing the bot"}, "Ev4")
+        await _until_flushed(rig)
+        runs = await rig.store.thread_runs(CH, THREAD)
+    finally:
+        await rig.orchestrator.stop()
+    link = await rig.store.get_message(CH, THREAD)
+    assert link is not None and link.chatter and link.linked_by == "person"
+    assert runs == []
+    assert not [call for call in rig.calls if call[0] == "POST"]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_reply_leaves_the_threads_wait_alone() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        await _deliver(app, _reply(REPLY, "skip: off topic"), "Ev5")
+        assert rig.orchestrator._debouncer is not None
+        assert not rig.orchestrator._debouncer.pending()
+    finally:
+        await rig.orchestrator.stop()
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_an_re_reply_joins_the_named_issues_topic_through_the_app() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        parent = await rig.store.create_topic(CH, "Dark mode")
+        await rig.store.link_message(MessageRef(channel_id=CH, ts=THREAD), parent.topic.id)
+        export = await rig.store.create_topic(CH, "Export as CSV")
+        await rig.store.set_topic_issue(export.topic.id, "acme-co/web", 42)
+        app = await _bolt_app(rig)
+        await _deliver(app, _reply(REPLY, "re: web#42 keep the column order"), "Ev6")
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending()  # the thread still drafts, now with #42
+    finally:
+        await rig.orchestrator.stop()
+    link = await rig.store.get_message(CH, REPLY)
+    assert link is not None and link.linked_by == "person"
+    assert link.topic_id == export.topic.id != parent.topic.id
+    assert rig.slack.reactions == [(CH, REPLY, "white_check_mark")]

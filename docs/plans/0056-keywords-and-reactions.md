@@ -81,5 +81,5 @@ Done when:
 
 ## Handoff notes
 
-- `Orchestrator.note(decision, event)` runs the handler first, then the debouncer. `register_handlers` passes the raw event to its sink for that. Keywords apply even while agent runs are off, because they are a person's decisions. `BoltKeywordSlack` looks up the workspace's team id with `auth.test` once. If that finds none, every user from another team counts as external.
+- `Orchestrator.note(decision, event)` runs the handler first, then the debouncer. `register_handlers` passes the raw event to its sink for that. Keywords apply even while agent runs are off, because they are a person's decisions. A `skip:` message stops there: it never reaches the debouncer, so it queues no run and leaves the thread's wait alone. An `re:` message goes on to the debouncer, because its thread should still draft, now against the named issue. `BoltKeywordSlack` looks up the workspace's team id with `auth.test` once. If that finds none, every user from another team counts as external.
 - The fixture validator in `testing/threads.py` still leaves `re:` messages out when it checks what the script links. That is correct: the agent never links them, the handler does.
