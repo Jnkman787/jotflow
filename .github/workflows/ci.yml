@@ -46,3 +46,28 @@ jobs:
 
       - name: Test
         run: uv run pytest -q
+
+  image:
+    name: Build container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Plain docker CLI: nothing is pushed, so no registry login or
+      # third-party build action is needed.
+      - name: Validate Compose file
+        run: docker compose config --quiet
+
+      - name: Build
+        run: docker build --tag jotflow:ci .
+
+      - name: Smoke test
+        run: |
+          docker run --rm jotflow:ci jotflow --version
+          test "$(docker run --rm jotflow:ci id -u)" = "10001"
+          if docker run --rm jotflow:ci sh -c 'command -v node || command -v npm || command -v uv'; then
+            echo "::error::The JotFlow image must not contain Node, npm, or uv"
+            exit 1
+          fi

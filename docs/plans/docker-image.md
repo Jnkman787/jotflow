@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #9
-- Draft PR: pending
-- Status: planning
-- Last verified: plan written, nothing built yet
-- Next safe action: commit this plan, push, open the draft PR
+- Draft PR: #62
+- Status: implementing
+- Last verified: local build and smoke tests on Docker 28.3 and Compose 2.38, 2026-10-18
+- Next safe action: wait for CI on #62, then mark it ready for review
 
 ## Objective and done-when
 
@@ -14,11 +14,11 @@ Package JotFlow as a container image and a Compose file that a team can start wi
 
 Done when:
 
-- [ ] The image builds from the locked dependencies, runs as a non-root user, and contains no Node and no agent CLI
-- [ ] `docker compose run --rm jotflow jotflow --version` prints the version
-- [ ] The database lives on a named volume and survives `docker compose down` followed by `up`
+- [x] The image builds from the locked dependencies, runs as a non-root user, and contains no Node and no agent CLI
+- [x] `docker compose run --rm jotflow jotflow --version` prints the version
+- [x] The database lives on a named volume and survives `docker compose down` followed by `up`
 - [ ] The image builds in CI on every pull request, with read-only permissions and no push
-- [ ] `docker compose up` with a filled `.env` reaches the connected state. This needs `jotflow run` from #8 and a live Slack workspace, so this PR uses `Refs #9`, not `Fixes #9`.
+- [ ] Deferred to #8: `docker compose up` with a filled `.env` reaches the connected state. This needs `jotflow run` from #8 and a live Slack workspace, so this PR uses `Refs #9`, not `Fixes #9`.
 
 **Out of scope:** the agent container and runner (#54), publishing the image to GHCR (#39), `jotflow run` itself (#8), and any change to `config.py`, `models.py`, or `cli.py`.
 
@@ -56,19 +56,30 @@ Alternatives considered: `docker/build-push-action` would add a third-party acti
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Dockerfile and .dockerignore
-- [ ] docker-compose.yml
-- [ ] CI image build job and Dependabot docker ecosystem
-- [ ] Verify locally: build, `--version`, non-root, no Node, volume persistence, no secrets in context
-- [ ] Update documentation
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] Dockerfile and .dockerignore
+- [x] docker-compose.yml
+- [x] CI image build job and Dependabot docker ecosystem
+- [x] Verify locally: build, `--version`, non-root, no Node, volume persistence, no secrets in context
+- [x] Update documentation: a short image section under Deployment in architecture.md
+- [x] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+Run locally on 2026-10-18 with Docker 28.3.2 and Compose 2.38.2:
+
+- `docker build -t jotflow:local .` succeeds. The image is about 330 MB uncompressed; most of it is the Python base and the dependency tree, which #6 trims by dropping githubkit.
+- `docker compose run --rm jotflow jotflow --version` prints `jotflow 0.0.1`.
+- `id` in the container reports uid and gid 10001. `node`, `npm`, `uv`, and `gcc` are absent, and so are ruff, pytest, and mypy.
+- `slack_bolt`, `mcp`, `aiosqlite`, and `pydantic_settings` import from the installed, non-editable package.
+- A file written to `/data` survives `docker compose down` and a new run. `/app` is read-only, `/tmp` is writable.
+- With a dummy `.env` and `local.db` in the checkout, a throwaway build that copies the whole context sees only `LICENSE`, `README.md`, `pyproject.toml`, `src/`, and `uv.lock`.
+- `make check` passes.
+- The CI `image` job runs the same build, a version check, a uid check, and a check that Node, npm, and uv are absent.
 
 ## Handoff notes
 
-None yet.
+- The default command is `jotflow run`, which fails until #8 adds it. The last done-when item, reaching the connected state, is checked once #8 lands, against a live workspace.
+- In M3 (#54), set `JOTFLOW_MCP_HOST` for the jotflow service so the MCP server listens on the `agents` network, add the service name to its `Host` allowlist, and add the agent service on `agents` plus its own egress network.
+- Decision taken here: an allowlist `.dockerignore` (deny everything, allow the five build inputs), so a new secret file can never slip into the context by default.

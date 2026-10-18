@@ -1,0 +1,39 @@
+# JotFlow deployment. See the Deployment section of docs/architecture.md.
+#
+# Today this runs the JotFlow container only. In M3 the agent container joins
+# the internal `agents` network as a second service (D6, #54). JotFlow never
+# mounts the Docker socket, and no ports are published to the host.
+
+name: jotflow
+
+services:
+  jotflow:
+    build: .
+    image: jotflow:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - jotflow-data:/data
+    networks:
+      - egress
+      - agents
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  jotflow-data:
+
+networks:
+  # Outbound access, for Slack's Socket Mode connection.
+  egress:
+  # No route out of the host. The M3 agent runner and JotFlow's MCP server
+  # meet here; nothing on this network is published.
+  agents:
+    internal: true
