@@ -17,6 +17,7 @@ from jotflow.store.base import (
     StoreError,
     TopicRecord,
     TransitionError,
+    try_transition,
 )
 from jotflow.store.hashing import content_hash
 from jotflow.store.memory import MemoryStore
@@ -42,4 +43,5 @@ __all__ = [
     "TransitionError",
     "clean_title",
     "content_hash",
+    "try_transition",
 ]

@@ -228,6 +228,33 @@ def plan_transition(
     return changes
 
 
+async def try_transition(
+    store: Store,
+    proposal_id: str,
+    to: ProposalState,
+    *,
+    expected: Collection[ProposalState] | None = None,
+    approved_by: str | None = None,
+    expected_hash: str | None = None,
+    result: ExecutionResult | None = None,
+) -> ProposalRecord | None:
+    """Like :meth:`Store.transition`, but return None instead of raising when the
+    proposal is not in a state that allows the change, for example because
+    another run won the race. Other errors still raise.
+    """
+    try:
+        return await store.transition(
+            proposal_id,
+            to,
+            expected=expected,
+            approved_by=approved_by,
+            expected_hash=expected_hash,
+            result=result,
+        )
+    except TransitionError:
+        return None
+
+
 class Store(Protocol):
     """JotFlow's local state. Every implementation passes tests/test_store_contract.py."""
 

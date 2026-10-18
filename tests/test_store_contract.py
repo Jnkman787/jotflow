@@ -30,6 +30,7 @@ from jotflow.store import (
     Store,
     TransitionError,
     content_hash,
+    try_transition,
 )
 
 S = ProposalState
@@ -501,3 +502,12 @@ async def test_two_connections_to_one_file_never_both_win(tmp_path: Path, clock:
     finally:
         await first.close()
         await second.close()
+
+
+async def test_try_transition_reports_a_lost_race(store: Store) -> None:
+    await approved(store)
+    outcomes = await asyncio.gather(*(try_transition(store, "p1", S.EXECUTING) for _ in range(5)))
+    assert sum(o is not None for o in outcomes) == 1
+    assert await try_transition(store, "p1", S.REJECTED) is None
+    with pytest.raises(NotFoundError):
+        await try_transition(store, "missing", S.REJECTED)
