@@ -5,9 +5,9 @@
 - Issue: #126
 - Also serves: #137 (#22's presets: init names the preset and model in the agent env files), D6, #54
 - Draft PR: #143
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-18, `make check` passes with the code below
-- Next safe action: the architect confirms the two defaults under Risks; then CodeRabbit and ready for review
+- Next safe action: review; the architect confirms the two defaults under Risks; merge after #137
 
 ## Objective and done-when
 
@@ -67,7 +67,7 @@ Done when:
 - [x] Docs: README setup, Deployment's agent container section, the example env files' comments
 - [x] CodeRabbit once: skipped, the free CLI allowance was rate-limited
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
