@@ -72,6 +72,67 @@ ANY_LABEL = "any"
 MAX_CHANNELS = 50
 MAX_REPOS_PER_CHANNEL = 20
 
+# Everything init says to explain itself. Prompts, --help, and tests share it.
+# Examples are fictional: acme-co, #ideas, Idea Bot. Never a real org or workspace.
+INTRO = """\
+jotflow init sets JotFlow up for your team in about five minutes. It will:
+
+  1. Help you create a Slack app for JotFlow from a link with everything filled in.
+  2. Check the two tokens Slack gives you for that app.
+  3. Ask which Slack channels JotFlow should watch, such as #ideas, and which
+     GitHub repos each one feeds, such as acme-co/web.
+  4. Write .env, with the Slack tokens and readable only by you on Linux and
+     macOS, and jotflow.toml, with your channels and repos and no secrets.
+
+.env and jotflow.toml are written only after the last question; only the
+Slack manifest, slack-app-manifest.json, is saved earlier so you can paste
+it if the link fails. Press Ctrl-D at any prompt to stop."""
+
+EXPLAIN_BOT_NAME = (
+    "This is how the bot appears in Slack, for example Idea Bot. You can change it later in Slack."
+)
+EXPLAIN_APP_TOKEN = (
+    "Next, the app-level token, which lets JotFlow connect to Slack without a public URL.",
+    "In the new app's settings, open Basic Information, scroll to App-Level Tokens, "
+    "and click Generate Token and Scopes.",
+    "Name it anything, for example socket-mode; the name is only a label. "
+    "Click Add Scope, choose connections:write, then click Generate.",
+    "Copy the token. It starts with xapp-.",
+)
+EXPLAIN_BOT_TOKEN = (
+    "Now install the app: open Install App, click Install to Workspace, then click Allow.",
+    "Copy the Bot User OAuth Token shown there. It starts with xoxb-.",
+)
+EXPLAIN_CHANNEL = (
+    "Which Slack channel should JotFlow watch? Open the channel, click its name at the "
+    "top, and find the Channel ID at the bottom of the About tab.",
+    "It starts with C, or G for some private channels, for example C0IDEAS01. "
+    "Pasting the channel's link works too.",
+)
+EXPLAIN_NEXT_CHANNEL = "The next channel's id, for example C0IDEAS02, or its link."
+EXPLAIN_REPO = (
+    "Which GitHub repo does this channel feed? Give its address as owner/name, the part "
+    "after github.com/ in its URL.",
+    "For example https://github.com/acme-co/web is acme-co/web. Pasting the link works too.",
+)
+EXPLAIN_NICKNAME = (
+    "A short word people type to point at this repo, as in re: web#42. "
+    "Lowercase is best. Press Enter to keep the suggestion in brackets."
+)
+EXPLAIN_DESCRIPTION = (
+    "One sentence on what this repo is for, for example The customer-facing website.",
+    "When a channel feeds several repos, the agent uses these sentences to choose one.",
+)
+EXPLAIN_LABELS = (
+    "Labels a proposal may put on an issue, comma-separated, for example bug, enhancement.",
+    "Press Enter for any: any label that already exists on the repo. A list narrows it.",
+)
+EXPLAIN_PRESET = (
+    "Which agent CLI will your team run? Your team supplies and controls the agent;",
+    "JotFlow only needs to know which CLI it is so it can start it correctly.",
+    "For example claude-code. Type none to connect without agent runs for now.",
+)
+
 
 class SetupAborted(Exception):
     """The person stopped the session, or input ran out."""
@@ -132,6 +193,12 @@ class Console:
 
     def secret(self, question: str) -> str:
         return self._read(self.read_secret, f"{question}: ").strip()
+
+
+def _explain(console: Console, lines: str | tuple[str, ...], indent: str = "") -> None:
+    """Print the explanation that goes before a prompt."""
+    for line in (lines,) if isinstance(lines, str) else lines:
+        console.say(f"{indent}{line}")
 
 
 def _default_config_file() -> Path:
@@ -209,7 +276,8 @@ def _paste_until_valid[T](
 
 
 def _create_app_steps(console: Console, options: InitOptions) -> None:
-    name = console.ask("What should the bot be called in Slack?", DEFAULT_BOT_NAME, _bot_name)
+    _explain(console, EXPLAIN_BOT_NAME)
+    name = console.ask("Bot name", DEFAULT_BOT_NAME, _bot_name)
     manifest = render_manifest_json(name)
     options.manifest_out.write_text(manifest, encoding="utf-8")
     console.say()
@@ -220,16 +288,6 @@ def _create_app_steps(console: Console, options: InitOptions) -> None:
     console.say(
         f"If the link does not open, choose Create New App, then From a manifest, at "
         f"{CREATE_APP_URL} and paste the contents of {options.manifest_out}."
-    )
-    console.say()
-    console.say("Then, in the new app's settings:")
-    console.say(
-        "  1. Basic Information, App-Level Tokens: generate a token with the "
-        "connections:write scope. It starts with xapp-."
-    )
-    console.say(
-        "  2. Install App: click Install to Workspace, then Allow. "
-        "Copy the Bot User OAuth Token. It starts with xoxb-."
     )
     console.say()
 
@@ -338,20 +396,14 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
             raise ValueError(f"The nickname {nickname!r} is already used in this channel.")
         return nickname
 
-    repo = console.ask("  GitHub repo (owner/name)", validate=new_repo)
-    nickname = console.ask(
-        "  Short nickname people can type, as in re: web#42",
-        _suggest_nickname(repo),
-        new_nickname,
-    )
-    description = console.ask(
-        "  What does it cover? The agent picks a repo by this", validate=_description
-    )
-    labels = console.ask(
-        "  Labels a proposal may use: any existing label, or a comma-separated list to narrow it",
-        ANY_LABEL,
-        _labels,
-    )
+    _explain(console, EXPLAIN_REPO, "  ")
+    repo = console.ask("  GitHub repo", validate=new_repo)
+    _explain(console, EXPLAIN_NICKNAME, "  ")
+    nickname = console.ask("  Nickname", _suggest_nickname(repo), new_nickname)
+    _explain(console, EXPLAIN_DESCRIPTION, "  ")
+    description = console.ask("  What it covers", validate=_description)
+    _explain(console, EXPLAIN_LABELS, "  ")
+    labels = console.ask("  Labels", ANY_LABEL, _labels)
     # "any" is None: no labels line in jotflow.toml, which means any existing
     # label. An explicit empty list would be an error there.
     chosen = _split_labels(labels) or None
@@ -383,10 +435,6 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
             f"Currently listed: {listed}. List each channel to keep; "
             "a channel you leave out is removed."
         )
-    console.say(
-        "Find a channel's id in Slack under the channel name, then About; "
-        "it starts with C, or G for some private channels. A channel link works too."
-    )
     channels: dict[str, ChannelPolicy] = {}
     while True:
 
@@ -397,6 +445,7 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
             return channel_id
 
         console.say()
+        _explain(console, EXPLAIN_NEXT_CHANNEL if channels else EXPLAIN_CHANNEL)
         channel_id = console.ask("Channel id", validate=new_channel)
         previous = existing.channels.get(channel_id) if existing else None
         if previous is not None:
@@ -416,10 +465,7 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
             break
 
     console.say()
-    console.say(
-        "Which agent preset will draft issues, for example claude-code? "
-        "Type none to connect JotFlow without starting agent runs yet."
-    )
+    _explain(console, EXPLAIN_PRESET)
     current = existing.agent.preset if existing else DEFAULT_PRESET
     preset_answer = console.ask(
         "Agent preset",
@@ -500,8 +546,7 @@ def _save_policy(console: Console, path: Path, policy: Policy) -> None:
 
 def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     """Run the setup session. Returns a process exit code."""
-    console.say("JotFlow setup. Press Ctrl-D at any prompt to stop.")
-    console.say("Your tokens and jotflow.toml are saved only after the last question.")
+    console.say(INTRO)
     console.say()
     existing = read_env(options.env_file)
 
@@ -514,18 +559,22 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
 
     if identity is None:
         _create_app_steps(console, options)
-        bot_token, new_identity = _paste_until_valid(
-            console, "Paste the bot token (xoxb-, hidden)", lambda t: check_bot_token(api, t)
-        )
-        identity = new_identity
-        console.say(f"  Bot token works: {_describe(identity)}.")
     if not keep_app_token:
+        _explain(console, EXPLAIN_APP_TOKEN)
         app_token, _ = _paste_until_valid(
             console,
             "Paste the app-level token (xapp-, hidden)",
             lambda t: check_app_token(api, t),
         )
         console.say("  App-level token works: Socket Mode can connect.")
+        console.say()
+    if identity is None:
+        _explain(console, EXPLAIN_BOT_TOKEN)
+        bot_token, new_identity = _paste_until_valid(
+            console, "Paste the bot token (xoxb-, hidden)", lambda t: check_bot_token(api, t)
+        )
+        identity = new_identity
+        console.say(f"  Bot token works: {_describe(identity)}.")
 
     if not identity.scopes_verified:
         console.say(
@@ -564,7 +613,9 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Register this command's options."""
+    """Register this command's options, with the intro as the help text."""
+    parser.description = INTRO
+    parser.formatter_class = argparse.RawDescriptionHelpFormatter
     parser.add_argument(
         "--env-file",
         type=Path,
