@@ -607,6 +607,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "slack-bolt" },
+    { name = "slack-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -625,6 +626,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "slack-bolt", specifier = ">=1.21" },
+    { name = "slack-sdk", specifier = ">=3.33" },
 ]
 
 [package.metadata.requires-dev]
