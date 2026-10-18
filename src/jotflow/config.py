@@ -6,8 +6,8 @@ loaded by :mod:`jotflow.policy`.
 
 No secrets are ever read from files inside the repository. Teams supply the
 Slack tokens through the environment or a local ``.env`` file that is
-gitignored. JotFlow holds no GitHub credentials (D5); the team's agent brings
-its own, in its own container (D6).
+gitignored. JotFlow's code never uses GitHub credentials (D5); the team's
+agent brings its own, in its own container (D6).
 """
 
 from __future__ import annotations
@@ -18,7 +18,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="JOTFLOW_", env_file=".env", extra="ignore", populate_by_name=True
+        env_prefix="JOTFLOW_",
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+        # Never echo a value in a validation error: it may be a token.
+        hide_input_in_errors=True,
     )
 
     # Slack

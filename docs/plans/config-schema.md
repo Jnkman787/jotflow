@@ -5,7 +5,7 @@
 - Issue: #6
 - Draft PR: #64
 - Status: completed
-- Last verified: `make check` green locally on Python 3.12 after merging main, 55 tests
+- Last verified: `make check` green locally on Python 3.12 after the review changes, 68 tests
 - Next safe action: review and merge PR #64
 
 ## Objective and done-when
@@ -70,7 +70,7 @@ labels = ["bug", "enhancement"]
 - `ProposalRecord` is what JotFlow stores: id, channel id, the drafting run id, state, the proposal, content hash, approver and time, the execution result. The agent never supplies id, channel, or run, so they are not in the tool schema.
 - `ProposalState` follows the state diagram in architecture.md: pending, approved, executing, reconciling, applied, rejected, superseded, failed. The #6 notes list seven states; architecture.md adds reconciling, and architecture.md is the contract.
 - `Run`, `RunKind` (drafting, execution, question), `RunStatus`.
-- `ExecutionResult`: either an issue URL or an error, never both. A helper parses the URL so execution can check it points at the approved repo.
+- `ExecutionResult`: either an issue URL or an error, never both. `matches(proposal)` checks the URL against the approved proposal: a create must be a plain issue URL in the approved repo, never a comment URL; an update must be the proposal's own issue, optionally one of its comments.
 
 **Rename.** `git mv src/jotflow/github src/jotflow/execution` with a docstring that matches D5.
 
@@ -102,6 +102,14 @@ Alternatives considered: a list of channel tables (`[[channels]] id = ...`) give
 - `make check`: ruff lint and format clean, mypy strict clean, all tests pass.
 - Tests cover the example file, defaults, unknown top-level and nested keys, a missing key, a bad channel id, invalid values, every problem reported at once, invalid TOML with its line, a missing file, an unknown channel, a repo outside the channel's list, labels inside and outside a repo's allowlist, the new proposal states, a proposal record round trip, the execution-run rule, and issue URL checks.
 - CodeRabbit (local, free CLI allowance): 1 finding, 1 fixed. Repo and issue URL patterns used Unicode `\w` and `\d`; they are now ASCII-only, with tests. The same fix was applied to the repo patterns in `policy.py` and `models.py`.
+- Security review: 3 required changes, all made, and 5 nits, 4 taken.
+  - Settings set `hide_input_in_errors`, so a failed start never prints a token. A test shows the value leaks without it.
+  - Repo names follow GitHub's rules, ASCII only. Owners are 1 to 39 characters; names are 1 to 100 and never `.` or `..`. One rule in `models.py` serves the proposals, the policy file, and issue URLs.
+  - Create results reject `#issuecomment-` URLs; see `ExecutionResult.matches`.
+  - Nits taken: list fields in the policy are tuples, so a loaded policy cannot be changed in place. Rejected values in error messages are cut to 40 characters. `check_labels` returns the allowlist's own spelling. `Run.error` is bounded like `ExecutionResult.error`, and both are described as untrusted.
+  - Left for the issues that post to Slack: stripping broadcast mentions from agent-written error text before it reaches a thread.
+- Team lead review: the Settings docstring now says JotFlow's code never uses GitHub credentials.
+- CodeRabbit was not re-run after these changes, because the rule is one run per PR.
 - A sample error from a deliberately broken file:
 
 ```

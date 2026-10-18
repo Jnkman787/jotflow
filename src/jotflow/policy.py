@@ -19,9 +19,10 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from jotflow.models import RepoName, shown
+
 _CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{2,}")
 _USER_ID = re.compile(r"[UW][A-Z0-9]{2,}")
-_REPO = re.compile(r"[\w.-]+/[\w.-]+", re.ASCII)
 _NICKNAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 _PRESET = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
@@ -29,7 +30,7 @@ _PRESET = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 def _matching(pattern: re.Pattern[str], what: str) -> AfterValidator:
     def check(value: str) -> str:
         if not pattern.fullmatch(value):
-            raise ValueError(f"{value!r} is not {what}")
+            raise ValueError(f"{shown(value)} is not {what}")
         return value
 
     return AfterValidator(check)
@@ -37,7 +38,6 @@ def _matching(pattern: re.Pattern[str], what: str) -> AfterValidator:
 
 ChannelId = Annotated[str, _matching(_CHANNEL_ID, "a Slack channel id such as C0123ABCD")]
 UserId = Annotated[str, _matching(_USER_ID, "a Slack user id such as U0123ABCD")]
-RepoName = Annotated[str, _matching(_REPO, "a repo in owner/name form")]
 Nickname = Annotated[
     str,
     _matching(_NICKNAME, "a nickname of lowercase letters, digits, - or _, up to 32 characters"),
@@ -96,8 +96,8 @@ class RepoPolicy(_Strict):
     description: str = Field(
         min_length=1, max_length=200, description="What the repo covers; the agent picks by this"
     )
-    labels: list[Label] = Field(
-        default_factory=list, description="Labels a proposal may set; empty allows none"
+    labels: tuple[Label, ...] = Field(
+        default=(), description="Labels a proposal may set; empty allows none"
     )
 
     @model_validator(mode="after")
@@ -106,18 +106,27 @@ class RepoPolicy(_Strict):
             raise ValueError(f"labels listed more than once: {', '.join(dupes)}")
         return self
 
-    def check_labels(self, labels: Iterable[str]) -> None:
-        """Raise :class:`LabelNotAllowedError` if any label is outside the allowlist."""
-        allowed = {label.casefold() for label in self.labels}
-        rejected = [label for label in labels if label.casefold() not in allowed]
+    def check_labels(self, labels: Iterable[str]) -> list[str]:
+        """The labels in the allowlist's own spelling, matched without case.
+
+        Raises :class:`LabelNotAllowedError` if any label is outside the allowlist.
+        """
+        allowed = {label.casefold(): label for label in self.labels}
+        wanted = list(labels)
+        rejected = [label for label in wanted if label.casefold() not in allowed]
         if rejected:
             raise LabelNotAllowedError(self.repo, rejected)
+        canonical: list[str] = []
+        for label in wanted:
+            if allowed[label.casefold()] not in canonical:
+                canonical.append(allowed[label.casefold()])
+        return canonical
 
 
 class ChannelPolicy(_Strict):
     """A Slack channel JotFlow watches and the repos it may feed."""
 
-    repos: list[RepoPolicy] = Field(min_length=1)
+    repos: tuple[RepoPolicy, ...] = Field(min_length=1)
     debounce_seconds: int | None = Field(
         default=None, ge=1, le=86_400, description="Overrides the top-level debounce window"
     )
@@ -151,8 +160,8 @@ class AgentPolicy(_Strict):
 class ApprovalPolicy(_Strict):
     """Who may approve (D7). Both options are off by default."""
 
-    approvers: list[UserId] = Field(
-        default_factory=list,
+    approvers: tuple[UserId, ...] = Field(
+        default=(),
         description="Slack user ids; empty means anyone in the channel may approve",
     )
     reactions: bool = Field(default=False, description="Whether a reaction counts as approval")

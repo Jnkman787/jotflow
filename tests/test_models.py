@@ -129,18 +129,49 @@ def test_result_rejects_non_issue_urls(url: str) -> None:
         ExecutionResult(issue_url=url)
 
 
-def test_result_url_must_point_at_the_approved_repo() -> None:
+CREATE = IssueProposal(repo="acme/web", title="x", body="", confidence=0.5)
+UPDATE = UpdateProposal(
+    topic_id="t1",
+    repo="acme/web",
+    issue_number=7,
+    changes=IssueChanges(comment="more"),
+    confidence=0.5,
+)
+
+
+def test_create_result_must_be_an_issue_in_the_approved_repo() -> None:
     result = ExecutionResult(issue_url="https://github.com/Acme/Web/issues/42")
     assert result.issue_ref() == ("Acme/Web", 42)
-    assert result.points_at("acme/web")
-    assert result.points_at("acme/web", 42)
-    assert not result.points_at("acme/web", 43)
-    assert not result.points_at("acme/api")
+    assert result.matches(CREATE)
+    assert not result.matches(CREATE.model_copy(update={"repo": "acme/api"}))
 
 
-def test_result_accepts_a_comment_url_for_updates() -> None:
+def test_create_result_rejects_a_comment_url() -> None:
     result = ExecutionResult(issue_url="https://github.com/acme/web/issues/7#issuecomment-123")
-    assert result.points_at("acme/web", 7)
+    assert not result.matches(CREATE)
+
+
+def test_update_result_must_be_the_proposals_issue() -> None:
+    assert ExecutionResult(issue_url="https://github.com/acme/web/issues/7").matches(UPDATE)
+    comment = ExecutionResult(issue_url="https://github.com/acme/web/issues/7#issuecomment-1")
+    assert comment.matches(UPDATE)
+    assert not ExecutionResult(issue_url="https://github.com/acme/web/issues/8").matches(UPDATE)
+    assert not ExecutionResult(issue_url="https://github.com/acme/api/issues/7").matches(UPDATE)
+
+
+def test_error_result_matches_nothing() -> None:
+    assert not ExecutionResult(error="rate limited").matches(CREATE)
+
+
+@pytest.mark.parametrize("repo", ["acme/.", "acme/..", "-acme/web", "a" * 40 + "/web", "acme/"])
+def test_invalid_repo_names_are_rejected(repo: str) -> None:
+    with pytest.raises(ValidationError):
+        IssueProposal(repo=repo, title="x", body="", confidence=0.5)
+
+
+def test_dot_repo_urls_are_rejected() -> None:
+    with pytest.raises(ValidationError):
+        ExecutionResult(issue_url="https://github.com/acme/../issues/1")
 
 
 def test_repo_names_are_ascii_only() -> None:

@@ -45,7 +45,7 @@ def test_example_file_is_valid() -> None:
 def test_defaults_are_off_and_permalinks() -> None:
     policy = parse_policy(MINIMAL)
     assert policy.issue_links == "permalinks"
-    assert policy.approval.approvers == []
+    assert policy.approval.approvers == ()
     assert policy.approval.approvers_enabled is False
     assert policy.approval.reactions is False
     assert policy.agent.preset is None
@@ -166,7 +166,7 @@ def test_repo_outside_allowlist() -> None:
 
 def test_labels_inside_allowlist_ignore_case() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "web")
-    repo.check_labels(["BUG", "enhancement"])
+    assert repo.check_labels(["BUG", "enhancement", "bug"]) == ["bug", "Enhancement"]
 
 
 def test_label_outside_allowlist() -> None:
@@ -178,7 +178,7 @@ def test_label_outside_allowlist() -> None:
 
 def test_empty_label_allowlist_allows_none() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
-    repo.check_labels([])
+    assert repo.check_labels([]) == []
     with pytest.raises(LabelNotAllowedError):
         repo.check_labels(["bug"])
 
@@ -192,3 +192,23 @@ def test_policy_is_immutable() -> None:
 def test_repo_names_are_ascii_only() -> None:
     [problem] = problems(MINIMAL.replace('repo = "acme/api"', 'repo = "acmé/api"'))
     assert problem.startswith("channels.C0TEST1.repos[1].repo: ")
+
+
+def test_lists_are_immutable() -> None:
+    policy = parse_policy("[approval]\napprovers = ['U0ALICE']\n" + MINIMAL)
+    assert isinstance(policy.approval.approvers, tuple)
+    assert isinstance(policy.channel("C0TEST1").repos, tuple)
+    assert isinstance(policy.repo("C0TEST1", "web").labels, tuple)
+
+
+@pytest.mark.parametrize("repo", ["acme/.", "acme/.."])
+def test_dot_repo_names_are_rejected(repo: str) -> None:
+    [problem] = problems(MINIMAL.replace('repo = "acme/api"', f'repo = "{repo}"'))
+    assert problem.startswith("channels.C0TEST1.repos[1].repo: ")
+
+
+def test_rejected_values_are_cut_short() -> None:
+    token = "xoxb-" + "1234567890" * 6
+    [problem] = problems(f"[approval]\napprovers = ['{token}']\n" + MINIMAL)
+    assert token not in problem
+    assert token[:40] in problem

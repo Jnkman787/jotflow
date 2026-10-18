@@ -22,15 +22,40 @@ import re
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, model_validator
 
-REPO_PATTERN = r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
-
+# GitHub's rules: an owner is 1 to 39 letters, digits, or hyphens, not starting
+# with a hyphen; a repo name is 1 to 100 letters, digits, ".", "-", or "_",
+# and never "." or "..". ASCII only.
+_REPO = r"(?P<owner>[A-Za-z0-9][A-Za-z0-9-]{0,38})/(?P<name>[A-Za-z0-9._-]{1,100})"
+_REPO_RE = re.compile(_REPO, re.ASCII)
 _ISSUE_URL = re.compile(
-    r"https://github\.com/(?P<repo>[\w.-]+/[\w.-]+)/issues/(?P<number>[1-9]\d*)"
-    r"(?:#issuecomment-\d+)?",
+    rf"https://github\.com/{_REPO}/issues/(?P<number>[1-9][0-9]{{0,9}})"
+    r"(?P<comment>#issuecomment-[0-9]{1,20})?",
     re.ASCII,
 )
+
+
+def shown(value: str, limit: int = 40) -> str:
+    """``repr`` of a rejected value, cut short so a pasted secret is not echoed whole."""
+    return repr(value if len(value) <= limit else value[:limit] + "...")
+
+
+def is_repo_name(value: str) -> bool:
+    """Whether ``value`` is a valid ``owner/name`` GitHub repo."""
+    match = _REPO_RE.fullmatch(value)
+    return match is not None and match["name"] not in {".", ".."}
+
+
+def _check_repo(value: str) -> str:
+    if not is_repo_name(value):
+        raise ValueError(f"{shown(value)} is not a repo in owner/name form")
+    return value
+
+
+RepoName = Annotated[
+    str, AfterValidator(_check_repo), Field(description="owner/name", examples=["acme/web"])
+]
 
 
 class ChannelMode(StrEnum):
@@ -86,7 +111,7 @@ class IssueProposal(BaseModel):
         default=None,
         description="Existing topic this issue is for; omit to start a new topic",
     )
-    repo: str = Field(pattern=REPO_PATTERN, description="owner/name")
+    repo: RepoName
     title: str = Field(min_length=1, max_length=256)
     body: str
     labels: list[str] = Field(default_factory=list)
@@ -115,7 +140,7 @@ class UpdateProposal(BaseModel):
 
     kind: Literal["update_issue"] = "update_issue"
     topic_id: str
-    repo: str = Field(pattern=REPO_PATTERN)
+    repo: RepoName
     issue_number: int = Field(gt=0)
     changes: IssueChanges
     sources: list[MessageRef] = Field(default_factory=list)
@@ -135,38 +160,50 @@ class ExecutionResult(BaseModel):
         default=None, description="https://github.com/owner/name/issues/N of the issue written"
     )
     error: str | None = Field(
-        default=None, max_length=2000, description="Why the write failed, if it did"
+        default=None,
+        max_length=2000,
+        description="Why the write failed; agent-written, so treat as untrusted text",
     )
 
     @model_validator(mode="after")
     def _one_outcome(self) -> ExecutionResult:
         if (self.issue_url is None) == (self.error is None):
             raise ValueError("set exactly one of issue_url and error")
-        if self.issue_url is not None and not _ISSUE_URL.fullmatch(self.issue_url):
+        if self.issue_url is not None and self._match() is None:
             raise ValueError("issue_url must look like https://github.com/owner/name/issues/N")
         return self
 
-    def issue_ref(self) -> tuple[str, int] | None:
-        """The ``(owner/name, number)`` the URL points at, or None for an error result."""
+    def _match(self) -> re.Match[str] | None:
         if self.issue_url is None:
             return None
         match = _ISSUE_URL.fullmatch(self.issue_url)
-        if match is None:  # pragma: no cover - rejected by the validator
+        if match is None or match["name"] in {".", ".."}:
             return None
-        return match["repo"], int(match["number"])
+        return match
 
-    def points_at(self, repo: str, issue_number: int | None = None) -> bool:
-        """Whether the URL is in ``repo`` and, if given, is issue ``issue_number``.
+    def issue_ref(self) -> tuple[str, int] | None:
+        """The ``(owner/name, number)`` the URL points at, or None for an error result."""
+        match = self._match()
+        if match is None:
+            return None
+        return f"{match['owner']}/{match['name']}", int(match["number"])
 
-        Repo names compare without case, as GitHub does.
+    def matches(self, proposal: IssueProposal | UpdateProposal) -> bool:
+        """Whether the reported URL is a valid result for ``proposal``.
+
+        A create must report a plain issue URL in the proposal's repo, never a
+        comment, so a run cannot pass off an existing issue's comment as the new
+        issue. An update must report the proposal's own issue, optionally one
+        of its comments. Repo names compare without case, as GitHub does.
         """
-        ref = self.issue_ref()
-        if ref is None:
+        match = self._match()
+        if match is None:
             return False
-        url_repo, url_number = ref
-        if url_repo.casefold() != repo.casefold():
+        if f"{match['owner']}/{match['name']}".casefold() != proposal.repo.casefold():
             return False
-        return issue_number is None or url_number == issue_number
+        if isinstance(proposal, IssueProposal):
+            return match["comment"] is None
+        return int(match["number"]) == proposal.issue_number
 
 
 class ProposalRecord(BaseModel):
@@ -209,7 +246,11 @@ class Run(BaseModel):
     deadline: AwareDatetime
     started_at: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
-    error: str | None = None
+    error: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Why the run failed; may hold agent-written text, so treat as untrusted",
+    )
 
     @model_validator(mode="after")
     def _execution_has_proposal(self) -> Run:

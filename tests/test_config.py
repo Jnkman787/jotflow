@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from jotflow.config import Settings
 
@@ -37,3 +38,10 @@ def test_policy_values_are_not_settings() -> None:
 
 def test_tokens_are_not_printed() -> None:
     assert "xoxb-test" not in repr(Settings())
+
+
+def test_validation_errors_do_not_echo_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOTFLOW_MCP_PORT", "xoxb-secret-value")
+    with pytest.raises(ValidationError) as exc:
+        Settings()
+    assert "xoxb-secret-value" not in str(exc.value)
