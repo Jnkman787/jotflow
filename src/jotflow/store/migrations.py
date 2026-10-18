@@ -133,6 +133,31 @@ CREATE TABLE runs (
 )
 """
 
+_TOOL_CALLS = """
+CREATE TABLE tool_calls (
+    run_id TEXT NOT NULL, -- the run that made the call
+    seq INTEGER NOT NULL CHECK (seq > 0), -- 1 for the run's first recorded call, and so on
+    tool TEXT NOT NULL, -- the write tool's name
+    args_hash TEXT NOT NULL, -- sha256 of the tool name and canonical arguments
+    channel_id TEXT NOT NULL, -- Slack channel id from the run's grant
+    thread_ts TEXT, -- Slack thread from the run's grant
+    result_json TEXT NOT NULL, -- the tool's result: ids and states only, see #15
+    called_at TEXT NOT NULL, -- UTC, ISO 8601
+    PRIMARY KEY (run_id, seq),
+    UNIQUE (run_id, tool, args_hash)
+)
+"""
+
+_PACKET_MESSAGES = """
+CREATE TABLE packet_messages (
+    run_id TEXT NOT NULL, -- the drafting run whose packet served the pointer
+    channel_id TEXT NOT NULL, -- Slack channel id
+    ts TEXT NOT NULL, -- Slack timestamp served in the packet
+    thread_ts TEXT, -- timestamp of the served pointer's thread parent
+    PRIMARY KEY (run_id, channel_id, ts)
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -171,6 +196,14 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE UNIQUE INDEX runs_one_execution_per_proposal"
             " ON runs (proposal_id) WHERE status IN ('queued', 'running') AND kind = 'execution'",
             "CREATE INDEX runs_status ON runs (status, created_at)",
+        ),
+    ),
+    Migration(
+        4,
+        (
+            _TOOL_CALLS,
+            "CREATE INDEX tool_calls_thread ON tool_calls (channel_id, thread_ts, tool, called_at)",
+            _PACKET_MESSAGES,
         ),
     ),
 )

@@ -407,6 +407,19 @@ async def try_transition(
         return None
 
 
+@dataclass(frozen=True)
+class ToolCallRecord:
+    """One write-tool call, as the ledger keeps it. Never holds message text."""
+
+    run_id: str
+    tool: str
+    args_hash: str
+    channel_id: str
+    thread_ts: str | None
+    result_json: str
+    called_at: datetime
+
+
 class Store(Protocol):
     """JotFlow's local state. Every implementation passes tests/test_store_contract.py."""
 
@@ -553,4 +566,32 @@ class Store(Protocol):
         executing proposal first moves to reconciling, through the shared
         transition rules, because its write may have started.
         """
+        ...
+
+    # Write-tool ledger (#15): what each run's tool calls did, for idempotency and caps
+    async def find_tool_call(self, run_id: str, tool: str, args_hash: str) -> str | None:
+        """The result JSON of an identical earlier call by this run, if any."""
+        ...
+
+    async def record_tool_call(self, call: ToolCallRecord) -> int:
+        """Record a call and return its sequence number within the run, from 1."""
+        ...
+
+    async def count_tool_calls(self, run_id: str, tools: Collection[str]) -> int:
+        """How many of ``tools`` the run has called."""
+        ...
+
+    async def count_thread_calls(
+        self, channel_id: str, thread_ts: str | None, tool: str, *, since: datetime
+    ) -> int:
+        """How many calls of ``tool`` any run made in this thread since ``since``."""
+        ...
+
+    # Packet membership (#14, #15): which message pointers a run's packet served
+    async def record_packet(self, run_id: str, refs: Collection[MessageRef]) -> None:
+        """Remember that ``run_id``'s packet served ``refs``."""
+        ...
+
+    async def packet_ref(self, run_id: str, channel_id: str, ts: str) -> MessageRef | None:
+        """The pointer ``run_id``'s packet served at ``channel_id`` and ``ts``, or None."""
         ...

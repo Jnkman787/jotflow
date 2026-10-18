@@ -47,6 +47,7 @@ from jotflow.store.base import (
     NotFoundError,
     Recovery,
     StoreError,
+    ToolCallRecord,
     TopicRecord,
     check_clearable,
     check_finish,
@@ -843,6 +844,100 @@ class SqliteStore:
             requeued=tuple(requeued),
             reconciling=tuple(reconciling),
         )
+
+    # Write-tool ledger and packet membership
+
+    async def find_tool_call(self, run_id: str, tool: str, args_hash: str) -> str | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT result_json FROM tool_calls"
+                " WHERE run_id = ? AND tool = ? AND args_hash = ?",
+                (run_id, tool, args_hash),
+            )
+        return None if row is None else str(row["result_json"])
+
+    async def record_tool_call(self, call: ToolCallRecord) -> int:
+        check_id(call.run_id, "run id")
+        check_id(call.channel_id, "channel id")
+        called_at = to_text(call.called_at)
+        async with self._write():
+            taken = await self._one(
+                "SELECT 1 FROM tool_calls WHERE run_id = ? AND tool = ? AND args_hash = ?",
+                (call.run_id, call.tool, call.args_hash),
+            )
+            if taken is not None:
+                raise ConflictError(f"run {call.run_id} already recorded this {call.tool} call")
+            row = await self._one(
+                "SELECT coalesce(max(seq), 0) + 1 AS next FROM tool_calls WHERE run_id = ?",
+                (call.run_id,),
+            )
+            seq = int(row["next"]) if row is not None else 1
+            await self._db.execute(
+                """
+                INSERT INTO tool_calls
+                    (run_id, seq, tool, args_hash, channel_id, thread_ts, result_json, called_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    call.run_id,
+                    seq,
+                    call.tool,
+                    call.args_hash,
+                    call.channel_id,
+                    call.thread_ts,
+                    call.result_json,
+                    called_at,
+                ),
+            )
+        return seq
+
+    async def count_tool_calls(self, run_id: str, tools: Collection[str]) -> int:
+        names = list(tools)
+        if not names:
+            return 0
+        marks = ", ".join("?" for _ in names)
+        async with self._lock:
+            row = await self._one(
+                f"SELECT count(*) AS n FROM tool_calls WHERE run_id = ? AND tool IN ({marks})",
+                (run_id, *names),
+            )
+        return int(row["n"]) if row is not None else 0
+
+    async def count_thread_calls(
+        self, channel_id: str, thread_ts: str | None, tool: str, *, since: datetime
+    ) -> int:
+        async with self._lock:
+            row = await self._one(
+                "SELECT count(*) AS n FROM tool_calls WHERE channel_id = ? AND thread_ts IS ?"
+                " AND tool = ? AND called_at >= ?",
+                (channel_id, thread_ts, tool, to_text(since)),
+            )
+        return int(row["n"]) if row is not None else 0
+
+    async def record_packet(self, run_id: str, refs: Collection[MessageRef]) -> None:
+        check_id(run_id, "run id")
+        rows = []
+        for ref in refs:
+            check_id(ref.channel_id, "channel id")
+            check_id(ref.ts, "message timestamp")
+            rows.append((run_id, ref.channel_id, ref.ts, ref.thread_ts))
+        async with self._write():
+            await self._db.executemany(
+                "INSERT OR IGNORE INTO packet_messages (run_id, channel_id, ts, thread_ts)"
+                " VALUES (?, ?, ?, ?)",
+                rows,
+            )
+
+    async def packet_ref(self, run_id: str, channel_id: str, ts: str) -> MessageRef | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT channel_id, ts, thread_ts FROM packet_messages"
+                " WHERE run_id = ? AND channel_id = ? AND ts = ?",
+                (run_id, channel_id, ts),
+            )
+        if row is None:
+            return None
+        return MessageRef(channel_id=row["channel_id"], ts=row["ts"], thread_ts=row["thread_ts"])
 
 
 async def schema_version(db: aiosqlite.Connection) -> int:

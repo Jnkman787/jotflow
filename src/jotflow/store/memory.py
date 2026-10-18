@@ -34,6 +34,7 @@ from jotflow.store.base import (
     MessageLink,
     NotFoundError,
     Recovery,
+    ToolCallRecord,
     TopicRecord,
     check_clearable,
     check_finish,
@@ -59,6 +60,8 @@ class MemoryStore:
         self._identities: dict[str, IdentityLink] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
         self._runs: dict[str, Run] = {}
+        self._calls: list[ToolCallRecord] = []
+        self._packets: dict[tuple[str, str, str], MessageRef] = {}
 
     async def close(self) -> None:
         return None
@@ -478,3 +481,50 @@ class MemoryStore:
                 requeued=tuple(requeued),
                 reconciling=tuple(reconciling),
             )
+
+    # Write-tool ledger and packet membership
+
+    async def find_tool_call(self, run_id: str, tool: str, args_hash: str) -> str | None:
+        for call in self._calls:
+            if (call.run_id, call.tool, call.args_hash) == (run_id, tool, args_hash):
+                return call.result_json
+        return None
+
+    async def record_tool_call(self, call: ToolCallRecord) -> int:
+        check_id(call.run_id, "run id")
+        check_id(call.channel_id, "channel id")
+        to_text(call.called_at)
+        async with self._lock:
+            if any(
+                (c.run_id, c.tool, c.args_hash) == (call.run_id, call.tool, call.args_hash)
+                for c in self._calls
+            ):
+                raise ConflictError(f"run {call.run_id} already recorded this {call.tool} call")
+            self._calls.append(call)
+            return sum(1 for c in self._calls if c.run_id == call.run_id)
+
+    async def count_tool_calls(self, run_id: str, tools: Collection[str]) -> int:
+        return sum(1 for c in self._calls if c.run_id == run_id and c.tool in tools)
+
+    async def count_thread_calls(
+        self, channel_id: str, thread_ts: str | None, tool: str, *, since: datetime
+    ) -> int:
+        return sum(
+            1
+            for c in self._calls
+            if (c.channel_id, c.thread_ts, c.tool) == (channel_id, thread_ts, tool)
+            and c.called_at >= since
+        )
+
+    async def record_packet(self, run_id: str, refs: Collection[MessageRef]) -> None:
+        check_id(run_id, "run id")
+        async with self._lock:
+            for ref in refs:
+                check_id(ref.channel_id, "channel id")
+                check_id(ref.ts, "message timestamp")
+                key = (run_id, ref.channel_id, ref.ts)
+                self._packets.setdefault(key, ref.model_copy(update={"permalink": None}))
+
+    async def packet_ref(self, run_id: str, channel_id: str, ts: str) -> MessageRef | None:
+        found = self._packets.get((run_id, channel_id, ts))
+        return None if found is None else found.model_copy()

@@ -42,7 +42,7 @@ from jotflow import __version__
 from jotflow.models import RunKind
 from jotflow.whiteboard.gate import GRANT_KEY, Gate
 from jotflow.whiteboard.tokens import Grant, RejectAllTokens, TokenCheck
-from jotflow.whiteboard.tools import TOOLS, ToolSpec, checked_registry
+from jotflow.whiteboard.tools import TOOLS, ToolError, ToolSpec, checked_registry
 
 log = logging.getLogger("jotflow.mcp")
 
@@ -121,7 +121,10 @@ def build_server(tools: Sequence[ToolSpec] = TOOLS) -> Server[Any]:
             # audit log never sees them.
             fields = ", ".join(".".join(str(p) for p in e["loc"]) or "-" for e in exc.errors())
             raise MCPError(INVALID_PARAMS, f"invalid arguments: {fields}") from None
-        result = await spec.handler(grant, arguments)
+        try:
+            result = await spec.handler(grant, arguments)
+        except ToolError as refused:
+            return CallToolResult(content=[TextContent(text=refused.reason)], is_error=True)
         return CallToolResult(
             content=[TextContent(text=result.model_dump_json())],
             structured_content=result.model_dump(mode="json"),

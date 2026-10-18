@@ -48,6 +48,19 @@ class ToolSpec:
 TOOLS: tuple[ToolSpec, ...] = ()
 
 
+class ToolError(Exception):
+    """A refusal the model should see and act on, such as a cap or a missing topic.
+
+    The server returns it as a tool result with ``isError`` set and the reason
+    as its text, not as a protocol error. Reasons are written in code and never
+    quote Slack text or the agent's arguments.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class RegistryError(Exception):
     """The tool registry is malformed. A programming error, caught at startup."""
 
