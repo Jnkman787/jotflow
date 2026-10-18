@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jotflow.models import RunKind, RunStatus
+from jotflow.models import IssueProposal, ProposalRecord, ProposalState, RunKind, RunStatus
 from jotflow.orchestrator.runs import (
     GRACE_SECONDS,
     TOKEN_FAILURE,
@@ -16,9 +16,11 @@ from jotflow.orchestrator.runs import (
     grant_for,
     token_ttl,
 )
-from jotflow.store import MemoryStore, SqliteStore, Store
+from jotflow.policy import Policy
+from jotflow.store import MemoryStore, SqliteStore, Store, content_hash
 from jotflow.store.base import MAX_RUN_TIMEOUT_SECONDS
 from jotflow.whiteboard.tokens import MAX_TOKEN_TTL_SECONDS, TokenRegistry
+from jotflow.whiteboard.write_tools import RecordResultArgs, WriteTools
 
 CH = "C0IDEAS01"
 THREAD = "1760781600.000100"
@@ -187,18 +189,6 @@ async def test_a_run_longer_than_the_cap_is_refused(store: Store) -> None:
         )
 
 
-async def test_execution_grants_name_their_proposal(
-    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle
-) -> None:
-    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
-    started = await lifecycle.start_next(max_running=2)
-    assert started is not None
-    grant = registry.check(started.token)
-    assert grant is not None
-    assert (grant.kind, grant.proposal_id) == (RunKind.EXECUTION, "p1")
-    assert grant_for(started.run) == grant
-
-
 async def test_a_token_failure_fails_the_run(
     store: Store, registry: TokenRegistry, clock: Clock
 ) -> None:
@@ -249,3 +239,140 @@ async def test_a_run_ended_elsewhere_is_not_reported_as_timed_out(
     clock.advance(61)
     assert await lifecycle.expire_overdue() == []
     assert registry.check(started.token) is None
+
+
+# --- execution runs move their proposal to executing ---------------------------
+
+ISSUE_URL = "https://github.com/acme-co/web/issues/42"
+
+
+def _proposal_record(proposal_id: str = "p1") -> ProposalRecord:
+    return ProposalRecord(
+        id=proposal_id,
+        channel_id=CH,
+        thread_ts=THREAD,
+        run_id="draft-run",
+        proposal=IssueProposal(
+            repo="acme-co/web", title="Progress bar", body="Add one.", confidence=0.9
+        ),
+        created_at=START,
+    )
+
+
+async def _approved(store: Store, proposal_id: str = "p1") -> None:
+    record = await store.add_proposal(_proposal_record(proposal_id))
+    await store.transition(
+        proposal_id,
+        ProposalState.APPROVED,
+        approved_by="U0CAROL",
+        expected_hash=content_hash(record.proposal),
+    )
+
+
+async def _start_execution(
+    store: Store, lifecycle: RunLifecycle, proposal_id: str = "p1"
+) -> StartedRun | None:
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id=proposal_id)
+    return await lifecycle.start_next(max_running=2)
+
+
+async def test_an_approved_proposal_becomes_executing(
+    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle
+) -> None:
+    await _approved(store)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.EXECUTING
+    grant = registry.check(started.token)
+    assert grant is not None
+    assert (grant.kind, grant.proposal_id) == (RunKind.EXECUTION, "p1")
+    assert grant_for(started.run) == grant
+
+
+async def test_record_result_succeeds_after_start(
+    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle, clock: Clock
+) -> None:
+    """End to end: start_next, then the agent's record_result through the real tool."""
+    await _approved(store)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    grant = registry.check(started.token)
+    assert grant is not None
+    tools = WriteTools(store, POLICY, _NoPoster(), clock=clock)
+    outcome = await tools.record_result(grant, RecordResultArgs(issue_url=ISSUE_URL))
+    assert outcome.model_dump()["state"] == ProposalState.APPLIED
+    applied = await store.get_proposal("p1")
+    assert applied is not None and applied.state is ProposalState.APPLIED
+
+
+async def test_a_reconciling_proposal_stays_reconciling(
+    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle
+) -> None:
+    await _approved(store)
+    await store.transition("p1", ProposalState.EXECUTING)
+    await store.transition("p1", ProposalState.RECONCILING)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.RECONCILING
+    assert registry.check(started.token) is not None
+
+
+@pytest.mark.parametrize("state", [ProposalState.PENDING, ProposalState.REJECTED])
+async def test_any_other_state_fails_the_run_without_a_token(
+    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle, state: ProposalState
+) -> None:
+    await store.add_proposal(_proposal_record())
+    if state is ProposalState.REJECTED:
+        await store.transition("p1", ProposalState.REJECTED)
+    assert await _start_execution(store, lifecycle) is None
+    assert registry.active() == 0
+    (run,) = await store.thread_runs(CH, THREAD)
+    assert run.status is RunStatus.FAILED
+    assert run.error is not None and "not approved or reconciling" in run.error
+
+
+async def test_a_missing_proposal_fails_the_run_without_a_token(
+    store: Store, registry: TokenRegistry, lifecycle: RunLifecycle
+) -> None:
+    assert await _start_execution(store, lifecycle, "missing") is None
+    assert registry.active() == 0
+    (run,) = await store.thread_runs(CH, THREAD)
+    assert run.status is RunStatus.FAILED and "does not exist" in (run.error or "")
+
+
+async def test_losing_the_move_to_executing_issues_no_token(
+    clock: Clock, registry: TokenRegistry
+) -> None:
+    class Racing(MemoryStore):
+        """Another run moves the proposal to executing first."""
+
+        async def get_proposal(self, proposal_id):  # type: ignore[no-untyped-def]
+            record = await super().get_proposal(proposal_id)
+            if record is not None and record.state is ProposalState.APPROVED:
+                await super().transition(proposal_id, ProposalState.EXECUTING)
+            return record
+
+    racing = Racing(clock=clock)
+    lifecycle = RunLifecycle(racing, registry, clock=clock)
+    await _approved(racing)
+    assert await _start_execution(racing, lifecycle) is None
+    assert registry.active() == 0
+    (run,) = await racing.thread_runs(CH, THREAD)
+    assert run.status is RunStatus.FAILED
+    assert "stopped being approved" in (run.error or "")
+
+
+class _NoPoster:
+    async def post(self, channel_id: str, thread_ts: str, text: str) -> str:
+        raise AssertionError("execution runs never post")
+
+
+POLICY = Policy.model_validate(
+    {
+        "channels": {
+            CH: {"repos": [{"repo": "acme-co/web", "nickname": "web", "description": "Web"}]}
+        }
+    }
+)

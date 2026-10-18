@@ -8,7 +8,10 @@ startup.
 A token lasts until the run's deadline plus :data:`GRACE_SECONDS`, never more
 than :data:`~jotflow.whiteboard.tokens.MAX_TOKEN_TTL_SECONDS`. Run timeouts are
 capped at the same constant (``MAX_RUN_TIMEOUT_SECONDS`` in the store), so no
-run outlives its token.
+run outlives its token; a run at the full two hours gets no grace.
+
+An execution run's proposal moves from approved to executing as the run
+starts, which is the state the agent's ``record_result`` requires.
 
 Tokens are never stored or logged. The registry keeps only digests,
 :class:`StartedRun` hides the token from ``repr``, and this module logs run ids
@@ -21,8 +24,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from jotflow.models import Run, RunKind, RunStatus
-from jotflow.store.base import Clock, Recovery, Store, utc_now
+from jotflow.models import ProposalState, Run, RunKind, RunStatus
+from jotflow.store.base import Clock, Recovery, Store, try_transition, utc_now
 from jotflow.whiteboard.tokens import MAX_TOKEN_TTL_SECONDS, Grant, TokenRegistry
 
 log = logging.getLogger("jotflow.runs")
@@ -77,6 +80,12 @@ class RunLifecycle:
         run = await self._store.claim_next_run(max_running=max_running)
         if run is None:
             return None
+        if run.kind is RunKind.EXECUTION:
+            problem = await self._prepare_execution(run)
+            if problem is not None:
+                log.warning("run %s not started: %s", run.id, problem)
+                await self._store.finish_run(run.id, RunStatus.FAILED, error=problem)
+                return None
         try:
             token = self._registry.issue(grant_for(run), token_ttl(run, self._now()))
         except Exception:
@@ -85,6 +94,33 @@ class RunLifecycle:
             raise
         log.info("run %s started (%s)", run.id, run.kind.value)
         return StartedRun(run, token)
+
+    async def _prepare_execution(self, run: Run) -> str | None:
+        """Make the run's proposal executing, so the agent's record_result is accepted.
+
+        An approved proposal moves to executing. A reconciling one stays
+        reconciling, because its run first checks for the hidden marker. Anything
+        else, including losing the move to another run, is a reason not to start.
+        Not one transaction with the claim: if JotFlow stops in between, the
+        proposal is still approved and startup recovery queues it again.
+        """
+        proposal_id = run.proposal_id or ""
+        record = await self._store.get_proposal(proposal_id)
+        if record is None or record.channel_id != run.channel_id:
+            return f"proposal {proposal_id} does not exist"
+        if record.state is ProposalState.RECONCILING:
+            return None
+        if record.state is ProposalState.APPROVED:
+            moved = await try_transition(
+                self._store,
+                proposal_id,
+                ProposalState.EXECUTING,
+                expected={ProposalState.APPROVED},
+            )
+            if moved is not None:
+                return None
+            return f"proposal {proposal_id} stopped being approved before its run started"
+        return f"proposal {proposal_id} is {record.state.value}, not approved or reconciling"
 
     async def finish(
         self, run_id: str, status: RunStatus, *, error: str | None = None

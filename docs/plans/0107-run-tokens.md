@@ -58,6 +58,14 @@ No token is stored or logged. The registry keeps only digests (#105). `StartedRu
   - The token lasts exactly to the deadline plus grace, its lifetime is capped at 2 hours and never zero, and a run timeout over 2 hours is refused.
   - A token failure after the claim fails the run with a fixed reason.
   - The token is in no database file, no log line, and no `repr`.
+- Security's blocker, backed by reviewer: execution runs never moved their proposal to executing, so #109's `record_result` would refuse every result. Fixed in `start_next`, after the claim and before issuing a token:
+  - an approved proposal moves to executing, with `expected={approved}`
+  - a reconciling one stays reconciling
+  - anything else, a missing proposal, or losing the move to another run fails the run with a fixed reason and issues no token
+- The claim and the move are two store calls, because the `Store` protocol has no call that does both in one transaction. A stop between them leaves the proposal approved and the run running; startup recovery (#104) marks the run interrupted and queues a fresh execution run for the approved proposal, so nothing is lost.
+- Tests: one per case, a lost race issuing no token, and an end-to-end test where the real `WriteTools.record_result` applies the proposal after `start_next`.
+- Reviewer's nit, taken: the module docstring and the architecture say a run at the full two hours gets no grace.
+- Follow-up to raise, outside this PR: `record_result` accepts only an executing proposal, so an execution run for a reconciling proposal that finds its marker cannot record the URL.
 - CodeRabbit: skipped. The CLI failed to connect ("Provider identity could not be verified").
 
 ## Handoff notes
