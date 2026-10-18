@@ -7,7 +7,7 @@ The full working rules, for people and coding agents alike, are in [AGENTS.md](A
 ## How work flows
 
 1. **Find or open an issue.** Search open issues first; most planned work already has one, attached to a milestone and its epic. Open a new issue only for work nobody owns yet. Titles take a type prefix such as `feat(slack): ...` or `fix: ...`.
-2. **Branch and plan.** Create a branch like `feat/short-topic`. For anything beyond a small fix, copy [docs/plans/TEMPLATE.md](docs/plans/TEMPLATE.md) to `docs/plans/<short-topic>.md`, fill it in, and commit it before writing code.
+2. **Branch and plan.** Create a branch like `feat/short-topic`. For anything beyond a small fix, copy [docs/plans/TEMPLATE.md](docs/plans/TEMPLATE.md) to `docs/plans/NNNN-short-topic.md`, where `NNNN` is the issue number padded to four digits, for example `docs/plans/0007-jotflow-init.md` for #7. A plan that serves several issues takes the number of the one it closes or mainly serves, and lists the others on its "Also serves" line. Fill it in and commit it before writing code.
 3. **Open a draft PR early.** Link the issue with `Fixes #N` if the PR completes it, or `Refs #N` if it is partial work.
 4. **Keep the plan current** as you go, then mark the PR ready for review.
 
