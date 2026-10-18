@@ -158,6 +158,6 @@ Alternatives considered:
 - **For #16 and #107.** Issue a token at claim time, and revoke it in `finish_run`'s caller. Tokens need not survive a restart, because recovery re-queues runs with fresh ones.
   - The grant's `thread_ts` is the run's `thread_ts`, which is always set: a top-level post uses its own ts. An execution grant names its proposal.
   - Issue with ttl = run deadline minus now, plus a small grace, capped at `whiteboard.tokens.MAX_TOKEN_TTL_SECONDS`.
-  - The store's run-timeout ceiling, one day today, should drop to that same cap once #105 merges.
+  - The store's run-timeout ceiling is now that same cap, two hours. This was a follow-up PR after #104, Refs #107.
 - **For #30.** An execution run claimed for a `reconciling` proposal must check the marker first. The store leaves that proposal in `reconciling`, and the existing proposal transitions decide where it goes next.
 - **`init.py`.** One line changed so a re-run keeps agent settings other than the preset. Product was told.

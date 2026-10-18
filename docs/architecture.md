@@ -226,7 +226,7 @@ This is the novel and risky piece. The agent, not the orchestrator, decides wher
 
 Every agent run is recorded in the team's own database (D8).
 
-- A run has a kind (drafting, execution, and from M5 question), a status, a deadline, and its linked proposal.
+- A run has a kind (drafting, execution, and from M5 question), a status, a deadline, and its linked proposal. Its timeout is at most two hours, the longest an MCP token lasts, so no run outlives its token.
 - The database enforces the per-thread rule, so it holds across a restart or a second process. A partial unique index allows one running run per thread. A top-level post is its own thread: its run carries the post's own ts, which is also the `thread_ts` Slack gives every reply to it, so a post and its replies share one lock. A burst during a run coalesces into one queued follow-up. An approved proposal has at most one queued or running execution run.
 - At most one run per thread at a time, of any kind, including execution. A follow-up reply arriving while an issue is being created waits until the issue number exists, so it can become an update proposal rather than a second new issue. Messages arriving during a run trigger a fresh run afterwards, and the newer proposal supersedes the older pending one.
 - A total concurrency cap, `[agent] max_concurrent_runs` in `jotflow.toml` (default 2), limits how many agent processes run at once. The oldest queued run whose thread is free starts first.

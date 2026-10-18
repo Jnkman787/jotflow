@@ -39,6 +39,10 @@ from jotflow.models import (
     UpdateProposal,
 )
 from jotflow.store.hashing import content_hash
+from jotflow.whiteboard.tokens import MAX_TOKEN_TTL_SECONDS
+
+# A run must not outlive its MCP token, which lasts at most this long (#105).
+MAX_RUN_TIMEOUT_SECONDS = MAX_TOKEN_TTL_SECONDS
 
 LinkSource = Literal["agent", "person"]
 Clock = Callable[[], datetime]
@@ -145,8 +149,11 @@ def check_run_request(
     elif proposal_id is not None:
         raise ValueError("only an execution run names a proposal")
     seconds = int(timeout.total_seconds())
-    if not 0 < seconds <= 86_400:
-        raise ValueError("a run timeout must be between 1 second and 1 day")
+    if not 0 < seconds <= MAX_RUN_TIMEOUT_SECONDS:
+        raise ValueError(
+            f"a run timeout must be between 1 second and {MAX_RUN_TIMEOUT_SECONDS // 3600} hours, "
+            "the longest an MCP token lasts"
+        )
     return seconds
 
 

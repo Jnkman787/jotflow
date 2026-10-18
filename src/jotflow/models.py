@@ -268,7 +268,12 @@ class Run(BaseModel):
         default=None, description="Required for execution runs: the approved proposal"
     )
     timeout_seconds: int = Field(
-        default=600, gt=0, le=86_400, description="How long the run may run once started"
+        default=600,
+        gt=0,
+        # The same 2 hours as whiteboard.tokens.MAX_TOKEN_TTL_SECONDS, which
+        # cannot be imported here; tests/test_store_runs.py checks they agree.
+        le=7_200,
+        description="How long the run may run once started; at most the token lifetime",
     )
     created_at: AwareDatetime
     deadline: AwareDatetime

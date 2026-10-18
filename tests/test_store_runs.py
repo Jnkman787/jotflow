@@ -116,8 +116,8 @@ async def test_custom_timeout(store: Store, clock: Clock) -> None:
     [
         (E, None, None, "needs proposal_id"),
         (D, "p1", None, "only an execution run"),
-        (D, None, timedelta(0), "between 1 second and 1 day"),
-        (D, None, timedelta(days=2), "between 1 second and 1 day"),
+        (D, None, timedelta(0), "between 1 second and 2 hours"),
+        (D, None, timedelta(hours=2, seconds=1), "between 1 second and 2 hours"),
     ],
 )
 async def test_bad_enqueue_requests(
@@ -448,3 +448,20 @@ async def test_the_database_refuses_an_execution_run_without_a_proposal(tmp_path
             " deadline) VALUES ('r1', 'execution', 'queued', ?, 60, ?, ?)",
             (CH, when, when),
         )
+
+
+def test_no_run_outlives_its_token() -> None:
+    from jotflow.models import Run
+    from jotflow.store.base import MAX_RUN_TIMEOUT_SECONDS
+    from jotflow.whiteboard.tokens import MAX_TOKEN_TTL_SECONDS
+
+    assert MAX_RUN_TIMEOUT_SECONDS == MAX_TOKEN_TTL_SECONDS
+    limit = next(m for m in Run.model_fields["timeout_seconds"].metadata if hasattr(m, "le"))
+    assert limit.le == MAX_TOKEN_TTL_SECONDS
+    for timeout in DEFAULT_RUN_TIMEOUTS.values():
+        assert timeout.total_seconds() <= MAX_TOKEN_TTL_SECONDS
+
+
+async def test_a_two_hour_timeout_is_allowed(store: Store) -> None:
+    run = await store.enqueue_run(D, CH, T1, timeout=timedelta(hours=2))
+    assert run.timeout_seconds == 7200
