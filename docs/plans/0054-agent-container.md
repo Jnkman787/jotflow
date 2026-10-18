@@ -96,7 +96,7 @@ Alternatives considered:
 - [x] CI: build the agent image, prove no Slack variable inside it
 - [x] Update documentation: Deployment, README setup for `agent.env`
 - [x] `make check` passes
-- [ ] CodeRabbit local review, or skipped
+- [x] CodeRabbit local review, or skipped: skipped, rate limit
 - [ ] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
@@ -113,6 +113,7 @@ Alternatives considered:
   - a launched stand-in agent reads its MCP config and calls JotFlow's real MCP server on loopback with its issued token: HTTP 200, with tools-only capabilities.
   - the subcommand and its settings, and configuration problems exit 2 naming the variable
 - Local Docker, Docker 28.3: the agent image builds with Node 20 and runs as uid 10002. With Slack sentinels in `.env`, neither `docker compose run agent env` nor the runner process's own environment holds them. The runner answers 401 without the secret and 404 with it. CI's `agent-image` job repeats this.
+- CodeRabbit: skipped. The free CLI allowance was used up ("Rate limit exceeded").
 - `docker compose config --services` lists only `jotflow` by default, and both with `COMPOSE_PROFILES=agent`.
 
 ## Handoff notes
