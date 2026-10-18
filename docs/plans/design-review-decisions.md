@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #51
-- Draft PR: to be opened with this plan
+- Draft PR: #52
 - Status: implementing
-- Last verified: plan committed
-- Next safe action: write roadmap.md decisions D6 to D12
+- Last verified: docs written, not yet reviewed
+- Next safe action: update affected issues and create the new ones listed in roadmap.md
 
 ## Objective and done-when
 
@@ -33,10 +33,11 @@ Docs only. Each decision gets a row in the roadmap decisions table with the reas
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] roadmap.md: decisions D6 to D12, milestone changes, post-v1 additions
-- [ ] architecture.md: apply every decision, fix stale and overstated claims
-- [ ] SECURITY.md: replace the GitHub writer reference
+- [x] Commit this plan and open the draft PR
+- [x] roadmap.md: decisions D6 to D12, milestone changes, post-v1 additions
+- [x] architecture.md: apply every decision, fix stale and overstated claims
+- [x] SECURITY.md: replace the GitHub writer reference
+- [x] README, AGENTS.md, CONTRIBUTING.md: reword the GitHub credentials principle
 - [ ] Update affected issues and create new ones
 - [ ] Teammate review of the diff
 - [ ] Mark the PR ready for review

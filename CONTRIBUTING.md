@@ -24,7 +24,7 @@ The full working rules, for people and coding agents alike, are in [AGENTS.md](A
 
 Contributions that violate these will not be merged:
 
-- JotFlow never holds GitHub credentials. The team's agent performs every GitHub write, and only when JotFlow hands it an approved proposal.
+- JotFlow's code never uses GitHub credentials. The team's agent performs every GitHub write, in its own container, and only when JotFlow hands it an approved proposal.
 - JotFlow stores pointers, not message content.
 - JotFlow never calls an LLM itself; the team supplies the agent.
 - No hosted component, no telemetry.

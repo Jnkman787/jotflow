@@ -8,7 +8,7 @@ Please do not open a public issue for security problems.
 
 Use GitHub's private vulnerability reporting on this repository: go to the **Security** tab and choose **Report a vulnerability**. You will get an acknowledgement within a few days and a status update once the report has been assessed.
 
-Please include steps to reproduce, the affected component (orchestrator, MCP server, adapter, GitHub writer), and what an attacker gains.
+Please include steps to reproduce, the affected component (orchestrator, MCP server, agent adapter, execution runs), and what an attacker gains.
 
 ## Scope
 
