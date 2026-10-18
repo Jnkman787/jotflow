@@ -208,6 +208,9 @@ def read_tools(
         if grant.kind is RunKind.EXECUTION:
             return Work(kind=grant.kind, execution=await _execution(grant, run.proposal_id))
         thread = await work_source.thread(grant.channel_id, run.thread_ts)
+        if (thread.channel_id, thread.thread_ts) != (grant.channel_id, run.thread_ts):
+            # A source bug must not let this run see, or later link, another thread.
+            raise ToolError(f"the thread source returned another thread for run {run.id}")
         index = await topics(grant, NoArguments())
         related = await work_source.related(grant.channel_id, run.thread_ts, index)
         # Record the run's own thread, and only that: link_message (#15) then accepts
@@ -216,7 +219,7 @@ def read_tools(
         await store.record_packet(
             run.id,
             [
-                MessageRef(channel_id=grant.channel_id, ts=m.ts, thread_ts=thread.thread_ts)
+                MessageRef(channel_id=grant.channel_id, ts=m.ts, thread_ts=run.thread_ts)
                 for m in thread.messages
             ],
         )

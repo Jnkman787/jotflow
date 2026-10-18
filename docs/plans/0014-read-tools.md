@@ -114,7 +114,8 @@ Alternative considered: taking `channel_id` as an argument and checking it again
 - **Blocker: `check_marker_first` contradicted D8.** The field is gone. `EXECUTION_NOTICE` tells every execution run to list recent issues and comments and look for the marker before writing.
 - **Nit: content check.** `get_work` refuses an execution proposal whose draft no longer matches its locked content hash (D7).
 - **Nit: `get_work(run_id)` wording.** The architecture's agent output contract and D1 now say `get_work` takes no arguments, because the token names the run.
-- **Security's note: schema mode.** Output schemas use `model_json_schema(mode="serialization")`, matching what `model_dump(mode="json")` sends.
+- **Security's note: schema mode.** Output schemas use `model_json_schema(mode="serialization")`, matching what `model_dump(mode="json")` sends. An earlier summary claimed this was in when the edit had not applied; security caught it at cb379b1. It is now in, with a test that each advertised schema equals the serialization schema and validates a real dumped result.
+- **Reviewer's nit, taken at the team lead's request.** Recorded pointers carry `run.thread_ts`, not the value the source returned. If the source returns another channel or thread, `get_work` refuses and records nothing. Tests cover both.
 - **Team lead's correction: packet recording.** `get_work` records only the run's own thread through `record_packet`, not related excerpts, so a run's links stay inside the thread its token names. A test calls #109's real `link_message`: a served message is accepted, and a related excerpt or an unserved message is refused.
 - `ToolError` came from #109, which merged first.
 

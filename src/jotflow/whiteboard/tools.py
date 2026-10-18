@@ -47,7 +47,10 @@ class ToolSpec:
         return self.input_model.model_json_schema()
 
     def output_schema(self) -> dict[str, Any] | None:
-        return None if self.output_model is None else self.output_model.model_json_schema()
+        if self.output_model is None:
+            return None
+        # Serialization mode: the schema of what model_dump(mode="json") sends.
+        return self.output_model.model_json_schema(mode="serialization")
 
 
 TOOLS: tuple[ToolSpec, ...] = ()

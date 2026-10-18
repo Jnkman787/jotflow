@@ -432,3 +432,49 @@ async def test_an_execution_packet_records_no_slack_pointers(
     grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
     await call(tools(store, clock)["get_work"], grant)
     assert await store.packet_ref(grant.run_id, CH, POST) is None
+
+
+async def test_a_source_returning_another_thread_is_refused(
+    store: MemoryStore, clock: Clock
+) -> None:
+    class WrongThread(FakeSource):
+        async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
+            fetched = await super().thread(channel_id, thread_ts)
+            return fetched.model_copy(update={"thread_ts": "1760799999.000999"})
+
+    grant = await running(store)
+    with pytest.raises(ToolError, match="returned another thread"):
+        await call(tools(store, clock, WrongThread())["get_work"], grant)
+    # Nothing was recorded, so nothing from that thread can be linked.
+    assert await store.packet_ref(grant.run_id, CH, POST) is None
+
+
+async def test_recorded_pointers_carry_the_runs_own_thread(
+    store: MemoryStore, clock: Clock
+) -> None:
+    grant = await running(store)
+    await call(tools(store, clock)["get_work"], grant)
+    served = await store.packet_ref(grant.run_id, CH, POST)
+    run = await store.get_run(grant.run_id)
+    assert served is not None and run is not None
+    assert served.thread_ts == run.thread_ts
+
+
+async def test_advertised_schemas_validate_real_results(store: MemoryStore, clock: Clock) -> None:
+    import jsonschema
+
+    by_name = tools(store, clock)
+    topic = await store.create_topic(CH, "Progress bar")
+    await store.link_message(MessageRef(channel_id=CH, ts=POST), topic.topic.id)
+    grant = await running(store)
+    results = {
+        "list_topics": await call(by_name["list_topics"], grant),
+        "get_topic": await call(
+            by_name["get_topic"], grant, GetTopicInput(topic_id=topic.topic.id)
+        ),
+        "get_work": await call(by_name["get_work"], grant),
+    }
+    for name, result in results.items():
+        schema = by_name[name].output_schema()
+        assert schema == type(result).model_json_schema(mode="serialization")
+        jsonschema.validate(result.model_dump(mode="json"), schema)
