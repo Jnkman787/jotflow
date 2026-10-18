@@ -14,7 +14,7 @@ import os
 import secrets
 from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Self
 
@@ -29,10 +29,15 @@ from jotflow.models import (
     Proposal,
     ProposalRecord,
     ProposalState,
+    Run,
+    RunKind,
+    RunStatus,
     Topic,
     UpdateProposal,
 )
 from jotflow.store.base import (
+    ACTIVE_RUN_STATUSES,
+    DEFAULT_RUN_TIMEOUTS,
     ChannelModeSetting,
     Clock,
     ConflictError,
@@ -40,12 +45,15 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    Recovery,
     StoreError,
     TopicRecord,
     check_clearable,
+    check_finish,
     check_github_login,
     check_id,
     check_new_proposal,
+    check_run_request,
     cleared_draft,
     from_text,
     plan_transition,
@@ -394,12 +402,10 @@ class SqliteStore:
         async with self._lock:
             return await self._get_proposal(proposal_id)
 
-    async def thread_proposals(
-        self, channel_id: str, thread_ts: str | None
-    ) -> list[ProposalRecord]:
+    async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         async with self._lock:
             rows = await self._all(
-                "SELECT * FROM proposals WHERE channel_id = ? AND thread_ts IS ?"
+                "SELECT * FROM proposals WHERE channel_id = ? AND thread_ts = ?"
                 " ORDER BY created_at, id",
                 (channel_id, thread_ts),
             )
@@ -456,11 +462,11 @@ class SqliteStore:
         return _found(updated)
 
     async def supersede_pending(
-        self, channel_id: str, thread_ts: str | None, *, keep_id: str
+        self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         async with self._write():
             rows = await self._all(
-                "SELECT id, draft_json FROM proposals WHERE channel_id = ? AND thread_ts IS ?"
+                "SELECT id, draft_json FROM proposals WHERE channel_id = ? AND thread_ts = ?"
                 " AND state = 'pending' AND id != ? ORDER BY id",
                 (channel_id, thread_ts, keep_id),
             )
@@ -601,6 +607,242 @@ class SqliteStore:
         async with self._lock:
             row = await self._one("SELECT * FROM channel_modes WHERE channel_id = ?", (channel_id,))
         return None if row is None else self._mode(row)
+
+    # Runs (D8, #53)
+
+    @staticmethod
+    def _run(row: aiosqlite.Row) -> Run:
+        return Run(
+            id=row["id"],
+            kind=RunKind(row["kind"]),
+            status=RunStatus(row["status"]),
+            channel_id=row["channel_id"],
+            thread_ts=row["thread_ts"],
+            proposal_id=row["proposal_id"],
+            timeout_seconds=row["timeout_seconds"],
+            created_at=from_text(row["created_at"]),
+            deadline=from_text(row["deadline"]),
+            started_at=None if row["started_at"] is None else from_text(row["started_at"]),
+            finished_at=None if row["finished_at"] is None else from_text(row["finished_at"]),
+            error=row["error"],
+        )
+
+    async def _get_run(self, run_id: str) -> Run | None:
+        row = await self._one("SELECT * FROM runs WHERE id = ?", (run_id,))
+        return None if row is None else self._run(row)
+
+    async def _active_run_for(
+        self, kind: RunKind, channel_id: str, thread_ts: str, proposal_id: str | None
+    ) -> Run | None:
+        """The queued run new work of this kind would coalesce with, if any."""
+        if kind is RunKind.DRAFTING:
+            row = await self._one(
+                "SELECT * FROM runs WHERE kind = 'drafting' AND status = 'queued'"
+                " AND channel_id = ? AND thread_ts = ?",
+                (channel_id, thread_ts),
+            )
+        elif kind is RunKind.EXECUTION:
+            row = await self._one(
+                "SELECT * FROM runs WHERE kind = 'execution' AND status IN ('queued', 'running')"
+                " AND proposal_id = ?",
+                (proposal_id,),
+            )
+        else:
+            return None
+        return None if row is None else self._run(row)
+
+    async def _insert_run(
+        self,
+        kind: RunKind,
+        channel_id: str,
+        thread_ts: str,
+        proposal_id: str | None,
+        seconds: int,
+    ) -> str:
+        run_id = secrets.token_hex(8)
+        now = self._clock()
+        await self._db.execute(
+            """
+            INSERT INTO runs (id, kind, status, channel_id, thread_ts, proposal_id,
+                timeout_seconds, created_at, deadline)
+            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                kind.value,
+                channel_id,
+                thread_ts,
+                proposal_id,
+                seconds,
+                to_text(now),
+                to_text(now + timedelta(seconds=seconds)),
+            ),
+        )
+        return run_id
+
+    async def enqueue_run(
+        self,
+        kind: RunKind,
+        channel_id: str,
+        thread_ts: str,
+        *,
+        proposal_id: str | None = None,
+        timeout: timedelta | None = None,
+    ) -> Run:
+        seconds = check_run_request(
+            kind,
+            channel_id,
+            thread_ts,
+            proposal_id,
+            DEFAULT_RUN_TIMEOUTS[kind] if timeout is None else timeout,
+        )
+        async with self._write():
+            existing = await self._active_run_for(kind, channel_id, thread_ts, proposal_id)
+            if existing is not None:
+                return existing
+            run_id = await self._insert_run(kind, channel_id, thread_ts, proposal_id, seconds)
+            run = await self._get_run(run_id)
+        return _found(run)
+
+    # Ties in created_at break by rowid, which is insertion order, so runs
+    # queued in the same instant still start first in, first out.
+
+    async def claim_next_run(self, *, max_running: int) -> Run | None:
+        if max_running < 1:
+            raise ValueError("max_running must be at least 1")
+        async with self._write():
+            row = await self._one("SELECT count(*) FROM runs WHERE status = 'running'")
+            if row is not None and row[0] >= max_running:
+                return None
+            row = await self._one(
+                """
+                SELECT r.* FROM runs AS r
+                WHERE r.status = 'queued' AND NOT EXISTS (
+                    SELECT 1 FROM runs AS x WHERE x.status = 'running'
+                    AND x.channel_id = r.channel_id AND x.thread_ts = r.thread_ts
+                )
+                ORDER BY r.created_at, r.rowid LIMIT 1
+                """
+            )
+            if row is None:
+                return None
+            now = self._clock()
+            await self._db.execute(
+                "UPDATE runs SET status = 'running', started_at = ?, deadline = ?"
+                " WHERE id = ? AND status = 'queued'",
+                (
+                    to_text(now),
+                    to_text(now + timedelta(seconds=row["timeout_seconds"])),
+                    row["id"],
+                ),
+            )
+            run = await self._get_run(row["id"])
+        return _found(run)
+
+    async def finish_run(
+        self, run_id: str, status: RunStatus, *, error: str | None = None
+    ) -> Run | None:
+        async with self._write():
+            run = await self._get_run(run_id)
+            if run is None:
+                raise NotFoundError(f"no run {run_id}")
+            if run.status not in ACTIVE_RUN_STATUSES:
+                return None
+            bounded = check_finish(run, status, error)
+            await self._db.execute(
+                "UPDATE runs SET status = ?, finished_at = ?, error = ?"
+                " WHERE id = ? AND status = ?",
+                (status.value, to_text(self._clock()), bounded, run_id, run.status.value),
+            )
+            finished = await self._get_run(run_id)
+        return _found(finished)
+
+    async def get_run(self, run_id: str) -> Run | None:
+        async with self._lock:
+            return await self._get_run(run_id)
+
+    async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM runs WHERE channel_id = ? AND thread_ts = ?"
+                " ORDER BY created_at, rowid",
+                (channel_id, thread_ts),
+            )
+        return [self._run(row) for row in rows]
+
+    async def overdue_runs(self) -> list[Run]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM runs WHERE status = 'running' AND deadline < ?"
+                " ORDER BY deadline, id",
+                (to_text(self._clock()),),
+            )
+        return [self._run(row) for row in rows]
+
+    async def recover_runs(self) -> Recovery:
+        async with self._write():
+            rows = await self._all(
+                "SELECT * FROM runs WHERE status IN ('queued', 'running')"
+                " ORDER BY created_at, rowid"
+            )
+            runs = [self._run(row) for row in rows]
+            now = self._clock()
+            await self._db.executemany(
+                "UPDATE runs SET status = 'interrupted', finished_at = ? WHERE id = ?",
+                [(to_text(now), run.id) for run in runs],
+            )
+            requeued: list[str] = []
+            threads: set[tuple[str, str]] = set()
+            timeouts: dict[str, int] = {}
+            for run in runs:
+                if run.kind is RunKind.DRAFTING and (run.channel_id, run.thread_ts) not in threads:
+                    threads.add((run.channel_id, run.thread_ts))
+                    requeued.append(
+                        await self._insert_run(
+                            run.kind, run.channel_id, run.thread_ts, None, run.timeout_seconds
+                        )
+                    )
+                elif run.kind is RunKind.EXECUTION and run.proposal_id is not None:
+                    timeouts.setdefault(run.proposal_id, run.timeout_seconds)
+            # Every proposal waiting to be written gets one execution run, whether
+            # or not its last run was recorded: this also covers a crash between
+            # approving a proposal and queuing its run.
+            waiting = await self._all(
+                "SELECT id FROM proposals WHERE state IN ('approved', 'executing', 'reconciling')"
+                " ORDER BY created_at, rowid"
+            )
+            reconciling: list[str] = []
+            for row in waiting:
+                record = _found(await self._get_proposal(row["id"]))
+                if record.state is ProposalState.EXECUTING:
+                    changes = plan_transition(
+                        record,
+                        ProposalState.RECONCILING,
+                        expected={ProposalState.EXECUTING},
+                        approved_by=None,
+                        expected_hash=None,
+                        result=None,
+                        now=now,
+                    )
+                    await self._db.execute(
+                        "UPDATE proposals SET state = ?, updated_at = ?"
+                        " WHERE id = ? AND state = 'executing'",
+                        (changes.state.value, to_text(now), record.id),
+                    )
+                    reconciling.append(record.id)
+                seconds = timeouts.get(
+                    record.id, int(DEFAULT_RUN_TIMEOUTS[RunKind.EXECUTION].total_seconds())
+                )
+                requeued.append(
+                    await self._insert_run(
+                        RunKind.EXECUTION, record.channel_id, record.thread_ts, record.id, seconds
+                    )
+                )
+        return Recovery(
+            interrupted=tuple(run.id for run in runs),
+            requeued=tuple(requeued),
+            reconciling=tuple(reconciling),
+        )
 
 
 async def schema_version(db: aiosqlite.Connection) -> int:

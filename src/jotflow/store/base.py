@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
 from jotflow.models import (
@@ -32,6 +32,9 @@ from jotflow.models import (
     MessageRef,
     ProposalRecord,
     ProposalState,
+    Run,
+    RunKind,
+    RunStatus,
     Topic,
     UpdateProposal,
 )
@@ -59,6 +62,27 @@ AUTO_APPROVER = "auto"
 FINAL_STATES = frozenset({S.APPLIED, S.REJECTED, S.SUPERSEDED})
 CLEARABLE_STATES = FINAL_STATES | {S.FAILED}
 CLEARED_TITLE = "(cleared)"
+
+R = RunStatus
+# Run lifecycle; see the run diagram in docs/architecture.md. Interrupted is
+# set only by recover_runs at startup, so it is not a finish_run target.
+ALLOWED_RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
+    R.QUEUED: frozenset({R.RUNNING, R.FAILED, R.INTERRUPTED}),
+    R.RUNNING: frozenset({R.SUCCEEDED, R.FAILED, R.TIMED_OUT, R.INTERRUPTED}),
+    R.SUCCEEDED: frozenset(),
+    R.FAILED: frozenset(),
+    R.TIMED_OUT: frozenset(),
+    R.INTERRUPTED: frozenset(),
+}
+ACTIVE_RUN_STATUSES = frozenset({R.QUEUED, R.RUNNING})
+FINISH_STATUSES = frozenset({R.SUCCEEDED, R.FAILED, R.TIMED_OUT})
+MAX_RUN_ERROR = 2000
+
+DEFAULT_RUN_TIMEOUTS: dict[RunKind, timedelta] = {
+    RunKind.DRAFTING: timedelta(minutes=10),
+    RunKind.EXECUTION: timedelta(minutes=5),
+    RunKind.QUESTION: timedelta(minutes=5),
+}
 
 _GITHUB_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
 
@@ -95,6 +119,52 @@ class DraftClearedError(TransitionError):
 
 class ContentChangedError(StoreError):
     """Approval named a content hash that no longer matches the draft."""
+
+
+@dataclass(frozen=True)
+class Recovery:
+    """What :meth:`Store.recover_runs` did at startup, for the log."""
+
+    interrupted: tuple[str, ...]  # run ids marked interrupted
+    requeued: tuple[str, ...]  # new run ids queued to replace them
+    reconciling: tuple[str, ...]  # proposal ids moved from executing to reconciling
+
+
+def check_run_request(
+    kind: RunKind, channel_id: str, thread_ts: str, proposal_id: str | None, timeout: timedelta
+) -> int:
+    """Validate an enqueue request; return the timeout in whole seconds."""
+    check_id(channel_id, "channel id")
+    # A top-level post is its own thread: pass its ts, never None, so a reply
+    # to it, whose thread_ts is that same ts, shares the per-thread lock.
+    check_id(thread_ts, "thread ts")
+    if kind is RunKind.EXECUTION:
+        if proposal_id is None:
+            raise ValueError("an execution run needs proposal_id")
+        check_id(proposal_id, "proposal id")
+    elif proposal_id is not None:
+        raise ValueError("only an execution run names a proposal")
+    seconds = int(timeout.total_seconds())
+    if not 0 < seconds <= 86_400:
+        raise ValueError("a run timeout must be between 1 second and 1 day")
+    return seconds
+
+
+def check_finish(run: Run, status: RunStatus, error: str | None) -> str | None:
+    """Validate a finish request; return the bounded error to store.
+
+    Raises ``ValueError`` for a status that is not a finish, or an error on a
+    success. A run that already finished is not an error here; callers check
+    :data:`ACTIVE_RUN_STATUSES` and return None, so a late timeout and a late
+    success cannot both win.
+    """
+    if status not in FINISH_STATUSES:
+        raise ValueError(f"{status} is not a finishing status")
+    if status is RunStatus.SUCCEEDED and error is not None:
+        raise ValueError("a successful run has no error")
+    if run.status is RunStatus.QUEUED and status is not RunStatus.FAILED:
+        raise ValueError("a queued run can only be cancelled, as failed")
+    return None if error is None else error[:MAX_RUN_ERROR]
 
 
 @dataclass(frozen=True)
@@ -184,6 +254,9 @@ def check_new_proposal(record: ProposalRecord) -> None:
     check_id(record.id, "proposal id")
     check_id(record.channel_id, "channel id")
     check_id(record.run_id, "run id")
+    # A top-level post is its own thread: its ts, never empty, so the proposal
+    # shares the per-thread lock, supersede_pending, and recovery with its runs.
+    check_id(record.thread_ts, "thread ts")
     if record.state is not ProposalState.PENDING:
         raise ValueError("a new proposal must be pending")
     if record.content_hash or record.approved_by or record.approved_at or record.result:
@@ -371,9 +444,7 @@ class Store(Protocol):
 
     async def get_proposal(self, proposal_id: str) -> ProposalRecord | None: ...
 
-    async def thread_proposals(
-        self, channel_id: str, thread_ts: str | None
-    ) -> list[ProposalRecord]:
+    async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         """Proposals from one thread, oldest first."""
         ...
 
@@ -398,7 +469,7 @@ class Store(Protocol):
         ...
 
     async def supersede_pending(
-        self, channel_id: str, thread_ts: str | None, *, keep_id: str
+        self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         """Mark every other pending proposal in the thread superseded, clearing their
         drafts; return their ids."""
@@ -419,3 +490,60 @@ class Store(Protocol):
     ) -> ChannelModeSetting: ...
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None: ...
+
+    # Runs (D8, #53)
+    async def enqueue_run(
+        self,
+        kind: RunKind,
+        channel_id: str,
+        thread_ts: str,
+        *,
+        proposal_id: str | None = None,
+        timeout: timedelta | None = None,
+    ) -> Run:
+        """Queue a run, or return the one already queued for the same work.
+
+        A drafting run coalesces with a queued drafting run for the same
+        thread; an execution run with a queued or running one for the same
+        proposal. ``timeout`` defaults to :data:`DEFAULT_RUN_TIMEOUTS`.
+
+        ``thread_ts`` is the thread's parent ts. For a top-level post with no
+        replies that is the post's own ts, as Slack does for its replies.
+        """
+        ...
+
+    async def claim_next_run(self, *, max_running: int) -> Run | None:
+        """Start the oldest queued run whose thread has no running run.
+
+        Atomic, and only while fewer than ``max_running`` runs are running.
+        The claimed run's deadline becomes its start plus its timeout.
+        """
+        ...
+
+    async def finish_run(
+        self, run_id: str, status: RunStatus, *, error: str | None = None
+    ) -> Run | None:
+        """End a run. Returns None if it had already ended; see :func:`check_finish`."""
+        ...
+
+    async def get_run(self, run_id: str) -> Run | None: ...
+
+    async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
+        """Runs for one thread, oldest first."""
+        ...
+
+    async def overdue_runs(self) -> list[Run]:
+        """Running runs past their deadline, oldest deadline first."""
+        ...
+
+    async def recover_runs(self) -> Recovery:
+        """At startup, in one transaction, settle every run a restart interrupted.
+
+        Queued and running runs become interrupted. Each thread that had an
+        interrupted drafting run gets one fresh drafting run. Every approved,
+        executing, or reconciling proposal without a live execution run gets
+        one, which also covers a crash between approving and queuing. An
+        executing proposal first moves to reconciling, through the shared
+        transition rules, because its write may have started.
+        """
+        ...

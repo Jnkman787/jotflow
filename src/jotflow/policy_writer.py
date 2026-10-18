@@ -61,6 +61,7 @@ def render_policy(policy: Policy) -> str:
         lines.append(f"preset = {toml_string(policy.agent.preset)}")
     else:
         lines.append('# preset = "claude-code"  # unset: JotFlow connects but starts no agent runs')
+    lines.append(f"max_concurrent_runs = {policy.agent.max_concurrent_runs}")
     lines += [
         "",
         "[approval]",

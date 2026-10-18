@@ -310,3 +310,18 @@ def test_invisible_characters_are_named() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
     with pytest.raises(InvalidLabelError, match="invisible characters"):
         repo.check_labels(["b\u200bug"])
+
+
+def test_run_cap_defaults_to_two() -> None:
+    assert parse_policy(MINIMAL).agent.max_concurrent_runs == 2
+
+
+@pytest.mark.parametrize("value", [0, 33, -1])
+def test_run_cap_is_bounded(value: int) -> None:
+    [problem] = problems(f"[agent]\nmax_concurrent_runs = {value}\n" + MINIMAL)
+    assert problem.startswith("agent.max_concurrent_runs: ")
+
+
+def test_run_cap_is_read() -> None:
+    policy = parse_policy("[agent]\nmax_concurrent_runs = 5\n" + MINIMAL)
+    assert policy.agent.max_concurrent_runs == 5

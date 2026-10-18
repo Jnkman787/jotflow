@@ -273,10 +273,17 @@ async def test_thread_proposals_oldest_first(store: Store) -> None:
     t0 = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
     await store.add_proposal(record("b", created=t0 + timedelta(seconds=5)))
     await store.add_proposal(record("a", created=t0))
-    await store.add_proposal(record("c", thread=None))
+    await store.add_proposal(record("c", thread="1760781700.000200"))
     await store.add_proposal(record("d", channel=OTHER))
     assert [p.id for p in await store.thread_proposals(CH, "1760781600.000100")] == ["a", "b"]
-    assert [p.id for p in await store.thread_proposals(CH, None)] == ["c"]
+    assert [p.id for p in await store.thread_proposals(CH, "1760781700.000200")] == ["c"]
+
+
+@pytest.mark.parametrize("thread", [None, ""])
+async def test_a_proposal_needs_its_thread(store: Store, thread: str | None) -> None:
+    # A top-level post is its own thread, so a proposal always names one.
+    with pytest.raises(ValueError):
+        await store.add_proposal(record("p1", thread=thread))
 
 
 async def test_approval_locks_the_content_hash(store: Store, clock: Clock) -> None:

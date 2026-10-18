@@ -712,3 +712,16 @@ def test_an_unsupported_existing_preset_is_named_before_it_is_dropped(
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "names the preset codex-cli, which JotFlow does not ship yet" in script.text
     assert load_policy(options.config_file).agent.preset is None
+
+
+def test_rerun_keeps_the_run_cap(options: InitOptions) -> None:
+    options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
+    example = EXAMPLE.read_text()
+    assert "max_concurrent_runs = 2" in example
+    options.config_file.write_text(
+        example.replace("max_concurrent_runs = 2", "max_concurrent_runs = 6")
+    )
+    # keep both tokens, rewrite the policy with one channel, choose no preset
+    script = Script(answers=["", "", "n", *POLICY])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert load_policy(options.config_file).agent.max_concurrent_runs == 6

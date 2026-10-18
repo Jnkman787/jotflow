@@ -227,9 +227,24 @@ This is the novel and risky piece. The agent, not the orchestrator, decides wher
 Every agent run is recorded in the team's own database (D8).
 
 - A run has a kind (drafting, execution, and from M5 question), a status, a deadline, and its linked proposal.
+- The database enforces the per-thread rule, so it holds across a restart or a second process. A partial unique index allows one running run per thread. A top-level post is its own thread: its run carries the post's own ts, which is also the `thread_ts` Slack gives every reply to it, so a post and its replies share one lock. A burst during a run coalesces into one queued follow-up. An approved proposal has at most one queued or running execution run.
 - At most one run per thread at a time, of any kind, including execution. A follow-up reply arriving while an issue is being created waits until the issue number exists, so it can become an update proposal rather than a second new issue. Messages arriving during a run trigger a fresh run afterwards, and the newer proposal supersedes the older pending one.
-- A total concurrency cap limits how many agent processes run at once.
-- On restart, interrupted drafting runs are re-queued and interrupted execution runs are reconciled: the next attempt checks for the proposal's hidden marker before writing.
+- A total concurrency cap, `[agent] max_concurrent_runs` in `jotflow.toml` (default 2), limits how many agent processes run at once. The oldest queued run whose thread is free starts first.
+- On restart, every queued or running run is marked interrupted. Each thread with an interrupted drafting run gets one fresh drafting run. Every proposal that is approved, executing, or reconciling then gets one fresh execution run, whether or not its last run was recorded. That also covers a crash between approving a proposal and queuing its run. A proposal that was executing moves to reconciling first, through the same transition rules as everywhere else, so the next attempt checks for the proposal's hidden marker before writing. A proposal still approved never started its write and stays approved. Any other proposal gets no new run.
+- Run states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued: enqueued, or coalesced with one already queued
+    queued --> running: claimed under the cap, thread free
+    queued --> failed: cancelled
+    running --> succeeded
+    running --> failed
+    running --> timed_out: past its deadline
+    queued --> interrupted: JotFlow restarted
+    running --> interrupted: JotFlow restarted
+```
+
 - Proposal states and transitions:
 
 ```mermaid
@@ -297,7 +312,7 @@ Two tiers, because every team supplies every value and the two kinds change at d
 
 | Tier | Lives in | Changed by | Holds |
 |---|---|---|---|
-| Policy | `jotflow.toml`, deployed with the service | An admin editing the file | Each channel's repos with nickname and description, optional label lists, optional approver list, reaction approval, `issue_links`, debounce window, topic window, agent preset |
+| Policy | `jotflow.toml`, deployed with the service | An admin editing the file | Each channel's repos with nickname and description, optional label lists, optional approver list, reaction approval, `issue_links`, debounce window, topic window, agent preset and run concurrency cap |
 | Runtime | The local database | Slack slash commands | Channel mode (`propose`, `auto`, `paused`), Slack to GitHub identity links |
 
 The policy file is validated in full at startup. An unknown or misspelt key is an error, and every error names its key, such as `channels.C0123ABCD.repos[0].nickname`. Channels are keyed by Slack channel id; each lists its repos. A repo's `labels` list is optional: without one, a proposal may use any label that already exists on the repo, and a list narrows that set. An explicit empty list is an error, because it could mean either; leaving the key out is the only way to say "any". Lists are per repo because labels are per repo on GitHub. JotFlow holds no GitHub credentials, so it cannot see which labels exist. The agent's rule is to never invent a label: drafting runs read the repo's labels with read-only access, and the execution run checks each label exists before applying it, since GitHub would otherwise create a missing one. That is a prompt rule, not something JotFlow enforces. JotFlow enforces a label list where a team has set one, and always rejects label names with control characters, line breaks, bidirectional overrides, invisible format characters such as zero-width spaces, or surrounding spaces. An empty approver list means approvers are off. [`jotflow.example.toml`](../jotflow.example.toml) is a complete, commented example. The environment tier holds only the Slack tokens, the MCP host and port, `JOTFLOW_MCP_ALLOWED_HOSTS` (extra `Host` names for the MCP server, such as the Compose service name), the database path, and `JOTFLOW_CONFIG`, the path to the policy file.
