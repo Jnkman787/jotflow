@@ -49,7 +49,7 @@ Alternatives considered: `docker/build-push-action` would add a third-party acti
 
 ## Risks and open questions
 
-- `jotflow run` does not exist until #8 lands, so the default command fails until then. `--version` is the smoke test meanwhile.
+- `jotflow run` is a stub until #8 lands, so the default command does nothing useful until then. `--version` is the smoke test meanwhile.
 - The MCP server will need `JOTFLOW_MCP_HOST` set to listen on the `agents` network in M3. Today it binds to `127.0.0.1`, which is correct while there is no agent container.
 - Named volume ownership relies on Docker copying the mount point's ownership into an empty volume. A bind mount would need the host directory to be writable by the image's uid.
 
@@ -75,12 +75,13 @@ Run locally on 2026-10-18 with Docker 28.3.2 and Compose 2.38.2:
 - `slack_bolt`, `mcp`, `aiosqlite`, and `pydantic_settings` import from the installed, non-editable package.
 - A file written to `/data` survives `docker compose down` and a new run. `/app` is read-only, `/tmp` is writable.
 - With a dummy `.env` and `local.db` in the checkout, a throwaway build that copies the whole context sees only `LICENSE`, `README.md`, `pyproject.toml`, `src/`, and `uv.lock`.
-- `make check` passes.
+- `make check` passes after rebasing on main with #63, and the image still prints `jotflow 0.0.1`.
+- CodeRabbit (local CLI, free allowance): 1 finding, 0 fixed, 1 rejected. It asked to change the default command because `jotflow run` was missing. Since #63 the command exists as a stub that #8 implements, so `jotflow run` is the right default and changing it now would only need reverting.
 - The CI `image` job runs the same build, a version check, a uid check, and a check that Node, npm, and uv are absent.
 - CI on #62 is green: lint, type check, and tests on Python 3.12 and 3.13, the image build, and the PR title check.
 
 ## Handoff notes
 
-- The default command is `jotflow run`, which fails until #8 adds it. The last done-when item, reaching the connected state, is checked once #8 lands, against a live workspace.
+- The default command is `jotflow run`. Since #63 it exists as a stub that prints "not implemented yet"; #8 implements it. The last done-when item, reaching the connected state, is checked once #8 lands, against a live workspace.
 - In M3 (#54), set `JOTFLOW_MCP_HOST` for the jotflow service so the MCP server listens on the `agents` network, add the service name to its `Host` allowlist, and add the agent service on `agents` plus its own egress network.
 - Decision taken here: an allowlist `.dockerignore` (deny everything, allow the five build inputs), so a new secret file can never slip into the context by default.
