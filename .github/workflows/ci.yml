@@ -297,3 +297,22 @@ jobs:
           print("agents-exec reaches agent-exec ok")'
           docker compose --profile agent down
           rm -f .env agent.env agent-exec.env
+
+  # JotFlow launches a run in each agent container and the agent calls back
+  # over MCP with its token, across containers (#54, #55). Stub agents, no
+  # Slack, no model, no GitHub.
+  cross-container:
+    name: Cross-container runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: |
+          docker build --tag jotflow:local .
+          docker build --file Dockerfile.agent --tag jotflow-agent:local .
+
+      - name: JotFlow launches a run in each agent container
+        run: tests/compose/reach_check.sh
