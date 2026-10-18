@@ -4,10 +4,10 @@
 
 - Issue: #55
 - Also serves: #54, whose last box is the cross-container launch
-- Draft PR: pending
-- Status: planning
-- Last verified: plan only
-- Next safe action: the lead confirms the plan and the open questions, then implement part 1
+- PRs: #136 (part 1); parts 2 and 3 follow
+- Status: implementing (part 1 ready for review)
+- Last verified: part 1 `make check` green, 1496 tests, 98.5% coverage, on 2026-10-18
+- Next safe action: reviewer reviews #136. Then part 2, the cross-container check
 
 ## Objective and done-when
 
@@ -29,11 +29,11 @@ The issue's boxes, refined:
 
 From the handoffs on #55:
 
-- [ ] `jotflow run` opens the store and builds the read tools with `SlackWorkSource`, and the write tools with `SlackThreadPoster`. It serves them through `make_mcp_server`, with the same `TokenRegistry` the lifecycle issues from.
+- [x] `jotflow run` opens the store and builds the read tools with `SlackWorkSource`, and the write tools with `SlackThreadPoster`. It serves them through `make_mcp_server`, with the same `TokenRegistry` the lifecycle issues from.
 - [ ] Ingest's accepted messages go to the debouncer, and a loop flushes it. The supervisor runs beside them. At startup, `lifecycle.recover()` runs before anything else touches runs. This depends on product's answer in Risks.
-- [ ] Shutdown order: stop taking Slack events first. Then stop the supervisor, which sends DELETE for live runs and revokes every live token. Then stop the MCP server, and close the store last. A test checks the order, and checks that no token is valid by the time the MCP server stops.
-- [ ] The token reaches the agent only through the runner's 0600 per-run MCP config (#54). JotFlow sends it only in the launch request body, never in a URL, a header, argv, or a log line. A test scans captured logs for the token.
-- [ ] Agent runs are off unless `[agent] preset` is set and that kind's runner secret is present. With them off, `jotflow run` behaves as today, and it says once at startup why runs are off.
+- [x] Shutdown order: stop taking Slack events first. Then stop the supervisor, which sends DELETE for live runs and revokes every live token. Then stop the MCP server, and close the store last. A test checks the order, and checks that no token is valid by the time the MCP server stops.
+- [x] The token reaches the agent only through the runner's 0600 per-run MCP config (#54). JotFlow sends it only in the launch request body, never in a URL, a header, argv, or a log line. A test scans captured logs for the token.
+- [x] Agent runs are off unless `[agent] preset` is set and that kind's runner secret is present. With them off, `jotflow run` behaves as today, and it says once at startup why runs are off.
 
 From #54:
 
@@ -49,7 +49,7 @@ From #54:
 
 **Three PRs**, in order, each reviewable alone:
 
-1. **Wiring `jotflow run`.** It adds a new `jotflow.app` module, so `serve` stays thin. It holds an `App` with the store, registry, lifecycle, tools, MCP server, supervisor and debouncer, built from `Settings`, `Policy`, and the Bolt client. `async with App(...)` starts them in order and stops them in reverse. Tests use fakes for Slack and the runner.
+1. **Wiring `jotflow run`.** It adds `jotflow/orchestrator/service.py`, so `serve` stays thin. `Orchestrator` holds the store, registry, lifecycle, tools, MCP server, supervisor and debouncer, built from `Settings`, `Policy`, and the Bolt client. `start()` runs in order and `stop()` in reverse. A failed start stops whatever had started. Tests use fakes for Slack and the runner.
 2. **The cross-container check.** It adds a CI step and a small probe script. The script is piped into the `jotflow` image with `python -`, so it is not a product command. Its stub agent command lives only in CI's `agent.env`. This is #54's box.
 3. **The fixture command and live runbook.** This is the `jotflow execute-fixture` command, plus the runbook in this plan.
 
@@ -61,9 +61,9 @@ From #54:
    - the read tools with `SlackWorkSource(BoltSlackReader(client), store, bot=identity)`
    - the write tools with `SlackThreadPoster(client)`
 4. `make_mcp_server(settings, tokens, tools)`, then `start()`.
-5. Build `RunnerClient.from_settings` and `RunSupervisor(..., max_running=policy.agent.max_concurrent_runs)`, and start its task. It is skipped when runs are off. With runs off, the debouncer still runs, and queued runs wait in the store.
-6. Wire the debouncer into `register_handlers` and start its flush loop.
-7. Connect Socket Mode.
+5. When runs are on, build `RunnerClient.from_settings` and `RunSupervisor(..., max_running=policy.agent.max_concurrent_runs)`, and start its task, plus the debouncer and its 1 s flush loop. When runs are off, neither starts, so nothing is queued that would launch in a burst later.
+6. `register_handlers` takes `orchestrator.note` as a sink after the log.
+7. Connect Socket Mode. A database that cannot open exits with code 4 before Slack connects.
 
 **Shutdown, in reverse:**
 
@@ -93,18 +93,29 @@ Runs stay `running` in the store, so the next startup's `recover()` marks them i
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision except the two questions above
-- [ ] Commit this plan and open the draft PR
-- [ ] Part 1: `App`, startup and shutdown order, debouncer wiring, `revoke_all`, tests
-- [ ] Part 1: in-process end-to-end test with a stub agent through the real MCP server, covering both `record_result` cases
+- [x] Commit this plan and open the draft PR
+- [x] Part 1: `Orchestrator`, startup and shutdown order, debouncer wiring, `revoke_all`, tests
+- [x] Part 1: in-process end-to-end test with a stub agent through the real MCP server, covering both `record_result` cases
 - [ ] Part 2: cross-container CI check, for #54's box
 - [ ] Part 3: `execute-fixture` and the live runbook
-- [ ] Docs: README's run section, architecture's How runs start
+- [x] Docs: README's run section, architecture's How runs start
 - [ ] `make check` passes on each part
 - [ ] Maintainer's live run
 
 ## Validation
 
-Pending. The live runbook goes here in part 3.
+**Part 1:** `make check` is green, with 1496 tests and 98.5% coverage. `service.py` and `run.py` are at 100%. `tests/test_service.py` covers:
+
+- With runs off, the tools are still served, and nothing is queued or launched.
+- A quiet thread is queued and launched on the drafting runner.
+- Shutdown sends DELETE for live runs, leaves no live token when the MCP server stops, and closes the store last.
+- Recovery runs first.
+- A failed start stops what had started.
+- Debouncer errors are logged, not raised.
+- No token or runner secret appears in DEBUG logs.
+- End to end in process: startup recovery queues the approved proposal's execution run. The real exec runner launches a stub agent, which calls `get_work` and then `record_result` through the real MCP server. A wrong-repo URL is refused with "does not match the approved repo", and the right one makes the proposal applied.
+
+The live runbook goes here in part 3.
 
 ## Handoff notes
 

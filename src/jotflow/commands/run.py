@@ -1,9 +1,11 @@
-"""`jotflow run`: connect to Slack over Socket Mode and log incoming events.
+"""`jotflow run`: connect to Slack over Socket Mode and run the whiteboard.
 
 Loads settings and policy first, so a missing token or a bad ``jotflow.toml``
 stops the command before any network call. Then it checks channel
-membership, connects, and logs each event as pointers only until SIGINT or
-SIGTERM.
+membership, starts the :class:`~jotflow.orchestrator.service.Orchestrator`
+(store, MCP server, debouncer, and agent runs), connects, and handles events
+until SIGINT or SIGTERM. Slack closes first on the way out, then the
+orchestrator in reverse order.
 """
 
 from __future__ import annotations
@@ -14,8 +16,9 @@ import contextlib
 import logging
 import os
 import signal
+import sqlite3
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Protocol
 
 from pydantic import ValidationError
@@ -33,6 +36,7 @@ from jotflow.logs import (
     configure_logging,
 )
 from jotflow.orchestrator.ingest import EventFilter
+from jotflow.orchestrator.service import Orchestrator
 from jotflow.orchestrator.slack import (
     NETWORK_ERRORS,
     SlackSetupError,
@@ -42,8 +46,10 @@ from jotflow.orchestrator.slack import (
     report_missing,
 )
 from jotflow.policy import Policy, PolicyError, load_policy
+from jotflow.store import StoreError
 from jotflow.whiteboard.server import McpServer, McpStartError, build_app
 from jotflow.whiteboard.tokens import TokenRegistry
+from jotflow.whiteboard.tools import ToolSpec
 
 log = logging.getLogger("jotflow.run")
 
@@ -52,6 +58,7 @@ LOG_LEVELS = ("debug", "info", "warning", "error")
 EXIT_CONFIG = 2
 EXIT_SLACK = 1
 EXIT_MCP = 3
+EXIT_STORE = 4
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -138,13 +145,20 @@ async def run_until_stopped(connection: Connection, stop: asyncio.Event) -> None
         log.info("disconnected")
 
 
-def make_mcp_server(settings: Settings, tokens: TokenRegistry) -> McpServer:
-    """The whiteboard MCP server, admitting only tokens ``tokens`` issued.
+def make_mcp_server(
+    settings: Settings, tokens: TokenRegistry, tools: Sequence[ToolSpec] = ()
+) -> McpServer:
+    """The whiteboard MCP server, serving ``tools`` to tokens ``tokens`` issued.
 
-    The run lifecycle (#53) issues a token per run and revokes it when the run
-    ends. Until runs exist nothing is issued, so nothing is reachable.
+    The run lifecycle issues a token per run and revokes it when the run ends,
+    so with agent runs off nothing is issued and nothing is reachable.
     """
-    app = build_app(port=settings.mcp_port, extra_hosts=settings.mcp_allowed_hosts, tokens=tokens)
+    app = build_app(
+        port=settings.mcp_port,
+        extra_hosts=settings.mcp_allowed_hosts,
+        tokens=tokens,
+        tools=tools,
+    )
     return McpServer(app, settings.mcp_host, settings.mcp_port)
 
 
@@ -159,16 +173,23 @@ async def serve(settings: Settings, policy: Policy) -> int:
     except SlackSetupError as exc:
         log.error("%s", exc)
         return EXIT_SLACK
-    register_handlers(app, EventFilter(policy.channels, identity))
-    log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
 
-    tokens = TokenRegistry()
-    mcp = make_mcp_server(settings, tokens)
+    orchestrator = Orchestrator(settings, policy, app.client, identity, make_server=make_mcp_server)
     try:
-        await mcp.start()
+        await orchestrator.start()
     except McpStartError as exc:
         log.error("%s", exc)
         return EXIT_MCP
+    except (StoreError, OSError, sqlite3.Error) as exc:
+        log.error(
+            "could not open the database at %s (%s: %s); check JOTFLOW_DATABASE_PATH",
+            settings.database_path,
+            type(exc).__name__,
+            exc,
+        )
+        return EXIT_STORE
+    register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
+    log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
 
     handler: Connection = AsyncSocketModeHandler(app, settings.slack_app_token.get_secret_value())
     stop = asyncio.Event()
@@ -188,7 +209,8 @@ async def serve(settings: Settings, policy: Policy) -> int:
         return EXIT_SLACK
     finally:
         remove_signals()
-        await mcp.stop()
+        # Slack is closed by now; then runs, tokens, the MCP server, and the store.
+        await orchestrator.stop()
     return 0
 
 

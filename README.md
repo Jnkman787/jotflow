@@ -92,7 +92,7 @@ The pieces:
 
 ## Quickstart
 
-**What works today:** JotFlow connects to Slack and logs each message in the channels you choose. It posts nothing in Slack yet, and creates no GitHub issues; both arrive in later milestones.
+**What works today:** JotFlow connects to Slack and logs each message in the channels you choose. With `[agent] preset` set in `jotflow.toml` and the agent containers set up, it also starts an agent run on each thread once the thread goes quiet. The agent can ask a clarifying question in the thread, and a run that fails posts a short notice there. Proposal cards and GitHub issues arrive in later milestones. Without a preset, JotFlow posts nothing.
 
 Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages. It can take longer the first time Docker builds JotFlow, or if your workspace needs an admin to approve new apps. Every name and id below is made up; use your own.
 
