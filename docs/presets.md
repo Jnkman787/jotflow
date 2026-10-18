@@ -25,6 +25,7 @@ claude -p <the kind's fixed prompt>
   --no-session-persistence
   --setting-sources ""
   --disable-slash-commands
+  --max-turns <40 drafting, 20 question, 15 execution>
   --model <model>
 ```
 
@@ -33,13 +34,14 @@ claude -p <the kind's fixed prompt>
 - **`--permission-mode dontAsk`** means nothing ever prompts. A tool not on `--allowedTools` is denied.
 - **`--no-session-persistence`** means no transcript is written.
 - **`--setting-sources ""`** reads no user, project, or local settings, and so no hooks from them.
+- **`--max-turns`** stops a looping agent. Claude Code has no default limit. The runner's time limit still ends any run. The flag works in 2.1.303 although `--help` doesn't list it.
 - **The prompt** is fixed, per kind, and tells the agent to call `get_work` first. No Slack text is ever in the command line.
 
 The preset also sets these variables:
 
 - **`XDG_CACHE_HOME`** is set to a `cache` folder in the run's directory, so the CLI's per-server MCP logs are removed with the run.
 - **`CLAUDE_CODE_DISABLE_AUTO_MEMORY`** keeps the CLI from writing memory files that a later run could load.
-- **`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `DISABLE_AUTOUPDATER`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`** keep the CLI from sending telemetry or error reports, and from updating itself.
+- **`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`** keep the CLI from sending telemetry or error reports, and from updating itself.
 
 **Where the tokens are.** The runner writes the run's MCP config to `/tmp/jotflow-run-<random>/mcp.json`. The file is mode 0600, in a 0700 directory, and is removed when the run ends. It holds two servers:
 

@@ -31,7 +31,7 @@ From the issue, refined:
 **Out of scope:**
 
 - Gemini CLI and Copilot CLI, which moved to M5.
-- Turn or spend caps. Claude Code has `--max-budget-usd`, but the runner's time limit already bounds a run. A cap can follow if live runs show a need.
+- Spend caps. Claude Code has `--max-budget-usd`, but the runner's time limit and the turn limit already bound a run. A cap can follow if live runs show a need.
 - GitHub Enterprise hosts.
 - Changing what JotFlow sends to the runner, which stays run id, kind, and token (D6).
 
@@ -100,6 +100,7 @@ claude -p <K's prompt>
   --no-session-persistence        # no transcript under ~/.claude/projects
   --setting-sources ""            # ignore user, project, and local settings and their hooks
   --disable-slash-commands
+  --max-turns <40 drafting, 20 question, 15 execution>
   --model <model>
 ```
 
@@ -211,6 +212,8 @@ The release tarball for Linux x86_64 matched its published sha256.
 During implementation I built the agent image with `AGENT_NPM_PACKAGES=@anthropic-ai/claude-code@2.1.303` and ran the real drafting and execution plans from `ClaudeCodePreset` inside it. The init event matched the table above for both kinds. The run used the `sonnet` model for drafting and `haiku` for execution, and showed version 2.1.303. No sentinel appeared in the output or under `HOME`.
 
 That run turned up an empty `~/.claude/projects/<run dir>/memory` directory for each run. The preset now sets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, and with it no projects directory is created. ADD's `--checksum` checks the GitHub MCP server tarball, and the image runs `github-mcp-server --version` as a build step.
+
+**After review started:** the lead forwarded docs research recommending `--max-turns`, since Claude Code has no default, and `DISABLE_UPDATES`. Both are added. `--max-turns` is accepted by 2.1.303 although `--help` doesn't list it. Two other research points need no change. First, the research's warning that `${ANTHROPIC_API_KEY}` and similar names expand to empty in headers doesn't apply, because the runner writes literal tokens and refuses GitHub tokens with `$` or braces. Second, the sub-agent tool (Agent or Task) is absent from the init tool list under `--tools ""`.
 
 ## Handoff notes
 

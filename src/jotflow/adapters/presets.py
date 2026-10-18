@@ -166,6 +166,14 @@ class CommandPreset:
         )
 
 
+# Agentic turns per run. Claude Code has no default limit. The runner's time
+# limit still ends any run; these stop a looping agent sooner and cheaper.
+CLAUDE_MAX_TURNS: Mapping[RunKind, int] = {
+    RunKind.DRAFTING: 40,
+    RunKind.QUESTION: 20,
+    RunKind.EXECUTION: 15,
+}
+
 CLAUDE_PROMPTS: Mapping[RunKind, str] = {
     RunKind.DRAFTING: (
         "You are JotFlow's drafting agent. Call the jotflow get_work tool first, then "
@@ -229,6 +237,8 @@ class ClaudeCodePreset:
             "--setting-sources",
             "",
             "--disable-slash-commands",
+            "--max-turns",
+            str(CLAUDE_MAX_TURNS[run.kind]),
         ]
         if run.model is not None:
             argv += ["--model", run.model]
@@ -243,6 +253,7 @@ class ClaudeCodePreset:
             "DISABLE_TELEMETRY": "1",
             "DISABLE_ERROR_REPORTING": "1",
             "DISABLE_AUTOUPDATER": "1",
+            "DISABLE_UPDATES": "1",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             # No memory files: a run starts from its packet, never from an earlier run.
             "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",

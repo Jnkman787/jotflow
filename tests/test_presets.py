@@ -92,6 +92,8 @@ def test_claude_code_drafting_argv_is_locked_down(tmp_path: Path) -> None:
         "--setting-sources",
         "",
         "--disable-slash-commands",
+        "--max-turns",
+        "40",
         "--model",
         "sonnet",
     )
@@ -163,6 +165,14 @@ def test_claude_code_keeps_its_logs_in_the_run_directory(kind: RunKind, tmp_path
     assert env["XDG_CACHE_HOME"] == str(tmp_path / "cache")
     assert env["DISABLE_TELEMETRY"] == "1"
     assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert env["DISABLE_UPDATES"] == "1"
+    assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+
+
+def test_every_kind_has_a_turn_limit(tmp_path: Path) -> None:
+    for kind in RunKind:
+        argv = CLAUDE_CODE.plan(context(kind, tmp_path)).argv
+        assert int(argv[argv.index("--max-turns") + 1]) == presets.CLAUDE_MAX_TURNS[kind] > 0
 
 
 @pytest.mark.parametrize("name", sorted(PRESETS))
