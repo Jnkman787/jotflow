@@ -117,6 +117,9 @@ Alternatives considered:
 
 ## Handoff notes
 
+- Follow-up, ruled by security at the lead's request: every write tool now also refuses a run that is missing, not running, or of another kind or channel than its grant, as a second guard behind revocation. It deliberately does not check the deadline, so the token's grace still lets a run's last call land; `get_work` refuses late runs. Tests cover a finished run, an unknown run, and a run past its deadline that may still record its result.
+- Follow-up after merge, found in the #116 security look: `record_result` accepted only an executing proposal. The store also allows reconciling to applied or failed, which is how a retry after a restart reports the marker it found. It now accepts executing or reconciling (`RESULT_STATES`), with tests for both outcomes.
+
 - Reviewer findings on f934071, all taken: `remove_labels` now passes `label_problem` (no allowlist, since removing any label is fine), `remove_assignees` must be GitHub logins, and a comment explains the two store writes for a new topic.
 
 - #107: pass `write_tools(store, policy, SlackThreadPoster(app.client))` alongside the read tools into `build_app(tools=...)`. Move a proposal to executing when claiming its execution run, and revoke the run's token when it ends.
