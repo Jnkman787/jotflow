@@ -37,7 +37,8 @@ Clock = Callable[[], float]
 class Grant:
     """What a valid token allows: one run, of one kind, in one channel.
 
-    An execution run is also bound to the one approved proposal it executes.
+    Drafting and question runs are also bound to the thread they work on, and
+    an execution run to the one approved proposal it executes.
     """
 
     run_id: str
@@ -53,6 +54,9 @@ class Grant:
             raise ValueError("an execution grant must name its proposal")
         if self.kind is not RunKind.EXECUTION and self.proposal_id is not None:
             raise ValueError("only an execution grant names a proposal")
+        if self.kind in (RunKind.DRAFTING, RunKind.QUESTION) and not self.thread_ts:
+            # These runs work on one thread, so the grant pins it.
+            raise ValueError(f"a {self.kind.value} grant must name its thread")
 
 
 class TokenCheck(Protocol):

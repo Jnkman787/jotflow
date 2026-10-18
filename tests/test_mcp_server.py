@@ -39,7 +39,7 @@ from jotflow.whiteboard.tools import TOOLS, RegistryError, ToolSpec, checked_reg
 PORT = 8765
 BASE = f"http://127.0.0.1:{PORT}"
 TOKEN = "run-token-for-tests"
-GRANT = Grant(run_id="run-1", kind=RunKind.DRAFTING, channel_id="C0EXAMPLE1")
+GRANT = Grant(run_id="run-1", kind=RunKind.DRAFTING, channel_id="C0EXAMPLE1", thread_ts="1.000100")
 SECRET = "the launch code is swordfish"
 
 
@@ -577,7 +577,9 @@ EXECUTION_GRANT = Grant(
 async def test_issued_tokens_admit_their_own_run_only() -> None:
     registry = TokenRegistry()
     drafting = registry.issue(GRANT, 60)
-    other = registry.issue(Grant(run_id="run-2", kind=RunKind.DRAFTING, channel_id="C0EX"), 60)
+    other = registry.issue(
+        Grant(run_id="run-2", kind=RunKind.DRAFTING, channel_id="C0EX", thread_ts="2.000100"), 60
+    )
     async with client_for(tokens=registry, tools=[ECHO]) as http:
         mine = await post(
             http,

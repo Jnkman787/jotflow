@@ -46,13 +46,26 @@ def test_an_execution_grant_must_name_its_proposal() -> None:
 @pytest.mark.parametrize("kind", [RunKind.DRAFTING, RunKind.QUESTION])
 def test_only_execution_grants_name_a_proposal(kind: RunKind) -> None:
     with pytest.raises(ValueError, match="only an execution grant"):
-        Grant(run_id="r", kind=kind, channel_id="C0EXAMPLE1", proposal_id="p")
+        Grant(run_id="r", kind=kind, channel_id="C0EXAMPLE1", thread_ts="1.0", proposal_id="p")
 
 
 @pytest.mark.parametrize(("run_id", "channel_id"), [("", "C0EXAMPLE1"), ("r", "")])
 def test_a_grant_needs_a_run_and_a_channel(run_id: str, channel_id: str) -> None:
     with pytest.raises(ValueError, match="needs a run id and a channel id"):
-        Grant(run_id=run_id, kind=RunKind.DRAFTING, channel_id=channel_id)
+        Grant(run_id=run_id, kind=RunKind.DRAFTING, channel_id=channel_id, thread_ts="1.000100")
+
+
+@pytest.mark.parametrize("kind", [RunKind.DRAFTING, RunKind.QUESTION])
+@pytest.mark.parametrize("thread_ts", [None, ""])
+def test_drafting_and_question_grants_name_their_thread(
+    kind: RunKind, thread_ts: str | None
+) -> None:
+    with pytest.raises(ValueError, match=f"a {kind.value} grant must name its thread"):
+        Grant(run_id="r", kind=kind, channel_id="C0EXAMPLE1", thread_ts=thread_ts)
+
+
+def test_an_execution_grant_needs_no_thread() -> None:
+    assert EXECUTE.thread_ts is None
 
 
 def test_the_registry_is_a_token_check(registry: TokenRegistry) -> None:
@@ -115,12 +128,12 @@ def test_ttl_must_be_positive_and_capped(registry: TokenRegistry, ttl: float) ->
 
 def test_live_tokens_are_bounded_and_expired_ones_free_space(clock: FakeClock) -> None:
     registry = TokenRegistry(clock=clock, max_live=2)
-    registry.issue(Grant("a", RunKind.DRAFTING, "C0EXAMPLE1"), 10)
-    registry.issue(Grant("b", RunKind.DRAFTING, "C0EXAMPLE1"), 100)
+    registry.issue(Grant("a", RunKind.DRAFTING, "C0EXAMPLE1", "1.000100"), 10)
+    registry.issue(Grant("b", RunKind.DRAFTING, "C0EXAMPLE1", "1.000100"), 100)
     with pytest.raises(RegistryFullError):
-        registry.issue(Grant("c", RunKind.DRAFTING, "C0EXAMPLE1"), 100)
+        registry.issue(Grant("c", RunKind.DRAFTING, "C0EXAMPLE1", "1.000100"), 100)
     clock.now += 10
-    registry.issue(Grant("c", RunKind.DRAFTING, "C0EXAMPLE1"), 100)
+    registry.issue(Grant("c", RunKind.DRAFTING, "C0EXAMPLE1", "1.000100"), 100)
     assert registry.active() == 2
 
 

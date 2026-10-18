@@ -73,7 +73,7 @@ Alternatives considered:
 - [x] Tests: issue, check, expiry, revoke, reissue, caps, no token in logs or reprs, kind scoping through the real endpoint
 - [x] Update documentation: architecture token section, AGENTS layout if needed
 - [x] `make check` passes, coverage at or above the floor
-- [ ] CodeRabbit local review, or skipped
+- [x] CodeRabbit local review, or skipped
 - [ ] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
@@ -93,6 +93,7 @@ Alternatives considered:
   - an execution token lists no drafting tools, and calling one gets exactly the unknown-tool error
   - revoked and expired tokens get 401, and neither token appears in the audit log or the response
 - `checked_registry` refuses a tool that names no run kind.
+- CodeRabbit (local CLI): 1 finding, fixed. Drafting and question grants must now name their thread, since those runs work on one thread. 5 tests cover it, making 773 in total.
 
 ## Handoff notes
 
