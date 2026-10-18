@@ -5,9 +5,9 @@
 - Issue: #13
 - Also serves: #16, which plugs its token check into the interface added here
 - Draft PR: #97
-- Status: implementing
-- Last verified: `make check` green locally on 2026-10-18, 467 tests, 98% coverage
-- Next safe action: run CodeRabbit or skip it, wait for CI on #97, confirm closingIssuesReferences is empty, mark ready
+- Status: ready for review
+- Last verified: rebased on main at 80a93dc; `make check` green, 496 tests, 97.6% coverage; CI green on #97
+- Next safe action: architect reviews #97; after merge, tick the first #13 box
 
 ## Objective and done-when
 
@@ -89,11 +89,11 @@ Alternatives considered:
 - [x] Update documentation: architecture Whiteboard section and configuration, AGENTS layout
 - [x] `make check` passes, coverage at or above the floor
 - [x] CodeRabbit local review, or skipped: skipped, rate limit
-- [ ] `closingIssuesReferences` is empty, then mark the PR ready
+- [x] `closingIssuesReferences` is empty, then mark the PR ready
 
 ## Validation
 
-- `make check` passes: ruff, mypy strict, and 467 tests with 98% total line and branch coverage. `whiteboard/gate.py`, `tokens.py`, and `tools.py` are at 100%, and `server.py` at 97%. The two lines left are the no-grant guard, reachable only without the gate, and a start that ends without an error.
+- `make check` passes: ruff, mypy strict, and 467 tests with 98% total (496 and 97.6% after rebasing on main) line and branch coverage. `whiteboard/gate.py`, `tokens.py`, and `tools.py` are at 100%, and `server.py` at 97%. The two lines left are the no-grant guard, reachable only without the gate, and a start that ends without an error.
 - `tests/test_mcp_server.py`, 48 tests, all in process through `httpx2.ASGITransport` except the two lifecycle tests on loopback:
   - `server/discover` returns `supportedVersions: ["2026-07-28"]` and capabilities exactly `{"tools": {"listChanged": false}}`, with no `Mcp-Session-Id`
   - the SDK's own `Client`, pinned to 2026-07-28, connects and lists no tools
