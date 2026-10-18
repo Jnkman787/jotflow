@@ -245,3 +245,9 @@ def test_comments_stay_with_their_columns_after_add_column(db_path: Path) -> Non
     found = {name: comment for name, _, comment in columns(sql)}
     assert found["updated_at"] == "UTC, ISO 8601"
     assert found["draft_cleared_at"].startswith("UTC, ISO 8601: when the drafted title")
+
+
+def test_shipped_migrations_are_numbered_one_to_n() -> None:
+    """Whoever rebases second renumbers; this catches a gap or a duplicate."""
+    assert [m.version for m in MIGRATIONS] == list(range(1, len(MIGRATIONS) + 1))
+    assert LATEST_VERSION == len(MIGRATIONS)
