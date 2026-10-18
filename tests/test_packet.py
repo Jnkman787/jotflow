@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import ssl
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import pytest
 from slack_sdk.errors import SlackApiError
+from slack_sdk.http_retry.builtin_async_handlers import AsyncConnectionErrorRetryHandler
+from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.models import MessageRef, RunKind, TopicIndex, TopicSummary, UntrustedText
 from jotflow.orchestrator import packet
@@ -62,8 +66,9 @@ class FakeReader:
             "U0BOT": {"profile": {"display_name": "Idea Bot"}},
         }
         self.calls: list[tuple[str, str]] = []
-        self.failures: list[SlackApiError] = []
+        self.failures: list[Exception] = []
         self.page_size: int | None = None
+        self.slow_users: set[str] = set()
 
     def _fail(self) -> None:
         if self.failures:
@@ -87,6 +92,8 @@ class FakeReader:
 
     async def user(self, user_id: str) -> Mapping[str, Any]:
         self.calls.append(("user", user_id))
+        if user_id in self.slow_users:
+            raise TimeoutError
         if user_id not in self.users:
             raise slack_error(404, "user_not_found")
         return {"user": self.users[user_id]}
@@ -492,6 +499,63 @@ async def test_a_related_thread_that_fails_is_skipped() -> None:
     assert await related_to_root(source(reader), topics) == []
 
 
+# Slow or dropped Slack requests (#134): the same fallbacks as a Slack error
+
+
+async def test_a_slow_name_lookup_falls_back_to_the_id() -> None:
+    reader = FakeReader({ROOT: [msg(ROOT, "hi <@U0ALEX>", user="U0SAM")]})
+    reader.slow_users = {"U0SAM", "U0ALEX"}
+    [message] = (await source(reader).thread(CH, ROOT)).messages
+    assert message.author.text == "U0SAM"
+    assert message.text.text == "hi @U0ALEX"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [TimeoutError(), aiohttp.ServerDisconnectedError(), aiohttp.ClientConnectionError("reset")],
+)
+async def test_a_slow_or_dropped_related_excerpt_is_dropped(failure: Exception) -> None:
+    reader = FakeReader({ROOT: [msg(ROOT, "progress bar")], "2.0": [msg("2.0", "progress bar")]})
+    original = reader.replies
+
+    async def failing_for_others(
+        channel: str, ts: str, *, cursor: str | None, limit: int
+    ) -> Mapping[str, Any]:
+        if ts != ROOT:
+            raise failure
+        return await original(channel, ts, cursor=cursor, limit=limit)
+
+    reader.replies = failing_for_others  # type: ignore[method-assign]
+    topics = index(summary("t", "Progress bar", ["2.0"]))
+    assert await related_to_root(source(reader), topics) == []
+
+
+@pytest.mark.parametrize("failure", [TimeoutError(), aiohttp.ClientConnectionError("reset")])
+async def test_a_slow_thread_is_a_clean_error_with_nothing_recorded(failure: Exception) -> None:
+    store = MemoryStore()
+    policy = parse_policy(
+        f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+"""
+    )
+    reader = FakeReader({ROOT: [msg(ROOT, "progress bar")]})
+    reader.failures = [failure]
+    run = await store.enqueue_run(RunKind.DRAFTING, CH, ROOT)
+    claimed = await store.claim_next_run(max_running=1)
+    assert claimed is not None and claimed.id == run.id
+    tools = checked_registry(read_tools(store, policy, source(reader, store)))
+    grant = Grant(run.id, RunKind.DRAFTING, CH, thread_ts=ROOT)
+    with pytest.raises(ToolError, match="Slack did not answer"):
+        await tools["get_work"].handler(grant, NoArguments())
+    assert reader.calls == [("replies", ROOT)]  # no retry
+    assert await store.packet_ref(run.id, CH, ROOT) is None
+
+
 # Nothing persists
 
 
@@ -545,9 +609,12 @@ class FakeWebClient:
         return FakeSlackResponse(self.data)
 
 
-async def test_the_bolt_reader_asks_for_one_thread_and_one_user() -> None:
+async def test_the_bolt_reader_asks_for_one_thread_and_one_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = FakeWebClient()
-    reader = packet.BoltSlackReader(client)  # type: ignore[arg-type]
+    reader = packet.BoltSlackReader(AsyncWebClient(token="xoxb-test"))
+    monkeypatch.setattr(reader, "_client", client)
     assert await reader.replies(CH, ROOT, cursor="c1", limit=50) == client.data
     assert await reader.user("U0SAM") == client.data
     assert client.calls == [
@@ -559,8 +626,42 @@ async def test_the_bolt_reader_asks_for_one_thread_and_one_user() -> None:
     ]
 
 
+def test_the_bolt_reader_uses_a_short_request_timeout() -> None:
+    original = AsyncWebClient(token="xoxb-test", timeout=30)
+    reader = packet.BoltSlackReader(original)
+    assert reader._client.timeout == packet.READER_TIMEOUT_SECONDS
+    assert reader._client.token == "xoxb-test"
+    assert original.timeout == 30  # the caller's client is left alone
+
+
+def test_the_bolt_reader_keeps_the_clients_tls_and_proxy_settings() -> None:
+    context = ssl.create_default_context()
+    handlers = [AsyncConnectionErrorRetryHandler()]
+    original = AsyncWebClient(
+        token="xoxb-test",
+        base_url="https://slack.example.test/api/",
+        ssl=context,
+        proxy="http://proxy.example.test:3128",
+        trust_env_in_session=True,
+        headers={"X-Team": "a"},
+        team_id="T0TEAM",
+        retry_handlers=handlers,
+    )
+    copy = packet.BoltSlackReader(original)._client
+    assert copy is not original
+    assert copy.ssl is context
+    assert copy.proxy == "http://proxy.example.test:3128"
+    assert copy.base_url == "https://slack.example.test/api/"
+    assert copy.trust_env_in_session is True
+    assert copy.headers["X-Team"] == "a"
+    assert copy.headers["User-Agent"] == original.headers["User-Agent"]
+    assert copy.default_params.get("team_id") == "T0TEAM"
+    assert copy.retry_handlers == handlers
+
+
 async def test_the_bolt_reader_tolerates_a_non_dict_body() -> None:
-    reader = packet.BoltSlackReader(FakeWebClient(data=b"raw"))  # type: ignore[arg-type]
+    reader = packet.BoltSlackReader(AsyncWebClient(token="xoxb-test"))
+    reader._client = FakeWebClient(data=b"raw")  # type: ignore[assignment]
     assert await reader.replies(CH, ROOT, cursor=None, limit=1) == {}
     assert await reader.user("U0SAM") == {}
 
@@ -702,4 +803,41 @@ description = "The customer-facing website"
     grant = Grant(run.id, Kind.DRAFTING, CH, thread_ts=ROOT)
     with pytest.raises(ToolError, match="rate limiting"):
         await tools["get_work"].handler(grant, NoArguments())
+    assert await store.packet_ref(run.id, CH, ROOT) is None
+
+
+async def test_a_whole_get_work_under_endless_rate_limits_waits_at_most_the_budget() -> None:
+    from jotflow.models import RunKind as Kind
+
+    class AlwaysLimited(FakeReader):
+        async def replies(
+            self, channel: str, ts: str, *, cursor: str | None, limit: int
+        ) -> Mapping[str, Any]:
+            self.calls.append(("replies", ts))
+            raise slack_error(429, "ratelimited", retry_after="10")
+
+        async def user(self, user_id: str) -> Mapping[str, Any]:
+            self.calls.append(("user", user_id))
+            raise slack_error(429, "ratelimited", retry_after="10")
+
+    store = MemoryStore()
+    policy = parse_policy(
+        f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+"""
+    )
+    sleeps = Sleeps()
+    work_source = SlackWorkSource(AlwaysLimited(), store, sleep=sleeps)
+    run = await store.enqueue_run(Kind.DRAFTING, CH, ROOT)
+    await store.claim_next_run(max_running=1)
+    tools = checked_registry(read_tools(store, policy, work_source))
+    grant = Grant(run.id, Kind.DRAFTING, CH, thread_ts=ROOT)
+    with pytest.raises(ToolError, match="rate limiting"):
+        await tools["get_work"].handler(grant, NoArguments())
+    assert sum(sleeps.waits) <= packet.RETRY_BUDGET_SECONDS
     assert await store.packet_ref(run.id, CH, ROOT) is None
