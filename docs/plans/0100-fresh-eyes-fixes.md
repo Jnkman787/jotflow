@@ -119,6 +119,8 @@ The second fresh-eyes review (comment on #100, 2026-10-18) found four platform b
 
 CodeRabbit: skipped, rate-limited.
 
+Reviewer's nit on #108, taken: on a re-run where `jotflow.toml` already names a preset JotFlow does not ship, setup says so before offering none as the default, instead of dropping it silently.
+
 Declined: none. "Gemini CLI" in the README's diagram stays, as it is the product's name.
 
 Validation, round 2: `make check` green, 753 tests. New tests cover the Windows separator (written, skipped elsewhere, existing value kept), channel links from Copy link and the browser, preset refusal, the reworded reuse question, Ctrl-C in the intro, and the missing-scope advice.

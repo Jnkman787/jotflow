@@ -572,6 +572,10 @@ def _ask_policy(console: Console, existing: Policy | None) -> Policy:
     _explain(console, EXPLAIN_PRESET)
     current = existing.agent.preset if existing else DEFAULT_PRESET
     if current is not None and current not in SUPPORTED_PRESETS:
+        console.say(
+            f"Your jotflow.toml names the preset {current}, which JotFlow does not ship yet, "
+            "so the default below is none. Press Enter to switch to none."
+        )
         current = None
     preset_answer = console.ask(
         "Agent preset",

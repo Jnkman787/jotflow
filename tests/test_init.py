@@ -698,3 +698,17 @@ def test_the_reuse_question_does_not_assume_the_bot_name(options: InitOptions) -
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert any("a Slack app for JotFlow?" in p for p in script.prompts)
     assert init.INTRO.count("Ctrl-C") == 1 and "Ctrl-D" not in init.INTRO
+
+
+def test_an_unsupported_existing_preset_is_named_before_it_is_dropped(
+    options: InitOptions,
+) -> None:
+    options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
+    text = EXAMPLE.read_text().replace('# preset = "claude-code"', 'preset = "codex-cli"')
+    options.config_file.write_text(text)
+    assert load_policy(options.config_file).agent.preset == "codex-cli"
+    # keep both tokens, rewrite the policy, keep the first channel, drop the second, Enter
+    script = Script(answers=["", "", "n", "C0EXAMPLE1", "", "", ""])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "names the preset codex-cli, which JotFlow does not ship yet" in script.text
+    assert load_policy(options.config_file).agent.preset is None
