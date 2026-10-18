@@ -103,6 +103,19 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml
 
 The mount is kept out of `docker-compose.yml` because Docker creates a root-owned directory on the host when a bind-mount source is missing. That directory would block `jotflow init` from writing the file. The base file therefore runs without a policy, for `--version` and image checks. The policy holds no secrets, and the container's user must be able to read it, so the file needs mode `0644`. With `0600`, JotFlow stops with a permission error naming the file.
 
+## Distribution
+
+A team never needs the source code. Each tagged release publishes two artifacts built from the same commit and version:
+
+| Artifact | Published to | Used for |
+|---|---|---|
+| Python package `jotflow` | PyPI | `uvx jotflow init`, the one-time interactive setup on the team's machine |
+| Container image `ghcr.io/jnkman787/jotflow` | GitHub's container registry | `jotflow run`, the always-on service |
+
+`jotflow init` writes `jotflow.toml`, `.env`, and a Compose file pinned to the matching image version, so the whole install is `uvx jotflow init` followed by `docker compose up -d`. The repository is where contributors work; cloning it is only needed to change JotFlow.
+
+JotFlow is a running service rather than an MCP server listed in an agent's configuration, because it must be connected to Slack when no agent session is open, decides when to start the agent, holds state across days, and serves the whole channel. The MCP connection is how the agent talks to JotFlow while a run lasts.
+
 ## Intent keywords
 
 People never need syntax: a plain message is classified by the agent. Keywords let them steer explicitly. A keyword is the first word of a message followed by a colon (D10).
