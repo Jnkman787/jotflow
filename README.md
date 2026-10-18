@@ -264,7 +264,7 @@ This starts JotFlow. The agent containers, where your team's agent will draft is
 
 1. Copy `agent.env.example` to `agent.env`. It holds the model login and a read-only GitHub token.
 2. Copy `agent-exec.env.example` to `agent-exec.env`. It holds the model login and a GitHub token that can write issues.
-3. Give both files mode 0600, fill them in as their comments describe, and add `COMPOSE_PROFILES=agent` to `.env`.
+3. Give both files mode 0600 and fill them in as their comments describe. Each gets its own runner secret, and `.env` holds both, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. Then add `COMPOSE_PROFILES=agent` to `.env`.
 
 Neither file holds Slack tokens, and neither agent sees `.env`.
 

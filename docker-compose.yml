@@ -25,6 +25,7 @@ services:
     networks:
       - egress
       - agents
+      - agents-exec
     read_only: true
     tmpfs:
       - /tmp
@@ -85,8 +86,8 @@ services:
       # A separate home: nothing a drafting run writes can reach an execution run.
       - agent-exec-home:/home/agent
     networks:
-      - agents
-      - agent-egress
+      - agents-exec
+      - agent-exec-egress
     read_only: true
     tmpfs:
       - /tmp:mode=1777
@@ -103,9 +104,13 @@ volumes:
 networks:
   # Outbound access, for Slack's Socket Mode connection.
   egress:
-  # No route out of the host. The agent's runner and JotFlow's MCP server
-  # meet here; nothing on this network is published.
+  # No route out of the host. Each agent service meets JotFlow on its own
+  # internal network, so the drafting agent cannot reach agent-exec at all.
+  # Nothing on these networks is published.
   agents:
     internal: true
-  # The agent's own way out, for its model API and GitHub.
+  agents-exec:
+    internal: true
+  # Each agent's own way out, for its model API and GitHub.
   agent-egress:
+  agent-exec-egress:

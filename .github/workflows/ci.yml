@@ -142,7 +142,7 @@ jobs:
         run: |
           printf 'JOTFLOW_SLACK_BOT_TOKEN=ci-sentinel-bot\n' > .env
           printf 'JOTFLOW_RUNNER_SECRET=ci-runner-secret\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' > agent.env
-          printf 'JOTFLOW_RUNNER_SECRET=ci-runner-secret\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' > agent-exec.env
+          printf 'JOTFLOW_RUNNER_SECRET=ci-exec-secret\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' > agent-exec.env
           for files in "-f docker-compose.yml" "-f docker-compose.yml -f docker-compose.policy.yml"; do
             touch jotflow.toml
             docker compose $files --profile agent config --format json > compose.json
@@ -161,7 +161,7 @@ jobs:
                         "JOTFLOW_GITHUB_READ_TOKEN": "ci-read",
                         "JOTFLOW_RUNNER_KINDS": "drafting,question",
                         "JOTFLOW_RUNNER_ALLOWED_HOSTS": "agent"},
-              "agent-exec": {"JOTFLOW_RUNNER_SECRET": "ci-runner-secret",
+              "agent-exec": {"JOTFLOW_RUNNER_SECRET": "ci-exec-secret",
                              "JOTFLOW_GITHUB_WRITE_TOKEN": "ci-write",
                              "JOTFLOW_RUNNER_KINDS": "execution",
                              "JOTFLOW_RUNNER_ALLOWED_HOSTS": "agent-exec"},
@@ -174,6 +174,13 @@ jobs:
               assert not binds, f"{name} bind-mounts {binds}"
           homes = {name: [v["source"] for v in services[name]["volumes"]] for name in expected}
           assert homes["agent"] != homes["agent-exec"], f"the agent services share a home: {homes}"
+          # Each runner has its own secret, so one cannot start runs on the other.
+          secrets = {services[n]["environment"]["JOTFLOW_RUNNER_SECRET"] for n in expected}
+          assert len(secrets) == 2, "the two runners must not share a secret"
+          # The drafting agent cannot reach agent-exec at all: no shared network.
+          networks = {name: set(services[name]["networks"]) for name in expected}
+          assert not networks["agent"] & networks["agent-exec"], f"agent services share {networks}"
+          assert {"agents", "agents-exec"} <= set(services["jotflow"]["networks"])
           # The checks above mean something: .env does reach JotFlow.
           assert services["jotflow"]["environment"]["JOTFLOW_SLACK_BOT_TOKEN"] == "ci-sentinel-bot"
           print("compose policy ok")
@@ -224,12 +231,13 @@ jobs:
           print("runner gate ok")'
           docker compose --profile agent down
 
-      # The execution runner holds only the write token and refuses drafting
-      # runs; started the same way, with its own env file.
+      # The execution runner holds only the write token, has its own secret, and
+      # refuses drafting runs; started the same way, with its own env file.
       - name: Execution runner refuses drafting runs
         run: |
           printf 'JOTFLOW_SLACK_BOT_TOKEN=ci-sentinel-bot\n' > .env
           secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          drafting_secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
           printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' "$secret" > agent-exec.env
           docker compose up -d --no-deps agent-exec
           for _ in $(seq 1 30); do
@@ -240,15 +248,18 @@ jobs:
             echo "::error::The execution runner can see JotFlow's Slack tokens"
             exit 1
           fi
-          docker compose exec -T -e SECRET="$secret" agent-exec python -c '
+          docker compose exec -T -e SECRET="$secret" -e OTHER="$drafting_secret" agent-exec python -c '
           import json, os, urllib.error, urllib.request
-          body = json.dumps({"run_id": "run-1", "kind": "drafting", "token": "jfr_" + "x" * 43}).encode()
-          request = urllib.request.Request("http://127.0.0.1:8766/runs", data=body, method="POST",
-              headers={"Authorization": "Bearer " + os.environ["SECRET"], "Content-Type": "application/json"})
-          try:
-              urllib.request.urlopen(request)
-              raise SystemExit("the execution runner accepted a drafting run")
-          except urllib.error.HTTPError as exc:
-              assert exc.code == 403, exc.code
+          def launch(secret, kind):
+              body = json.dumps({"run_id": "run-1", "kind": kind, "token": "jfr_" + "x" * 43}).encode()
+              request = urllib.request.Request("http://127.0.0.1:8766/runs", data=body, method="POST",
+                  headers={"Authorization": "Bearer " + secret, "Content-Type": "application/json"})
+              try:
+                  return urllib.request.urlopen(request).status
+              except urllib.error.HTTPError as exc:
+                  return exc.code
+          # The drafting runner'"'"'s secret starts nothing here.
+          assert launch(os.environ["OTHER"], "execution") == 401
+          assert launch(os.environ["SECRET"], "drafting") == 403
           print("execution runner refuses drafting ok")'
           docker compose --profile agent down
