@@ -330,7 +330,7 @@ def test_proposal_outside_policy() -> None:
 
     data = _base()
     data["agent"][0]["calls"][2]["arguments"]["labels"] = ["wontfix"]
-    assert "labels not in acme-co/web's allowlist" in _problem(data)
+    assert "labels not in acme-co/web's label list" in _problem(data)
 
 
 def test_proposal_needs_a_named_topic_and_known_sources() -> None:

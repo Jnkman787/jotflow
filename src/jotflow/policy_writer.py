@@ -78,8 +78,10 @@ def render_policy(policy: Policy) -> str:
                 f"repo = {toml_string(repo.repo)}",
                 f"nickname = {toml_string(repo.nickname)}",
                 f"description = {toml_string(repo.description)}",
-                f"labels = {_array(repo.labels)}",
             ]
+            # No labels line means any label that exists on the repo.
+            if repo.labels is not None:
+                lines.append(f"labels = {_array(repo.labels)}")
     text = "\n".join(lines) + "\n"
     if parse_policy(text) != policy:
         raise RuntimeError("rendered jotflow.toml does not load back to the same policy")

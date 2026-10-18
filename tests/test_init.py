@@ -241,7 +241,8 @@ def test_fresh_setup_writes_a_valid_policy(options: InitOptions) -> None:
     assert list(policy.channels) == ["C0TEST1"]
     (repo,) = policy.channels["C0TEST1"].repos
     assert (repo.repo, repo.nickname, repo.description) == ("acme/web", "web", "The web app")
-    assert repo.labels == ("bug", "enhancement")
+    assert repo.labels is None
+    assert not repo.restricts_labels
     assert policy.agent.preset == "claude-code"
     assert not policy.approval.approvers_enabled
 
@@ -259,7 +260,7 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
         "web-app",  # taken: asked again
         "api",
         "The API",
-        "none",
+        "any",
         "n",
         "y",
         "C0LINKS1",  # already listed: asked again
@@ -279,7 +280,7 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
     first = policy.channels["C0LINKS1"].repos
     assert [(r.repo, r.nickname, r.labels) for r in first] == [
         ("acme/Web-App", "web-app", ("bug", "size:s")),
-        ("acme/api", "api", ()),
+        ("acme/api", "api", None),
     ]
     assert policy.agent.preset is None
     assert "already used in this channel" in script.text
@@ -398,3 +399,39 @@ def test_keeping_an_unreadable_policy_warns(options: InitOptions) -> None:
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "chmod 644" in script.text
     assert stat.S_IMODE(options.config_file.stat().st_mode) == 0o600
+
+
+def test_labels_answer_rules() -> None:
+    assert init._labels("") == "any"
+    assert init._labels(" ANY ") == "any"
+    assert init._labels("bug, size:s") == "bug, size:s"
+    assert init._split_labels("any") == ()
+    assert init._split_labels("bug, size:s") == ("bug", "size:s")
+    with pytest.raises(ValueError, match="Type any to allow every label"):
+        init._labels("none")
+    with pytest.raises(ValueError, match="listed twice"):
+        init._labels("bug, Bug")
+
+
+def test_none_for_labels_is_explained_and_asked_again(options: InitOptions) -> None:
+    # POLICY's fifth answer is the labels prompt; answer none, then a list.
+    answers = [*POLICY[:4], "none", "bug", *POLICY[5:]]
+    script = Script(answers=["", *answers], secrets=[GOOD_BOT, GOOD_APP])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "Type any to allow every label the repo already has" in script.text
+    (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
+    assert repo.labels == ("bug",)
+
+
+def test_labels_prompt_defaults_to_any(options: InitOptions) -> None:
+    script = Script(answers=["", *POLICY], secrets=[GOOD_BOT, GOOD_APP])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    [labels_prompt] = [p for p in script.prompts if "Labels a proposal may use" in p]
+    assert "any existing label, or a comma-separated list to narrow it [any]" in labels_prompt
+
+
+def test_any_writes_no_labels_line(options: InitOptions) -> None:
+    script = Script(answers=["", *POLICY], secrets=[GOOD_BOT, GOOD_APP])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    text = options.config_file.read_text(encoding="utf-8")
+    assert "labels" not in text.split("[[channels.C0TEST1.repos]]", 1)[1]
