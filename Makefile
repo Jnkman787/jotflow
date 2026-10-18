@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format format-check typecheck test check run clean
+.PHONY: help install lint format format-check typecheck test check run manifest clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -27,6 +27,11 @@ check: lint format-check typecheck test ## Everything CI runs
 
 run: ## Run the jotflow CLI
 	uv run jotflow
+
+manifest: ## Regenerate manifests/slack-app.json from the renderer
+	uv run python -m jotflow.slack_manifest > manifests/slack-app.json.tmp \
+		&& mv manifests/slack-app.json.tmp manifests/slack-app.json \
+		|| { rm -f manifests/slack-app.json.tmp; exit 1; }
 
 clean: ## Remove caches and build output
 	rm -rf .pytest_cache .mypy_cache .ruff_cache dist build
