@@ -4,9 +4,9 @@
 
 - Issue: #15
 - Draft PR: #109
-- Status: implementing
-- Last verified: `make check` green on main at c1f456d, 908 tests, 98.3% coverage
-- Next safe action: run CodeRabbit or skip it, wait for CI, mark ready; renumber migration 3 if #104 lands first
+- Status: ready for review
+- Last verified: rebased on main at 34a0c64 (#104, #112); `make check` green, 1017 tests, 98.4% coverage
+- Next safe action: reviewer reviews #109
 
 ## Objective and done-when
 
@@ -78,7 +78,7 @@ Alternatives considered:
 
 ## Risks and open questions
 
-- #104 is not merged yet. This PR's migration is number 3 on today's `main`. If #104 lands first, its runs migration takes 3, and this one becomes 4 in a rebase.
+- #104 merged first, so its runs migration is 3 and this PR's ledger and packet migration is 4.
 - Wiring is left to #107. `jotflow run` does not open the store yet, so `write_tools(...)` and `SlackThreadPoster` ship tested but are not passed to the server. #107 opens the store, issues tokens, and passes `(*read_tools(...), *write_tools(...))` to `build_app`. Until then no token exists, so production behaviour does not change.
 - `record_result` requires the proposal to be executing. The run lifecycle (#107) moves it from approved to executing when it claims the execution run.
 
@@ -89,7 +89,7 @@ Alternatives considered:
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
 - [x] Commit this plan and open the draft PR
-- [x] Rebase on `main` once #105 merged (#104 is still open; see Risks)
+- [x] Rebase on `main` once #104 and #105 merged
 - [x] Migration: `tool_calls` and packet membership; store methods on both stores
 - [x] Ledger with shielded commit and argument-hash idempotency
 - [x] The five tools with kinds, scoping, caps, and policy checks
@@ -98,7 +98,7 @@ Alternatives considered:
 - [x] Update documentation: architecture tool table and write-tool rules
 - [x] `make check` passes
 - [x] CodeRabbit local review, or skipped: skipped, rate limit
-- [ ] `closingIssuesReferences` checked, then mark the PR ready
+- [x] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
