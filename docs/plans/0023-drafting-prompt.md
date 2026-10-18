@@ -4,10 +4,10 @@
 
 - Issue: #23
 - Also serves: #22 (the claude-code preset gets its first real runs)
-- Draft PR: to be opened with this plan
-- Status: planning
+- Draft PR: #144
+- Status: implementing
 - Last verified: plan written against main at e7a30b5, 2026-10-18
-- Next safe action: commit this plan and open the draft PR
+- Next safe action: add the instructions file and the packet fields
 
 ## Objective and done-when
 
@@ -135,8 +135,8 @@ Two new fixtures:
 
 ## Progress checklist
 
-- [ ] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
+- [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
+- [x] Commit this plan and open the draft PR
 - [ ] `instructions/drafting.md`, and the `instructions`, `channel`, and `people` packet fields, with tests
 - [ ] `hint_overruled` on proposals, with tests
 - [ ] The fixture `github` block, `fake_github_mcp`, and the two new fixtures
