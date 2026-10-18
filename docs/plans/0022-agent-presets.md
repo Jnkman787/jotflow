@@ -4,9 +4,9 @@
 
 - Issue: #22
 - Draft PR: #137
-- Status: implementing
+- Status: ready for review
 - Last verified: Claude Code 2.1.303 and github-mcp-server 2.0.2, checked locally on 2026-10-18 (see Validation)
-- Next safe action: implement `src/jotflow/adapters/presets.py` and wire it into the runner
+- Next safe action: review #137; then the Codex CLI preset in a second PR under this plan
 
 ## Objective and done-when
 
