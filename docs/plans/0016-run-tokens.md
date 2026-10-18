@@ -5,9 +5,9 @@
 - Issue: #16
 - Also serves: #53, whose run lifecycle issues and revokes these tokens
 - Draft PR: #105
-- Status: implementing
-- Last verified: `make check` green locally on 2026-10-18, 768 tests, 98.2% coverage
-- Next safe action: CodeRabbit or skip, CI on #105, check closingIssuesReferences, mark ready
+- Status: ready for review
+- Last verified: `make check` green, 773 tests, 98.2% coverage; CI green on #105
+- Next safe action: review and merge #105. All three #16 boxes are met, so #16 can be closed at merge.
 
 ## Objective and done-when
 
@@ -74,7 +74,7 @@ Alternatives considered:
 - [x] Update documentation: architecture token section, AGENTS layout if needed
 - [x] `make check` passes, coverage at or above the floor
 - [x] CodeRabbit local review, or skipped
-- [ ] `closingIssuesReferences` checked, then mark the PR ready
+- [x] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
