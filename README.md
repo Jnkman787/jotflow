@@ -269,7 +269,7 @@ This starts JotFlow. The agent containers, where your team's agent will draft is
 
 Neither file holds Slack tokens, and neither agent sees `.env`.
 
-Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
+Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 
 The first start builds JotFlow's image, which takes a minute or two.
 

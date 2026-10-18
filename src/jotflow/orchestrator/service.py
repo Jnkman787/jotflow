@@ -46,7 +46,7 @@ from jotflow.config import Settings
 from jotflow.models import RunKind
 from jotflow.orchestrator.debounce import Debouncer
 from jotflow.orchestrator.ingest import BotIdentity, Decision
-from jotflow.orchestrator.launch import RunnerClient, RunSupervisor
+from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
@@ -109,6 +109,77 @@ def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
     return RunKinds(frozenset(on), tuple(off))
 
 
+# Runners start alongside JotFlow, so give them a moment to answer.
+INFO_ATTEMPTS = 10
+INFO_DELAY_SECONDS = 3.0
+
+# Each runner serves exactly one group of kinds, asked about by its first kind.
+RUNNER_GROUPS: tuple[tuple[str, frozenset[RunKind]], ...] = (
+    ("drafting and question", CONVERSATION_KINDS),
+    ("execution", frozenset({RunKind.EXECUTION})),
+)
+
+
+async def check_runners(
+    client: RunnerClient,
+    kinds: RunKinds,
+    preset: str,
+    *,
+    attempts: int = INFO_ATTEMPTS,
+    delay: float = INFO_DELAY_SECONDS,
+) -> RunKinds:
+    """Ask each runner that is on what it starts, with its own secret.
+
+    A runner that will not answer, or starts another preset or other kinds than
+    jotflow.toml expects, turns its kinds off with one reason. Their runs stay
+    queued, as for a missing secret.
+    """
+    on = set(kinds.on)
+    off = list(kinds.off)
+    for label, group in RUNNER_GROUPS:
+        if not group <= on:
+            continue
+        reason = await _runner_mismatch(client, group, preset, attempts=attempts, delay=delay)
+        if reason is not None:
+            on -= group
+            off.append(f"{label} runs are off: {reason}")
+    return RunKinds(frozenset(on), tuple(off))
+
+
+async def _runner_mismatch(
+    client: RunnerClient,
+    group: frozenset[RunKind],
+    preset: str,
+    *,
+    attempts: int,
+    delay: float,
+) -> str | None:
+    kind = min(group, key=lambda k: list(RunKind).index(k))
+    endpoint = client.endpoint_for(kind)
+    where = endpoint.url if endpoint is not None else "its runner"
+    problem = "no attempt was made"
+    for attempt in range(max(attempts, 1)):
+        try:
+            info = await client.info(kind)
+        except RunnerError as exc:
+            problem = str(exc)
+            if problem != UNREACHABLE:
+                break  # a refusal, such as a wrong secret, will not fix itself
+            if attempt + 1 < attempts:
+                await asyncio.sleep(delay)
+            continue
+        if info.preset != preset:
+            return (
+                f"the runner at {where} starts preset {info.preset}, "
+                f"but jotflow.toml's [agent] preset is {preset}"
+            )
+        if frozenset(info.kinds) != group:
+            served = ", ".join(k.value for k in info.kinds) or "nothing"
+            return f"the runner at {where} serves {served}"
+        return None
+    return f"the runner at {where} did not answer: {problem}"
+
+
 class Orchestrator:
     """The store, the MCP server, the debouncer, and the run supervisor, in order."""
 
@@ -124,7 +195,11 @@ class Orchestrator:
         runner: RunnerClient | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
+        info_attempts: int = INFO_ATTEMPTS,
+        info_delay: float = INFO_DELAY_SECONDS,
     ) -> None:
+        self._info_attempts = info_attempts
+        self._info_delay = info_delay
         self._settings = settings
         self._policy = policy
         self._client = client
@@ -173,12 +248,21 @@ class Orchestrator:
         )
         self._server = self._make_server(self._settings, self.registry, tools)
         await self._server.start()
+        if self.kinds.on:
+            self._runner = self._runner or RunnerClient.from_settings(self._settings)
+            self.kinds = await check_runners(
+                self._runner,
+                self.kinds,
+                self._policy.agent.preset or "",
+                attempts=self._info_attempts,
+                delay=self._info_delay,
+            )
         for reason in self.kinds.off:
             log.warning("%s", reason)
         if not self.runs_on:
             return
-        runner = self._runner or RunnerClient.from_settings(self._settings)
-        self._runner = runner
+        runner = self._runner
+        assert runner is not None
         self._supervisor = RunSupervisor(
             lifecycle,
             self._store,

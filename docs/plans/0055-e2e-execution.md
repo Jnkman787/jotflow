@@ -4,7 +4,7 @@
 
 - Issue: #55
 - Also serves: #54, whose last box is the cross-container launch
-- PRs: #136 (part 1); parts 2 and 3 follow
+- PRs: #136 (part 1), #141 (part 2, merged), #142 (part 3)
 - Status: implementing (part 1 ready for review)
 - Last verified: part 1 `make check` green, 1496 tests, 98.5% coverage, on 2026-10-18
 - Next safe action: reviewer reviews #136. Then part 2, the cross-container check
@@ -97,8 +97,9 @@ Runs stay `running` in the store, so the next startup's `recover()` marks them i
 - [x] Commit this plan and open the draft PR
 - [x] Part 1: `Orchestrator`, startup and shutdown order, debouncer wiring, `revoke_all`, tests
 - [x] Part 1: in-process end-to-end test with a stub agent through the real MCP server, covering both `record_result` cases
-- [ ] Part 2: cross-container CI check, for #54's box
-- [ ] Part 3: `execute-fixture` and the live runbook
+- [x] Part 2: cross-container CI check, for #54's box (#141, merged)
+- [x] Part 3: `execute-fixture` and the live runbook (#142)
+- [x] Part 3, lead's additions: the runner's secret-gated `GET /info` returning `{preset, kinds}`. JotFlow's startup check turns a kind off on a preset or kinds mismatch, a refusal, or no answer after 10 tries 3 s apart, and retries only an unreachable runner. The cross-container job checks `/info` and that the drafting runner refuses the exec secret. The stub agent compares the exact per-kind tool set.
 - [x] Docs: README's run section, architecture's How runs start
 - [ ] `make check` passes on each part
 - [ ] Maintainer's live run

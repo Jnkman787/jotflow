@@ -792,3 +792,29 @@ async def test_an_execution_run_that_recorded_its_result_stays_applied(rig: Rig)
     await rig.supervisor.tick()
     assert await rig.status(run_id) is RunStatus.SUCCEEDED
     assert await _proposal_state(rig) is ProposalState.APPLIED
+
+
+async def test_info_is_read_strictly_from_the_kinds_own_runner() -> None:
+    recorder = Recorder(200, {"preset": "claude-code", "kinds": ["execution"]})
+    client = recording_client(recorder)
+    info = await client.info(RunKind.EXECUTION)
+    assert (info.preset, info.kinds) == ("claude-code", (RunKind.EXECUTION,))
+    (request,) = recorder.requests
+    assert (request.method, request.url.host, request.url.path) == ("GET", "agent-exec", "/info")
+    assert request.headers["authorization"] == f"Bearer {EXEC_SECRET}"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"preset": "claude-code"},
+        {"preset": "claude-code", "kinds": ["admin"]},
+        {"preset": 1, "kinds": []},
+        {"preset": "claude-code", "kinds": [], "command": "sh"},
+    ],
+)
+async def test_a_bad_info_reply_is_refused(body: Any) -> None:
+    with pytest.raises(RunnerError, match="not its info"):
+        await recording_client(Recorder(200, body)).info(RunKind.DRAFTING)
+    with pytest.raises(RunnerError, match="401"):
+        await recording_client(Recorder(401)).info(RunKind.DRAFTING)
