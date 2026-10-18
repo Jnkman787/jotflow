@@ -209,7 +209,7 @@ Defaults that need no syntax (D9):
 
 This is the novel and risky piece. The agent, not the orchestrator, decides where a message belongs, but the orchestrator constrains the decision.
 
-- Every packet includes the channel's active topic index and related-thread excerpts.
+- Every packet includes the channel's active topic index and related-thread excerpts. The index lists topics with a message linked in the last `topic_window_days` (14 by default), most recently active first and capped at 50. Each entry has its id, title, linked issue, message count, and up to five thread timestamps. It travels as compact JSON with a note that titles were written by earlier runs and are untrusted data (`src/jotflow/orchestrator/topics.py`).
 - The agent classifies each new message as: new topic, belongs to topic X, or chatter, and records any keyword hint it overruled and why.
 - Below a confidence threshold the agent uses `ask_channel` rather than guessing.
 - People override with `re:`, `skip:`, or the equivalent reaction; overrides are recorded so the index stays correct.
@@ -293,7 +293,7 @@ Two tiers, because every team supplies every value and the two kinds change at d
 
 | Tier | Lives in | Changed by | Holds |
 |---|---|---|---|
-| Policy | `jotflow.toml`, deployed with the service | An admin editing the file | Each channel's repos with nickname and description, optional label lists, optional approver list, reaction approval, `issue_links`, debounce window, agent preset |
+| Policy | `jotflow.toml`, deployed with the service | An admin editing the file | Each channel's repos with nickname and description, optional label lists, optional approver list, reaction approval, `issue_links`, debounce window, topic window, agent preset |
 | Runtime | The local database | Slack slash commands | Channel mode (`propose`, `auto`, `paused`), Slack to GitHub identity links |
 
 The policy file is validated in full at startup. An unknown or misspelt key is an error, and every error names its key, such as `channels.C0123ABCD.repos[0].nickname`. Channels are keyed by Slack channel id; each lists its repos. A repo's `labels` list is optional: without one, a proposal may use any label that already exists on the repo, and a list narrows that set. An explicit empty list is an error, because it could mean either; leaving the key out is the only way to say "any". Lists are per repo because labels are per repo on GitHub. JotFlow holds no GitHub credentials, so it cannot see which labels exist. The agent's rule is to never invent a label: drafting runs read the repo's labels with read-only access, and the execution run checks each label exists before applying it, since GitHub would otherwise create a missing one. That is a prompt rule, not something JotFlow enforces. JotFlow enforces a label list where a team has set one, and always rejects label names with control characters, line breaks, bidirectional overrides, invisible format characters such as zero-width spaces, or surrounding spaces. An empty approver list means approvers are off. [`jotflow.example.toml`](../jotflow.example.toml) is a complete, commented example. The environment tier holds only the Slack tokens, the MCP host and port, `JOTFLOW_MCP_ALLOWED_HOSTS` (extra `Host` names for the MCP server, such as the Compose service name), the database path, and `JOTFLOW_CONFIG`, the path to the policy file.

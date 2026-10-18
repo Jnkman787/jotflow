@@ -305,6 +305,12 @@ class Policy(_Strict):
     debounce_seconds: int = Field(
         default=120, ge=1, le=86_400, description="Quiet window before a thread is drafted"
     )
+    topic_window_days: int = Field(
+        default=14,
+        ge=1,
+        le=365,
+        description="Days since a message was last linked during which a topic stays active",
+    )
     agent: AgentPolicy = Field(default_factory=AgentPolicy)
     approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
     channels: dict[ChannelId, ChannelPolicy] = Field(min_length=1)

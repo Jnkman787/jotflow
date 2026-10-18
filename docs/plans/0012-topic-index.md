@@ -4,10 +4,10 @@
 
 - Issue: #12
 - Also serves: #14 (`list_topics` returns this index), #37 (expiry reuses the window setting)
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: add `topic_window_days` to the policy, then the index models and builder
+- Draft PR: #110
+- Status: ready for review
+- Last verified: `make check` green locally on 2026-10-18: 768 tests, 98% coverage, `orchestrator/topics.py` at 100%
+- Next safe action: review; #14 returns `list_topics` from its MCP tool, and #37 reuses `topic_window_days`
 
 ## Objective and done-when
 
@@ -15,12 +15,12 @@ Every drafting run gets a compact index of the channel's active topics, so the a
 
 Done when:
 
-- [ ] `list_topics(channel)` returns only topics active within the window, most recently active first
-- [ ] Adding a message to a topic refreshes its activity (the store already does this; tested here through the index)
-- [ ] The index serialises to a compact form suitable for a prompt, with titles labelled as untrusted data
-- [ ] The window is configurable in `jotflow.toml` as `topic_window_days`
-- [ ] Topic titles are bounded and sanitised (#12 note): already enforced by the store on every write; the index cleans them again on the way out
-- [ ] `make check` passes, including the coverage floor
+- [x] `list_topics(channel)` returns only topics active within the window, most recently active first
+- [x] Adding a message to a topic refreshes its activity (the store already does this; tested here through the index)
+- [x] The index serialises to a compact form suitable for a prompt, with titles labelled as untrusted data
+- [x] The window is configurable in `jotflow.toml` as `topic_window_days`
+- [x] Topic titles are bounded and sanitised (#12 note): already enforced by the store on every write; the index cleans them again on the way out
+- [x] `make check` passes, including the coverage floor
 
 **Out of scope:** expiring topics whose issue closed, and reviving expired topics (#37). The MCP tool itself (#14).
 
@@ -43,19 +43,20 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `topic_window_days` in the policy, writer, and example
-- [ ] `TopicSummary` and `TopicIndex`
-- [ ] `build_index` and `list_topics`
-- [ ] Tests
-- [ ] Docs: architecture Correlation section, AGENTS.md layout
-- [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] `topic_window_days` in the policy, writer, and example
+- [x] `TopicSummary` and `TopicIndex`
+- [x] `build_index` and `list_topics`
+- [x] Tests
+- [x] Docs: architecture Correlation section, AGENTS.md layout
+- [x] CodeRabbit once, or skipped: see Validation
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` green: 768 tests, 98% coverage. `tests/test_topic_index.py` runs against MemoryStore and SqliteStore. It covers only topics within the window, an inclusive window edge, a linked message bringing an old topic back, summary fields with the thread cap and order, other channels hidden, the 50-topic cap and the count of topics left out, a bad window or limit, the compact JSON form and its untrusted-data note, titles cleaned again even when a bad title reached the store some other way, `list_topics` taking the window from the policy and refusing an unconfigured channel, and `topic_window_days` defaulting, validating 1 to 365, and round-tripping through the writer.
+- Docs: the architecture's Correlation section describes the index and the Configuration table lists the topic window. `jotflow.example.toml` documents `topic_window_days`. AGENTS.md's layout already lists the topic index under `orchestrator/`.
 
 ## Handoff notes
 

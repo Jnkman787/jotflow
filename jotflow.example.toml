@@ -12,6 +12,11 @@ issue_links = "permalinks"
 # Seconds a thread must be quiet before it is drafted. Channels may override.
 debounce_seconds = 120
 
+# How many days a topic stays in the list the agent sees after the last message
+# linked to it. Older topics are kept, just not shown, so a reply months later
+# can still find its issue.
+topic_window_days = 14
+
 [agent]
 # The agent preset the runner in the agent container launches.
 # Leave it out to connect JotFlow to Slack without starting agent runs.
