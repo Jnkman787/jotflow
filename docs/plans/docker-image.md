@@ -4,9 +4,9 @@
 
 - Issue: #9
 - Draft PR: #62
-- Status: implementing
+- Status: ready for review
 - Last verified: local build and smoke tests on Docker 28.3 and Compose 2.38, 2026-10-18
-- Next safe action: wait for CI on #62, then mark it ready for review
+- Next safe action: review and merge #62; after #8 lands, check the connected state with `docker compose up` against a live workspace
 
 ## Objective and done-when
 
@@ -63,7 +63,7 @@ Alternatives considered: `docker/build-push-action` would add a third-party acti
 - [x] Verify locally: build, `--version`, non-root, no Node, volume persistence, no secrets in context
 - [x] Update documentation: a short image section under Deployment in architecture.md
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
@@ -77,6 +77,7 @@ Run locally on 2026-10-18 with Docker 28.3.2 and Compose 2.38.2:
 - With a dummy `.env` and `local.db` in the checkout, a throwaway build that copies the whole context sees only `LICENSE`, `README.md`, `pyproject.toml`, `src/`, and `uv.lock`.
 - `make check` passes.
 - The CI `image` job runs the same build, a version check, a uid check, and a check that Node, npm, and uv are absent.
+- CI on #62 is green: lint, type check, and tests on Python 3.12 and 3.13, the image build, and the PR title check.
 
 ## Handoff notes
 
