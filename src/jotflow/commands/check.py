@@ -10,8 +10,10 @@ in the environment for that run, and it refuses outright when ``CI`` is set.
 JotFlow reads the opt-in from the process environment, never from ``.env``,
 and refuses if ``.env`` contains it. That does not stop every way of leaving
 it on: Compose's ``env_file`` turns ``.env`` lines into the container's
-environment, and a shell profile can export it. So the opt-in belongs on the
-command line, and an interactive run also asks before it posts.
+environment, and a shell profile can export it. So the live check refuses
+inside JotFlow's own image, which sets ``JOTFLOW_IMAGE``, and runs on the host
+instead; plain ``jotflow check`` still works in the image. The opt-in belongs
+on the command line, and an interactive run also asks before it posts.
 """
 
 from __future__ import annotations
@@ -38,6 +40,8 @@ EXIT_REFUSED = 2
 
 OPT_IN = "JOTFLOW_LIVE_CHECK"
 CHANNEL_VAR = "JOTFLOW_LIVE_CHECK_CHANNEL"
+IMAGE_VAR = "JOTFLOW_IMAGE"
+EXIT_CANCELLED = 130
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -75,12 +79,17 @@ def _truthy(value: str | None) -> bool:
 
 
 def check_opt_in(environ: Mapping[str, str], dotenv: Mapping[str, str]) -> None:
+    if _truthy(environ.get(IMAGE_VAR)):
+        raise Refusal(
+            f"this is JotFlow's container image, where Compose passes .env into the "
+            f"environment; run the live check on the host: {OPT_IN}=1 make live-check"
+        )
     if _truthy(environ.get("CI")):
         raise Refusal("the live check never runs in CI; CI must not hold Slack tokens")
     if OPT_IN in dotenv:
         raise Refusal(
-            f"remove {OPT_IN} from .env; the opt-in is given on the command line for each "
-            "run, so it is never left on"
+            f"remove the {OPT_IN} line from .env and set it only for this one run: "
+            f"{OPT_IN}=1 jotflow check --live"
         )
     if environ.get(OPT_IN) != "1":
         raise Refusal(
@@ -161,7 +170,12 @@ def run(args: argparse.Namespace) -> int:
     print(f"Live check: posting one test message to channel {channel}, then deleting it.")
     print("Stop any running JotFlow first: Slack sends each event to only one connection.")
     interactive = not getattr(args, "yes", False) and sys.stdin.isatty()
-    if not confirm(channel, interactive=interactive):
+    try:
+        go_ahead = confirm(channel, interactive=interactive)
+    except KeyboardInterrupt:
+        print("\njotflow check: cancelled, nothing posted", file=sys.stderr)
+        return EXIT_CANCELLED
+    if not go_ahead:
         print("jotflow check: not posting; nothing was sent", file=sys.stderr)
         return EXIT_REFUSED
     return asyncio.run(
