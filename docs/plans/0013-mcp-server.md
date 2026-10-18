@@ -5,9 +5,9 @@
 - Issue: #13
 - Also serves: #16, which plugs its token check into the interface added here
 - Draft PR: #97
-- Status: ready for review
+- Status: completed
 - Last verified: rebased on main at 80a93dc; `make check` green, 496 tests, 97.6% coverage; CI green on #97
-- Next safe action: merge #97 after the lead's final look; then tick the first #13 box
+- Next safe action: none; #13's last two boxes are covered by `tests/test_mcp_terminal_client.py`
 
 ## Objective and done-when
 
@@ -92,6 +92,10 @@ Alternatives considered:
 - [x] `closingIssuesReferences` is empty, then mark the PR ready
 
 ## Validation
+
+- **#13's last two boxes, in a follow-up after #106 (read tools) and #109 (write tools) merged.** `tests/test_mcp_terminal_client.py` runs the real server on loopback with the full tool set, built as `jotflow run` will build it in #55, and tokens issued by `TokenRegistry`.
+  - The MCP SDK's own streamable-HTTP client connects with each run kind's token and lists exactly that kind's tools, as written out from architecture.md's token table. A revoked token is refused with "the bearer token is not valid".
+  - Every listed tool's `inputSchema` equals its Pydantic model's `model_json_schema()`. Its `outputSchema` equals the serialization schema, or is absent when the tool has no output model.
 
 - `make check` passes: ruff, mypy strict, and 467 tests with 98% total (497 and 97.6% after rebasing on main and the review changes) line and branch coverage. `whiteboard/gate.py`, `tokens.py`, and `tools.py` are at 100%, and `server.py` at 97%. The two lines left are the no-grant guard, reachable only without the gate, and a start that ends without an error.
 - `tests/test_mcp_server.py`, 48 tests, all in process through `httpx2.ASGITransport` except the two lifecycle tests on loopback:
