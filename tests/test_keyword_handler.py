@@ -489,3 +489,11 @@ async def test_bolt_adapter_reads_guests_and_external_users(
 ) -> None:
     person = await BoltKeywordSlack(FakeClient(user), "T0ACME").person("U0ALEX")
     assert person == Person("U0ALEX", guest=guest, external=external)
+
+
+async def test_an_unknown_author_counts_as_someone_else(store: Store) -> None:
+    slack = FakeSlack()
+    handler = KeywordHandler(store, policy(approvers=("U0LEAD",)), slack)
+    assert (await handler.on_reaction(reaction("U0BLAKE", None))).action == "ignored"
+    assert (await handler.on_reaction(reaction("U0LEAD", None))).action == "skipped"
+    assert slack.replies[0][2].startswith("<@U0LEAD> marked Someone's message")

@@ -153,7 +153,8 @@ class KeywordHandler:
             return Outcome("ignored", "guest or external user")
         author = event.get("item_user") if isinstance(event.get("item_user"), str) else None
         approvers = self._policy.approval.approvers
-        someone_else = author is not None and author != user
+        # Without a known author, assume someone else's message: the approver rule holds.
+        someone_else = author != user
         if someone_else and approvers and user not in approvers:
             return Outcome("ignored", "only the author or an approver may")
         stored = await self._store.get_message(channel, ts)

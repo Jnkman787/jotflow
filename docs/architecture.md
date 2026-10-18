@@ -198,7 +198,7 @@ Rules:
 
 - The colon is required, so sentences like "Skip button is broken" are never read as commands. Typos are tolerated only on keywords of four or more letters.
 - JotFlow confirms a recognised keyword with a reaction on the message, so the poster knows it was understood. Reactions never restart the wait before drafting.
-- Every keyword has an equivalent reaction, for people who forget or prefer clicking. Reactions from guests and external users are ignored. So far only `skip:` has one, :no_entry_sign:. `re:` has none, because it needs an issue number.
+- Keywords can have an equivalent reaction, for people who forget or prefer clicking. Today only `skip:` has one, :no_entry_sign:. `re:` cannot, because it needs an issue number. Reactions from guests and external users are ignored.
 - A `re:` that names an issue outside the channel's repos is refused, with a thread reply that says why. One that names an issue with no topic yet starts a topic for it.
 - `re:` and `skip:` are stored as the poster's own decision, which the agent cannot overrule. JotFlow applies them before the debouncer joins a reply to its parent's topic, and a skip reaction that arrives later still overrides that join.
 - JotFlow strips the keyword before the agent sees the text, and passes the rest as untrusted thread content. A keyword never adds instructions to the agent's prompt.

@@ -56,7 +56,7 @@ Done when:
 ## Risks and open questions
 
 - Typo tolerance inside `split_keyword` changes what the live packet strips and hints, so the packet and the handler agree. I asked the architect, who wrote the module, and kept insertions and deletions out so #20's tests hold unchanged.
-- A typo like `sip:` becomes `skip`. D10 accepts that trade for four-letter keywords.
+- A real word one letter away, like `ship:` or `skin:`, becomes `skip`. D10 accepts that trade for four-letter keywords, and the confirmation reaction shows the poster what happened.
 
 ## Progress checklist
 
