@@ -56,18 +56,32 @@ jobs:
           persist-credentials: false
 
       # Plain docker CLI: nothing is pushed, so no registry login or
-      # third-party build action is needed.
-      - name: Validate Compose file
-        run: docker compose config --quiet
+      # third-party build action is needed. The tag matches the image name in
+      # docker-compose.yml, so the Compose checks below reuse this build.
+      - name: Validate Compose files
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.policy.yml config --quiet
 
       - name: Build
-        run: docker build --tag jotflow:ci .
+        run: docker build --tag jotflow:local .
 
       - name: Smoke test
         run: |
-          docker run --rm jotflow:ci jotflow --version
-          test "$(docker run --rm jotflow:ci id -u)" = "10001"
-          if docker run --rm jotflow:ci sh -c 'command -v node || command -v npm || command -v uv'; then
+          docker run --rm jotflow:local jotflow --version
+          test "$(docker run --rm jotflow:local id -u)" = "10001"
+          if docker run --rm jotflow:local sh -c 'command -v node || command -v npm || command -v uv'; then
             echo "::error::The JotFlow image must not contain Node, npm, or uv"
+            exit 1
+          fi
+
+      - name: Policy file mount
+        run: |
+          install -m 0644 jotflow.example.toml jotflow.toml
+          compose="docker compose -f docker-compose.yml -f docker-compose.policy.yml"
+          $compose run --rm jotflow python -c \
+            'import os; from jotflow.policy import load_policy; load_policy(os.environ["JOTFLOW_CONFIG"]); print("policy loaded")'
+          if $compose run --rm jotflow sh -c 'echo x >> "$JOTFLOW_CONFIG"' 2>/dev/null; then
+            echo "::error::The policy file must be mounted read-only"
             exit 1
           fi

@@ -94,6 +94,15 @@ The team decides where both containers run. The only requirements are that JotFl
 
 **The JotFlow image.** The `Dockerfile` builds from `uv.lock` and ships only the virtual environment: no uv, no Node, no agent CLI. It runs as an unprivileged user (uid 10001). `docker-compose.yml` mounts a named volume at `/data` for the database, keeps the root filesystem read-only, drops all capabilities, and publishes no ports. JotFlow joins two networks: `egress` for Slack, and `agents`, which is internal and has no route out. The M3 agent service joins only `agents` plus whatever egress its model and GitHub access need.
 
+**The policy file in Compose.** `docker-compose.policy.yml` mounts the team's `jotflow.toml` read-only at `/etc/jotflow/jotflow.toml` and points `JOTFLOW_CONFIG` at it. Start JotFlow with both files, or set `COMPOSE_FILE` so plain `docker compose up -d` uses both:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.policy.yml up -d
+COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml
+```
+
+The mount is kept out of `docker-compose.yml` because Docker creates a root-owned directory on the host when a bind-mount source is missing. That directory would block `jotflow init` from writing the file. The base file therefore runs without a policy, for `--version` and image checks. The policy holds no secrets, and the container's user must be able to read it, so the file needs mode `0644`. With `0600`, JotFlow stops with a permission error naming the file.
+
 ## Intent keywords
 
 People never need syntax: a plain message is classified by the agent. Keywords let them steer explicitly. A keyword is the first word of a message followed by a colon (D10).
