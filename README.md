@@ -286,6 +286,8 @@ $env:JOTFLOW_LIVE_CHECK = "1"; uv run jotflow check --live; Remove-Item Env:JOTF
 docker compose start jotflow
 ```
 
+If you stop the check with Ctrl-C, the last part never runs and the opt-in stays set in that PowerShell window. Close the window, or run `Remove-Item Env:JOTFLOW_LIVE_CHECK`.
+
 Without uv, replace `uv run jotflow` with `.venv/bin/jotflow`, or `.venv\Scripts\jotflow` on Windows.
 
 Run it on the host, not in the container: it refuses inside JotFlow's image, because Compose passes every `.env` line into the container. That refusal guards against accidents; it is not a security boundary. Keep `JOTFLOW_LIVE_CHECK` out of `.env` and your shell profile; the check refuses when `.env` has it. Ctrl-C at the question cancels without posting. Each step prints `ok` or `FAIL` with what to fix. Add `--yes` to skip the question. If `jotflow.toml` lists several channels, pick one with `--channel C0123ABCD`. `uv run jotflow check` without `--live` only checks `.env` and `jotflow.toml`, and posts nothing. The live check refuses to run when `CI` is set, so it never runs in a pipeline.

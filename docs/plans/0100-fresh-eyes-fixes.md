@@ -89,6 +89,7 @@ None is declined.
   - both forms of the saved-tokens message
 - A scripted session was printed and read end to end. The README transcript is a shortened copy of it.
 - Fictional names only: the new text names `acme-co`, `Acme Co`, `#ideas`, `C0IDEAS01`, and `Idea Bot`. A scan of the diff found no other organisation, workspace, or repo.
+- Security review: approved, with one optional note, taken by team lead decision. If the PowerShell live-check line is stopped with Ctrl-C, `Remove-Item` never runs, so the README says to close the window or clear the variable by hand.
 - CodeRabbit: skipped, rate limit. A self-review softened one claim, that Slack always notifies you of an approval, to "usually".
 
 ## Handoff notes
