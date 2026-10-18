@@ -109,6 +109,7 @@ Smaller decisions deferred until their milestone: the topic expiry window, and i
 - Topic expiry: quiet window or linked issue closed; expiry removes a topic from the active index only, and its record is kept indefinitely for matching
 - Rebuild command: reconstruct the store from Slack thread replies
 - Container image published to GHCR on tagged releases
+- Python package published to PyPI with trusted publishing, from the same tag and version as the image; `jotflow init` writes a Compose file pinned to that image, so a team installs with `uvx jotflow init` then `docker compose up -d` and never clones the repo
 - Documentation: deployment guide, agent adapter guide, threat model
 - First tagged release
 
