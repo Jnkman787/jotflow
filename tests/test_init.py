@@ -294,8 +294,8 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
 @pytest.mark.parametrize(
     ("bad", "fragment"),
     [
-        ("general", "not a Slack channel id"),
-        ("c0lower", "not a Slack channel id"),
+        ("general", "looks like the channel's name"),
+        ("c0lower", "use capital letters"),
         ("D0DIRECT", "not a Slack channel id"),
     ],
 )
@@ -725,3 +725,50 @@ def test_rerun_keeps_the_run_cap(options: InitOptions) -> None:
     script = Script(answers=["", "", "n", *POLICY])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert load_policy(options.config_file).agent.max_concurrent_runs == 6
+
+
+# --- #100 round 3 --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("typed", "shown"),
+    [
+        ("c0ideas01", "C0IDEAS01"),
+        ("C0ideas01", "C0IDEAS01"),
+        (" c0ideas01 ", "C0IDEAS01"),
+        ("customer12", "CUSTOMER12"),
+        ("growth2026", "GROWTH2026"),
+    ],
+)
+def test_a_lowercase_id_is_refused_with_a_hint(typed: str, shown: str) -> None:
+    with pytest.raises(ValueError) as exc:
+        init._channel_id(typed)
+    message = str(exc.value)
+    assert "Slack channel ids use capital letters" in message
+    assert f"did you mean {shown}?" in message
+    assert "channel's name" in message
+
+
+@pytest.mark.parametrize("typed", ["general", "cgeneralchannel"])
+def test_a_lowercase_word_is_treated_as_a_name(typed: str) -> None:
+    with pytest.raises(ValueError, match="looks like the channel's name"):
+        init._channel_id(typed)
+
+
+def test_other_bad_ids_say_use_capitals() -> None:
+    with pytest.raises(ValueError, match="in capitals"):
+        init._channel_id("x0")
+
+
+def test_a_guessed_id_is_never_written(options: InitOptions) -> None:
+    answers = ["", "", "customer12", "growth2026", *POLICY]
+    script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert list(load_policy(options.config_file).channels) == ["C0TEST1"]
+    assert "did you mean CUSTOMER12?" in script.text
+
+
+def test_preset_and_nickname_prompts_say_what_they_do() -> None:
+    preset = " ".join(init.EXPLAIN_PRESET)
+    assert "claude-code is accepted today but does nothing" in preset
+    assert "issue 42" in init.EXPLAIN_NICKNAME

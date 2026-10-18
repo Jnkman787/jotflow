@@ -158,18 +158,15 @@ class BotIdentity:
     scopes_verified: bool
 
 
-_REINSTALL = (
-    "Reinstall the app from OAuth & Permissions so the new scopes are granted, "
-    "then copy the bot token again."
-)
-
 _COMMON_ERRORS = {
     "invalid_auth": "Slack does not recognise this token. Copy it again; it may be incomplete.",
     "not_authed": "No token reached Slack. Paste the token again.",
     "account_inactive": "This token belongs to an app or user that has been deactivated.",
     "token_revoked": "This token has been revoked. Reinstall the app and copy the new token.",
-    "token_expired": "This token has expired. Turn off token rotation for the app, "
-    "reinstall it, and copy the new token.",
+    "token_expired": "This token has expired, which means token rotation is on for the app. "
+    "JotFlow's manifest leaves it off, and Slack does not let you turn it off again "
+    "once it is on. Create the app again from the link setup prints, run setup again, "
+    "then delete the old app under Basic Information. manifests/README.md has the steps.",
     "ratelimited": "Slack is rate limiting requests. Wait a minute and try again.",
 }
 
@@ -214,8 +211,10 @@ def check_bot_token(api: SlackApi, token: str) -> BotIdentity:
             raise TokenError(
                 f"The bot token is missing {'this scope' if one else 'these scopes'}: "
                 f"{', '.join(missing)}. In the app's settings, open OAuth & Permissions, "
-                f"and under Scopes, Bot Token Scopes, add {'it' if one else 'them'}. "
-                f"Do not create a second app. {_REINSTALL}"
+                "scroll to Scopes, and under Bot Token Scopes click Add an OAuth Scope "
+                f"for {'it' if one else 'each one'}. Then click Reinstall to Workspace and "
+                "Allow, copy the new Bot User OAuth Token from the same page, and paste it "
+                "here. Do not create a second app."
             )
     return BotIdentity(
         team=str(result.body.get("team") or ""),
