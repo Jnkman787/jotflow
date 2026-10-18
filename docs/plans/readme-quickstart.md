@@ -59,6 +59,7 @@ Stays open on #10, because it needs the live sandbox workspace:
 - Corrections made during that check: the transcript gained init's `COMPOSE_FILE` line, the log lines gained their timestamp prefix, `/invite` uses the bot's handle rather than its display name, and the file-not-found message uses the code's backticks.
 - `make check` green; the change is docs only.
 - Security review of #71: 4 items, all taken. A troubleshooting row for the directory Docker Desktop creates when `jotflow.toml` is missing; a note that `.env`'s owner-only mode is not enforced on Windows drives, with the advice to clone into the Linux home directory in WSL; a reminder to remove channel ids and workspace names before pasting logs publicly; and a pointer to revoking leaked tokens.
+- Team lead review of #71: the status note no longer claims a working Slack connection, since the live check has not happened; the recovery row now stops Compose first and starts it again after `jotflow init`.
 
 ## Handoff notes
 

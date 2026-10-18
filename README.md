@@ -4,7 +4,7 @@
 
 JotFlow is a self-hosted, agent-agnostic bridge between a shared Slack channel and your GitHub repositories. Anyone on the team, engineer or not, drops an idea, bug, or request into the channel. JotFlow watches the conversation, correlates follow-up messages and replies to the same topic, and has *your* AI agent draft the corresponding GitHub issue. A human approves it, or the channel is configured to let it through automatically. Either way, the result is posted back to Slack so everyone sees what was created.
 
-> **Status: milestone 1, installable.** You can set JotFlow up and see it connect to Slack and log events from your channels. Drafting and approving issues arrives in later milestones; see the [roadmap](docs/roadmap.md). [docs/architecture.md](docs/architecture.md) is the full design.
+> **Status: milestone 1, installable, in progress.** Setup and `jotflow run` are built and tested offline; the first live check against a Slack workspace is next. Drafting and approving issues arrives in later milestones; see the [roadmap](docs/roadmap.md). [docs/architecture.md](docs/architecture.md) is the full design.
 
 ## Why
 
@@ -165,7 +165,7 @@ Connected to Slack as @idea_bot in Example Team.
 
 Setup writes two files next to `docker-compose.yml`. Neither is committed to git.
 
-- **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, including `/mnt/c` in WSL, file modes are not enforced and the folder's Windows permissions decide who can read it, so in WSL clone into your Linux home directory instead. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
+- **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that mode is not enforced and the folder's Windows permissions decide who can read it. Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
 - **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option.
 
 Running `jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`.
@@ -222,7 +222,7 @@ Every error names what to fix. The common ones:
 | `configuration problem in environment or .env:` `JOTFLOW_SLACK_BOT_TOKEN: not set` | `.env` is missing or isn't next to `docker-compose.yml`. Run `jotflow init` in the repository folder. |
 | `configuration problem in jotflow.toml:` ``file not found; run `jotflow init` to create it`` | The container didn't get your policy file. Check that `.env` has the `COMPOSE_FILE` line. If you removed it, start with `docker compose -f docker-compose.yml -f docker-compose.policy.yml up -d`. |
 | Compose says the bind source path for `jotflow.toml` does not exist | Run `jotflow init` before `docker compose up -d`. |
-| `jotflow.toml` is a directory, or JotFlow reports `Is a directory` | Compose ran before setup, and Docker Desktop created an empty directory in place of the missing file. Remove it, with `sudo` if needed because Docker created it as root, then run `jotflow init`. |
+| `jotflow.toml` is a directory, or JotFlow reports `Is a directory` | Compose ran before setup, and Docker Desktop created an empty directory in place of the missing file. Stop JotFlow with `docker compose down` and remove the directory. That may need `sudo`, or Docker Desktop's file access, because Docker created it as root. Then run `jotflow init` and start again with `docker compose up -d`. |
 | `Permission denied` on `/etc/jotflow/jotflow.toml` | The container runs as its own user and must be able to read the file: `chmod 644 jotflow.toml`. |
 | `not a member of channel C0EXAMPLE1; invite the bot there with /invite @idea_bot` | Invite the bot to that channel. JotFlow keeps running and watches the channels it is in. |
 | `could not look up channel ... the app needs the channels:read and groups:read scopes` | The app was created from an older manifest. Add the two scopes under **OAuth & Permissions** and reinstall the app. If Slack shows a new bot token, run `jotflow init` again to save it. |
