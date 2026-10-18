@@ -6,7 +6,7 @@
 - Also serves: #56, for the strict keyword prefix only; #14's `WorkSource` interface
 - Draft PR: #125
 - Status: completed
-- Last verified: `make check` green locally: 1273 tests, `packet.py` at 99%, `keywords.py` at 100%
+- Last verified: `make check` green locally: 1278 tests, `packet.py` at 99%, `keywords.py` at 100%
 - Next safe action: review and merge #125. #55 wires `SlackWorkSource(BoltSlackReader(app.client), store, bot=identity)` into `read_tools`
 
 ## Objective and done-when
@@ -95,7 +95,7 @@ Alternatives considered:
 
 ## Validation
 
-- `make check` passes, with 1273 tests. `orchestrator/packet.py` is at 99%, and `orchestrator/keywords.py` at 100%.
+- `make check` passes, with 1278 tests after the CodeRabbit fixes. `orchestrator/packet.py` is at 99%, and `orchestrator/keywords.py` at 100%.
 - `tests/test_packet.py`, 40 tests, all against a fake `SlackReader` that logs every call, so no network. They cover:
   - **Keywords:** the strict prefix, including "Skip button is broken" and "ideas:" as plain text.
   - **Markup:** Slack markup to plain text, covering mentions, channels, links, `<!here>`, user groups, and entities.
@@ -119,7 +119,12 @@ Alternatives considered:
     - an unreadable thread giving no excerpts
   - **The real adapter:** `BoltSlackReader` asks for exactly one thread and one user.
 - **No persistence:** a `SqliteStore` file runs a full `get_work` through `read_tools` with this source. The secret text is in the packet served to the agent, and absent from every database file afterwards.
-- CodeRabbit: see the PR.
+- CodeRabbit (local CLI): 3 findings, all fixed.
+  1. **Major.** Fetching stopped at the first 200 messages, so a very long thread lost its newest replies. `_window` now pages through the thread, up to 25 pages, and keeps the first 50 messages plus a rolling window of the newest 200. `omitted` counts everything left out. A 600-reply test shows the newest reply survives.
+  2. **The backoff budget.** Cumulative retry waiting is capped at 20 s, inside the MCP server's 30 s request timeout. Each wait is capped at 10 s. A test shows two 8 s waits, then a clear error.
+  3. **Doc wording.** The privacy paragraph is whole again, with the packet's rules in a list after it.
+  - Related excerpts now read only each thread's first message, with one call each.
+- After the fixes: 1278 tests.
 
 ## Handoff notes
 

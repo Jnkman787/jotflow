@@ -548,3 +548,53 @@ async def test_the_bolt_reader_tolerates_a_non_dict_body() -> None:
     reader = packet.BoltSlackReader(FakeWebClient(data=b"raw"))  # type: ignore[arg-type]
     assert await reader.replies(CH, ROOT, cursor=None, limit=1) == {}
     assert await reader.user("U0SAM") == {}
+
+
+# CodeRabbit's findings: the newest replies survive, and backoff fits the request
+
+
+async def test_a_very_long_thread_still_shows_its_newest_replies() -> None:
+    replies = [msg(f"1.{i:04}", f"reply {i}") for i in range(600)]
+    reader = FakeReader({ROOT: [msg(ROOT, "root"), *replies]})
+    thread = await source(reader).thread(CH, ROOT)
+    kept = [m.ts for m in thread.messages]
+    assert kept[0] == ROOT
+    assert kept[-1] == "1.0599"  # the newest reply, past the first 200
+    assert kept[1 : 1 + packet.KEEP_HEAD] == [f"1.{i:04}" for i in range(packet.KEEP_HEAD)]
+    assert thread.omitted == 601 - len(kept)
+
+
+async def test_paging_stops_at_the_page_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(packet, "MAX_PAGES", 2)
+    reader = FakeReader({ROOT: [msg(ROOT, "root"), *(msg(f"1.{i:03}", "r") for i in range(9))]})
+    reader.page_size = 2
+    await source(reader).thread(CH, ROOT)
+    assert len([c for c in reader.calls if c[0] == "replies"]) == 2
+
+
+async def test_related_reads_only_each_threads_first_message() -> None:
+    reader = FakeReader(
+        {
+            ROOT: [msg(ROOT, "progress bar")],
+            "2.0": [msg("2.0", "progress bar", thread_ts="2.0"), msg("2.1", "more")],
+        }
+    )
+    await source(reader).related(CH, ROOT, index(summary("t", "Progress bar", ["2.0"])))
+    assert [ts for call, ts in reader.calls if call == "replies"].count("2.0") == 1
+
+
+async def test_an_empty_related_thread_is_skipped() -> None:
+    reader = FakeReader({ROOT: [msg(ROOT, "progress bar")], "2.0": []})
+    topics = index(summary("t", "Progress bar", ["2.0"]))
+    assert await source(reader).related(CH, ROOT, topics) == []
+
+
+async def test_backoff_stops_before_the_wait_budget_runs_out() -> None:
+    async def always_limited() -> str:
+        raise slack_error(429, "ratelimited", retry_after="8")
+
+    sleeps = Sleeps()
+    with pytest.raises(SlackFetchError, match="rate limiting"):
+        await with_backoff(always_limited, what="x", sleep=sleeps, attempts=10)
+    assert sleeps.waits == [8.0, 8.0]
+    assert sum(sleeps.waits) <= packet.RETRY_BUDGET_SECONDS

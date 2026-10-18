@@ -22,6 +22,7 @@ import asyncio
 import logging
 import re
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
@@ -39,7 +40,9 @@ from jotflow.whiteboard.tools import ToolError
 
 log = logging.getLogger("jotflow.packet")
 
-MAX_MESSAGES = 200  # fetched per thread; more is a very long thread
+MAX_MESSAGES = 200  # newest messages kept while paging a very long thread
+RAW_HEAD = 50  # oldest messages kept while paging, so the root and first replies survive
+MAX_PAGES = 25  # conversations.replies pages read per thread, at most
 MAX_MESSAGE_CHARS = 4_000
 MAX_PACKET_CHARS = 60_000
 KEEP_HEAD = 10  # replies kept after the root when trimming
@@ -51,7 +54,9 @@ PAGE_SIZE = 200
 
 RETRY_ATTEMPTS = 4
 RETRY_BASE_SECONDS = 1.0
-RETRY_CAP_SECONDS = 30.0
+RETRY_CAP_SECONDS = 10.0
+# Total waiting across retries stays well inside the MCP server's 30 s request timeout.
+RETRY_BUDGET_SECONDS = 20.0
 
 NAME_CACHE_SECONDS = 600.0
 NAME_CACHE_SIZE = 1_000
@@ -78,13 +83,16 @@ async def with_backoff[T](
     what: str,
     sleep: Sleep = asyncio.sleep,
     attempts: int = RETRY_ATTEMPTS,
+    budget: float = RETRY_BUDGET_SECONDS,
 ) -> T:
     """Run ``call``, retrying Slack rate limits with backoff.
 
     It waits ``Retry-After`` when Slack sends it, otherwise 1, 2, 4… seconds,
-    capped. After ``attempts`` tries it raises :class:`SlackFetchError`. Any
-    other Slack error raises at once.
+    each capped. It stops early when the next wait would take the total past
+    ``budget``, so a slow retry never outlasts the request. Then it raises
+    :class:`SlackFetchError`. Any other Slack error raises at once.
     """
+    waited = 0.0
     for attempt in range(attempts):
         try:
             return await call()
@@ -98,7 +106,11 @@ async def with_backoff[T](
             wait = _retry_after(error)
             if wait is None:
                 wait = RETRY_BASE_SECONDS * (2**attempt)
-            await sleep(min(wait, RETRY_CAP_SECONDS))
+            wait = min(wait, RETRY_CAP_SECONDS)
+            if waited + wait > budget:
+                break
+            waited += wait
+            await sleep(wait)
     raise SlackFetchError(f"Slack is rate limiting {what}; try the run again shortly")
 
 
@@ -259,29 +271,44 @@ class SlackWorkSource:
         self._sleep = sleep
         self._names = _Names(reader, sleep)
 
-    async def _fetch(
-        self, channel: str, thread_ts: str, *, limit: int = MAX_MESSAGES
-    ) -> list[Mapping[str, Any]]:
-        """The thread's messages, oldest first, at most ``limit`` (plus a page)."""
-        messages: list[Mapping[str, Any]] = []
+    async def _page(
+        self, channel: str, ts: str, cursor: str | None, limit: int
+    ) -> Mapping[str, Any]:
+        return await with_backoff(
+            partial(self._reader.replies, channel, ts, cursor=cursor, limit=limit),
+            what="conversations.replies",
+            sleep=self._sleep,
+        )
+
+    async def _window(self, channel: str, thread_ts: str) -> tuple[list[Mapping[str, Any]], int]:
+        """The thread's oldest and newest messages, oldest first, and how many were skipped.
+
+        Pages through the whole thread, up to :data:`MAX_PAGES`, keeping the
+        first :data:`RAW_HEAD` messages and a rolling window of the newest
+        :data:`MAX_MESSAGES`, so a very long thread still shows its latest replies.
+        """
+        head: list[Mapping[str, Any]] = []
+        tail: deque[Mapping[str, Any]] = deque(maxlen=MAX_MESSAGES)
+        total = 0
         cursor: str | None = None
-        while len(messages) < limit:
-            page = await with_backoff(
-                partial(
-                    self._reader.replies,
-                    channel,
-                    thread_ts,
-                    cursor=cursor,
-                    limit=min(PAGE_SIZE, limit),
-                ),
-                what="conversations.replies",
-                sleep=self._sleep,
-            )
-            messages.extend(m for m in page.get("messages") or [] if isinstance(m, Mapping))
+        for _ in range(MAX_PAGES):
+            page = await self._page(channel, thread_ts, cursor, PAGE_SIZE)
+            for message in page.get("messages") or []:
+                if not isinstance(message, Mapping):
+                    continue
+                total += 1
+                (head if len(head) < RAW_HEAD else tail).append(message)
             cursor = (page.get("response_metadata") or {}).get("next_cursor") or None
             if not page.get("has_more") or not cursor:
                 break
-        return messages
+        kept = head + list(tail)
+        return kept, total - len(kept)
+
+    async def _first(self, channel: str, thread_ts: str) -> Mapping[str, Any] | None:
+        """A thread's first message only, for a related excerpt."""
+        page = await self._page(channel, thread_ts, None, 1)
+        messages = [m for m in page.get("messages") or [] if isinstance(m, Mapping)]
+        return messages[0] if messages else None
 
     def _from_jotflow(self, raw: Mapping[str, Any]) -> bool:
         if self._bot is None:
@@ -298,7 +325,7 @@ class SlackWorkSource:
 
     async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
         try:
-            raw = await self._fetch(channel_id, thread_ts)
+            raw, skipped_while_paging = await self._window(channel_id, thread_ts)
         except SlackFetchError as error:
             raise ToolError(str(error)) from None
         root = next((m for m in raw if m.get("ts") == thread_ts), None)
@@ -330,7 +357,8 @@ class SlackWorkSource:
         names = await self._names.resolve(ids)
 
         messages = [self._message(m, rest, topic_id, names) for m, rest, topic_id in kept]
-        trimmed, omitted = _trim(messages)
+        trimmed, trimmed_out = _trim(messages)
+        omitted = skipped_while_paging + trimmed_out
         log.info(
             "packet channel=%s thread=%s messages=%d omitted=%d",
             channel_id,
@@ -378,7 +406,7 @@ class SlackWorkSource:
         # index already names, and only their first message.
         try:
             own = " ".join(
-                str(m.get("text") or "") for m in await self._fetch(channel_id, thread_ts)
+                str(m.get("text") or "") for m in (await self._window(channel_id, thread_ts))[0]
             )
         except SlackFetchError:
             return []
@@ -398,8 +426,10 @@ class SlackWorkSource:
             if len(excerpts) >= MAX_RELATED:
                 break
             try:
-                [first, *_] = await self._fetch(channel_id, other, limit=1) or [{}]
-            except (SlackFetchError, ValueError):
+                first = await self._first(channel_id, other)
+            except SlackFetchError:
+                continue
+            if first is None:
                 continue
             ts = first.get("ts")
             keyword, rest = split_keyword(str(first.get("text") or ""))
