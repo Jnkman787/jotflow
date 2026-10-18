@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #76
-- Draft PR: to be opened
+- Draft PR: #78
 - Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then add `pytest-cov` and the coverage config
+- Last verified: `make check` green locally on Python 3.12, 243 tests, 95.74% total coverage
+- Next safe action: wait for CI on #78, then mark it ready
 
 ## Objective and done-when
 
@@ -14,17 +14,17 @@ Measure line and branch coverage on every run of the tests, and fail locally and
 
 Done when:
 
-- [ ] `pytest-cov` in the dev dependency group; coverage config in `pyproject.toml` with branch coverage and `fail_under = 80`
-- [ ] `make cov` prints the per-file report with missing lines; `make check` enforces the floor
-- [ ] CI runs tests with coverage and fails below 80%, on Python 3.12, 3.13, and 3.14
-- [ ] `src/jotflow/commands/run.py` is above 80% using fakes, with no network
-- [ ] AGENTS.md states the floor and that new code comes with tests that keep it
+- [x] `pytest-cov` in the dev dependency group; coverage config in `pyproject.toml` with branch coverage and `fail_under = 80`
+- [x] `make cov` prints the per-file report with missing lines; `make check` enforces the floor
+- [x] CI runs tests with coverage and fails below 80%, on Python 3.12, 3.13, and 3.14
+- [x] `src/jotflow/commands/run.py` is above 80% using fakes, with no network
+- [x] AGENTS.md states the floor and that new code comes with tests that keep it
 
 **Out of scope:** per-file floors, coverage upload services or badges, and raising coverage in files other than `commands/run.py`.
 
 ## Design
 
-- **Dependency.** `pytest-cov` in the `dev` group, locked with `uv add --dev`. It is the only new dependency, and the issue names it.
+- **Dependency.** `pytest-cov>=6.0` in the `dev` group, locked at 7.1.0 with `uv add --dev`. It is the only new dependency, and the issue names it.
 - **Config** in `pyproject.toml`:
   - `[tool.coverage.run]`: `source_pkgs = ["jotflow"]`, `branch = true`. `source_pkgs` measures the installed package by name, so the src layout needs no path tricks.
   - `[tool.coverage.report]`: `fail_under = 80`, `show_missing = true`, and `exclude_also` for `if __name__ == "__main__":`.
@@ -52,19 +52,32 @@ Alternatives considered: putting `--cov` in pytest's `addopts` would slow every 
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Add `pytest-cov` and the coverage config
-- [ ] `make cov`, and `make check` enforcing the floor
-- [ ] CI test step with coverage
-- [ ] Tests for `serve()` in `commands/run.py`
-- [ ] Update documentation: AGENTS.md Testing and Commands
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] Add `pytest-cov` and the coverage config
+- [x] `make cov`, and `make check` enforcing the floor
+- [x] CI test step with coverage
+- [x] Tests for `serve()` in `commands/run.py`
+- [x] Update documentation: AGENTS.md Testing and Commands
+- [x] `make check` passes
 - [ ] Local CodeRabbit review, or skipped
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make cov`: 243 tests pass. Total line and branch coverage is 95.74%, and the report ends "Required test coverage of 80.0% reached", which shows the floor comes from `pyproject.toml`.
+- `commands/run.py`: 100%, up from 75%. Six new tests drive `serve()` with fakes, with no network:
+  - a clean run that connects, waits, and closes
+  - channels to invite
+  - a setup error before connecting
+  - a refused Socket Mode connection
+  - an unreachable Slack on connect
+  - Ctrl-C before signal handlers are installed
+- The floor fails runs below it:
+  - running only `tests/test_cli.py` with coverage reports "Required test coverage of 80.0% not reached. Total coverage: 33.42%" and exits 1
+  - `--cov-fail-under=99` on the full suite exits 1
+- `make check` passes, including `make eol`. Every changed file is LF in the index and the working tree.
+- Lowest files now: `commands/init.py` at 91%, then `envfile.py` and `slack_auth.py` at 96%. Raising them is out of scope.
+
 
 ## Handoff notes
 

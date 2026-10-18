@@ -41,6 +41,7 @@ dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
   "mypy>=1.13",
+  "pytest-cov>=6.0",
 ]
 
 [build-system]
@@ -64,6 +65,16 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source_pkgs = ["jotflow"]
+branch = true
+
+[tool.coverage.report]
+# The floor for line and branch coverage; make check and CI fail below it.
+fail_under = 80
+show_missing = true
+exclude_also = ['if __name__ == "__main__":']
 
 [tool.mypy]
 python_version = "3.12"

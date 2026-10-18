@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format format-check typecheck test eol check run manifest clean
+.PHONY: help install lint format format-check typecheck test cov eol check run manifest clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -20,15 +20,18 @@ format-check: ## Verify formatting without changing files
 typecheck: ## Run mypy in strict mode
 	uv run mypy
 
-test: ## Run the test suite
+test: ## Run the test suite, without coverage
 	uv run pytest -q
+
+cov: ## Run the tests with coverage; fails below the floor in pyproject.toml
+	uv run pytest -q --cov --cov-report=term-missing
 
 eol: ## Fail if any tracked file has CRLF line endings
 	@if git ls-files --eol | grep -E '^i/(crlf|mixed)|w/(crlf|mixed)'; then \
 		echo "The files above have CRLF line endings. All files must use LF; see AGENTS.md."; exit 1; \
 	fi
 
-check: eol lint format-check typecheck test ## Everything CI runs
+check: eol lint format-check typecheck cov ## Everything CI runs
 
 run: ## Run the jotflow CLI
 	uv run jotflow
@@ -39,5 +42,5 @@ manifest: ## Regenerate manifests/slack-app.json from the renderer
 		|| { rm -f manifests/slack-app.json.tmp; exit 1; }
 
 clean: ## Remove caches and build output
-	rm -rf .pytest_cache .mypy_cache .ruff_cache dist build
+	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage dist build
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

@@ -266,3 +266,137 @@ async def test_unreachable_slack_is_a_setup_error() -> None:
         await fetch_identity(UnreachableClient())  # type: ignore[arg-type]
     with pytest.raises(SlackSetupError, match="could not reach Slack"):
         await missing_channels(UnreachableClient(), ["C0IN"])  # type: ignore[arg-type]
+
+
+# serve(): the Bolt app and Socket Mode handler are replaced with fakes, so
+# these tests drive the whole startup, wait, and shutdown path with no network.
+
+
+class FakeBoltApp(FakeApp):
+    def __init__(self, client: FakeClient) -> None:
+        super().__init__()
+        self.client = client
+
+
+class FakeHandler(FakeConnection):
+    def __init__(self, error: BaseException | None = None) -> None:
+        super().__init__()
+        self.error = error
+
+    async def connect_async(self) -> None:
+        await super().connect_async()
+        if self.error is not None:
+            raise self.error
+
+
+class ServeHarness:
+    """Patches serve()'s collaborators and records what it did."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, client: FakeClient) -> None:
+        self.app = FakeBoltApp(client)
+        self.handlers: list[FakeHandler] = []
+        self.handler_error: BaseException | None = None
+        self.signals_removed = False
+        monkeypatch.setattr(run_command, "AsyncApp", lambda **_: self.app)
+        monkeypatch.setattr(run_command, "AsyncSocketModeHandler", self._handler)
+        monkeypatch.setattr(run_command, "install_stop_signals", self._install)
+
+    def _handler(self, app: Any, app_token: str) -> FakeHandler:
+        assert app is self.app
+        assert app_token == "xapp-test"
+        handler = FakeHandler(self.handler_error)
+        self.handlers.append(handler)
+        return handler
+
+    def _install(self, stop: asyncio.Event) -> Callable[[], None]:
+        # Stand in for a SIGTERM arriving once the connection is up.
+        asyncio.get_running_loop().call_soon(stop.set)
+
+        def remove() -> None:
+            self.signals_removed = True
+
+        return remove
+
+
+def serve_inputs() -> tuple[Any, Any]:
+    from jotflow.config import Settings
+    from jotflow.policy import parse_policy
+
+    settings = Settings(slack_bot_token="xoxb-test", slack_app_token="xapp-test")
+    return settings, parse_policy(POLICY)
+
+
+def member_client() -> FakeClient:
+    return FakeClient(channels={"C0TEST1": {"is_member": True}})
+
+
+async def test_serve_connects_waits_and_closes(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="jotflow")
+    harness = ServeHarness(monkeypatch, member_client())
+    assert await run_command.serve(*serve_inputs()) == 0
+    [handler] = harness.handlers
+    assert handler.calls == ["connect", "close"]
+    assert harness.signals_removed
+    assert set(harness.app.listeners) == {"message", "reaction_added"}
+    assert "watching 1 configured channel(s) as @jotbot" in caplog.text
+    assert "not a member" not in caplog.text
+
+
+async def test_serve_reports_channels_to_invite(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="jotflow")
+    ServeHarness(monkeypatch, FakeClient())
+    assert await run_command.serve(*serve_inputs()) == 0
+    assert "not a member of channel C0TEST1; invite the bot there with /invite @jotbot" in (
+        caplog.text
+    )
+
+
+async def test_serve_stops_on_a_setup_error_before_connecting(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = ServeHarness(monkeypatch, FakeClient(auth="invalid_auth"))
+    assert await run_command.serve(*serve_inputs()) == run_command.EXIT_SLACK
+    assert harness.handlers == []
+    assert "invalid_auth" in caplog.text
+
+
+async def test_serve_reports_a_refused_socket_mode_connection(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = ServeHarness(monkeypatch, member_client())
+    harness.handler_error = slack_error("invalid_auth")
+    assert await run_command.serve(*serve_inputs()) == run_command.EXIT_SLACK
+    [handler] = harness.handlers
+    assert handler.calls == ["connect", "close"]
+    assert harness.signals_removed
+    assert "Slack refused the Socket Mode connection (invalid_auth)" in caplog.text
+
+
+async def test_serve_reports_an_unreachable_slack_on_connect(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = ServeHarness(monkeypatch, member_client())
+    harness.handler_error = aiohttp.ClientConnectionError("no route")
+    assert await run_command.serve(*serve_inputs()) == run_command.EXIT_SLACK
+    [handler] = harness.handlers
+    assert handler.calls == ["connect", "close"]
+    assert harness.signals_removed
+    assert "could not reach Slack (ClientConnectionError)" in caplog.text
+
+
+def test_ctrl_c_before_signals_are_installed_exits_130(
+    clean_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOTFLOW_SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("JOTFLOW_SLACK_APP_TOKEN", "xapp-test")
+    (clean_env / "jotflow.toml").write_text(POLICY, encoding="utf-8")
+
+    async def interrupted(settings: Any, policy: Any) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_command, "serve", interrupted)
+    assert run_command.run(args()) == 130

@@ -48,9 +48,10 @@ docs/             architecture, roadmap, plans
 | Command | Does |
 |---|---|
 | `make install` | Create the environment with uv, including dev tools |
-| `make check` | Line endings, lint, format check, type check, and tests: what CI runs |
+| `make check` | Line endings, lint, format check, type check, and tests with coverage: what CI runs |
 | `make eol` | Fail if any file has CRLF line endings |
-| `make test` | Tests only |
+| `make test` | Tests only, without coverage |
+| `make cov` | Tests with the coverage report; fails below the floor |
 | `make format` | Apply ruff formatting and safe fixes |
 | `make run` | Run the `jotflow` CLI |
 | `make manifest` | Regenerate `manifests/slack-app.json` from the renderer |
@@ -115,6 +116,7 @@ The plan stays in the repository after merge as the record of what was built and
 
 - New behaviour comes with tests. Bug fixes come with a test that fails before the fix.
 - Tests must not need network access, a Slack workspace, or GitHub. Use the replay fixtures and fakes.
+- Line and branch coverage must stay at or above 80%. `make check` and CI fail below it, and `make cov` shows the missing lines per file. New code comes with tests that keep the total above the floor; do not lower `fail_under` in `pyproject.toml` or exclude code to get past it.
 - Do not weaken a test or a type annotation to make CI pass.
 
 ## Documentation
