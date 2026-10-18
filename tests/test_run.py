@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import pytest
 from slack_sdk.errors import SlackApiError
 
@@ -250,3 +251,18 @@ async def test_registered_listener_logs_pointer_not_text(
     assert len(info) == 1
     assert "channel=C0TEST1 ts=1.1" in info[0].getMessage()
     assert SECRET_TEXT not in caplog.text
+
+
+class UnreachableClient(FakeClient):
+    async def auth_test(self) -> dict[str, Any]:
+        raise aiohttp.ClientConnectionError("no route")
+
+    async def conversations_info(self, channel: str) -> dict[str, Any]:
+        raise TimeoutError
+
+
+async def test_unreachable_slack_is_a_setup_error() -> None:
+    with pytest.raises(SlackSetupError, match="could not reach Slack"):
+        await fetch_identity(UnreachableClient())  # type: ignore[arg-type]
+    with pytest.raises(SlackSetupError, match="could not reach Slack"):
+        await missing_channels(UnreachableClient(), ["C0IN"])  # type: ignore[arg-type]

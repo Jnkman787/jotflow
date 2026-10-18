@@ -25,6 +25,7 @@ from slack_sdk.errors import SlackApiError
 from jotflow.config import Settings
 from jotflow.orchestrator.ingest import EventFilter
 from jotflow.orchestrator.slack import (
+    NETWORK_ERRORS,
     SlackSetupError,
     fetch_identity,
     missing_channels,
@@ -145,7 +146,7 @@ async def serve(settings: Settings, policy: Policy) -> int:
     register_handlers(app, EventFilter(policy.channels, identity))
     log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
 
-    handler = AsyncSocketModeHandler(app, settings.slack_app_token.get_secret_value())
+    handler: Connection = AsyncSocketModeHandler(app, settings.slack_app_token.get_secret_value())
     stop = asyncio.Event()
     remove_signals = install_stop_signals(stop)
     try:
@@ -155,6 +156,11 @@ async def serve(settings: Settings, policy: Policy) -> int:
             "Slack refused the Socket Mode connection (%s); check JOTFLOW_SLACK_APP_TOKEN",
             exc.response.get("error", "unknown error"),
         )
+        await handler.close_async()
+        return EXIT_SLACK
+    except NETWORK_ERRORS as exc:
+        log.error("could not reach Slack (%s); check the network", type(exc).__name__)
+        await handler.close_async()
         return EXIT_SLACK
     finally:
         remove_signals()

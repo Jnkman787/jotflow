@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #8
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then write the event filter in `src/jotflow/orchestrator/ingest.py`
+- Draft PR: #66
+- Status: blocked: waiting for #64 to merge, then rebase onto `main`
+- Last verified: `make check` green locally on Python 3.12, 100 tests
+- Next safe action: after #64 merges, `git rebase --onto origin/main feat/config-schema feat/slack-run`, retarget #66 to `main`, rerun `make check` and the local CodeRabbit review, then mark #66 ready
 
 This branch is stacked on #64 (Settings and `jotflow.toml`), which it needs. Once #64 merges, rebase onto `main`.
 
@@ -16,16 +16,16 @@ This branch is stacked on #64 (Settings and `jotflow.toml`), which it needs. Onc
 
 Done when:
 
-- [ ] Connects with slack-bolt `AsyncApp` over Socket Mode, with the client's automatic reconnect on
-- [ ] A message in a configured channel produces one log line with channel id and ts but no text
-- [ ] A message in an unconfigured channel is ignored and logged at debug
-- [ ] The bot's own messages, edits and deletes are ignored (D8)
-- [ ] An event Slack delivers twice is logged once (D8)
-- [ ] At startup, every configured channel the bot is not a member of is reported with the `/invite` instruction; the bot never joins on its own
-- [ ] Missing environment variables and an invalid `jotflow.toml` stop the command with a clear message and exit code 2, before any network call
-- [ ] Clean shutdown on SIGINT and SIGTERM
-- [ ] Debug logging never prints message text, including from slack-bolt and slack-sdk
-- [ ] `make check` passes
+- [x] Connects with slack-bolt `AsyncApp` over Socket Mode, with the client's automatic reconnect on
+- [x] A message in a configured channel produces one log line with channel id and ts but no text
+- [x] A message in an unconfigured channel is ignored and logged at debug
+- [x] The bot's own messages, edits and deletes are ignored (D8)
+- [x] An event Slack delivers twice is logged once (D8)
+- [x] At startup, every configured channel the bot is not a member of is reported with the `/invite` instruction; the bot never joins on its own
+- [x] Missing environment variables and an invalid `jotflow.toml` stop the command with a clear message and exit code 2, before any network call
+- [x] Clean shutdown on SIGINT and SIGTERM
+- [x] Debug logging never prints message text, including from slack-bolt and slack-sdk
+- [x] `make check` passes
 
 Stays open on #8 after this PR, because it needs the live sandbox workspace: staying connected through a real Socket Mode reconnect.
 
@@ -59,20 +59,43 @@ Alternatives considered: `AsyncSocketModeHandler.start_async()` sleeps forever a
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Event filter with own-event, subtype, channel, and duplicate rules
-- [ ] Slack identity, membership check, and handler registration
-- [ ] `jotflow run`: settings and policy errors, logging, signals, clean close
-- [ ] Add or update tests
-- [ ] Update documentation
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] Event filter with own-event, subtype, channel, and duplicate rules
+- [x] Slack identity, membership check, and handler registration
+- [x] `jotflow run`: settings and policy errors, logging, signals, clean close
+- [x] Add or update tests
+- [x] Update documentation
+- [x] `make check` passes
 - [ ] Local CodeRabbit review
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check`: ruff lint and format clean, mypy strict clean, 100 tests pass. 47 are new, in `tests/test_ingest.py` and `tests/test_run.py`.
+- The tests cover:
+  - accepted messages and their subtypes
+  - unconfigured channels
+  - own messages, by user id and by bot id
+  - other bots
+  - edits, deletes, and other subtypes
+  - malformed events
+  - duplicates, by event id and by channel and ts, and the bounded memory
+  - reactions: own, unconfigured, on files, duplicates
+  - one INFO line per accepted message without its text
+  - ignored events at DEBUG
+  - missing tokens, a bad or missing policy file exiting 2 without calling Slack
+  - the Slack libraries held at INFO under `--log-level debug`
+  - connect then close, close on cancel
+  - SIGINT and SIGTERM setting the stop event
+  - a bad token, an unreachable Slack, a missing scope
+  - non-member and invisible channels with the `/invite` hint
+  - the registered listener logging a pointer once for a duplicated delivery
+- Manual: `jotflow run` with no tokens and with no `jotflow.toml` prints the problems and exits 2.
+- CodeRabbit: skipped. The free CLI allowance was used up, with a reset in about 42 minutes. In its place a self-review found two gaps, both fixed: a network failure at startup ended in a traceback instead of a message, and a failed Socket Mode connect left the handler open.
+- Not yet done: staying connected through a real Socket Mode reconnect, which needs the sandbox workspace. The handler uses slack-sdk's automatic reconnect, which is on by default.
 
 ## Handoff notes
 
-None yet.
+- `tests/test_cli.py` now runs each subcommand from an empty directory with `JOTFLOW_*` cleared. Without that, `run` on a developer machine with a real `.env` and `jotflow.toml` would connect to Slack during the test.
+- Duplicate memory is in-process. A restart forgets it, and Slack does not redeliver old events after a reconnect, so this is acceptable until #11.
+- The debouncer (#19) should hook in where `register_handlers` calls `log_decision`.

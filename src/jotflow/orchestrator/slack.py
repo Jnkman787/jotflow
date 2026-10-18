@@ -6,6 +6,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
+import aiohttp
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
@@ -16,7 +17,14 @@ log = logging.getLogger("jotflow.slack")
 
 
 class SlackSetupError(Exception):
-    """Slack rejected JotFlow's credentials or scopes at startup."""
+    """Slack was unreachable, or rejected JotFlow's credentials or scopes, at startup."""
+
+
+NETWORK_ERRORS = (aiohttp.ClientError, TimeoutError, OSError)
+
+
+def _unreachable(exc: BaseException) -> SlackSetupError:
+    return SlackSetupError(f"could not reach Slack ({type(exc).__name__}); check the network")
 
 
 async def fetch_identity(client: AsyncWebClient) -> tuple[BotIdentity, str]:
@@ -28,6 +36,8 @@ async def fetch_identity(client: AsyncWebClient) -> tuple[BotIdentity, str]:
             f"Slack rejected the bot token ({exc.response.get('error', 'unknown error')}); "
             "check JOTFLOW_SLACK_BOT_TOKEN"
         ) from None
+    except NETWORK_ERRORS as exc:
+        raise _unreachable(exc) from None
     user_id = response.get("user_id")
     if not isinstance(user_id, str):
         raise SlackSetupError("auth.test returned no bot user id; is this a bot token?")
@@ -58,6 +68,8 @@ async def missing_channels(client: AsyncWebClient, channel_ids: Iterable[str]) -
                 f"could not look up channel {channel_id} ({error}); "
                 "the app needs the channels:read and groups:read scopes"
             ) from None
+        except NETWORK_ERRORS as exc:
+            raise _unreachable(exc) from None
         channel = response.get("channel")
         if not isinstance(channel, dict) or not channel.get("is_member"):
             missing.append(channel_id)
