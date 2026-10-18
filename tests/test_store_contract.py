@@ -22,8 +22,11 @@ from jotflow.models import (
 from jotflow.store import (
     ALLOWED_TRANSITIONS,
     AUTO_APPROVER,
+    CLEARED_TITLE,
+    FINAL_STATES,
     ConflictError,
     ContentChangedError,
+    DraftClearedError,
     MemoryStore,
     NotFoundError,
     SqliteStore,
@@ -524,3 +527,168 @@ async def test_try_transition_reports_a_lost_race(store: Store) -> None:
     assert await try_transition(store, "p1", S.REJECTED) is None
     with pytest.raises(NotFoundError):
         await try_transition(store, "missing", S.REJECTED)
+
+
+# --- #102: drafts are cleared once a proposal is final -------------------------
+
+
+def _assert_cleared(proposal: ProposalRecord, clock: Clock) -> None:
+    assert proposal.draft_cleared_at == clock.now
+    draft_now = proposal.proposal
+    assert isinstance(draft_now, IssueProposal)
+    assert (draft_now.title, draft_now.body) == (CLEARED_TITLE, "")
+    kept = draft()
+    assert (draft_now.repo, draft_now.labels, draft_now.assignees) == (
+        kept.repo,
+        kept.labels,
+        kept.assignees,
+    )
+
+
+async def test_applied_clears_the_draft_and_keeps_the_audit_trail(
+    store: Store, clock: Clock
+) -> None:
+    first = await approved(store)
+    await store.transition("p1", S.EXECUTING)
+    clock.tick(5)
+    applied = await store.transition("p1", S.APPLIED, result=ExecutionResult(issue_url=ISSUE_URL))
+    _assert_cleared(applied, clock)
+    assert applied.content_hash == first.content_hash == SHOWN
+    assert (applied.approved_by, applied.approved_at) == (first.approved_by, first.approved_at)
+    assert applied.result is not None and applied.result.issue_url == ISSUE_URL
+    assert applied.participants == first.participants
+    assert await store.get_proposal("p1") == applied
+
+
+async def test_rejected_clears_the_draft(store: Store, clock: Clock) -> None:
+    await store.add_proposal(record())
+    rejected = await store.transition("p1", S.REJECTED)
+    _assert_cleared(rejected, clock)
+    assert rejected.content_hash is None
+
+
+async def test_superseded_drafts_are_cleared(store: Store, clock: Clock) -> None:
+    await store.add_proposal(record("old"))
+    await store.add_proposal(record("new"))
+    clock.tick()
+    assert await store.supersede_pending(CH, "1760781600.000100", keep_id="new") == ["old"]
+    old = await store.get_proposal("old")
+    assert old is not None
+    _assert_cleared(old, clock)
+    new = await store.get_proposal("new")
+    assert new is not None and new.draft_cleared_at is None and new.proposal == draft()
+
+
+async def test_update_drafts_lose_body_and_comment_only(store: Store, clock: Clock) -> None:
+    topic = (await store.create_topic(CH, "Progress bar")).topic
+    update = UpdateProposal(
+        topic_id=topic.id,
+        repo="acme-co/web",
+        issue_number=42,
+        changes=IssueChanges(
+            body="New body", comment="Also on mobile", add_labels=["mobile"], add_assignees=["a"]
+        ),
+        sources=[ref("1760781600.000100")],
+        confidence=0.8,
+    )
+    await store.add_proposal(record(proposal=update))
+    rejected = await store.transition("p1", S.REJECTED)
+    cleared = rejected.proposal
+    assert isinstance(cleared, UpdateProposal)
+    assert (cleared.changes.body, cleared.changes.comment) == (None, None)
+    assert cleared.changes.add_labels == ["mobile"] and cleared.changes.add_assignees == ["a"]
+    assert (cleared.issue_number, cleared.topic_id) == (42, topic.id)
+    assert [s.ts for s in cleared.sources] == ["1760781600.000100"]
+
+
+async def test_a_failed_draft_stays_for_retry_until_cleared(store: Store, clock: Clock) -> None:
+    await approved(store)
+    await store.transition("p1", S.EXECUTING)
+    failed = await store.transition("p1", S.FAILED, result=ExecutionResult(error="GitHub said no"))
+    assert failed.draft_cleared_at is None and failed.proposal == draft()
+
+    clock.tick()
+    cleared = await store.clear_draft("p1")
+    _assert_cleared(cleared, clock)
+    assert cleared.state is S.FAILED
+    assert cleared.result is not None and cleared.result.error == "GitHub said no"
+    with pytest.raises(DraftClearedError):
+        await store.transition("p1", S.APPROVED, approved_by="U0DAVE", expected_hash=SHOWN)
+    assert (
+        await try_transition(store, "p1", S.APPROVED, approved_by="U0DAVE", expected_hash=SHOWN)
+        is None
+    )
+    again = await store.clear_draft("p1")
+    assert again.draft_cleared_at == cleared.draft_cleared_at
+
+
+@pytest.mark.parametrize("state", [S.PENDING, S.APPROVED, S.EXECUTING, S.RECONCILING])
+async def test_a_live_draft_cannot_be_cleared(store: Store, state: ProposalState) -> None:
+    await _reach(store, state)
+    with pytest.raises(TransitionError, match="so its draft is still needed"):
+        await store.clear_draft("p1")
+    still = await store.get_proposal("p1")
+    assert still is not None and still.draft_cleared_at is None and still.proposal == draft()
+
+
+async def test_clearing_a_missing_proposal(store: Store) -> None:
+    with pytest.raises(NotFoundError):
+        await store.clear_draft("missing")
+
+
+@pytest.mark.parametrize("final", sorted(FINAL_STATES))
+async def test_clear_draft_is_a_no_op_once_final(
+    store: Store, clock: Clock, final: ProposalState
+) -> None:
+    await _reach(store, final)
+    first = await store.get_proposal("p1")
+    clock.tick(60)
+    assert await store.clear_draft("p1") == first
+
+
+@pytest.mark.parametrize("path", ["rejected", "applied", "superseded", "cleared after failing"])
+async def test_cleared_text_is_gone_from_the_files_while_open(
+    tmp_path: Path, clock: Clock, path: str
+) -> None:
+    """secure_delete scrubs the main file and a checkpoint resets the WAL, so while
+    the store is still open no file holds the cleared text."""
+    secret = "SECRET-THREAD-QUOTE " * 50
+    sqlite_store = await SqliteStore.open(tmp_path / "jotflow.db", clock=clock)
+
+    def leftovers() -> list[str]:
+        return [p.name for p in tmp_path.iterdir() if b"SECRET-THREAD-QUOTE" in p.read_bytes()]
+
+    try:
+        await sqlite_store.add_proposal(record(proposal=draft(body=secret)))
+        assert leftovers()  # the draft is really on disk before the clear
+        if path == "rejected":
+            await sqlite_store.transition("p1", S.REJECTED)
+        elif path == "superseded":
+            await sqlite_store.add_proposal(record("p2"))
+            await sqlite_store.supersede_pending(CH, "1760781600.000100", keep_id="p2")
+        else:
+            hashed = content_hash(draft(body=secret))
+            await sqlite_store.transition(
+                "p1", S.APPROVED, approved_by="U0CAROL", expected_hash=hashed
+            )
+            await sqlite_store.transition("p1", S.EXECUTING)
+            if path == "applied":
+                await sqlite_store.transition(
+                    "p1", S.APPLIED, result=ExecutionResult(issue_url=ISSUE_URL)
+                )
+            else:
+                await sqlite_store.transition("p1", S.FAILED)
+                assert leftovers()  # a failed draft is kept for a retry
+                await sqlite_store.clear_draft("p1")
+        assert leftovers() == []
+    finally:
+        await sqlite_store.close()
+    assert leftovers() == []
+
+
+async def test_an_in_memory_database_has_no_log_to_scrub(clock: Clock) -> None:
+    memory_db = await SqliteStore.open(":memory:", clock=clock)
+    async with memory_db:
+        await memory_db.add_proposal(record())
+        rejected = await memory_db.transition("p1", S.REJECTED)
+    assert rejected.draft_cleared_at == clock.now

@@ -13,6 +13,9 @@ import re
 import unicodedata
 
 MAX_TITLE_LENGTH = 80
+# Unescape until the text stops changing, so any depth of &amp; nesting is caught;
+# anything still escaped after this many passes loses its & as markup below.
+MAX_UNESCAPE_PASSES = 8
 
 # Slack's own markup: <@U123>, <#C123|name>, <!here>, <https://x|label>.
 _SLACK_TOKEN = re.compile(r"<[^<>]*>")
@@ -44,9 +47,14 @@ def _visible(text: str) -> str:
 
 def clean_title(text: str) -> str:
     """Return ``text`` as a safe, short topic title. Raises ValueError if nothing is left."""
-    # Slack sends &lt; &gt; &amp; escaped; unescape first so "&lt;!channel&gt;"
-    # is caught as a Slack token instead of surviving to be unescaped later.
-    cleaned = html.unescape(html.unescape(text))
+    # Slack sends &lt; &gt; &amp; escaped; unescape first, until stable, so
+    # "&lt;!channel&gt;" at any depth is caught as a Slack token.
+    cleaned = text
+    for _ in range(MAX_UNESCAPE_PASSES):
+        unescaped = html.unescape(cleaned)
+        if unescaped == cleaned:
+            break
+        cleaned = unescaped
     cleaned = unicodedata.normalize("NFKC", cleaned)
     cleaned = _visible(cleaned)
     cleaned = _SLACK_TOKEN.sub(" ", cleaned)

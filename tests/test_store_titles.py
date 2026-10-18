@@ -24,6 +24,7 @@ from jotflow.store import MAX_TITLE_LENGTH, clean_title
         ("&lt;!channel&gt; now", "now"),
         ("&lt;https://evil.example|docs&gt; then", "then"),
         ("&amp;lt;!here&amp;gt; twice escaped", "twice escaped"),
+        ("&amp;amp;amp;lt;!channel&amp;amp;amp;gt; deep", "deep"),
         ("open evil.example/login please", "open please"),
         ("pay at evil.example now", "pay at now"),
         ("acme-co.com:8080/x rocks", "rocks"),
@@ -59,3 +60,12 @@ def test_injection_style_titles_lose_their_payload() -> None:
     )
     for fragment in ("<", ">", "!channel", "https", "`", "[", "]"):
         assert fragment not in title
+
+
+def test_escaping_deeper_than_the_pass_limit_still_loses_its_markup() -> None:
+    from jotflow.store.titles import MAX_UNESCAPE_PASSES
+
+    raw = "&" + "amp;" * (MAX_UNESCAPE_PASSES + 2) + "lt;!channel&gt; tail"
+    title = clean_title(raw)
+    # No & or < survives, so nothing can be unescaped back into <!channel> later.
+    assert "&" not in title and "<" not in title and ">" not in title

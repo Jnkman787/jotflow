@@ -21,17 +21,19 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from jotflow.models import (
     ChannelMode,
     ExecutionResult,
+    IssueProposal,
     MessageRef,
     ProposalRecord,
     ProposalState,
     Topic,
+    UpdateProposal,
 )
 from jotflow.store.hashing import content_hash
 
@@ -51,6 +53,12 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
 }
 
 AUTO_APPROVER = "auto"
+
+# Once final, a proposal's drafted text is cleared (#102). Failed is not final:
+# a person may retry it, until the draft is cleared explicitly.
+FINAL_STATES = frozenset({S.APPLIED, S.REJECTED, S.SUPERSEDED})
+CLEARABLE_STATES = FINAL_STATES | {S.FAILED}
+CLEARED_TITLE = "(cleared)"
 
 _GITHUB_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
 
@@ -75,6 +83,14 @@ class TransitionError(StoreError):
         self.proposal_id = proposal_id
         self.current = current
         self.wanted = wanted
+
+
+class DraftClearedError(TransitionError):
+    """The proposal's draft has been cleared, so it can no longer be approved or executed."""
+
+    def __init__(self, proposal_id: str, current: ProposalState, wanted: ProposalState) -> None:
+        super().__init__(proposal_id, current, wanted)
+        self.args = (f"proposal {proposal_id}'s draft was cleared, so it cannot become {wanted}",)
 
 
 class ContentChangedError(StoreError):
@@ -115,6 +131,24 @@ class ChannelModeSetting:
     mode: ChannelMode
     changed_by: str
     changed_at: datetime
+
+
+def cleared_draft(
+    proposal: IssueProposal | UpdateProposal,
+) -> IssueProposal | UpdateProposal:
+    """The draft with its free text removed: title, body, and comment. All else stays."""
+    if isinstance(proposal, IssueProposal):
+        return proposal.model_copy(update={"title": CLEARED_TITLE, "body": ""}, deep=True)
+    changes = proposal.changes.model_copy(update={"body": None, "comment": None})
+    return proposal.model_copy(update={"changes": changes}, deep=True)
+
+
+def check_clearable(record: ProposalRecord) -> None:
+    """Only a final or failed proposal may lose its draft; others still need it."""
+    if record.state not in CLEARABLE_STATES:
+        error = TransitionError(record.id, record.state, record.state)
+        error.args = (f"proposal {record.id} is {record.state}, so its draft is still needed",)
+        raise error
 
 
 def utc_now() -> datetime:
@@ -167,9 +201,42 @@ class TransitionChanges:
     approved_by: str | None
     approved_at: datetime | None
     result: ExecutionResult | None
+    clear_draft: bool = False
 
 
 def plan_transition(
+    record: ProposalRecord,
+    to: ProposalState,
+    *,
+    expected: Collection[ProposalState] | None,
+    approved_by: str | None,
+    expected_hash: str | None,
+    result: ExecutionResult | None,
+    now: datetime,
+) -> TransitionChanges:
+    """Check a requested transition against the record and return what to write.
+
+    Moving to a final state also clears the draft (#102). Raises
+    :class:`TransitionError` for a disallowed or unexpected state,
+    :class:`DraftClearedError` for a cleared draft, :class:`ContentChangedError`
+    when ``expected_hash`` is stale, and ``ValueError`` for missing or misplaced
+    arguments. Writes nothing.
+    """
+    changes = _plan(
+        record,
+        to,
+        expected=expected,
+        approved_by=approved_by,
+        expected_hash=expected_hash,
+        result=result,
+        now=now,
+    )
+    if to in FINAL_STATES and record.draft_cleared_at is None:
+        return replace(changes, clear_draft=True)
+    return changes
+
+
+def _plan(
     record: ProposalRecord,
     to: ProposalState,
     *,
@@ -188,6 +255,8 @@ def plan_transition(
     current = record.state
     if to not in ALLOWED_TRANSITIONS[current] or (expected is not None and current not in expected):
         raise TransitionError(record.id, current, to)
+    if record.draft_cleared_at is not None and to not in FINAL_STATES:
+        raise DraftClearedError(record.id, current, to)
     if (approved_by is not None or expected_hash is not None) and to is not ProposalState.APPROVED:
         raise ValueError("approved_by and expected_hash only apply when approving")
     if result is not None and to not in (ProposalState.APPLIED, ProposalState.FAILED):
@@ -321,10 +390,18 @@ class Store(Protocol):
         """Move a proposal to ``to`` atomically; see :func:`plan_transition`."""
         ...
 
+    async def clear_draft(self, proposal_id: str) -> ProposalRecord:
+        """Remove a failed or final proposal's drafted text; a no-op if already cleared.
+
+        After this a failed proposal can no longer be retried.
+        """
+        ...
+
     async def supersede_pending(
         self, channel_id: str, thread_ts: str | None, *, keep_id: str
     ) -> list[str]:
-        """Mark every other pending proposal in the thread superseded; return their ids."""
+        """Mark every other pending proposal in the thread superseded, clearing their
+        drafts; return their ids."""
         ...
 
     # Identity links

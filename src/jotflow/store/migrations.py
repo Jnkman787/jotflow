@@ -12,6 +12,10 @@ state, never what people wrote.
 
 Statements must not contain ``;``. Add a new migration with the next version
 number; never edit one that has shipped.
+
+A column added with ``ALTER TABLE ... ADD COLUMN`` takes a ``/* ... */``
+comment, not ``--``: SQLite copies the column text into the stored CREATE
+TABLE, and a ``--`` comment there would swallow the closing parenthesis.
 """
 
 from __future__ import annotations
@@ -120,6 +124,13 @@ MIGRATIONS: tuple[Migration, ...] = (
             _PARTICIPANTS,
             _IDENTITY_LINKS,
             _CHANNEL_MODES,
+        ),
+    ),
+    Migration(
+        2,
+        (
+            "ALTER TABLE proposals ADD COLUMN draft_cleared_at TEXT"
+            " /* UTC, ISO 8601: when the drafted title and body were removed (#102) */",
         ),
     ),
 )
