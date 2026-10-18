@@ -6,7 +6,7 @@
 - Also serves: #56, for the strict keyword prefix only; #14's `WorkSource` interface
 - Draft PR: #125
 - Status: completed
-- Last verified: `make check` green locally: 1278 tests, `packet.py` at 99%, `keywords.py` at 100%
+- Last verified: `make check` green locally after the review nits: 1286 tests, `packet.py` at 99%, `keywords.py` at 100%
 - Next safe action: review and merge #125. #55 wires `SlackWorkSource(BoltSlackReader(app.client), store, bot=identity)` into `read_tools`
 
 ## Objective and done-when
@@ -125,6 +125,9 @@ Alternatives considered:
   3. **Doc wording.** The privacy paragraph is whole again, with the packet's rules in a list after it.
   - Related excerpts now read only each thread's first message, with one call each.
 - After the fixes: 1278 tests.
+- Reviewer, at bdcf8f0: approved, with 2 nits, both taken.
+  1. **Ranking read the thread twice.** `related()` fetched the run's own thread a second time, just to rank, adding to `get_work`'s time under rate limits. `WorkSource.related(thread, topics)` now ranks from the `WorkThread` that `get_work` already has. A test shows only one read of the run's thread. A shared budget per `get_work` was considered: each call's 20 s retry budget, with the reads now fewer, keeps a rate-limited packet close to the 30 s request limit. Folding everything into one budget is left for #55 to judge against real timings.
+  2. **The size cap could be exceeded.** `_trim` shrinks the head too, once the tail is at its minimum, so long early replies cannot push a packet past `MAX_PACKET_CHARS`. The last resort is the root plus the minimum tail, each capped at `MAX_MESSAGE_CHARS`. Tests cover both.
 
 ## Handoff notes
 

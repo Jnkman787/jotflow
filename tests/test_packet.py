@@ -104,6 +104,11 @@ def source(reader: FakeReader, store: Any = None, **kw: Any) -> SlackWorkSource:
     return SlackWorkSource(reader, store or MemoryStore(), sleep=Sleeps(), **kw)
 
 
+async def related_to_root(src: SlackWorkSource, topics: TopicIndex) -> list[Any]:
+    """Fetch the root thread, as get_work does, then rank related threads against it."""
+    return await src.related(await src.thread(CH, ROOT), topics)
+
+
 def index(*summaries: TopicSummary) -> TopicIndex:
     return TopicIndex(
         channel_id=CH,
@@ -419,7 +424,7 @@ async def test_related_threads_are_ranked_by_shared_title_words() -> None:
         summary("t4", "Dark mode", ["4.0"]),
         summary("t1", "This thread", [ROOT]),
     )
-    excerpts = await source(reader).related(CH, ROOT, topics)
+    excerpts = await related_to_root(source(reader), topics)
     assert [(e.thread_ts, e.topic_id) for e in excerpts] == [("2.0", "t2"), ("3.0", "t3")]
     assert excerpts[0].excerpt.text == "Progress bar for onboarding steps"
     assert excerpts[0].excerpt.untrusted is True
@@ -432,7 +437,7 @@ async def test_related_excerpts_are_capped_and_cut() -> None:
         ts = f"{i + 2}.0"
         threads[ts] = [msg(ts, "progress bar " + "z" * 600, thread_ts=ts)]
         summaries.append(summary(f"t{i}", "Progress bar", [ts]))
-    excerpts = await source(FakeReader(threads)).related(CH, ROOT, index(*summaries))
+    excerpts = await related_to_root(source(FakeReader(threads)), index(*summaries))
     assert len(excerpts) == packet.MAX_RELATED
     assert all(len(e.excerpt.text) == packet.EXCERPT_CHARS for e in excerpts)
 
@@ -449,15 +454,25 @@ async def test_related_leaves_out_skipped_chatter_and_failures() -> None:
         }
     )
     topics = index(summary("t", "Progress bar", ["2.0", "3.0", "4.0", "5.0"]))
-    excerpts = await source(reader, store).related(CH, ROOT, topics)
+    excerpts = await related_to_root(source(reader, store), topics)
     assert [e.thread_ts for e in excerpts] == ["5.0"]
     assert excerpts[0].excerpt.text == "progress bar @Alex Rivera"
 
 
-async def test_related_is_empty_when_the_thread_cannot_be_read() -> None:
-    reader = FakeReader({ROOT: [msg(ROOT, "x")]})
-    reader.failures = [slack_error(200, "channel_not_found")]
-    assert await source(reader).related(CH, ROOT, index()) == []
+async def test_related_ranks_from_the_fetched_thread_without_reading_it_again() -> None:
+    reader = FakeReader(
+        {
+            ROOT: [msg(ROOT, "The onboarding progress bar")],
+            "2.0": [msg("2.0", "Progress bar ideas", thread_ts="2.0")],
+        }
+    )
+    src = source(reader)
+    thread = await src.thread(CH, ROOT)
+    before = [ts for call, ts in reader.calls if call == "replies"]
+    await src.related(thread, index(summary("t", "Progress bar", ["2.0"])))
+    after = [ts for call, ts in reader.calls if call == "replies"]
+    assert before == [ROOT]
+    assert after == [ROOT, "2.0"]  # no second read of the run's own thread
 
 
 async def test_a_related_thread_that_fails_is_skipped() -> None:
@@ -474,7 +489,7 @@ async def test_a_related_thread_that_fails_is_skipped() -> None:
 
     reader.replies = failing_for_others  # type: ignore[method-assign]
     topics = index(summary("t", "Progress bar", ["2.0"]))
-    assert await source(reader).related(CH, ROOT, topics) == []
+    assert await related_to_root(source(reader), topics) == []
 
 
 # Nothing persists
@@ -579,14 +594,14 @@ async def test_related_reads_only_each_threads_first_message() -> None:
             "2.0": [msg("2.0", "progress bar", thread_ts="2.0"), msg("2.1", "more")],
         }
     )
-    await source(reader).related(CH, ROOT, index(summary("t", "Progress bar", ["2.0"])))
+    await related_to_root(source(reader), index(summary("t", "Progress bar", ["2.0"])))
     assert [ts for call, ts in reader.calls if call == "replies"].count("2.0") == 1
 
 
 async def test_an_empty_related_thread_is_skipped() -> None:
     reader = FakeReader({ROOT: [msg(ROOT, "progress bar")], "2.0": []})
     topics = index(summary("t", "Progress bar", ["2.0"]))
-    assert await source(reader).related(CH, ROOT, topics) == []
+    assert await related_to_root(source(reader), topics) == []
 
 
 async def test_backoff_stops_before_the_wait_budget_runs_out() -> None:
@@ -598,3 +613,27 @@ async def test_backoff_stops_before_the_wait_budget_runs_out() -> None:
         await with_backoff(always_limited, what="x", sleep=sleeps, attempts=10)
     assert sleeps.waits == [8.0, 8.0]
     assert sum(sleeps.waits) <= packet.RETRY_BUDGET_SECONDS
+
+
+async def test_long_early_replies_shrink_the_head_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(packet, "MAX_PACKET_CHARS", 9_000)
+    early = [msg(f"1.{i:04}", "h" * 4_000) for i in range(20)]
+    late = [msg(f"2.{i:04}", "short") for i in range(80)]
+    reader = FakeReader({ROOT: [msg(ROOT, "root"), *early, *late]})
+    thread = await source(reader).thread(CH, ROOT)
+    size = sum(len(m.text.text) + len(m.author.text) for m in thread.messages)
+    assert size <= 9_000
+    assert thread.messages[0].ts == ROOT and thread.messages[-1].ts == "2.0079"
+    assert len([m for m in thread.messages if m.ts.startswith("1.")]) < packet.KEEP_HEAD
+
+
+async def test_a_tiny_cap_still_keeps_the_root_and_the_newest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(packet, "MAX_PACKET_CHARS", 50)
+    replies = [msg(f"1.{i:04}", "z" * 40) for i in range(90)]
+    reader = FakeReader({ROOT: [msg(ROOT, "r" * 40), *replies]})
+    thread = await source(reader).thread(CH, ROOT)
+    assert thread.messages[0].ts == ROOT
+    assert len(thread.messages) == 1 + packet.MIN_TAIL
+    assert thread.messages[-1].ts == "1.0089"

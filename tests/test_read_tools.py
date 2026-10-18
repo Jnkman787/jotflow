@@ -85,9 +85,7 @@ class FakeSource:
             ],
         )
 
-    async def related(
-        self, channel_id: str, thread_ts: str, topics: TopicIndex
-    ) -> list[RelatedExcerpt]:
+    async def related(self, thread: WorkThread, topics: TopicIndex) -> list[RelatedExcerpt]:
         return [
             RelatedExcerpt(
                 ts="1760700050.000200",
@@ -256,7 +254,8 @@ async def test_drafting_work_before_20_fails_clearly(store: MemoryStore, clock: 
 
 async def test_no_work_source_has_no_related_excerpts() -> None:
     index = TopicIndex(channel_id=CH, window_days=14, generated_at=datetime.now(UTC))
-    assert await NoWorkSource().related(CH, POST, index) == []
+    thread = WorkThread(channel_id=CH, thread_ts=POST, messages=[])
+    assert await NoWorkSource().related(thread, index) == []
 
 
 async def test_read_tools_defaults_to_no_work_source(store: MemoryStore, clock: Clock) -> None:

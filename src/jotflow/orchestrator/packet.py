@@ -398,19 +398,13 @@ class SlackWorkSource:
             from_jotflow=self._from_jotflow(raw),
         )
 
-    async def related(
-        self, channel_id: str, thread_ts: str, topics: TopicIndex
-    ) -> list[RelatedExcerpt]:
+    async def related(self, thread: WorkThread, topics: TopicIndex) -> list[RelatedExcerpt]:
         # Rank the index's other threads by how many words their topic's title
-        # shares with this thread. No channel history: only the threads the
-        # index already names, and only their first message.
-        try:
-            own = " ".join(
-                str(m.get("text") or "") for m in (await self._window(channel_id, thread_ts))[0]
-            )
-        except SlackFetchError:
-            return []
-        own_words = _words(own)
+        # shares with this thread, which is already fetched, so nothing is read
+        # twice. No channel history: only the threads the index already names,
+        # and only their first message.
+        channel_id, thread_ts = thread.channel_id, thread.thread_ts
+        own_words = _words(" ".join(m.text.text for m in thread.messages))
         ranked: list[tuple[int, str, str]] = []
         seen = {thread_ts}
         for summary in topics.topics:
@@ -450,18 +444,29 @@ class SlackWorkSource:
 
 
 def _trim(messages: list[ThreadMessage]) -> tuple[list[ThreadMessage], int]:
-    """Keep the root, the first replies, and the most recent ones, within the caps."""
+    """Keep the root, the first replies, and the most recent ones, within the caps.
+
+    The tail shrinks first, down to :data:`MIN_TAIL`, then the head, down to the
+    root alone, so a packet of long messages still fits :data:`MAX_PACKET_CHARS`.
+    """
 
     def size(kept: list[ThreadMessage]) -> int:
         return sum(len(m.text.text) + len(m.author.text) for m in kept)
 
     if len(messages) <= 1 + KEEP_HEAD + KEEP_TAIL and size(messages) <= MAX_PACKET_CHARS:
         return messages, 0
-    head = messages[: 1 + KEEP_HEAD]
-    tail_count = min(KEEP_TAIL, max(0, len(messages) - len(head)))
+    head_count = min(1 + KEEP_HEAD, len(messages))
+    tail_count = min(KEEP_TAIL, len(messages) - head_count)
     while True:
-        tail = messages[len(messages) - tail_count :] if tail_count else []
-        kept = head + tail
-        if size(kept) <= MAX_PACKET_CHARS or tail_count <= MIN_TAIL:
+        kept = messages[:head_count] + (
+            messages[len(messages) - tail_count :] if tail_count else []
+        )
+        if size(kept) <= MAX_PACKET_CHARS:
             return kept, len(messages) - len(kept)
-        tail_count -= 1
+        if tail_count > MIN_TAIL:
+            tail_count -= 1
+        elif head_count > 1:
+            head_count -= 1
+        else:
+            # The root and the minimum tail alone; each is capped at MAX_MESSAGE_CHARS.
+            return kept, len(messages) - len(kept)

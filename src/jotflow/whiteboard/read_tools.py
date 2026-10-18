@@ -164,9 +164,9 @@ class WorkSource(Protocol):
 
     async def thread(self, channel_id: str, thread_ts: str) -> WorkThread: ...
 
-    async def related(
-        self, channel_id: str, thread_ts: str, topics: TopicIndex
-    ) -> list[RelatedExcerpt]: ...
+    async def related(self, thread: WorkThread, topics: TopicIndex) -> list[RelatedExcerpt]:
+        """Excerpts from other threads, ranked against ``thread``, which is already fetched."""
+        ...
 
 
 class NoWorkSource:
@@ -175,9 +175,7 @@ class NoWorkSource:
     async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
         raise ToolError("thread text is not available yet; fetching it arrives with #20")
 
-    async def related(
-        self, channel_id: str, thread_ts: str, topics: TopicIndex
-    ) -> list[RelatedExcerpt]:
+    async def related(self, thread: WorkThread, topics: TopicIndex) -> list[RelatedExcerpt]:
         return []
 
 
@@ -235,7 +233,7 @@ def read_tools(
             # A source bug must not let this run see, or later link, another thread.
             raise ToolError(f"the thread source returned another thread for run {run.id}")
         index = await topics(grant, NoArguments())
-        related = await work_source.related(grant.channel_id, run.thread_ts, index)
+        related = await work_source.related(thread, index)
         # Record the run's own thread, and only that: link_message (#15) then accepts
         # exactly those messages, so a run's writes stay inside the thread its token
         # names. Related excerpts are context to read, never messages to link.
