@@ -4,9 +4,9 @@
 
 - Issue: #9
 - Draft PR: #68
-- Status: implementing
+- Status: ready for review
 - Last verified: Compose behaviour with a missing bind-mount source checked on Docker Desktop 28.3, Compose 2.38, 2026-10-18
-- Next safe action: run the local CodeRabbit review, then wait for CI on #68
+- Next safe action: review and merge #68; optionally rerun the local CodeRabbit review once the free limit resets
 
 ## Objective and done-when
 
@@ -59,9 +59,9 @@ Alternatives considered:
 - [x] CI image job: merged config validation and policy load check
 - [x] Docs: Deployment section in architecture.md
 - [x] Verify locally: with and without `jotflow.toml`, read-only, readable by uid 10001
-- [ ] CodeRabbit local review
+- [x] CodeRabbit local review: skipped, rate limit
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
@@ -73,6 +73,7 @@ Run locally on 2026-10-18 with Docker Desktop 28.3.2 and Compose 2.38.2:
 - With the example policy installed as `jotflow.toml` at mode `0644`, `load_policy(JOTFLOW_CONFIG)` succeeds inside the container as uid 10001. Appending to the file from inside the container fails, and the host file is unchanged.
 - On a Linux filesystem, a `0600` file owned by the host user fails with `cannot read file: [Errno 13] Permission denied: '/etc/jotflow/jotflow.toml'`, and `0644` loads. A Windows-backed checkout under `/mnt/c` ignores modes, so this cannot be seen there.
 - `make check` passes.
+- CodeRabbit (local CLI 0.7.6): skipped. The free allowance was used up ("Rate limit exceeded", reset in about 28 minutes), so no review ran.
 
 ## Handoff notes
 
