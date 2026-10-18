@@ -26,7 +26,7 @@ Smaller decisions deferred until their milestone: topic expiry, default approver
 
 - Slack app manifest with the scopes and events Upshot needs, Socket Mode enabled
 - Config loading: `Settings` from environment, `upshot.toml` schema for channel to repo mapping, repo and label allowlists, approver list; drop the GitHub App fields and rename the `github` package to `execution` (D5)
-- `upshot init`: interactive setup that writes `upshot.toml` and a `.env` template
+- `upshot init`: guided setup. Writes `upshot.toml`, renders the Slack manifest with the team's chosen bot name, prints a create-from-manifest deep link, waits for the two tokens, validates them against Slack's auth endpoint with scope-specific error messages, writes `.env`, confirms the connection
 - `upshot run`: connects over Socket Mode, joins configured channels, logs redacted events
 - Dockerfile and `docker-compose.yml` with a persistent volume for the database
 - Quickstart in the README: clone to connected bot
@@ -106,3 +106,4 @@ Smaller decisions deferred until their milestone: topic expiry, default approver
 - Per-action approval granularity
 - HTTP and SDK agent adapters
 - Other chat platforms behind the Slack interface
+- Slack manifest API support in `upshot init`: create the app and push scope updates programmatically for teams that supply an app configuration token

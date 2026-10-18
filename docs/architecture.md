@@ -104,6 +104,8 @@ There is no hosted component and no telemetry.
 | Upshot | A Slack app installed in the team's workspace: `channels:history`, `groups:history`, `chat:write`, `reactions:read`, `reactions:write`, `users:read`, `commands`, plus an app-level token for Socket Mode | Any GitHub access |
 | Team's agent | Whatever GitHub access the team already gave it | Any Slack access |
 
+Each team creates a dedicated Slack app for Upshot from the manifest in this repository, inside their own workspace. The bot's display name and icon are theirs to choose; "Upshot" is only the manifest default. Reusing an existing app is not supported: scopes, event subscriptions, and slash commands would have to be merged by hand and would collide with whatever the app already does. Slack requires two manual steps that no software can skip, creating the app and clicking Allow on the install screen, so `upshot init` wraps everything around them: it renders the manifest, opens the create-from-manifest link, validates the pasted tokens, and writes the environment file.
+
 Upshot must be a Slack app because something has to be woken when a message is posted. Slack's MCP server is pull-only: an agent that is already running can read, search, or post through it, but nothing in it fires on a new message. Only an installed app can subscribe to events. The agent needs no Slack access because Upshot fetches thread text, hands it over through `get_work`, and does all posting itself.
 
 ## Configuration
