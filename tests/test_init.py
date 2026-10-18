@@ -1064,3 +1064,7 @@ def test_per_kind_models_are_explained_and_kept(options: InitOptions) -> None:
     assert (
         agent["JOTFLOW_AGENT_MODEL_DRAFTING"] == "opus" and agent["JOTFLOW_AGENT_MODEL"] == "haiku"
     )
+
+
+def test_the_model_prompt_says_it_covers_drafting_and_execution() -> None:
+    assert "both drafting and execution" in " ".join(init.EXPLAIN_MODEL)
