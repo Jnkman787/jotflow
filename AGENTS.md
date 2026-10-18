@@ -9,11 +9,12 @@ JotFlow is a self-hosted Slack app that exposes an MCP server. It watches a Slac
 Read before changing behaviour:
 
 - [docs/architecture.md](docs/architecture.md): the design contract.
-- [docs/roadmap.md](docs/roadmap.md): milestones and decisions D1 to D5.
+- [docs/roadmap.md](docs/roadmap.md): milestones and decisions D1 to D12.
 
 ## Principles that are not up for debate
 
-- JotFlow never holds GitHub credentials. The team's agent performs every GitHub write, and only for a proposal JotFlow has handed it after approval or in `auto` mode.
+- JotFlow's code never uses GitHub credentials. The team's agent performs every GitHub write, in its own container, and only for a proposal JotFlow has handed it after approval or in `auto` mode.
+- The agent never sees JotFlow's secrets. Shipped presets give drafting runs, which read Slack text, only a read-only GitHub token and no shell or write tools; only execution runs, which receive approved structured fields, get the write token.
 - The agent acts only through JotFlow's MCP tools. Its stdout is never parsed for results.
 - JotFlow stores pointers, not message content. No column, log line, or file may hold a Slack message body.
 - JotFlow never calls an LLM itself. The team supplies the agent.
