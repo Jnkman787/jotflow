@@ -69,9 +69,9 @@ Done when:
 - [x] Tests, both orders with the debouncer
 - [x] Docs: architecture Intent keywords, AGENTS.md layout, README "Using it"
 - [x] Follow-up issues: undo by removing a reaction; hint reactions
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: three findings, all fixed (typo example, unknown reaction author, reaction wording)
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
