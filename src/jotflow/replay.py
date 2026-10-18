@@ -12,15 +12,17 @@ The report names messages by ``ts`` only, never by what they say.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from jotflow.models import RunKind, RunStatus, UntrustedText
+from jotflow.models import RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
+from jotflow.orchestrator.keywords import split_keyword
+from jotflow.orchestrator.packet import SlackWorkSource
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.store import MemoryStore, Store
 from jotflow.testing.threads import (
@@ -33,22 +35,13 @@ from jotflow.testing.threads import (
     ReactionEvent,
     SavedThread,
 )
-from jotflow.whiteboard.read_tools import (
-    RelatedExcerpt,
-    ThreadMessage,
-    WorkThread,
-    read_tools,
-)
+from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolError, ToolSpec
 from jotflow.whiteboard.write_tools import write_tools
 
 # Replay runs at a fixed time, so every run of a fixture is identical.
 REPLAY_START = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
-NOT_RUN_KEYWORDS = (
-    "not checked: re: and skip: are applied by keyword parsing, which arrives with #20"
-)
-
 __all__ = ["Check", "ReplayError", "ReplayReport", "replay"]
 
 
@@ -108,34 +101,39 @@ class _Poster:
         return f"1792310999.{len(self.threads):06d}"
 
 
-class _FixtureSource:
-    """Serves each thread's accepted messages from the fixture, as Slack would."""
+class _FixtureReader:
+    """The two Slack reads the live work packet makes, answered from the fixture.
+
+    Replay builds each run's thread with the real
+    :class:`~jotflow.orchestrator.packet.SlackWorkSource`, so ``skip:``, keyword
+    stripping, hints, mentions, and related excerpts follow the live rules.
+    """
 
     def __init__(self, thread: SavedThread, accepted: Sequence[MessageEvent]) -> None:
         self._thread = thread
         self._accepted = accepted
 
-    async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
-        messages = [
-            ThreadMessage(
-                ts=m.ts,
-                user_id=m.user,
-                author=UntrustedText(text=self._name(m.user)),
-                text=UntrustedText(text=m.text),
-            )
-            for m in self._accepted
-            if m.channel == channel_id and m.root == thread_ts
-        ]
-        return WorkThread(channel_id=channel_id, thread_ts=thread_ts, messages=messages)
+    async def replies(
+        self, channel: str, ts: str, *, cursor: str | None, limit: int
+    ) -> Mapping[str, Any]:
+        thread = [m for m in self._accepted if m.channel == channel and m.root == ts]
+        thread.sort(key=lambda m: (m.ts != ts, m.ts))  # the parent first, as Slack does
+        messages = [_slack_message(m) for m in thread][:limit]
+        return {"ok": True, "messages": messages, "has_more": False}
 
-    async def related(self, thread: WorkThread, topics: Any) -> list[RelatedExcerpt]:
-        return []
+    async def user(self, user_id: str) -> Mapping[str, Any]:
+        found = self._thread.users.get(user_id)
+        name = found.name if found else user_id
+        return {"ok": True, "user": {"id": user_id, "profile": {"display_name": name}}}
 
-    def _name(self, user: str | None) -> str:
-        if user is None:
-            return "unknown"
-        found = self._thread.users.get(user)
-        return found.name if found else user
+
+def _slack_message(message: MessageEvent) -> dict[str, Any]:
+    data: dict[str, Any] = {"type": "message", "ts": message.ts, "text": message.text}
+    for key in ("thread_ts", "user", "bot_id", "subtype"):
+        value = getattr(message, key)
+        if value is not None:
+            data[key] = value
+    return data
 
 
 @dataclass
@@ -146,6 +144,7 @@ class _Replay:
     specs: dict[str, ToolSpec]
     poster: _Poster
     topics: dict[str, str] = field(default_factory=dict)  # key:<name> or fixture id -> store id
+    accepted: list[MessageEvent] = field(default_factory=list)  # messages ingest accepted
 
     def resolve(self, topic: str | None) -> str | None:
         if topic is None:
@@ -274,6 +273,8 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
         _equal("ingest accepted", accepted, list(expected.accepted)),
         _equal("ingest ignored", ignored, dict(expected.ignored)),
     ]
+    # Attaching a re: message to its topic is #56's; until then those messages are
+    # set aside here. The keywords check below still checks that they say re:.
     attached_by_keyword = {ts for ts, word in expected.keywords.items() if word == "re"}
 
     topic_problems: list[str] = []
@@ -326,8 +327,10 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
     )
     checks.append(_counted("proposals", got_proposals, want_proposals))
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
-    if any(word in {"re", "skip"} for word in expected.keywords.values()):
-        checks.append(Check("keywords", None, NOT_RUN_KEYWORDS))
+    found = {
+        m.ts: keyword for m in replay.accepted if (keyword := split_keyword(m.text)[0]) is not None
+    }
+    checks.append(_equal("keywords", found, dict(expected.keywords)))
     return checks
 
 
@@ -355,7 +358,10 @@ async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayRe
     active = store or MemoryStore(clock=clock)
     poster = _Poster()
     accepted, ignored, messages = _ingest(thread)
-    source = _FixtureSource(thread, messages)
+    bot = thread.workspace.bot
+    source = SlackWorkSource(
+        _FixtureReader(thread, messages), active, bot=BotIdentity(bot.user_id, bot.bot_id)
+    )
     specs = {
         spec.name: spec
         for spec in (
@@ -363,7 +369,7 @@ async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayRe
             *write_tools(active, thread.policy, poster, clock=clock),
         )
     }
-    state = _Replay(thread, active, clock, specs, poster)
+    state = _Replay(thread, active, clock, specs, poster, accepted=messages)
     registry = TokenRegistry(clock=clock.mono)
     lifecycle = RunLifecycle(active, registry, clock=clock)
     report = ReplayReport(thread.name, thread.description)

@@ -11,7 +11,7 @@ import pytest
 from jotflow import replay as module
 from jotflow.commands import replay as command
 from jotflow.models import ProposalState, RunKind
-from jotflow.replay import NOT_RUN_KEYWORDS, ReplayReport, replay
+from jotflow.replay import ReplayReport, replay
 from jotflow.store import MemoryStore, SqliteStore
 from jotflow.testing.threads import builtin_paths, builtin_thread, load_thread, parse_thread
 from jotflow.whiteboard.tokens import Grant
@@ -43,19 +43,6 @@ async def test_every_fixture_replays_to_its_expected_outcome(path: Path, no_netw
         "asks",
     ):
         assert name in names
-
-
-async def test_keyword_checks_are_reported_as_not_run() -> None:
-    report = await replay(builtin_thread("keywords"))
-    (keywords,) = [c for c in report.checks if c.name == "keywords"]
-    assert keywords.ok is None and keywords.detail == NOT_RUN_KEYWORDS
-    assert report.ok
-    assert "--    keywords" in report.render()
-
-
-async def test_a_fixture_without_keywords_has_no_keyword_check() -> None:
-    report = await replay(builtin_thread("feature-request"))
-    assert all(c.name != "keywords" for c in report.checks)
 
 
 async def test_replay_uses_the_real_store_and_lifecycle(tmp_path: Path) -> None:
@@ -182,11 +169,7 @@ def _state(thread_name: str = "feature-request") -> module._Replay:
     return module._Replay(thread, store, module._Clock(), {}, module._Poster())
 
 
-def test_unknown_authors_and_topics() -> None:
-    thread = builtin_thread("feature-request")
-    source = module._FixtureSource(thread, [])
-    assert source._name(None) == "unknown"
-    assert source._name("U0NOBODY") == "U0NOBODY"
+def test_unknown_topics() -> None:
     with pytest.raises(module.ReplayError, match="before it exists"):
         _state().resolve("key:never")
     assert _state().resolve(None) is None
@@ -251,3 +234,59 @@ async def test_errors_name_fields_and_reasons_never_input() -> None:
         )
     # The tool's own reason, written in code, is passed through as it is.
     assert str(refused.value) == "link_message refused the scripted call: run r1 is not running"
+
+
+# --- keywords, through the real parser and work packet (#129) -----------------
+
+
+async def test_keywords_are_checked_for_every_fixture() -> None:
+    for path in PATHS:
+        report = await replay(load_thread(path))
+        (keywords,) = [c for c in report.checks if c.name == "keywords"]
+        assert keywords.ok is True, (path.stem, keywords.detail)
+
+
+async def test_a_wrong_keyword_expectation_fails_the_replay() -> None:
+    def misread(data: dict[str, Any]) -> None:
+        # "Skip button is broken" has no keyword at all: no word with a colon.
+        data["expected"]["keywords"]["1792315680.000100"] = "bug"
+
+    thread = parse_thread(_broken("keywords", misread), source="test")
+    report = await replay(thread)
+    (keywords,) = [c for c in report.checks if c.name == "keywords"]
+    assert keywords.ok is False
+    assert not report.ok
+
+
+async def test_the_real_work_packet_applies_skip_and_strips_keywords() -> None:
+    from jotflow.orchestrator.ingest import BotIdentity
+    from jotflow.orchestrator.packet import SlackWorkSource
+    from jotflow.whiteboard.tools import ToolError
+
+    thread = builtin_thread("keywords")
+    _, _, accepted = module._ingest(thread)
+    bot = thread.workspace.bot
+    source = SlackWorkSource(
+        module._FixtureReader(thread, accepted),
+        MemoryStore(),
+        bot=BotIdentity(bot.user_id, bot.bot_id),
+    )
+    with pytest.raises(ToolError, match="skip:"):
+        await source.thread("C0EXAMPLE1", "1792315440.000100")
+    idea = await source.thread("C0EXAMPLE1", "1792315200.000100")
+    (first,) = idea.messages
+    assert first.hint == "idea"
+    assert not first.text.text.lower().startswith("idea:")
+
+
+async def test_the_fixture_reader_speaks_slacks_shapes() -> None:
+    thread = builtin_thread("bug-report")
+    _, _, accepted = module._ingest(thread)
+    reader = module._FixtureReader(thread, accepted)
+    root = next(m for m in accepted if not m.is_reply)
+    page = await reader.replies("C0EXAMPLE1", root.ts, cursor=None, limit=2)
+    assert page["messages"][0]["ts"] == root.ts
+    assert len(page["messages"]) == 2 and page["has_more"] is False
+    user = await reader.user(root.user or "")
+    assert user["user"]["profile"]["display_name"] == thread.users[root.user or ""].name
+    assert (await reader.user("U0NOBODY"))["user"]["profile"]["display_name"] == "U0NOBODY"
