@@ -36,16 +36,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
 from jotflow.models import RunKind
 from jotflow.orchestrator.debounce import Debouncer
-from jotflow.orchestrator.ingest import BotIdentity, Decision
+from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
+from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
 from jotflow.orchestrator.runs import RunLifecycle
@@ -193,6 +194,7 @@ class Orchestrator:
         make_server: ServerFactory,
         open_store: StoreOpener = open_sqlite,
         runner: RunnerClient | None = None,
+        keyword_slack: KeywordSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -207,6 +209,8 @@ class Orchestrator:
         self._make_server = make_server
         self._open_store = open_store
         self._runner = runner
+        self._keyword_slack = keyword_slack
+        self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
         self._tick_seconds = tick_seconds
         self.registry = TokenRegistry()
@@ -240,6 +244,10 @@ class Orchestrator:
         self._store = await self._open_store(self._settings.database_path)
         lifecycle = RunLifecycle(self._store, self.registry)
         await lifecycle.recover()
+        # Keywords are a person's decisions, stored even while agent runs are off.
+        self._keywords = KeywordHandler(
+            self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
+        )
         poster = SlackThreadPoster(self._client)
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
         tools = (
@@ -290,8 +298,21 @@ class Orchestrator:
             self._policy.agent.max_concurrent_runs,
         )
 
-    async def note(self, decision: Decision) -> None:
-        """Take one ingest decision. Does nothing while runs are off."""
+    async def note(self, decision: Decision, event: Mapping[str, Any] | None = None) -> None:
+        """Take one ingest decision: keywords first, then the debouncer (#56).
+
+        The keyword handler runs first, so a person's ``skip:`` or ``re:`` is
+        stored before the debouncer would join a reply to its parent's topic.
+        The debouncer does nothing while runs are off.
+        """
+        if isinstance(decision, Accepted) and event is not None and self._keywords is not None:
+            try:
+                if decision.kind == "message":
+                    await self._keywords.on_message(event)
+                else:
+                    await self._keywords.on_reaction(event)
+            except Exception:
+                log.exception("could not apply a keyword")
         if self._debouncer is None:
             return
         try:

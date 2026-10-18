@@ -506,3 +506,26 @@ async def test_an_unknown_author_counts_as_someone_else(store: Store) -> None:
     assert (await handler.on_reaction(reaction("U0BLAKE", None))).action == "ignored"
     assert (await handler.on_reaction(reaction("U0LEAD", None))).action == "skipped"
     assert slack.replies[0][2].startswith("<@U0LEAD> marked Someone's message")
+
+
+class AuthClient(FakeClient):
+    def __init__(self, user: dict[str, Any], team: Any) -> None:
+        super().__init__(user)
+        self.team = team
+
+    async def auth_test(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("auth_test", kwargs))
+        return {"ok": True, "team_id": self.team}
+
+
+async def test_bolt_adapter_looks_up_its_own_team_once() -> None:
+    client = AuthClient({"team_id": "T0ACME"}, "T0ACME")
+    slack = BoltKeywordSlack(client)
+    assert not (await slack.person("U0ALEX")).external
+    assert not (await slack.person("U0ALEX")).external
+    assert [name for name, _ in client.calls].count("auth_test") == 1
+
+
+async def test_without_its_own_team_every_other_team_is_external() -> None:
+    slack = BoltKeywordSlack(AuthClient({"team_id": "T0ACME"}, None))
+    assert (await slack.person("U0ALEX")).external

@@ -7,7 +7,7 @@
 - Draft PR: #135
 - Status: ready for review
 - Last verified: 2026-10-18, `make check` passes on the branch rebased onto main
-- Next safe action: review; wiring the handler into `jotflow run` follows with #55
+- Next safe action: review; rebased onto #136, and the handler is wired into `jotflow run`
 
 ## Objective and done-when
 
@@ -22,10 +22,10 @@ Done when:
 - [x] `/jotflow help` lists the keywords
 - [x] A `skip:` reply ends up as person-marked chatter, and an `re:` reply is linked to the named issue's topic, whichever order the keyword handler and the debouncer's join run in (reviewer, from #127)
 - [x] Replay applies `re:` and `skip:` through the same handler and no longer sets `re:` messages aside in its topic comparison (lead, from #132)
+- [x] `jotflow run` applies keywords before the debouncer, for messages and skip reactions, tested through a real Bolt app (lead, after #136 merged)
 - [x] `make check` passes, including the coverage floor
 
 **Out of scope, as follow-ups:**
-- Wiring the handler into `jotflow run` comes with #55, which owns opening the store in `serve()`. This PR registers only `/jotflow help`, which needs no store.
 - Undoing someone else's skip by removing the reaction needs the `reaction_removed` event, a manifest change that teams would reinstall for. For now the visible note says how to ask for an undo. Follow-up: #138.
 - `idea:` and `bug:` given as reactions have no effect yet: the hint reaches the agent from the message text, and a reaction has nowhere to be stored. The confirmation reaction says the keyword was understood only when it was acted on. Follow-up: #139.
 - The rest of #80's help surfaces: the pinned guide, the newcomer tip, and near-miss nudges. `help_text()` is the one source #80 builds on.
@@ -81,5 +81,5 @@ Done when:
 
 ## Handoff notes
 
-- #55 wires `KeywordHandler` into `jotflow run`: call `on_message` before `Debouncer.note`, and `on_reaction` for accepted reactions. `BoltKeywordSlack` needs the workspace's team id.
+- `Orchestrator.note(decision, event)` runs the handler first, then the debouncer. `register_handlers` passes the raw event to its sink for that. Keywords apply even while agent runs are off, because they are a person's decisions. `BoltKeywordSlack` looks up the workspace's team id with `auth.test` once. If that finds none, every user from another team counts as external.
 - The fixture validator in `testing/threads.py` still leaves `re:` messages out when it checks what the script links. That is correct: the agent never links them, the handler does.

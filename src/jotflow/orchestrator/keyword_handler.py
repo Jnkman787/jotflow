@@ -15,7 +15,8 @@ external users are ignored. With approvers off anyone may skip someone else's
 message, and JotFlow says so in the thread; with approvers on only the author
 or an approver may (D7, D10).
 
-**Order with the debouncer.** Call :meth:`KeywordHandler.on_message` before
+**Order with the debouncer.** :meth:`jotflow.orchestrator.service.Orchestrator.note`
+calls :meth:`KeywordHandler.on_message` before
 :meth:`~jotflow.orchestrator.debounce.Debouncer.note`. The debouncer joins a
 reply to its parent's topic only when the reply is not placed yet, so a
 person's ``re:`` or ``skip:`` stored first is left alone. A skip reaction that
@@ -192,9 +193,17 @@ def help_text() -> str:
 class BoltKeywordSlack:
     """:class:`KeywordSlack` over slack-sdk's client."""
 
-    def __init__(self, client: Any, team_id: str) -> None:
+    def __init__(self, client: Any, team_id: str | None = None) -> None:
         self._client = client
         self._team_id = team_id
+
+    async def _own_team(self) -> str | None:
+        """This workspace's id, from ``auth.test`` once, unless it was given."""
+        if self._team_id is None:
+            response = await self._client.auth_test()
+            team = response.get("team_id")
+            self._team_id = team if isinstance(team, str) else None
+        return self._team_id
 
     async def react(self, channel_id: str, ts: str, name: str) -> None:
         await self._client.reactions_add(channel=channel_id, timestamp=ts, name=name)
@@ -209,5 +218,6 @@ class BoltKeywordSlack:
         user = response.get("user") or {}
         guest = bool(user.get("is_restricted") or user.get("is_ultra_restricted"))
         team = user.get("team_id")
-        external = bool(user.get("is_stranger")) or (team is not None and team != self._team_id)
+        own = await self._own_team()
+        external = bool(user.get("is_stranger")) or (team is not None and team != own)
         return Person(user_id, guest=guest, external=external)

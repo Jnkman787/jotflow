@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 import aiohttp
@@ -90,16 +90,19 @@ def report_missing(missing: list[str], bot_name: str) -> None:
 def register_handlers(
     app: AsyncApp,
     events: EventFilter,
-    sink: Callable[[Decision], Awaitable[None]] | None = None,
+    sink: Callable[[Decision, Mapping[str, Any]], Awaitable[None]] | None = None,
 ) -> None:
-    """Route message and reaction events through the filter to the log, then ``sink``."""
+    """Route message and reaction events through the filter to the log, then ``sink``.
+
+    ``sink`` gets the raw event too, for the keyword handler to read its text.
+    """
 
     async def on_event(event: dict[str, Any], body: dict[str, Any]) -> None:
         event_id = body.get("event_id")
         decision = events.classify(event, event_id if isinstance(event_id, str) else None)
         log_decision(decision)
         if sink is not None:
-            await sink(decision)
+            await sink(decision, event)
 
     app.event("message")(on_event)
     app.event("reaction_added")(on_event)
