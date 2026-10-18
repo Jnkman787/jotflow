@@ -99,7 +99,7 @@ None is declined.
 
 ## Round 2
 
-The second fresh-eyes review (comment on #100, 2026-10-18) found four platform blockers, six contradictions, minor items, and a jargon list. Round 2 is PR #NNN, `Refs #100`; the team lead runs a third review on the merged text. #100 closes when a review finds no blocker and no contradiction.
+The second fresh-eyes review (comment on #100, 2026-10-18) found four platform blockers, six contradictions, minor items, and a jargon list. Round 2 is PR #108, `Refs #100`; the team lead runs a third review on the merged text. #100 closes when a review finds no blocker and no contradiction.
 
 | Finding | Fix |
 |---|---|
@@ -116,6 +116,8 @@ The second fresh-eyes review (comment on #100, 2026-10-18) found four platform b
 | Minor: uv needs a new terminal; macOS Python is older; `cd ~` in WSL; showing the manifest file; viewing the app-level token again; the channel must exist and browser links work; refuse unsupported presets; where logs go and stopping `jotflow run`; plain live-check steps; explain the proxy | All done. Setup accepts `app.slack.com/client/T.../C...` links, and refuses presets it does not ship yet, with `none` or `claude-code` accepted. A pip row covers too-old Python. |
 | Jargon | Defined in "Words used here": manifest, Docker, image, container, Compose, slash command, milestone. Inline: sudo, chmod, daemon, bind source path, proxy, OAuth & Permissions, Event Subscriptions, `.venv`, `ts` and `thread_ts`. Removed from user-facing text: "MCP server hat", "headless mode", "CLI", "policy file", "host", "CI", "shell profile", "opt in", and "decision D2" and the bare `debounce_seconds` comment in the example file. |
 | Also, from the reviewer | AGENTS.md and the architecture intro say decisions D1 to D13. |
+
+CodeRabbit: skipped, rate-limited.
 
 Declined: none. "Gemini CLI" in the README's diagram stays, as it is the product's name.
 
