@@ -87,6 +87,8 @@ class Rig:
         self.server: FakeServer | None = None
         self.calls: list[tuple[str, str, str]] = []
         self.fail_server = fail_server
+        self.info_preset = "claude-code"
+        self.info_status = 200
         self.runner = RunnerClient(
             conversation=RunnerEndpoint("http://agent:8766", SECRET),
             execution=RunnerEndpoint("http://agent-exec:8766", EXEC_SECRET),
@@ -102,10 +104,20 @@ class Rig:
             runner=self.runner,
             flush_seconds=0.01,
             tick_seconds=0.01,
+            info_attempts=2,
+            info_delay=0.0,
         )
 
     def _runner(self, request: httpx2.Request) -> httpx2.Response:
-        self.calls.append((request.method, str(request.url.host), request.url.path))
+        host = str(request.url.host)
+        self.calls.append((request.method, host, request.url.path))
+        if request.url.path == "/info":
+            if self.info_status == 0:
+                raise httpx2.ConnectError("down")
+            if self.info_status != 200:
+                return httpx2.Response(self.info_status, json={})
+            kinds = ["execution"] if host == "agent-exec" else ["drafting", "question"]
+            return httpx2.Response(200, json={"preset": self.info_preset, "kinds": kinds})
         if request.method == "POST":
             return httpx2.Response(202, json={})
         run_id = request.url.path.rsplit("/", 1)[1]
@@ -293,7 +305,7 @@ async def test_an_execution_run_end_to_end_records_only_the_approved_repo(
 
     orchestrator = Orchestrator(
         settings(mcp_port=port),
-        policy(),
+        policy(preset="command"),
         AsyncWebClient(token="xoxb-test"),
         IDENTITY,
         make_server=make_mcp_server,
@@ -397,3 +409,85 @@ async def test_without_the_drafting_secret_nothing_is_queued_but_execution_runs(
     assert await rig.store.thread_runs(CH, "1760781700.000100") == []
     assert all(host != "agent" for _, host, _ in rig.calls)
     await rig.orchestrator.stop()
+
+
+# Each runner is asked what it starts, with its own secret, before runs begin.
+
+
+async def test_runners_that_match_jotflow_toml_turn_their_kinds_on() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    assert rig.orchestrator.kinds.on == frozenset(RunKind)
+    assert ("GET", "agent", "/info") in rig.calls and ("GET", "agent-exec", "/info") in rig.calls
+    await rig.orchestrator.stop()
+
+
+async def test_a_runner_with_another_preset_turns_its_kinds_off(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig()
+    rig.info_preset = "codex"
+    await _approved(rig.store)
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert not rig.orchestrator.runs_on
+    assert (
+        "execution runs are off: the runner at http://agent-exec:8766 starts preset codex, "
+        "but jotflow.toml's [agent] preset is claude-code"
+    ) in caplog.text
+    assert "drafting and question runs are off" in caplog.text
+    await asyncio.sleep(0.05)
+    assert not [c for c in rig.calls if c[0] == "POST"]
+    proposal = await rig.store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.APPROVED
+    await rig.orchestrator.stop()
+
+
+async def test_a_wrong_secret_is_not_retried_and_turns_the_kind_off(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig()
+    rig.info_status = 401
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert not rig.orchestrator.runs_on
+    assert "did not answer: the runner refused JotFlow's secret (401)" in caplog.text
+    assert sum(1 for c in rig.calls if c == ("GET", "agent", "/info")) == 1
+    await rig.orchestrator.stop()
+
+
+async def test_an_unreachable_runner_is_retried_then_its_kinds_are_off(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig()
+    rig.info_status = 0
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert sum(1 for c in rig.calls if c == ("GET", "agent-exec", "/info")) == 2
+    assert (
+        "execution runs are off: the runner at http://agent-exec:8766 did not answer" in caplog.text
+    )
+    await rig.orchestrator.stop()
+
+
+async def test_a_runner_serving_other_kinds_turns_them_off() -> None:
+    from jotflow.orchestrator.launch import RunnerInfo
+    from jotflow.orchestrator.service import RunKinds, check_runners
+
+    class Client:
+        def endpoint_for(self, kind: RunKind) -> RunnerEndpoint:
+            return RunnerEndpoint("http://agent:8766", SECRET)
+
+        async def info(self, kind: RunKind) -> RunnerInfo:
+            return RunnerInfo(preset="claude-code", kinds=(RunKind.DRAFTING,))
+
+    checked = await check_runners(
+        Client(),  # type: ignore[arg-type]
+        RunKinds(frozenset({RunKind.DRAFTING, RunKind.QUESTION}), ()),
+        "claude-code",
+        attempts=1,
+    )
+    assert checked.on == frozenset()
+    assert checked.off == (
+        "drafting and question runs are off: the runner at http://agent:8766 serves drafting",
+    )

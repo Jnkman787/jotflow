@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 
 from jotflow.config import Settings
 from jotflow.models import IssueProposal, ProposalRecord, ProposalState, RunKind, RunStatus
-from jotflow.orchestrator.launch import RunnerClient, RunSupervisor
+from jotflow.orchestrator.launch import RunnerClient, RunnerEndpoint, RunnerError, RunSupervisor
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.policy import Policy
 from jotflow.store import MemoryStore, content_hash
@@ -87,6 +87,31 @@ async def main() -> int:
     execution = await store.enqueue_run(RunKind.EXECUTION, CHANNEL, THREAD, proposal_id="probe")
 
     client = RunnerClient.from_settings(settings)
+    # Each runner says what it starts, to its own secret only.
+    for kind, served in (
+        (RunKind.DRAFTING, ["drafting", "question"]),
+        (RunKind.EXECUTION, ["execution"]),
+    ):
+        info = await client.info(kind)
+        if info.preset != "command" or [k.value for k in info.kinds] != served:
+            print(f"probe: the {kind.value} runner reported {info}", file=sys.stderr)
+            return 1
+    drafting_runner = client.endpoint_for(RunKind.DRAFTING)
+    exec_runner = client.endpoint_for(RunKind.EXECUTION)
+    assert drafting_runner is not None and exec_runner is not None
+    swapped = RunnerClient(
+        conversation=RunnerEndpoint(drafting_runner.url, exec_runner.secret), execution=None
+    )
+    try:
+        await swapped.info(RunKind.DRAFTING)
+    except RunnerError as exc:
+        print(f"probe: the drafting runner refused the other secret: {exc}")
+    else:
+        print("probe: the drafting runner answered the execution runner's secret", file=sys.stderr)
+        return 1
+    finally:
+        await swapped.aclose()
+    print("probe: both runners report preset command and their own kinds")
     supervisor = RunSupervisor(
         RunLifecycle(store, registry), store, client, NoPoster(), max_running=2
     )

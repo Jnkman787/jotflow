@@ -269,7 +269,7 @@ This starts JotFlow. The agent containers, where your team's agent will draft is
 
 Neither file holds Slack tokens, and neither agent sees `.env`.
 
-Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
+Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 
 The first start builds JotFlow's image, which takes a minute or two.
 
@@ -301,6 +301,48 @@ uv run jotflow replay feature-request
 ```
 
 It prints what happened at each step, `ok` or `FAIL`, and whether the result matches what the example expects. The examples, and the format for saving your own, are described in [src/jotflow/testing/threads/README.md](src/jotflow/testing/threads/README.md).
+
+### Check that the agent can write an issue
+
+Before approval in Slack exists, you can hand JotFlow one approved issue and watch the agent write it. Use a test repo, because this creates a real issue there.
+
+You need:
+
+- the agent containers set up, as in step 5
+- `[agent] preset` set in `jotflow.toml`
+- a test channel whose repo list names the test repo
+- the `ts` of one message in that channel, from the log, which is where a failure notice would go
+
+Write `fixture.json`:
+
+```json
+{
+  "channel_id": "C0TEST01",
+  "thread_ts": "1760781697.000100",
+  "repo": "your-org/test-repo",
+  "title": "JotFlow end-to-end check",
+  "body": "Created by jotflow execute-fixture. Safe to delete.",
+  "approved_by": "U0YOURID"
+}
+```
+
+Then queue it while JotFlow runs:
+
+```
+docker compose exec -T jotflow jotflow execute-fixture - --confirm < fixture.json
+```
+
+It prints the proposal id and the run id. Within a few seconds the log shows the run start, and then end `succeeded`. The issue appears in the test repo with the proposal id hidden in its body.
+
+**To check a retry does not duplicate the issue,** take the proposal id it printed, and do the following:
+
+1. Add `JOTFLOW_DATABASE_PATH=/data/retry-check.db` to `.env`, and restart JotFlow with `docker compose up -d`.
+2. Add `"id": "<that proposal id>"` to `fixture.json`.
+3. Run the same command with `--reconciling` added. That stores the proposal as if its first run had been interrupted, so the agent looks for the hidden id before writing.
+4. Check that the run ends `succeeded` and the repo still has one such issue.
+5. Remove the `.env` line, restart, and delete the test issue.
+
+The command refuses in CI, refuses without `--confirm`, and checks the repo and labels against `jotflow.toml` as a drafted proposal would be checked. It bypasses the approver list in `jotflow.toml`: `approved_by` is whatever user id the fixture names, and no one in Slack approves anything. It is an operator check that needs a shell in JotFlow's container, not a way around approvers, so keep that access to the people who run JotFlow.
 
 ## Troubleshooting
 

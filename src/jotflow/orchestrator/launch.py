@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from jotflow.config import Settings
 from jotflow.models import Run, RunKind, RunStatus
@@ -100,6 +100,22 @@ class RunnerStatus(BaseModel):
     run_id: str
     state: RunnerState
     exit_code: int | None = None
+
+
+class RunnerInfo(BaseModel):
+    """What a runner says it starts, validated strictly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    preset: str = Field(max_length=64)
+    kinds: tuple[RunKind, ...] = Field(max_length=len(RunKind))
+
+
+class RunnerInfoWire(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    preset: str = Field(max_length=64)
+    kinds: list[str] = Field(max_length=len(RunKind))
 
 
 @dataclass(frozen=True)
@@ -174,6 +190,18 @@ class RunnerClient:
         if status.run_id != run_id:
             raise RunnerError("the runner's reply was for another run")
         return status
+
+    async def info(self, kind: RunKind) -> RunnerInfo:
+        """What the runner for ``kind`` starts: its preset and the kinds it serves."""
+        response = await self._call("GET", kind, "/info")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        try:
+            # Strict except for the kinds, which arrive as JSON strings.
+            raw = RunnerInfoWire.model_validate_json(response.content)
+            return RunnerInfo(preset=raw.preset, kinds=tuple(RunKind(k) for k in raw.kinds))
+        except (ValidationError, ValueError):
+            raise RunnerError("the runner's reply was not its info") from None
 
     async def stop(self, run_id: str, kind: RunKind) -> None:
         """Ask the runner to kill the run. A run it does not know is already gone."""
