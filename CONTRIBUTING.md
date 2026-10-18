@@ -1,6 +1,6 @@
-# Contributing to Upshot
+# Contributing to JotFlow
 
-Thanks for your interest. Upshot is early, so design feedback on [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/roadmap.md) is as useful as code.
+Thanks for your interest. JotFlow is early, so design feedback on [docs/architecture.md](docs/architecture.md) and [docs/roadmap.md](docs/roadmap.md) is as useful as code.
 
 The full working rules, for people and coding agents alike, are in [AGENTS.md](AGENTS.md). This page is the short version.
 
@@ -24,9 +24,9 @@ The full working rules, for people and coding agents alike, are in [AGENTS.md](A
 
 Contributions that violate these will not be merged:
 
-- Upshot never holds GitHub credentials. The team's agent performs every GitHub write, and only when Upshot hands it an approved proposal.
-- Upshot stores pointers, not message content.
-- Upshot never calls an LLM itself; the team supplies the agent.
+- JotFlow never holds GitHub credentials. The team's agent performs every GitHub write, and only when JotFlow hands it an approved proposal.
+- JotFlow stores pointers, not message content.
+- JotFlow never calls an LLM itself; the team supplies the agent.
 - No hosted component, no telemetry.
 
 ## Licensing

@@ -1,6 +1,6 @@
 # Security policy
 
-Upshot writes to GitHub repositories based on content posted in chat. Treat anything that could let untrusted channel content cause an unintended write, bypass the approval gate, or expose message content as a security issue.
+JotFlow writes to GitHub repositories based on content posted in chat. Treat anything that could let untrusted channel content cause an unintended write, bypass the approval gate, or expose message content as a security issue.
 
 ## Reporting a vulnerability
 
@@ -27,4 +27,4 @@ Out of scope:
 
 ## Supported versions
 
-Upshot is pre-release. Only the `main` branch is supported.
+JotFlow is pre-release. Only the `main` branch is supported.

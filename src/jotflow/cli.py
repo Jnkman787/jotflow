@@ -5,14 +5,14 @@ from __future__ import annotations
 import argparse
 import sys
 
-from upshot import __version__
+from jotflow import __version__
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="upshot", description="Turn team chat into GitHub issues."
+        prog="jotflow", description="Turn team chat into GitHub issues."
     )
-    parser.add_argument("--version", action="version", version=f"upshot {__version__}")
+    parser.add_argument("--version", action="version", version=f"jotflow {__version__}")
     parser.parse_args(argv)
     parser.print_help()
     return 0
