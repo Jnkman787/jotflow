@@ -228,6 +228,13 @@ class ProposalRecord(BaseModel):
     )
     approved_at: AwareDatetime | None = None
     result: ExecutionResult | None = None
+    draft_cleared_at: AwareDatetime | None = Field(
+        default=None,
+        description=(
+            "When the drafted title, body, and comment were removed from the store, once the "
+            "proposal was final; the hash, approver, and result stay"
+        ),
+    )
     participants: list[str] = Field(
         default_factory=list,
         description=(

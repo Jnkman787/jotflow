@@ -40,9 +40,11 @@ from jotflow.store.base import (
     NotFoundError,
     StoreError,
     TopicRecord,
+    check_clearable,
     check_github_login,
     check_id,
     check_new_proposal,
+    cleared_draft,
     from_text,
     plan_transition,
     to_text,
@@ -107,6 +109,8 @@ class SqliteStore:
         try:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA foreign_keys = ON")
+            # Overwrite deleted content, so a cleared draft leaves no copy in free pages.
+            await db.execute("PRAGMA secure_delete = ON")
             await db.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
             if str(path) != ":memory:":
                 await db.execute("PRAGMA journal_mode = WAL")
@@ -328,6 +332,9 @@ class SqliteStore:
             if row["result_json"] is None
             else ExecutionResult.model_validate_json(row["result_json"]),
             participants=[u["slack_user_id"] for u in users],
+            draft_cleared_at=None
+            if row["draft_cleared_at"] is None
+            else from_text(row["draft_cleared_at"]),
             created_at=from_text(row["created_at"]),
         )
 
@@ -415,6 +422,7 @@ class SqliteStore:
                 result=result,
                 now=self._clock(),
             )
+            now = to_text(self._clock())
             cursor = await self._db.execute(
                 """
                 UPDATE proposals SET state = ?, content_hash = ?, approved_by = ?,
@@ -427,11 +435,13 @@ class SqliteStore:
                     changes.approved_by,
                     None if changes.approved_at is None else to_text(changes.approved_at),
                     None if changes.result is None else changes.result.model_dump_json(),
-                    to_text(self._clock()),
+                    now,
                     proposal_id,
                     record.state.value,
                 ),
             )
+            if changes.clear_draft:
+                await self._clear(record, now)
             if cursor.rowcount != 1:  # pragma: no cover - the write lock rules this out
                 raise StoreError(f"proposal {proposal_id} changed during the transition")
             updated = await self._get_proposal(proposal_id)
@@ -447,12 +457,34 @@ class SqliteStore:
                 (channel_id, thread_ts, keep_id),
             )
             ids = [row["id"] for row in rows]
-            await self._db.executemany(
-                "UPDATE proposals SET state = 'superseded', updated_at = ?"
-                " WHERE id = ? AND state = 'pending'",
-                [(to_text(self._clock()), proposal_id) for proposal_id in ids],
-            )
+            now = to_text(self._clock())
+            for proposal_id in ids:
+                record = _found(await self._get_proposal(proposal_id))
+                await self._db.execute(
+                    "UPDATE proposals SET state = 'superseded', updated_at = ?"
+                    " WHERE id = ? AND state = 'pending'",
+                    (now, proposal_id),
+                )
+                await self._clear(record, now)
             return ids
+
+    async def _clear(self, record: ProposalRecord, now: str) -> None:
+        """Replace the stored draft with its cleared form, inside the caller's transaction."""
+        await self._db.execute(
+            "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?"
+            " WHERE id = ? AND draft_cleared_at IS NULL",
+            (canonical_json(cleared_draft(record.proposal)), now, now, record.id),
+        )
+
+    async def clear_draft(self, proposal_id: str) -> ProposalRecord:
+        async with self._write():
+            record = await self._get_proposal(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            check_clearable(record)
+            await self._clear(record, to_text(self._clock()))
+            updated = await self._get_proposal(proposal_id)
+        return _found(updated)
 
     # Identity links
 

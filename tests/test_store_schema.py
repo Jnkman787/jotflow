@@ -27,17 +27,56 @@ _DOCUMENTED_AS_MESSAGE = re.compile(
     r"|\bwhat\s+(?:people|someone|they)\s+(?:wrote|said)\b",
     re.IGNORECASE,
 )
-_COLUMN = re.compile(r"^\s*([a-z_][a-z0-9_]*)\s+([A-Z]+)\b[^\n]*?(?:--\s*(.*))?$")
 _NOT_COLUMNS = {"PRIMARY", "CHECK", "UNIQUE", "FOREIGN", "CONSTRAINT"}
 
 
 def columns(sql: str) -> list[tuple[str, str, str]]:
-    """``(name, type, comment)`` for each column in a CREATE TABLE statement."""
+    """``(name, type, comment)`` for each column in a stored CREATE TABLE statement.
+
+    Splits the column list on top-level commas. A ``/* */`` comment belongs to
+    the column it sits in. A ``--`` comment belongs to the column that starts its
+    line, since the schema writes one column per line. That rule still holds after
+    ``ALTER TABLE ... ADD COLUMN``, which SQLite splices in after the last column,
+    even mid-line.
+    """
+    body = sql[sql.index("(") + 1 : sql.rindex(")")]
+    # Each part: [definition, comment, line it starts on]
+    parts: list[list[object]] = [["", "", None]]
+    depth, i, line = 0, 0, 0
+    while i < len(body):
+        part = parts[-1]
+        if body.startswith("--", i):
+            end = body.find("\n", i)
+            end = len(body) if end == -1 else end
+            owners = [p for p in parts if p[2] == line and str(p[0]).strip()]
+            owner = owners[0] if owners else parts[-2] if len(parts) > 1 else part
+            owner[1] = f"{owner[1]} {body[i + 2 : end].strip()}"
+            i = end
+        elif body.startswith("/*", i):
+            end = body.index("*/", i)
+            part[1] = f"{part[1]} {body[i + 2 : end].strip()}"
+            i = end + 2
+        elif body[i] == "'":
+            end = body.index("'", i + 1)
+            part[0] = f"{part[0]}{body[i : end + 1]}"
+            i = end + 1
+        else:
+            ch = body[i]
+            line += ch == "\n"
+            depth += ch == "("
+            depth -= ch == ")"
+            if ch == "," and depth == 0:
+                parts.append(["", "", None])
+            else:
+                if part[2] is None and not ch.isspace():
+                    part[2] = line
+                part[0] = f"{part[0]}{ch}"
+            i += 1
     found = []
-    for line in sql.splitlines()[1:]:
-        match = _COLUMN.match(line)
-        if match and match.group(1).upper() not in _NOT_COLUMNS:
-            found.append((match.group(1), match.group(2), (match.group(3) or "").strip()))
+    for definition, comment, _ in parts:
+        words = str(definition).split()
+        if len(words) >= 2 and words[0].upper() not in _NOT_COLUMNS:
+            found.append((words[0], words[1], str(comment).strip()))
     return found
 
 
@@ -114,7 +153,19 @@ def test_the_check_catches_a_message_column(column: str, complaint: str) -> None
         assert any(complaint in p for p in found), found
 
 
-async def test_fresh_database_reaches_latest_version(db_path: Path) -> None:
+async def test_the_check_reads_added_columns() -> None:
+    with sqlite3.connect(":memory:") as db:
+        db.execute("CREATE TABLE t (\n    id TEXT PRIMARY KEY -- an id\n)")
+        db.execute("ALTER TABLE t ADD COLUMN cleared_at TEXT /* when cleared */")
+        db.execute("ALTER TABLE t ADD COLUMN note TEXT /* the message's text */")
+        db.execute("ALTER TABLE t ADD COLUMN bare TEXT")
+        found = problems(db)
+        assert "t.note: documented as holding a message" in found
+        assert "t.bare: no comment saying what it holds" in found
+        assert not any(p.startswith("t.cleared_at") for p in found)
+
+
+def test_fresh_database_reaches_latest_version(db_path: Path) -> None:
     with sqlite3.connect(db_path) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -186,3 +237,11 @@ async def test_an_existing_database_keeps_its_mode(tmp_path: Path) -> None:
     store = await SqliteStore.open(path)
     await store.close()
     assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
+
+def test_comments_stay_with_their_columns_after_add_column(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as db:
+        (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = 'proposals'").fetchone()
+    found = {name: comment for name, _, comment in columns(sql)}
+    assert found["updated_at"] == "UTC, ISO 8601"
+    assert found["draft_cleared_at"].startswith("UTC, ISO 8601: when the drafted title")

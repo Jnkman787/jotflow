@@ -29,9 +29,11 @@ from jotflow.store.base import (
     MessageLink,
     NotFoundError,
     TopicRecord,
+    check_clearable,
     check_github_login,
     check_id,
     check_new_proposal,
+    cleared_draft,
     plan_transition,
     to_text,
     utc_now,
@@ -201,18 +203,32 @@ class MemoryStore:
                 result=result,
                 now=self._clock(),
             )
-            updated = record.model_copy(
-                update={
-                    "state": changes.state,
-                    "content_hash": changes.content_hash,
-                    "approved_by": changes.approved_by,
-                    "approved_at": changes.approved_at,
-                    "result": changes.result,
-                },
-                deep=True,
-            )
+            update: dict[str, object] = {
+                "state": changes.state,
+                "content_hash": changes.content_hash,
+                "approved_by": changes.approved_by,
+                "approved_at": changes.approved_at,
+                "result": changes.result,
+            }
+            if changes.clear_draft:
+                update |= self._cleared(record)
+            updated = record.model_copy(update=update, deep=True)
             self._proposals[proposal_id] = updated
             return updated.model_copy(deep=True)
+
+    def _cleared(self, record: ProposalRecord) -> dict[str, object]:
+        return {"proposal": cleared_draft(record.proposal), "draft_cleared_at": self._clock()}
+
+    async def clear_draft(self, proposal_id: str) -> ProposalRecord:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            check_clearable(record)
+            if record.draft_cleared_at is None:
+                record = record.model_copy(update=self._cleared(record), deep=True)
+                self._proposals[proposal_id] = record
+            return record.model_copy(deep=True)
 
     async def supersede_pending(
         self, channel_id: str, thread_ts: str | None, *, keep_id: str
@@ -227,8 +243,9 @@ class MemoryStore:
                 and r.id != keep_id
             )
             for proposal_id in ids:
-                self._proposals[proposal_id] = self._proposals[proposal_id].model_copy(
-                    update={"state": ProposalState.SUPERSEDED}
+                record = self._proposals[proposal_id]
+                self._proposals[proposal_id] = record.model_copy(
+                    update={"state": ProposalState.SUPERSEDED, **self._cleared(record)}, deep=True
                 )
             return ids
 
