@@ -20,10 +20,12 @@ classifiers = [
 dependencies = [
   "slack-bolt>=1.21",
   "aiohttp>=3.10",
-  "mcp>=1.10",
+  "mcp>=2.3,<3",
   "pydantic>=2.9",
   "pydantic-settings>=2.6",
   "aiosqlite>=0.20",
+  "starlette>=1.0",
+  "uvicorn>=0.40",
   "slack-sdk>=3.33",
 ]
 
@@ -42,6 +44,7 @@ dev = [
   "pytest-asyncio>=0.24",
   "mypy>=1.13",
   "pytest-cov>=6.0",
+  "httpx2>=2.0",
 ]
 
 [build-system]

@@ -4,10 +4,10 @@
 
 - Issue: #13
 - Also serves: #16, which plugs its token check into the interface added here
-- Draft PR: pending
-- Status: planning
-- Last verified: SDK behaviour checked with a throwaway prototype on 2026-10-18, nothing built yet
-- Next safe action: commit this plan, push, open the draft PR
+- Draft PR: #97
+- Status: implementing
+- Last verified: `make check` green locally on 2026-10-18, 467 tests, 98% coverage
+- Next safe action: run CodeRabbit or skip it, wait for CI on #97, confirm closingIssuesReferences is empty, mark ready
 
 ## Objective and done-when
 
@@ -15,19 +15,19 @@ Serve JotFlow's MCP endpoint from the `jotflow run` process, hardened to the 202
 
 Done when, for this PR:
 
-- [ ] `jotflow run` starts the MCP server on `JOTFLOW_MCP_HOST:JOTFLOW_MCP_PORT` and stops it on shutdown, including when Slack setup fails
-- [ ] Only protocol version `2026-07-28` is served. A request without `MCP-Protocol-Version`, or with any other version, gets 400 with an `UnsupportedProtocolVersionError` listing the supported versions. No `initialize` handshake and no `Mcp-Session-Id` are ever served.
-- [ ] Header and body disagreement on `MCP-Protocol-Version`, `Mcp-Method`, or `Mcp-Name` gets 400 with `HeaderMismatch` (-32020)
-- [ ] Any method other than POST gets 405 with `Allow: POST`
-- [ ] Any request carrying an `Origin` header gets 403
-- [ ] The `Host` header must be on the allowlist: loopback names on the configured port by default, plus configured names such as the Compose service name. Anything else gets 403.
-- [ ] A query string gets 400, so a token can never travel in the URL
-- [ ] Request bodies over 64 KiB get 413, and a request that takes longer than 30 seconds gets 504
-- [ ] The server declares only the `tools` capability, with `listChanged: false`. No prompts, resources, subscriptions, logging, completions, sampling, or elicitation.
-- [ ] Tools come from a fixed registry defined in code, empty for now. Nothing at runtime can add a tool or change a description.
-- [ ] One audit log line per request: method, tool name if any, run id once #16 exists, status, outcome, and duration. Never arguments, bodies, or tokens.
-- [ ] Every request needs `Authorization: Bearer <token>`. Until #16 lands, the token check rejects every token with 401, so nothing is reachable unauthenticated.
-- [ ] Tests drive the endpoint in process, with no network beyond loopback
+- [x] `jotflow run` starts the MCP server on `JOTFLOW_MCP_HOST:JOTFLOW_MCP_PORT` once Slack setup succeeds, and stops it on every exit path after that. A port that cannot be bound ends the run with a clear error and exit code 3.
+- [x] Only protocol version `2026-07-28` is served. A request without `MCP-Protocol-Version`, or with any other version, gets 400 with an `UnsupportedProtocolVersionError` listing the supported versions. No `initialize` handshake and no `Mcp-Session-Id` are ever served.
+- [x] Header and body disagreement on `MCP-Protocol-Version`, `Mcp-Method`, or `Mcp-Name` gets 400 with `HeaderMismatch` (-32020)
+- [x] Any method other than POST gets 405 with `Allow: POST`
+- [x] Any request carrying an `Origin` header gets 403
+- [x] The `Host` header must be on the allowlist: loopback names on the configured port by default, plus configured names such as the Compose service name. Anything else gets 403.
+- [x] A query string gets 400, so a token can never travel in the URL
+- [x] Request bodies over 64 KiB get 413, and a request that takes longer than 30 seconds gets 504
+- [x] The server declares only the `tools` capability, with `listChanged: false`. No prompts, resources, subscriptions, logging, completions, sampling, or elicitation.
+- [x] Tools come from a fixed registry defined in code, empty for now. Nothing at runtime can add a tool or change a description.
+- [x] One audit log line per request: method, tool name if any, run id once #16 exists, status, outcome, and duration. Never arguments, bodies, or tokens.
+- [x] Every request needs `Authorization: Bearer <token>`. Until #16 lands, the token check rejects every token with 401, so nothing is reachable unauthenticated.
+- [x] Tests drive the endpoint in process, with no network beyond loopback
 
 The issue's own boxes:
 
@@ -59,7 +59,7 @@ The gate writes the audit line for every request, including rejected ones. Heade
 
 **Token interface.** `whiteboard/tokens.py` defines `TokenCheck`, a protocol with one method that takes the presented token and returns a `Grant` (run id, run kind, channel) or `None`. `RejectAllTokens` is the default and returns `None` for everything. #16 replaces it. The gate stores the grant in the ASGI scope, so tools can scope themselves by it.
 
-**Tool registry.** `whiteboard/tools.py` holds `TOOLS: tuple[ToolSpec, ...]`, empty for now. A `ToolSpec` has a name, a description, a Pydantic input model, and a handler. `build_server()` takes no tool argument, so nothing at runtime can add one. It validates the registry at start: unique names, names within the specification's character rules, non-empty descriptions. Input schemas come from `model_json_schema()`. Unknown tool names get a JSON-RPC error.
+**Tool registry.** `whiteboard/tools.py` holds `TOOLS: tuple[ToolSpec, ...]`, empty for now. A `ToolSpec` has a name, a description, a Pydantic input model, and a handler. `build_app()` uses `TOOLS` by default. Tests pass their own `ToolSpec` list, which is still code; nothing reads tools from configuration, Slack, or the database, and the list is fixed once the server is built. It validates the registry at start: unique names, names within the specification's character rules, non-empty descriptions. Input schemas come from `model_json_schema()`. Unknown tool names get a JSON-RPC error.
 
 **Settings.** `JOTFLOW_MCP_HOST` and `JOTFLOW_MCP_PORT` already exist. A new `JOTFLOW_MCP_ALLOWED_HOSTS` takes comma-separated extra `Host` names, such as `jotflow` for the Compose service. A name without a port gets the configured port. Loopback names are always allowed.
 
@@ -81,20 +81,39 @@ Alternatives considered:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Token interface and tool registry
-- [ ] Gate middleware and server builder
-- [ ] Start and stop with `jotflow run`; settings
-- [ ] Tests: each gate rule, protocol behaviour through the SDK, capabilities, audit lines, lifecycle
-- [ ] Update documentation: architecture Whiteboard section and configuration, AGENTS layout
-- [ ] `make check` passes, coverage at or above the floor
+- [x] Commit this plan and open the draft PR
+- [x] Token interface and tool registry
+- [x] Gate middleware and server builder
+- [x] Start and stop with `jotflow run`; settings
+- [x] Tests: each gate rule, protocol behaviour through the SDK, capabilities, audit lines, lifecycle
+- [x] Update documentation: architecture Whiteboard section and configuration, AGENTS layout
+- [x] `make check` passes, coverage at or above the floor
 - [ ] CodeRabbit local review, or skipped
 - [ ] `closingIssuesReferences` is empty, then mark the PR ready
 
 ## Validation
 
-To be filled in.
+- `make check` passes: ruff, mypy strict, and 467 tests with 98% total line and branch coverage. `whiteboard/gate.py`, `tokens.py`, and `tools.py` are at 100%, and `server.py` at 97%. The two lines left are the no-grant guard, reachable only without the gate, and a start that ends without an error.
+- `tests/test_mcp_server.py`, 48 tests, all in process through `httpx2.ASGITransport` except the two lifecycle tests on loopback:
+  - `server/discover` returns `supportedVersions: ["2026-07-28"]` and capabilities exactly `{"tools": {"listChanged": false}}`, with no `Mcp-Session-Id`
+  - the SDK's own `Client`, pinned to 2026-07-28, connects and lists no tools
+  - a test-only tool shows its Pydantic schema, gets the grant and validated arguments, and an invalid argument error names the field and never the value
+  - header and body disagreement gets 400 with -32020 from the SDK
+  - the default token check refuses everything with 401. Missing, non-Bearer, empty, spaced, and oversized tokens get 401 and never reach the check.
+  - any `Origin`, including the server's own, gets 403. Off-list `Host` values get 403, and a configured `jotflow` name is allowed.
+  - GET, DELETE, PUT, and OPTIONS get 405 with `Allow: POST`; before the gate, a legacy GET hung open as an SSE stream
+  - a query string gets 400
+  - a missing version, `2025-11-25`, `2025-03-26`, and an unknown version get 400 with -32022 and the supported list, and no session id. A legacy `initialize` never reaches the SDK.
+  - declared and streamed bodies over 64 KiB get 413, and a non-numeric `Content-Length` gets 400
+  - a slow request gets 504, and a request that times out mid-response gets no second response start
+  - each request writes one audit line. Lines for a served call, a bad token, and an `Origin` rejection hold no argument text, token, or wrong-token text, and an unsafe `Mcp-Name` is logged as `?`.
+  - malformed registries fail at startup
+  - a real uvicorn start on loopback answers a request, leaves the process's SIGTERM handler untouched, stops, and frees the port. A taken port gives `McpStartError` rather than exiting the process.
+- `tests/test_run.py`: `serve()` starts the MCP server after Slack setup and stops it after Socket Mode closes, also when Socket Mode is refused. A Slack setup error never starts it, and an MCP start error exits 3 before Socket Mode connects.
+- `uv lock` adds no package. `uvicorn` and `starlette` move from transitive to declared, `httpx2` joins the dev group, and `mcp` is pinned to `>=2.3,<3` because the code uses the 2.x API.
 
 ## Handoff notes
 
-None yet.
+- #16 implements `TokenCheck.check()` and passes it to `build_app(tokens=...)` in `commands/run.make_mcp_server`. Tool handlers receive the `Grant`, and run-kind scoping belongs there or in the call handler.
+- #14 and #15 add `ToolSpec` entries to `whiteboard/tools.TOOLS`, with Pydantic input models from `models.py`. The registry check and schema derivation are already tested.
+- M3 (#54) sets `JOTFLOW_MCP_HOST` to listen on the `agents` network and `JOTFLOW_MCP_ALLOWED_HOSTS=jotflow`. It also checks that the shipped agent CLIs speak 2026-07-28. If one only speaks the handshake era, adding `2025-11-25` means sessions, which must be bound to the token, per the notes on #16.

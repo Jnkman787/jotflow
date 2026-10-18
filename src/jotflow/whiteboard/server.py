@@ -1,0 +1,220 @@
+"""Build and run the whiteboard MCP server.
+
+:func:`build_app` assembles the ASGI app: the :class:`~jotflow.whiteboard.gate.Gate`
+in front of the MCP SDK's Streamable HTTP endpoint. :class:`McpServer` runs it
+with uvicorn inside ``jotflow run``'s event loop.
+
+JotFlow builds on the SDK's low-level ``Server``, not ``MCPServer``.
+``MCPServer`` always registers prompt, resource, and subscription handlers, and
+the SDK advertises a capability for every registered handler. Registering only
+``tools/list`` and ``tools/call`` makes the server declare exactly
+``{"tools": {"listChanged": false}}``: no prompts, resources, subscriptions,
+logging, completions, sampling, or elicitation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+import uvicorn
+from mcp.server import Server, ServerRequestContext
+from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.exceptions import MCPError
+from mcp.types import (
+    INVALID_PARAMS,
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
+from mcp.types.version import MODERN_PROTOCOL_VERSIONS
+from pydantic import ValidationError
+from starlette.types import ASGIApp
+
+from jotflow import __version__
+from jotflow.whiteboard.gate import GRANT_KEY, Gate
+from jotflow.whiteboard.tokens import Grant, RejectAllTokens, TokenCheck
+from jotflow.whiteboard.tools import TOOLS, ToolSpec, checked_registry
+
+log = logging.getLogger("jotflow.mcp")
+
+PATH = "/mcp"
+# The protocol versions served. Only the stateless 2026-07-28 revision: the
+# handshake era brings sessions back, which #16 would have to bind to tokens.
+PINNED_VERSIONS: tuple[str, ...] = ("2026-07-28",)
+MAX_BODY_BYTES = 64 * 1024
+REQUEST_TIMEOUT_SECONDS = 30.0
+LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
+
+if not set(PINNED_VERSIONS) <= set(MODERN_PROTOCOL_VERSIONS):  # pragma: no cover
+    raise ImportError("the installed mcp SDK does not serve the pinned protocol versions")
+
+
+class McpStartError(Exception):
+    """The MCP server could not start, for example because the port is taken."""
+
+
+def allowed_hosts(port: int, extra: Sequence[str] = ()) -> frozenset[str]:
+    """``Host`` values the server answers: loopback on ``port``, plus ``extra``.
+
+    An extra name without a port, such as the Compose service name ``jotflow``,
+    gets ``port``.
+    """
+    hosts = {f"{name}:{port}" for name in LOOPBACK_NAMES}
+    for name in extra:
+        hosts.add(name if name.rsplit(":", 1)[-1].isdigit() else f"{name}:{port}")
+    return frozenset(hosts)
+
+
+def _grant(ctx: ServerRequestContext[Any, Any]) -> Grant:
+    request = ctx.request
+    grant = getattr(getattr(request, "state", None), GRANT_KEY, None)
+    if not isinstance(grant, Grant):
+        # The gate admits nothing without a grant, so this is unreachable
+        # unless the app is mounted without it.
+        raise MCPError(INVALID_PARAMS, "no grant for this request")
+    return grant
+
+
+def build_server(tools: Sequence[ToolSpec] = TOOLS) -> Server[Any]:
+    """The MCP server with exactly ``tools``, which are fixed for its lifetime."""
+    registry = checked_registry(tools)
+    listing = ListToolsResult(
+        tools=[
+            Tool(name=t.name, description=t.description, input_schema=t.input_schema())
+            for t in registry.values()
+        ]
+    )
+
+    async def list_tools(
+        ctx: ServerRequestContext[Any, Any], params: PaginatedRequestParams | None
+    ) -> ListToolsResult:
+        return listing
+
+    async def call_tool(
+        ctx: ServerRequestContext[Any, Any], params: CallToolRequestParams
+    ) -> CallToolResult:
+        spec = registry.get(params.name)
+        if spec is None:
+            raise MCPError(INVALID_PARAMS, f"unknown tool {params.name!r}")
+        grant = _grant(ctx)
+        try:
+            arguments = spec.input_model.model_validate(params.arguments or {})
+        except ValidationError as exc:
+            # The agent's own arguments, so naming the fields is fine; the
+            # audit log never sees them.
+            fields = ", ".join(".".join(str(p) for p in e["loc"]) or "-" for e in exc.errors())
+            raise MCPError(INVALID_PARAMS, f"invalid arguments: {fields}") from None
+        result = await spec.handler(grant, arguments)
+        return CallToolResult(
+            content=[TextContent(text=result.model_dump_json())],
+            structured_content=result.model_dump(mode="json"),
+        )
+
+    return Server(
+        "jotflow",
+        version=__version__,
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
+
+
+def build_app(
+    *,
+    port: int,
+    extra_hosts: Sequence[str] = (),
+    tokens: TokenCheck | None = None,
+    tools: Sequence[ToolSpec] = TOOLS,
+) -> Gate:
+    """The gated ASGI app. ``tokens`` defaults to refusing everything (#16)."""
+    hosts = allowed_hosts(port, extra_hosts)
+    sdk_app = build_server(tools).streamable_http_app(
+        streamable_http_path=PATH,
+        json_response=True,
+        stateless_http=True,
+        max_request_body_size=MAX_BODY_BYTES,
+        # A second layer behind the gate, which is stricter about Origin.
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=sorted(hosts),
+            allowed_origins=[],
+        ),
+    )
+    return Gate(
+        sdk_app,
+        allowed_hosts=hosts,
+        versions=PINNED_VERSIONS,
+        tokens=tokens or RejectAllTokens(),
+        max_body=MAX_BODY_BYTES,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+
+
+class _QuietServer(uvicorn.Server):
+    """uvicorn without its own signal handlers; ``jotflow run`` owns shutdown."""
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Iterator[None]:
+        yield
+
+
+@dataclass
+class McpServer:
+    """Runs the app with uvicorn in the current event loop."""
+
+    app: ASGIApp
+    host: str
+    port: int
+    _server: uvicorn.Server | None = field(default=None, init=False)
+    _task: asyncio.Task[None] | None = field(default=None, init=False)
+
+    async def start(self) -> None:
+        config = uvicorn.Config(
+            self.app,
+            host=self.host,
+            port=self.port,
+            lifespan="on",
+            log_config=None,
+            access_log=False,
+            server_header=False,
+            date_header=False,
+            limit_concurrency=32,
+            timeout_keep_alive=5,
+            timeout_graceful_shutdown=5,
+            h11_max_incomplete_event_size=16 * 1024,
+        )
+        server = self._server = _QuietServer(config)
+
+        async def serve() -> None:
+            # uvicorn calls sys.exit() on a bind error, which asyncio would
+            # re-raise out of the event loop; turn it into ours here.
+            try:
+                await server.serve()
+            except (SystemExit, OSError) as exc:
+                raise McpStartError(
+                    f"could not listen on {self.host}:{self.port}; is the port in use?"
+                ) from exc
+
+        self._task = asyncio.create_task(serve())
+        while not server.started:
+            if self._task.done():
+                self._task.result()  # raises McpStartError
+                raise McpStartError(f"MCP server on {self.host}:{self.port} stopped at startup")
+            await asyncio.sleep(0.01)
+        log.info("MCP server listening on %s:%d%s", self.host, self.port, PATH)
+
+    async def stop(self) -> None:
+        if self._server is None or self._task is None:
+            return
+        self._server.should_exit = True
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+        self._server = None
+        self._task = None

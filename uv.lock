@@ -707,10 +707,13 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "slack-bolt" },
     { name = "slack-sdk" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx2" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -722,15 +725,18 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "aiosqlite", specifier = ">=0.20" },
-    { name = "mcp", specifier = ">=1.10" },
+    { name = "mcp", specifier = ">=2.3,<3" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "slack-bolt", specifier = ">=1.21" },
     { name = "slack-sdk", specifier = ">=3.33" },
+    { name = "starlette", specifier = ">=1.0" },
+    { name = "uvicorn", specifier = ">=0.40" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx2", specifier = ">=2.0" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },

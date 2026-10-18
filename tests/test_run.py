@@ -289,6 +289,22 @@ class FakeHandler(FakeConnection):
             raise self.error
 
 
+class FakeMcp:
+    """Stands in for the MCP server so serve() tests never bind a port."""
+
+    def __init__(self, calls: list[str], start_error: BaseException | None) -> None:
+        self.calls = calls
+        self.start_error = start_error
+
+    async def start(self) -> None:
+        self.calls.append("mcp start")
+        if self.start_error is not None:
+            raise self.start_error
+
+    async def stop(self) -> None:
+        self.calls.append("mcp stop")
+
+
 class ServeHarness:
     """Patches serve()'s collaborators and records what it did."""
 
@@ -297,7 +313,12 @@ class ServeHarness:
         self.handlers: list[FakeHandler] = []
         self.handler_error: BaseException | None = None
         self.signals_removed = False
+        self.mcp_calls: list[str] = []
+        self.mcp_start_error: BaseException | None = None
         monkeypatch.setattr(run_command, "AsyncApp", lambda **_: self.app)
+        monkeypatch.setattr(
+            run_command, "make_mcp_server", lambda _: FakeMcp(self.mcp_calls, self.mcp_start_error)
+        )
         monkeypatch.setattr(run_command, "AsyncSocketModeHandler", self._handler)
         monkeypatch.setattr(run_command, "install_stop_signals", self._install)
 
@@ -339,6 +360,7 @@ async def test_serve_connects_waits_and_closes(
     [handler] = harness.handlers
     assert handler.calls == ["connect", "close"]
     assert harness.signals_removed
+    assert harness.mcp_calls == ["mcp start", "mcp stop"]
     assert set(harness.app.listeners) == {"message", "reaction_added"}
     assert "watching 1 configured channel(s) as @jotbot" in caplog.text
     assert "not a member" not in caplog.text
@@ -361,6 +383,7 @@ async def test_serve_stops_on_a_setup_error_before_connecting(
     harness = ServeHarness(monkeypatch, FakeClient(auth="invalid_auth"))
     assert await run_command.serve(*serve_inputs()) == run_command.EXIT_SLACK
     assert harness.handlers == []
+    assert harness.mcp_calls == []
     assert "invalid_auth" in caplog.text
 
 
@@ -374,6 +397,25 @@ async def test_serve_reports_a_refused_socket_mode_connection(
     assert handler.calls == ["connect", "close"]
     assert harness.signals_removed
     assert "Slack refused the Socket Mode connection (invalid_auth)" in caplog.text
+    assert harness.mcp_calls == ["mcp start", "mcp stop"]
+
+
+async def test_serve_stops_when_the_mcp_server_cannot_start(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from jotflow.whiteboard.server import McpStartError
+
+    harness = ServeHarness(monkeypatch, member_client())
+    harness.mcp_start_error = McpStartError("could not listen on 127.0.0.1:8765")
+    assert await run_command.serve(*serve_inputs()) == run_command.EXIT_MCP
+    assert harness.handlers == []
+    assert "could not listen on 127.0.0.1:8765" in caplog.text
+
+
+def test_make_mcp_server_uses_the_settings() -> None:
+    settings, _ = serve_inputs()
+    server = run_command.make_mcp_server(settings)
+    assert (server.host, server.port) == ("127.0.0.1", 8765)
 
 
 async def test_serve_reports_an_unreachable_slack_on_connect(

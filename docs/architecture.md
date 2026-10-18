@@ -51,6 +51,22 @@ Every call carries a token, and what a token may do depends on who holds it:
 
 Tokens are short-lived for runs and revocable for operators. The server validates `Host` and `Origin` headers so a web page cannot reach it from a browser.
 
+**Transport rules.** `jotflow run` serves the endpoint at `/mcp` on `JOTFLOW_MCP_HOST:JOTFLOW_MCP_PORT`, and a gate in front of the MCP SDK applies these rules to every request before the SDK sees it:
+
+| Request | Answer |
+|---|---|
+| Carries an `Origin` header | 403. Agents never send one, so this is stricter than an allowlist. |
+| `Host` not loopback on the configured port, and not in `JOTFLOW_MCP_ALLOWED_HOSTS` | 403, against DNS rebinding |
+| Any method but POST | 405 with `Allow: POST`. There are no sessions, so there is no GET stream and no DELETE. |
+| A query string | 400, so a token never travels in a URL |
+| `MCP-Protocol-Version` missing or other than `2026-07-28` | 400 with the unsupported-version error listing what is served. The handshake era is not served, so no `Mcp-Session-Id` is ever minted. |
+| A body over 64 KiB | 413 |
+| No valid `Authorization: Bearer` token | 401 |
+| Headers that disagree with the body | 400 `HeaderMismatch`, from the SDK |
+| Not finished within 30 seconds | 504 |
+
+The server declares only the `tools` capability, with `listChanged: false`: no prompts, resources, subscriptions, logging, completions, sampling, or elicitation. Tools come from a fixed registry in code, so no runtime content can add a tool or change a description. Every request, admitted or not, writes one audit line with the method, tool, run, status, outcome, and duration, never arguments, bodies, or tokens. Until per-run tokens land (#16), the token check refuses every token, so nothing is reachable.
+
 **Agent adapters.** Thin runners that launch the team's agent with the MCP server attached and a prompt.
 
 - First adapter: a generic command template. Every major agent CLI has a headless mode and reads an MCP configuration, so a team selects their agent by editing one line. Presets ship for Claude Code and Codex CLI first, then Gemini CLI and Copilot CLI.
@@ -280,7 +296,7 @@ Two tiers, because every team supplies every value and the two kinds change at d
 | Policy | `jotflow.toml`, deployed with the service | An admin editing the file | Each channel's repos with nickname and description, optional label lists, optional approver list, reaction approval, `issue_links`, debounce window, agent preset |
 | Runtime | The local database | Slack slash commands | Channel mode (`propose`, `auto`, `paused`), Slack to GitHub identity links |
 
-The policy file is validated in full at startup. An unknown or misspelt key is an error, and every error names its key, such as `channels.C0123ABCD.repos[0].nickname`. Channels are keyed by Slack channel id; each lists its repos. A repo's `labels` list is optional: without one, a proposal may use any label that already exists on the repo, and a list narrows that set. An explicit empty list is an error, because it could mean either; leaving the key out is the only way to say "any". Lists are per repo because labels are per repo on GitHub. JotFlow holds no GitHub credentials, so it cannot see which labels exist. The agent's rule is to never invent a label: drafting runs read the repo's labels with read-only access, and the execution run checks each label exists before applying it, since GitHub would otherwise create a missing one. That is a prompt rule, not something JotFlow enforces. JotFlow enforces a label list where a team has set one, and always rejects label names with control characters, line breaks, bidirectional overrides, invisible format characters such as zero-width spaces, or surrounding spaces. An empty approver list means approvers are off. [`jotflow.example.toml`](../jotflow.example.toml) is a complete, commented example. The environment tier holds only the Slack tokens, the MCP host and port, the database path, and `JOTFLOW_CONFIG`, the path to the policy file.
+The policy file is validated in full at startup. An unknown or misspelt key is an error, and every error names its key, such as `channels.C0123ABCD.repos[0].nickname`. Channels are keyed by Slack channel id; each lists its repos. A repo's `labels` list is optional: without one, a proposal may use any label that already exists on the repo, and a list narrows that set. An explicit empty list is an error, because it could mean either; leaving the key out is the only way to say "any". Lists are per repo because labels are per repo on GitHub. JotFlow holds no GitHub credentials, so it cannot see which labels exist. The agent's rule is to never invent a label: drafting runs read the repo's labels with read-only access, and the execution run checks each label exists before applying it, since GitHub would otherwise create a missing one. That is a prompt rule, not something JotFlow enforces. JotFlow enforces a label list where a team has set one, and always rejects label names with control characters, line breaks, bidirectional overrides, invisible format characters such as zero-width spaces, or surrounding spaces. An empty approver list means approvers are off. [`jotflow.example.toml`](../jotflow.example.toml) is a complete, commented example. The environment tier holds only the Slack tokens, the MCP host and port, `JOTFLOW_MCP_ALLOWED_HOSTS` (extra `Host` names for the MCP server, such as the Compose service name), the database path, and `JOTFLOW_CONFIG`, the path to the policy file.
 
 Setup is a first-class feature: `jotflow init` asks a few questions, checks the Slack tokens, and writes `.env` and `jotflow.toml`, and the Slack app manifest installs in a couple of clicks. The written `jotflow.toml` is checked by the same loader `jotflow run` uses, so it always loads. A team should go from clone to connected bot without reading source.
 
