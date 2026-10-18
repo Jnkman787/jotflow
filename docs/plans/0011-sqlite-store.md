@@ -5,7 +5,7 @@
 - Issue: #11
 - Also serves: #53 (run records build on this schema), #12 (topic titles are bounded and sanitised here)
 - Draft PR: #96
-- Status: implementing
+- Status: ready for review
 - Last verified: `make check` green locally on 2026-10-18: 646 tests, 98% total coverage, every store module at 100%
 - Next safe action: review; then #53 adds the runs table as migration 2
 
@@ -74,9 +74,9 @@ Runs: `proposals.run_id` is text with no foreign key, so a proposal does not nee
 - [x] `MemoryStore`
 - [x] Shared contract tests, schema test, title tests, concurrency test for transitions
 - [x] Docs: architecture Data and privacy, AGENTS.md layout
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit: skipped, rate-limited
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
@@ -84,6 +84,7 @@ Runs: `proposals.run_id` is text with no foreign key, so a proposal does not nee
 - `tests/test_store_contract.py` runs every case against both `MemoryStore` and `SqliteStore`: topics and the activity window, message links and the person-over-agent rule, cross-channel refusals, proposals of both kinds, every pair of states against the diagram (64 cases each), the content hash lock and a stale card hash, the matching-URL rule for applied, reconcile and retry, supersede, identity links with the one-login rule, and channel modes. Ten concurrent `executing` transitions produce exactly one winner, and so do four racing transitions from two separate SQLite connections to the same file.
 - `tests/test_store_schema.py` reads the live schema: every column must have a comment, and none may be named or documented as a message's body, text, or content. A second test feeds it bad columns and checks it catches each one. Migrations: a fresh file reaches the latest version in WAL mode, reopening keeps data, a newer database is refused, a failing migration rolls back to the previous version, and versions must be numbered without gaps.
 - `tests/test_store_titles.py` covers markup, Slack tokens, URLs, mentions, invisible and bidi characters, full-width letters, length cuts, and injection-style titles.
+- CodeRabbit: skipped. The local CLI was rate-limited.
 - Found by the tests: a single word longer than the title limit was kept at 81 characters, because the word-boundary cut found no space. Fixed.
 - Also found: writing the title tests turned the `\u200b` and `\u202e` escapes into the invisible characters themselves, which put a bidi override in the source. Restored as escapes; the store code and its tests are ASCII only.
 
