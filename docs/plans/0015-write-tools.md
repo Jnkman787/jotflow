@@ -97,11 +97,12 @@ Alternatives considered:
 - [x] Tests for every rule, through the real endpoint where the rule is about the wire
 - [x] Update documentation: architecture tool table and write-tool rules
 - [x] `make check` passes
-- [ ] CodeRabbit local review, or skipped
+- [x] CodeRabbit local review, or skipped: skipped, rate limit
 - [ ] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
+- CodeRabbit: skipped. The free CLI allowance was used up ("Rate limit exceeded").
 - `make check` passes: ruff, mypy strict, and 908 tests with 98.3% total coverage. `write_tools.py` is at 98%.
 - Store, in `tests/test_store_contract.py` for both stores: calls numbered per run and found by hash, a duplicate record refused, counts per run and per thread over time, and packet refs per run with their own thread. `test_store_schema.py` covers the two new tables, and no column holds message text.
 - `tests/test_write_tools.py`, 55 tests:
