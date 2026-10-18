@@ -4,10 +4,10 @@
 
 - Issue: #129
 - Also serves: #17, #20, #56
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: replace replay's fixture source with the real `SlackWorkSource`
+- Draft PR: #132
+- Status: ready for review
+- Last verified: `make check` green locally on 2026-10-18
+- Next safe action: review; when #56 resolves `re:` handles, drop the topic comparison's set-aside for them
 
 ## Objective and done-when
 
@@ -15,10 +15,10 @@
 
 Done when:
 
-- [ ] Replay checks each fixture's keyword expectations with `split_keyword`, and none is reported as not run
-- [ ] The keywords and existing-topic fixtures pass, and a test shows a wrong keyword expectation fails the replay
-- [ ] When #56 extends the module, replay picks the extension up with no change
-- [ ] `make check` passes, including the coverage floor
+- [x] Replay checks each fixture's keyword expectations with `split_keyword`, and none is reported as not run
+- [x] The keywords and existing-topic fixtures pass, and a test shows a wrong keyword expectation fails the replay
+- [x] When #56 extends the module, replay picks the extension up with no change
+- [x] `make check` passes, including the coverage floor
 
 **Out of scope:** resolving `re: web#42` to a topic, which #56 adds to the keyword module. Until then the topic comparison sets messages attached by `re:` aside, and says so in its detail.
 
@@ -35,17 +35,22 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `_FixtureReader` and the switch to `SlackWorkSource`
-- [ ] The real keyword check
-- [ ] Tests
-- [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] `_FixtureReader` and the switch to `SlackWorkSource`
+- [x] The real keyword check
+- [x] Tests
+- [x] CodeRabbit once, or skipped: see Validation
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- Every built-in fixture still replays to its expected outcome, now through the real `SlackWorkSource`, and the `keywords` check runs and passes for all eight. No check is reported as not run.
+- New tests:
+  - a wrong keyword expectation, labelling "Skip button is broken" as `bug`, fails the replay
+  - the real work packet refuses a `skip:` thread and strips `idea:` into a hint
+  - the fixture reader returns the parent first, honours `limit`, and gives display names in Slack's shapes
+- The old fixture source and the "not run" path are removed, with their tests.
 
 ## Handoff notes
 
