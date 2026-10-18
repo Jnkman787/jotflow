@@ -5,9 +5,9 @@
 - Issue: #18
 - Also serves: #17, which will replay these fixtures
 - Draft PR: #95
-- Status: implementing
+- Status: ready for review
 - Last verified: `make check` green locally on 2026-10-18, 369 tests, 97% coverage
-- Next safe action: run the local CodeRabbit review or skip it, wait for CI on #95, then mark it ready
+- Next safe action: review and merge #95; the replay-tests box on #18 completes with #17
 
 ## Objective and done-when
 
@@ -78,8 +78,8 @@ Alternatives considered: fixtures under `tests/` would not ship with the package
 - [x] Tests: loader validation, ingest against every fixture, scripted outcome, fictional data guard
 - [x] Update documentation: AGENTS.md layout
 - [x] `make check` passes, coverage at or above the floor
-- [ ] CodeRabbit local review, or skipped
-- [ ] Mark the PR ready for review
+- [x] CodeRabbit local review, or skipped
+- [x] Mark the PR ready for review
 
 ## Validation
 
@@ -93,6 +93,7 @@ Alternatives considered: fixtures under `tests/` would not ship with the package
   - every loader check fails with its own message on a mutated fixture
 - `uv build --wheel` includes `jotflow/testing/threads/*.json` and the README, so the fixtures ship with the package.
 - `make eol` passes, and every new file is LF.
+- CodeRabbit (local CLI, `--committed --base main -c AGENTS.md`): 0 findings across all 13 files.
 
 ## Handoff notes
 
