@@ -165,3 +165,6 @@ htmlcov/
 .env
 *.db
 *.sqlite
+
+# Agent CLI local settings
+.claude/settings.local.json

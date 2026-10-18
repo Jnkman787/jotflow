@@ -103,7 +103,7 @@ The plan lives in [docs/roadmap.md](docs/roadmap.md): five milestones from "inst
 
 ## Contributing
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Security concerns go through [SECURITY.md](SECURITY.md), not public issues.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), and point your coding agent at [AGENTS.md](AGENTS.md). Security concerns go through [SECURITY.md](SECURITY.md), not public issues.
 
 ## License
 
