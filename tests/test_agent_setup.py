@@ -32,7 +32,7 @@ def test_new_secrets_are_long_enough_and_different() -> None:
     ("in_env", "in_agent", "value", "how"),
     [
         (OLD, OLD, OLD, "kept"),
-        (OLD, OTHER, OLD, "repaired"),
+        (OLD, OTHER, "fresh", "regenerated"),
         (OLD, None, OLD, "copied"),
         (None, OLD, OLD, "copied"),
         ("short", OLD, OLD, "copied"),
@@ -112,3 +112,9 @@ def test_the_escape_hatch_is_a_non_empty_command() -> None:
     assert uses_command({"JOTFLOW_AGENT_COMMAND": '["my-agent"]'})
     assert not uses_command({"JOTFLOW_AGENT_COMMAND": "  "})
     assert not uses_command({})
+
+
+def test_a_generator_that_repeats_itself_is_refused() -> None:
+    env = {"JOTFLOW_RUNNER_SECRET": OLD, "JOTFLOW_RUNNER_EXEC_SECRET": OLD}
+    with pytest.raises(RuntimeError, match="two different runner secrets"):
+        choose_secrets(env, {}, {}, generate=lambda: OLD)

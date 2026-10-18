@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 _KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -77,27 +77,74 @@ def update_env_text(text: str, updates: Mapping[str, str | None]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_env(path: Path, updates: Mapping[str, str | None], *, template: str = "") -> None:
-    """Set ``updates`` in the file at ``path``, creating it with mode 0600 if needed.
-
-    A new file starts from ``template``, such as an example file's text.
-    """
+def _read_text(path: Path) -> str | None:
     try:
-        current = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        current = template
-    new_text = update_env_text(current, updates)
+        return None
+
+
+def _stage(path: Path, text: str) -> str:
+    """Write ``text`` to a fsynced 0600 temporary file beside ``path``; return its name."""
     directory = path.parent if str(path.parent) else Path(".")
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=directory)
     try:
         if hasattr(os, "fchmod"):  # not on Windows before Python 3.13
             os.fchmod(fd, FILE_MODE)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(new_text)
+            handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_name, path)
     except BaseException:
         Path(temp_name).unlink(missing_ok=True)
         raise
+    return temp_name
+
+
+def _put(path: Path, temp_name: str) -> None:
+    os.replace(temp_name, path)
     os.chmod(path, FILE_MODE)
+
+
+EnvChange = tuple[Path, Mapping[str, str | None], str]
+
+
+def write_envs(changes: Sequence[EnvChange]) -> None:
+    """Apply several ``(path, updates, template)`` changes as one step.
+
+    Every new file is staged first, so bad input changes nothing. If putting
+    one in place fails, the files already replaced get their old text back,
+    and a file that did not exist is removed again. Each file is mode 0600.
+    """
+    staged: list[tuple[Path, str, str | None]] = []
+    try:
+        for path, updates, template in changes:
+            current = _read_text(path)
+            text = update_env_text(template if current is None else current, updates)
+            staged.append((path, _stage(path, text), current))
+    except BaseException:
+        for _, temp_name, _ in staged:
+            Path(temp_name).unlink(missing_ok=True)
+        raise
+    done: list[tuple[Path, str | None]] = []
+    try:
+        for path, temp_name, old in staged:
+            _put(path, temp_name)
+            done.append((path, old))
+    except BaseException:
+        for path, old in reversed(done):
+            if old is None:
+                path.unlink(missing_ok=True)
+            else:
+                _put(path, _stage(path, old))
+        for _, temp_name, _ in staged:
+            Path(temp_name).unlink(missing_ok=True)
+        raise
+
+
+def write_env(path: Path, updates: Mapping[str, str | None], *, template: str = "") -> None:
+    """Set ``updates`` in the file at ``path``, creating it with mode 0600 if needed.
+
+    A new file starts from ``template``, such as an example file's text.
+    """
+    write_envs([(path, updates, template)])

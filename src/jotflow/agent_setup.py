@@ -31,7 +31,10 @@ WRITE_TOKEN_KEY = "JOTFLOW_GITHUB_WRITE_TOKEN"
 # The runner refuses a shorter secret.
 MIN_SECRET_LENGTH = 32
 
-How = Literal["kept", "copied", "repaired", "generated", "rotated"]
+How = Literal["kept", "copied", "regenerated", "generated", "rotated"]
+
+# Tries to make the execution secret differ from the drafting one.
+MAX_DISTINCT_TRIES = 5
 
 
 def new_secret() -> str:
@@ -64,15 +67,18 @@ def choose_secret(
     rotate: bool = False,
     generate: Callable[[], str] = new_secret,
 ) -> Secret:
-    """Keep the pair's secret, repair a mismatch, or make a new one.
+    """Keep the pair's secret, or make a new one.
 
-    ``.env`` wins a mismatch. A value too short for the runner is replaced.
+    A mismatch gets a fresh secret for both files, never either side's value:
+    one side may hold a rotation made by hand after a leak, or the half of an
+    interrupted rotation that was written. A value too short for the runner is
+    replaced.
     """
     if rotate:
         return Secret(generate(), "rotated")
     env, agent = _usable(in_env), _usable(in_agent)
     if env and agent:
-        return Secret(env, "kept" if env == agent else "repaired")
+        return Secret(env, "kept") if env == agent else Secret(generate(), "regenerated")
     if env or agent:
         return Secret(env or agent or "", "copied")
     return Secret(generate(), "generated")
@@ -100,10 +106,12 @@ def choose_secrets(
         rotate=rotate_execution,
         generate=generate,
     )
-    while execution.value == drafting.value:
+    for _ in range(MAX_DISTINCT_TRIES):
+        if execution.value != drafting.value:
+            return drafting, execution
         # Only a hand edit makes them equal; JotFlow refuses to start that way.
         execution = Secret(generate(), "generated")
-    return drafting, execution
+    raise RuntimeError("could not make two different runner secrets")
 
 
 def with_agent_profile(current: str | None) -> str | None:

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from jotflow import envfile as init_envfile
 from jotflow.commands import init
 from jotflow.commands.init import (
     APP_TOKEN_KEY,
@@ -861,19 +862,92 @@ def test_both_secrets_rotate_together(options: InitOptions) -> None:
     assert after[DRAFT_KEY] != after[EXEC_KEY]
 
 
-def test_mismatched_files_are_repaired_from_env(options: InitOptions) -> None:
+def test_a_mismatch_gets_a_fresh_secret_in_both_files(options: InitOptions) -> None:
     _with_agent(options)
     env, _, _ = _files(options)
-    text = options.agent_file.read_text().replace(env[DRAFT_KEY], "z" * 40)
+    hand_rotated = "z" * 40
+    text = options.agent_file.read_text().replace(env[DRAFT_KEY], hand_rotated)
     options.agent_file.write_text(text)
     options.agent_exec_file.unlink()
     script = _kept_session(options)
     after, agent, agent_exec = _files(options)
-    assert after[DRAFT_KEY] == agent[DRAFT_KEY] == env[DRAFT_KEY]
+    assert after[DRAFT_KEY] == agent[DRAFT_KEY]
+    assert after[DRAFT_KEY] not in (env[DRAFT_KEY], hand_rotated)
     assert after[EXEC_KEY] == agent_exec[DRAFT_KEY] == env[EXEC_KEY]
-    assert "both now use the one in .env" in script.text
+    assert "so setup made a new one for both" in script.text
     assert "both files hold the same one" in script.text
-    assert "z" * 40 not in script.text
+    assert "Restart with `docker compose up -d`" in script.text
+    assert hand_rotated not in script.text and after[DRAFT_KEY] not in script.text
+
+
+def test_an_interrupted_rotation_never_reverts(options: InitOptions) -> None:
+    _with_agent(options)
+    env, _, _ = _files(options)
+    # A rotation that wrote agent.env and stopped before .env.
+    half_done = "n" * 40
+    options.agent_file.write_text(options.agent_file.read_text().replace(env[DRAFT_KEY], half_done))
+    _kept_session(options)
+    after, agent, _ = _files(options)
+    assert after[DRAFT_KEY] == agent[DRAFT_KEY]
+    assert after[DRAFT_KEY] not in (env[DRAFT_KEY], half_done)
+
+
+def test_a_failed_write_changes_no_file(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _with_agent(options)
+    before = [
+        p.read_bytes() for p in (options.env_file, options.agent_file, options.agent_exec_file)
+    ]
+    real_replace = init_envfile.os.replace
+
+    def failing(src: str, dst: object) -> None:
+        if Path(str(dst)).name == ".env":
+            raise OSError("disk full")
+        real_replace(src, dst)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(init_envfile.os, "replace", failing)
+    script = Script(answers=["", "", "", ""])
+    with pytest.raises(OSError, match="disk full"):
+        run_init(
+            script.console(), FakeSlackApi.working(), replace(options, rotate_runner_secret=True)
+        )
+    monkeypatch.undo()
+    after = [
+        p.read_bytes() for p in (options.env_file, options.agent_file, options.agent_exec_file)
+    ]
+    assert after == before
+    leftovers = [p.name for p in options.env_file.parent.iterdir() if p.name.startswith(".")]
+    assert leftovers == [".env"]  # no staged temporary files left behind
+
+
+def test_the_command_preset_is_detected_and_kept(options: InitOptions) -> None:
+    for path in (options.agent_file, options.agent_exec_file):
+        path.write_text(
+            'JOTFLOW_AGENT_COMMAND=["my-agent", "{mcp_config}"]\nJOTFLOW_AGENT_PRESET=claude-code\n'
+        )
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    [prompt] = [p for p in script.prompts if p.startswith("Agent preset")]
+    assert "[command]" in prompt
+    assert not any(p.startswith("Agent model") for p in script.prompts)
+    assert load_policy(options.config_file).agent.preset == "command"
+    for path in (options.agent_file, options.agent_exec_file):
+        values = read_env(path)
+        assert "JOTFLOW_AGENT_PRESET" not in values and values["JOTFLOW_AGENT_COMMAND"]
+        assert values["JOTFLOW_RUNNER_SECRET"]
+    # A re-run that keeps jotflow.toml keeps the command preset.
+    rerun = Script(answers=["", "", ""])
+    assert run_init(rerun.console(), FakeSlackApi.working(), options) == 0
+    assert load_policy(options.config_file).agent.preset == "command"
+    assert "kept its runner secret" in rerun.text
+
+
+def test_the_command_preset_without_a_command_says_so(options: InitOptions) -> None:
+    script = Script(answers=["", "", *POLICY[:-1], "command"], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "has no JOTFLOW_AGENT_COMMAND" in script.text
+    assert "JOTFLOW_AGENT_PRESET" not in read_env(options.agent_file)
 
 
 def test_a_model_is_set_kept_and_removed(options: InitOptions) -> None:
@@ -904,6 +978,7 @@ def test_the_escape_hatch_gets_a_secret_but_no_preset(options: InitOptions) -> N
     assert "JOTFLOW_AGENT_PRESET" not in agent_exec and "JOTFLOW_AGENT_MODEL" not in agent_exec
     assert agent_exec["JOTFLOW_RUNNER_SECRET"] == read_env(options.env_file)[EXEC_KEY]
     assert "sets JOTFLOW_AGENT_COMMAND, so setup left the preset and model out" in script.text
+    assert "JotFlow will refuse that runner" in script.text
     assert read_env(options.agent_file)["JOTFLOW_AGENT_PRESET"] == "claude-code"
 
 

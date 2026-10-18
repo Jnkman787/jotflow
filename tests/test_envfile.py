@@ -93,3 +93,38 @@ def test_write_env_starts_a_new_file_from_the_template(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == "# what A is\nA=1\nB=\n"
     write_env(path, {"B": "2"}, template="ignored once the file exists\n")
     assert path.read_text(encoding="utf-8") == "# what A is\nA=1\nB=2\n"
+
+
+def test_write_envs_puts_back_what_it_replaced_when_one_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jotflow import envfile
+    from jotflow.envfile import write_envs
+
+    first, second, new = tmp_path / "a.env", tmp_path / "b.env", tmp_path / "c.env"
+    first.write_text("A=old\n")
+    second.write_text("B=old\n")
+    real_replace = envfile.os.replace
+
+    def failing(src: str, dst: object) -> None:
+        if Path(str(dst)).name == "b.env":
+            raise OSError("disk full")
+        real_replace(src, dst)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(envfile.os, "replace", failing)
+    with pytest.raises(OSError):
+        write_envs([(first, {"A": "new"}, ""), (new, {"C": "1"}, ""), (second, {"B": "new"}, "")])
+    assert first.read_text() == "A=old\n" and second.read_text() == "B=old\n"
+    assert not new.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.env", "b.env"]
+
+
+def test_write_envs_with_bad_input_changes_nothing(tmp_path: Path) -> None:
+    from jotflow.envfile import write_envs
+
+    first = tmp_path / "a.env"
+    first.write_text("A=old\n")
+    with pytest.raises(ValueError):
+        write_envs([(first, {"A": "new"}, ""), (tmp_path / "b.env", {"B": "two\nlines"}, "")])
+    assert first.read_text() == "A=old\n"
+    assert [p.name for p in tmp_path.iterdir()] == ["a.env"]

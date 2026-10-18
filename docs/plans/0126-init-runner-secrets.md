@@ -20,7 +20,7 @@ Done when:
 - [x] When the agent is set up, `.env` gains `COMPOSE_PROFILES=agent`, and any other profiles already there are kept
 - [x] No secret is printed or logged. Nothing from `.env` except the runner secrets reaches the agent env files
 - [x] Both agent env files get `JOTFLOW_AGENT_PRESET`, plus `JOTFLOW_AGENT_MODEL` when the person chooses one. A file that sets the `JOTFLOW_AGENT_COMMAND` escape hatch gets neither
-- [x] Tests cover the first run, a re-run, a rotation of each secret, mismatched files, and the escape hatch
+- [x] Tests cover the first run, a re-run, a rotation of each secret, mismatched files getting a fresh secret, an interrupted rotation that never reverts, a failed write that changes no file, and the `command` preset across a re-run
 - [x] README setup and the agent container section of Deployment say init does this
 - [x] `make check` passes, including the coverage floor
 
@@ -37,13 +37,13 @@ Done when:
   - Nothing is written until the last question is answered, as before.
 - **Secrets, in a pure function.** `agent_setup.choose_secrets(env, agent, agent_exec, rotate_drafting=, rotate_execution=)` takes the three files' current values and returns the values to write, with reasons to show:
   - A value is kept when it is at least 32 characters, which the runner requires.
-  - When the two files of a pair disagree, the `.env` value wins and init says so, without showing either value. When only one file has a value, it is copied to the other.
+  - When the two files of a pair hold different usable values, init makes a fresh secret for both and says to restart. Neither side wins, because either may hold a rotation made by hand after a leak, or the written half of an interrupted rotation (security's second look, adopted by the lead). When only one file has a value, it is copied to the other.
   - A missing or short value, or a rotation, generates a new one.
-  - If the drafting and execution values come out equal, which can only happen by hand-editing, the execution one is regenerated, because JotFlow refuses to start with equal secrets.
+  - If the drafting and execution values come out equal, which can only happen by hand-editing, the execution one is regenerated, because JotFlow refuses to start with equal secrets. That loop is bounded and raises after five tries.
 - **Rotation**: `--rotate-runner-secret`, `--rotate-exec-secret`, or both. A rotation reminds the person to restart with `docker compose up -d`, so both sides pick up the new value.
-- **Writing.** `envfile.write_env` already writes atomically at 0600 and keeps comments and other keys. It gains removal: a `None` value deletes the key, for `default`. The agent files are written first and `.env` last. If init stops in between, the next run finds the mismatch and repairs it with the rule above.
+- **Writing.** `envfile.write_envs` writes `.env` and both agent files as one step. Every new file is staged as a fsynced 0600 temporary file first, so bad input changes nothing. If putting one in place fails, the ones already replaced get their old text back, and a new one is removed. A crash between two renames can still leave a mismatch, and the rule above then makes a fresh secret instead of reverting. A `None` value deletes a key, for `default`. Messages are printed only after the write succeeds.
 - **New agent files** start from `agent.env.example` or `agent-exec.env.example` next to `.env` when one is there, so the comments come along. Otherwise they start empty. Only JotFlow's keys are set. Nothing is copied from `.env`, and a test proves it with sentinel tokens.
-- **The escape hatch.** If a file sets `JOTFLOW_AGENT_COMMAND`, init still writes its secret but no preset or model, and says why: #137 makes both together a startup error.
+- **The `command` preset.** #142 makes JotFlow require `[agent] preset = "command"` when a runner uses `JOTFLOW_AGENT_COMMAND`, so init accepts `command` and keeps it on a re-run. It is the default when an agent file already sets a command. With it, init writes each file's secret, removes a stray `JOTFLOW_AGENT_PRESET`, skips the model question, and says when a file lacks the command. With `claude-code`, a file that sets a command gets only its secret, and init warns that JotFlow will refuse that runner.
 - **`COMPOSE_PROFILES`.** It is added, or merged into an existing comma-separated value, when the preset is not `none` and each agent file holds its GitHub token. Otherwise init names the missing lines and says to re-run init or add the profile once they are filled in. Starting a runner without its token would only crash-loop.
 - **Output.** Init says which files it wrote and which secrets were kept, copied, generated, or rotated. It never shows a value.
 - Files: `src/jotflow/commands/init.py`, `src/jotflow/envfile.py`, and `src/jotflow/agent_setup.py` for the pure logic. `Secret`'s repr leaves out the value. Tests go in `tests/test_init.py`, `tests/test_envfile.py`, and `tests/test_agent_setup.py`.
