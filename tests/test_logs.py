@@ -89,6 +89,8 @@ SECRET_TEXT = "the launch code is swordfish, it's under the mat"
         f"chat_postMessage(channel='C0EXAMPLE1', text={SECRET_TEXT!r})",
         f'chat_postMessage(text="{SECRET_TEXT}")',
         f"body: channel=C0EXAMPLE1&text={SECRET_TEXT.replace(' ', '+')}&ts=1.0",
+        # JSON serialized inside JSON, with an escaped quote inside the value.
+        json.dumps({"body": json.dumps({"text": SECRET_TEXT + ' and a "quote"', "ts": "1"})}),
     ],
 )
 def test_payload_text_is_redacted_by_default_and_kept_with_bodies(line: str) -> None:
@@ -195,3 +197,17 @@ def test_no_fixture_text_or_token_reaches_the_default_output(
             assert word not in out, word
     assert SECRETS["slack bot"] not in out
     assert "message channel=" in out or "ignored" in out or "reaction channel=" in out
+
+
+def test_the_bodies_warning_shows_even_at_a_quiet_level(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_logging("error", bodies=True)
+    assert BODIES_WARNING in capsys.readouterr().err
+
+
+def test_escaped_json_keeps_what_follows_the_text_value() -> None:
+    inner = json.dumps({"text": SECRET_TEXT + ' "q"', "ts": "1.000100"})
+    out = redact(json.dumps({"body": inner}))
+    assert "swordfish" not in out
+    assert "1.000100" in out

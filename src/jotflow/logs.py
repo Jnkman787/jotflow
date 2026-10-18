@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from collections.abc import Mapping
 
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -59,6 +60,9 @@ _SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
 _TEXT_FIELDS: tuple[tuple[re.Pattern[str], str], ...] = (
     # JSON: "text": "..."
     (re.compile(r'("text"\s*:\s*)"(?:\\.|[^"\\])*"'), rf'\1"{REDACTED}"'),
+    # JSON serialized inside a JSON string: \"text\": \"...\". The value ends at the
+    # first \" whose backslash is not itself escaped, so \\\" inside it is skipped.
+    (re.compile(r'(\\"text\\"\s*:\s*\\").*?(?<!\\)\\"'), rf'\1{REDACTED}\\"'),
     # Python reprs: 'text': '...' or 'text': "..."
     (re.compile(r"('text'\s*:\s*)'(?:\\.|[^'\\])*'"), rf"\1'{REDACTED}'"),
     (re.compile(r"""('text'\s*:\s*)"(?:\\.|[^"\\])*\""""), rf'\1"{REDACTED}"'),
@@ -118,4 +122,8 @@ def configure_logging(level: str, *, bodies: bool = False) -> None:
     for name in THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(numeric if bodies else max(numeric, logging.INFO))
     if bodies:
-        logging.getLogger("jotflow").warning(BODIES_WARNING)
+        if numeric > logging.WARNING:
+            # A quieter level would hide the warning; this one must always show.
+            print(f"WARNING {BODIES_WARNING}", file=sys.stderr)
+        else:
+            logging.getLogger("jotflow").warning(BODIES_WARNING)

@@ -4,9 +4,9 @@
 
 - Issue: #25
 - Draft PR: #121
-- Status: implementing
-- Last verified: `make check` green, 1124 tests, 98.5% coverage; `logs.py` at 100%
-- Next safe action: CodeRabbit or skip, CI on #121, mark ready
+- Status: ready for review
+- Last verified: `make check` green, 1127 tests, 98.5% coverage; `logs.py` at 100%
+- Next safe action: reviewer reviews #121
 
 ## Objective and done-when
 
@@ -65,12 +65,13 @@ Alternatives considered: a structlog dependency, rejected because it adds a depe
 - [x] Tests: patterns, formatter with tracebacks, the fixture-thread replay, the flag guard and warning
 - [x] Update documentation: README troubleshooting or logging note, architecture Data and privacy logging line
 - [x] `make check` passes
-- [ ] CodeRabbit local review, or skipped
-- [ ] `closingIssuesReferences` checked, then mark the PR ready
+- [x] CodeRabbit local review, or skipped
+- [x] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
-- `make check` passes: 1124 tests, 98.5% total coverage, and `logs.py` at 100%.
+- CodeRabbit (local CLI): 2 findings, both fixed. First, JSON serialized inside a JSON string escaped its `text` field past the pattern; a new pattern and a test with an escaped quote inside the value cover it. Second, the `--log-bodies` warning was hidden at `--log-level error`; it now goes straight to stderr when the level would hide it, with a test.
+- `make check` passes: 1127 tests, 98.5% total coverage, and `logs.py` at 100%.
 - `tests/test_logs.py`, 44 tests:
   - eight token shapes are redacted with and without `--log-bodies`: Slack bot, user, app, and refresh; JotFlow run; GitHub classic, fine-grained, and app
   - bearer values in headers and plain text are redacted, and so are RSA and PKCS#8 private keys
