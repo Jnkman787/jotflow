@@ -303,16 +303,14 @@ class Orchestrator:
 
         The keyword handler runs first, so a person's ``skip:`` or ``re:`` is
         stored before the debouncer would join a reply to its parent's topic.
-        A ``skip:`` message never reaches the debouncer at all, so it neither
-        queues a drafting run nor restarts the wait. The debouncer does nothing
-        while runs are off.
+        The debouncer then leaves a ``skip:`` message, and any reply under a
+        ``skip:`` first message, out: no drafting run, and no restarted wait. It
+        does nothing while runs are off.
         """
         if isinstance(decision, Accepted) and event is not None and self._keywords is not None:
             try:
                 if decision.kind == "message":
-                    outcome = await self._keywords.on_message(event)
-                    if outcome.action == "skipped":
-                        return
+                    await self._keywords.on_message(event)
                 else:
                     await self._keywords.on_reaction(event)
             except Exception:

@@ -241,6 +241,8 @@ async def test_a_debouncer_error_is_logged_not_raised(
     async def broken(*_: Any, **__: Any) -> None:
         raise RuntimeError("store is down")
 
+    # Arm a thread while the store works, so the flush below has one to queue.
+    await rig.orchestrator.note(accepted("1760781900.000100"))
     monkeypatch.setattr(rig.store, "get_message", broken)
     monkeypatch.setattr(rig.store, "enqueue_run", broken)
     with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
@@ -648,6 +650,9 @@ async def test_a_skip_message_queues_no_drafting_run() -> None:
         app = await _bolt_app(rig)
         root = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX"}
         await _deliver(app, {**root, "text": "skip: just testing the bot"}, "Ev4")
+        await _deliver(app, _reply(REPLY, "it did not react, nice"), "Ev7")
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
         await _until_flushed(rig)
         runs = await rig.store.thread_runs(CH, THREAD)
     finally:
@@ -680,8 +685,17 @@ async def test_an_re_reply_joins_the_named_issues_topic_through_the_app() -> Non
         await rig.store.link_message(MessageRef(channel_id=CH, ts=THREAD), parent.topic.id)
         export = await rig.store.create_topic(CH, "Export as CSV")
         await rig.store.set_topic_issue(export.topic.id, "acme-co/web", 42)
+        agent_links: list[str] = []
+        original = rig.store.link_message
+
+        async def recording(ref: MessageRef, topic_id: str, *, by: Any = "agent") -> Any:
+            if by == "agent":
+                agent_links.append(ref.ts)
+            return await original(ref, topic_id, by=by)
+
+        rig.store.link_message = recording  # type: ignore[method-assign]
         app = await _bolt_app(rig)
-        await _deliver(app, _reply(REPLY, "re: web#42 keep the column order"), "Ev6")
+        await _deliver(app, _reply(REPLY, "re: web#42 same thing"), "Ev6")
         assert rig.orchestrator._debouncer is not None
         assert rig.orchestrator._debouncer.pending()  # the thread still drafts, now with #42
     finally:
@@ -689,4 +703,5 @@ async def test_an_re_reply_joins_the_named_issues_topic_through_the_app() -> Non
     link = await rig.store.get_message(CH, REPLY)
     assert link is not None and link.linked_by == "person"
     assert link.topic_id == export.topic.id != parent.topic.id
+    assert agent_links == []  # the debouncer never joined it to the parent's topic
     assert rig.slack.reactions == [(CH, REPLY, "white_check_mark")]

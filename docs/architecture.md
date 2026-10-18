@@ -200,7 +200,7 @@ Rules:
 - JotFlow confirms a recognised keyword with a reaction on the message, so the poster knows it was understood. Reactions never restart the wait before drafting.
 - Keywords can have an equivalent reaction, for people who forget or prefer clicking. Today only `skip:` has one, :no_entry_sign:. `re:` cannot, because it needs an issue number. Reactions from guests and external users are ignored.
 - A `re:` that names an issue outside the channel's repos is refused, with a thread reply that says why. One that names an issue with no topic yet starts a topic for it.
-- `re:` and `skip:` are stored as the poster's own decision, which the agent cannot overrule. JotFlow applies them before the debouncer joins a reply to its parent's topic, and a skip reaction that arrives later still overrides that join. A `skip:` message never reaches the debouncer, so it queues no drafting run and does not restart the wait.
+- `re:` and `skip:` are stored as the poster's own decision, which the agent cannot overrule. JotFlow applies them before the debouncer joins a reply to its parent's topic, and a skip reaction that arrives later still overrides that join. The debouncer never arms a thread for a `skip:` message, or for any reply under a `skip:` first message, so neither costs an agent run or restarts the wait.
 - JotFlow strips the keyword before the agent sees the text, and passes the rest as untrusted thread content. A keyword never adds instructions to the agent's prompt.
 - No keyword can skip approval or change the channel mode.
 - Acting on someone else's message: with approvers off, anyone may, and JotFlow posts a visible note in the thread that the author can undo. With approvers on, only the author or an approver may.
