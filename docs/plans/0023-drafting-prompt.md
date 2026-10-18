@@ -137,10 +137,10 @@ Two new fixtures:
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
 - [x] Commit this plan and open the draft PR
-- [ ] `instructions/drafting.md`, and the `instructions`, `channel`, and `people` packet fields, with tests
-- [ ] `hint_overruled` on proposals, with tests
-- [ ] The fixture `github` block, `fake_github_mcp`, and the two new fixtures
-- [ ] `jotflow replay --agent`, the local launcher, the stub preset in CI, `--repeat`, and the two invariants
+- [x] `instructions/drafting.md`, and the `instructions`, `channel`, and `people` packet fields, with tests
+- [x] `hint_overruled` on proposals, with tests
+- [x] The fixture `github` block, `fake_github_mcp`, and the two new fixtures
+- [x] `jotflow replay --agent`, the local launcher, the stub preset in CI, `--repeat`, and the two invariants
 - [ ] Run Claude Code against every fixture with N=3, record the results, and tune the instructions
 - [ ] Docs: architecture.md's agent output contract and the packet, the fixtures README, and docs/presets.md
 - [ ] `make check` passes
@@ -148,7 +148,12 @@ Two new fixtures:
 
 ## Validation
 
-None yet.
+- **The scripted harness.** `jotflow replay --all --agent scripted --repeat 2` matched every fixture 2 of 2 times, through the real runner, MCP server, and tokens, with the stub agent in a subprocess. `tests/test_replay_agent.py` runs every fixture this way.
+- **The claude-code plumbing.** With an invalid API key and a scratch HOME, `jotflow replay feature-request --agent claude-code` launched Claude Code 2.1.303 through the preset, and it exited 1 on the key, as expected. No real run yet: that waits on the lead's answer about model spend.
+- **The approval hash.** Proposals without `hint_overruled` hash exactly as they did on main. A test pins the two hashes.
+- **The GitHub stand-in.** It serves the tool names, descriptions, and input schemas captured from github-mcp-server 2.0.2's `tools/list` with `--read-only`.
+
+**During implementation:** github-mcp-server 2.0.2's `search_issues` is semantic search. It is scoped by `owner` and `repo` arguments, not by `repo:` qualifiers, so the instructions say to pass those. The stand-in accepts both.
 
 ## Handoff notes
 
