@@ -49,7 +49,7 @@ Done when:
 ## Risks and open questions
 
 - Repo visibility has to come from the agent's drafting run, since JotFlow holds no GitHub access. Until that is wired, the card says visibility was not checked, which is the safe default.
-- Migration 5: I have asked the architect whether #106 or anything else in flight adds a migration. Whichever lands one first takes 5.
+- Migration 5: the architect confirmed nothing of theirs in flight adds a migration (#106 is code only). Whichever lands one first still takes 5.
 
 ## Progress checklist
 
