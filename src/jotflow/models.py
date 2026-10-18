@@ -246,6 +246,9 @@ class ProposalRecord(BaseModel):
     )
     approved_at: AwareDatetime | None = None
     result: ExecutionResult | None = None
+    card_ts: str | None = Field(
+        default=None, description="Slack ts of the proposal's card message, once posted"
+    )
     draft_cleared_at: AwareDatetime | None = Field(
         default=None,
         description=(

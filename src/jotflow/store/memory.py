@@ -229,6 +229,16 @@ class MemoryStore:
     def _cleared(self, record: ProposalRecord) -> dict[str, object]:
         return {"proposal": cleared_draft(record.proposal), "draft_cleared_at": self._clock()}
 
+    async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
+        check_id(ts, "card ts")
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            record = record.model_copy(update={"card_ts": ts}, deep=True)
+            self._proposals[proposal_id] = record
+            return record.model_copy(deep=True)
+
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._lock:
             record = self._proposals.get(proposal_id)
