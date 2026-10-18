@@ -24,6 +24,7 @@ dependencies = [
   "pydantic>=2.9",
   "pydantic-settings>=2.6",
   "aiosqlite>=0.20",
+  "slack-sdk>=3.33",
 ]
 
 [project.urls]
