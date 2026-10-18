@@ -13,14 +13,32 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
+import re
 import sys
+import tempfile
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
+
+from pydantic import TypeAdapter, ValidationError
 
 from jotflow.envfile import read_env, write_env
+from jotflow.models import RepoName
+from jotflow.policy import (
+    ChannelId,
+    ChannelPolicy,
+    Label,
+    Nickname,
+    Policy,
+    PolicyError,
+    PresetName,
+    RepoPolicy,
+    load_policy,
+)
+from jotflow.policy_writer import render_policy
 from jotflow.slack_auth import (
     BotIdentity,
     HttpSlackApi,
@@ -43,6 +61,10 @@ APP_TOKEN_KEY = "JOTFLOW_SLACK_APP_TOKEN"
 CREATE_APP_URL = "https://api.slack.com/apps"
 DEFAULT_MANIFEST_OUT = "slack-app-manifest.json"
 MAX_ATTEMPTS = 5
+DEFAULT_PRESET = "claude-code"
+DEFAULT_LABELS = ("bug", "enhancement")
+MAX_CHANNELS = 50
+MAX_REPOS_PER_CHANNEL = 20
 
 
 class SetupAborted(Exception):
@@ -106,10 +128,15 @@ class Console:
         return self._read(self.read_secret, f"{question}: ").strip()
 
 
+def _default_config_file() -> Path:
+    return Path(os.environ.get("JOTFLOW_CONFIG") or "jotflow.toml")
+
+
 @dataclass(frozen=True)
 class InitOptions:
     env_file: Path = Path(".env")
     manifest_out: Path = Path(DEFAULT_MANIFEST_OUT)
+    config_file: Path = field(default_factory=_default_config_file)
 
 
 def create_app_link(manifest_json: str) -> str:
@@ -201,10 +228,249 @@ def _create_app_steps(console: Console, options: InitOptions) -> None:
     console.say()
 
 
+# --- jotflow.toml ---------------------------------------------------------
+
+
+def _checker(type_: Any) -> Callable[[str], str]:
+    """Turn a policy field type into a ``Console.ask`` validator with its own message."""
+    adapter: TypeAdapter[str] = TypeAdapter(type_)
+
+    def check(value: str) -> str:
+        try:
+            return adapter.validate_python(value)
+        except ValidationError as exc:
+            message = str(exc.errors(include_url=False)[0]["msg"])
+            raise ValueError(message.removeprefix("Value error, ")) from None
+
+    return check
+
+
+_check_channel = _checker(ChannelId)
+_check_repo = _checker(RepoName)
+_check_nickname = _checker(Nickname)
+_check_preset = _checker(PresetName)
+_check_label = _checker(Label)
+
+_CHANNEL_LINK = re.compile(r"https://[^\s/]+\.slack\.com/archives/([A-Za-z0-9]+)/?.*")
+_GITHUB_LINK = re.compile(r"(?:https?://)?github\.com/([^/\s]+/[^/\s]+?)(?:\.git)?/?")
+
+
+def _channel_id(value: str) -> str:
+    """Accept a channel id or a pasted channel link."""
+    if match := _CHANNEL_LINK.fullmatch(value.strip()):
+        value = match.group(1)
+    return _check_channel(value.strip())
+
+
+def _repo(value: str) -> str:
+    """Accept ``owner/name`` or a pasted GitHub link."""
+    value = value.strip()
+    if match := _GITHUB_LINK.fullmatch(value):
+        value = match.group(1)
+    return _check_repo(value.removesuffix(".git"))
+
+
+def _suggest_nickname(repo: str) -> str:
+    name = repo.rsplit("/", 1)[-1].lower()
+    name = re.sub(r"[^a-z0-9_-]+", "-", name).strip("-_")
+    return name[:32] or "repo"
+
+
+def _description(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("Please describe what the repo covers, in a sentence.")
+    if len(value) > 200:
+        raise ValueError(f"Keep the description to 200 characters; this one has {len(value)}.")
+    return value
+
+
+def _labels(value: str) -> str:
+    """Validate a comma-separated label list. ``none`` means no labels."""
+    if value.strip().lower() == "none":
+        return "none"
+    labels = [part.strip() for part in value.split(",") if part.strip()]
+    seen: set[str] = set()
+    for label in labels:
+        _check_label(label)
+        if label.casefold() in seen:
+            raise ValueError(f"{label!r} is listed twice.")
+        seen.add(label.casefold())
+    return ", ".join(labels) if labels else "none"
+
+
+def _split_labels(answer: str) -> tuple[str, ...]:
+    if answer == "none":
+        return ()
+    return tuple(part.strip() for part in answer.split(","))
+
+
+def _summary(policy: Policy) -> str:
+    repos = sum(len(c.repos) for c in policy.channels.values())
+    channels = len(policy.channels)
+    preset = policy.agent.preset or "no agent preset"
+    return (
+        f"{channels} channel{'s' if channels != 1 else ''}, "
+        f"{repos} repo{'s' if repos != 1 else ''}, {preset}"
+    )
+
+
+def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]) -> RepoPolicy:
+    def new_repo(value: str) -> str:
+        repo = _repo(value)
+        if repo.casefold() in taken_repos:
+            raise ValueError(f"{repo} is already listed for this channel.")
+        return repo
+
+    def new_nickname(value: str) -> str:
+        nickname = _check_nickname(value.strip().lower())
+        if nickname in taken_nicknames:
+            raise ValueError(f"The nickname {nickname!r} is already used in this channel.")
+        return nickname
+
+    repo = console.ask("  GitHub repo (owner/name)", validate=new_repo)
+    nickname = console.ask(
+        "  Short nickname people can type, as in re: web#42",
+        _suggest_nickname(repo),
+        new_nickname,
+    )
+    description = console.ask(
+        "  What does it cover? The agent picks a repo by this", validate=_description
+    )
+    labels = console.ask(
+        "  Labels a proposal may set, comma-separated, or none",
+        ", ".join(DEFAULT_LABELS),
+        _labels,
+    )
+    return RepoPolicy(
+        repo=repo, nickname=nickname, description=description, labels=_split_labels(labels)
+    )
+
+
+def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:
+    repos: list[RepoPolicy] = []
+    while True:
+        repos.append(
+            _ask_repo(
+                console,
+                {r.repo.casefold() for r in repos},
+                {r.nickname for r in repos},
+            )
+        )
+        if len(repos) >= MAX_REPOS_PER_CHANNEL or not console.confirm(
+            "  Add another repo to this channel?", default=False
+        ):
+            return tuple(repos)
+
+
+def _ask_policy(console: Console, existing: Policy | None) -> Policy:
+    console.say()
+    console.say("Now the channels JotFlow watches and the repos each one feeds.")
+    console.say(
+        "Find a channel's id in Slack under the channel name, then About; "
+        "it starts with C, or G for some private channels. A channel link works too."
+    )
+    channels: dict[str, ChannelPolicy] = {}
+    while True:
+
+        def new_channel(value: str) -> str:
+            channel_id = _channel_id(value)
+            if channel_id in channels:
+                raise ValueError(f"{channel_id} is already listed.")
+            return channel_id
+
+        console.say()
+        channel_id = console.ask("Channel id", validate=new_channel)
+        previous = existing.channels.get(channel_id) if existing else None
+        if previous is not None:
+            nicknames = ", ".join(r.nickname for r in previous.repos)
+            if console.confirm(f"  Keep this channel's current repos ({nicknames})?"):
+                channels[channel_id] = previous
+            else:
+                channels[channel_id] = ChannelPolicy(
+                    repos=_ask_channel_repos(console),
+                    debounce_seconds=previous.debounce_seconds,
+                )
+        else:
+            channels[channel_id] = ChannelPolicy(repos=_ask_channel_repos(console))
+        if len(channels) >= MAX_CHANNELS or not console.confirm(
+            "Add another channel?", default=False
+        ):
+            break
+
+    console.say()
+    console.say(
+        "Which agent preset will draft issues, for example claude-code? "
+        "Type none to connect JotFlow without starting agent runs yet."
+    )
+    current = existing.agent.preset if existing else DEFAULT_PRESET
+    preset_answer = console.ask(
+        "Agent preset",
+        current or "none",
+        lambda v: "none" if v.strip().lower() == "none" else _check_preset(v.strip().lower()),
+    )
+    preset = None if preset_answer == "none" else preset_answer
+
+    data = existing.model_dump() if existing else {}
+    data["agent"] = {"preset": preset}
+    data["channels"] = {cid: channel.model_dump() for cid, channel in channels.items()}
+    return Policy.model_validate(data)
+
+
+def _policy_step(console: Console, options: InitOptions) -> Policy | None:
+    """Ask for the policy. ``None`` means keep the file that is there."""
+    path = options.config_file
+    existing: Policy | None = None
+    if path.exists():
+        try:
+            existing = load_policy(path)
+        except PolicyError as exc:
+            console.say()
+            console.say(f"{path} has problems:")
+            for problem in exc.problems:
+                console.say(f"  {problem}")
+            if not console.confirm(f"Write a new {path}? The old one is kept as {path}.bak"):
+                console.say(f"  Keeping {path}. jotflow run will not start until it is fixed.")
+                return None
+        else:
+            console.say()
+            console.say(f"{path} is already set up: {_summary(existing)}.")
+            if console.confirm("Keep it?"):
+                return None
+    return _ask_policy(console, existing)
+
+
+def _write_text_atomic(path: Path, text: str, mode: int = 0o644) -> None:
+    directory = path.parent if str(path.parent) else Path(".")
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=directory)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temp_name, path)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+
+
+def _save_policy(console: Console, path: Path, policy: Policy) -> None:
+    text = render_policy(policy)
+    if path.exists():
+        old = path.read_bytes()
+        if old == text.encode("utf-8"):
+            console.say(f"{path} is unchanged.")
+            return
+        backup = path.with_name(path.name + ".bak")
+        _write_text_atomic(backup, old.decode("utf-8", errors="replace"))
+        console.say(f"Saved the previous {path} as {backup}.")
+    _write_text_atomic(path, text)
+    console.say(f"Wrote {path}: {_summary(policy)}.")
+
+
 def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     """Run the setup session. Returns a process exit code."""
     console.say("JotFlow setup. Press Ctrl-D at any prompt to stop.")
-    console.say("Your tokens are saved only after both have been checked.")
+    console.say("Your tokens and jotflow.toml are saved only after the last question.")
     console.say()
     existing = read_env(options.env_file)
 
@@ -236,9 +502,13 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
             "If JotFlow later reports a missing_scope error, reinstall the app from its manifest."
         )
 
-    write_env(options.env_file, {BOT_TOKEN_KEY: bot_token, APP_TOKEN_KEY: app_token})
+    policy = _policy_step(console, options)
+
     console.say()
+    write_env(options.env_file, {BOT_TOKEN_KEY: bot_token, APP_TOKEN_KEY: app_token})
     console.say(f"Saved both tokens to {options.env_file}. Only your user can read that file.")
+    if policy is not None:
+        _save_policy(console, options.config_file, policy)
     console.say(f"Connected to Slack as {_describe(identity)}.")
     console.say()
     bot = f"@{identity.bot_user}" if identity.bot_user else "the bot"
@@ -256,6 +526,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=Path(".env"),
         help="where to save the Slack tokens (default: .env)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="where to save the policy file (default: $JOTFLOW_CONFIG or jotflow.toml)",
     )
     parser.add_argument(
         "--manifest-out",
@@ -276,10 +552,16 @@ def run(
             print("jotflow init is interactive; run it in a terminal.", file=sys.stderr)
             return 2
         console = Console()
-    options = InitOptions(env_file=args.env_file, manifest_out=args.manifest_out)
+    options = InitOptions(
+        env_file=args.env_file,
+        manifest_out=args.manifest_out,
+        config_file=getattr(args, "config", None) or _default_config_file(),
+    )
     try:
         return run_init(console, api or HttpSlackApi(), options)
     except SetupAborted:
         console.say()
-        console.say(f"Setup stopped. {options.env_file} was not changed.")
+        console.say(
+            f"Setup stopped. {options.env_file} and {options.config_file} were not changed."
+        )
         return 1

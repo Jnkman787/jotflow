@@ -29,6 +29,7 @@ src/jotflow/
   models.py       shared contracts: proposals, runs, results, classifications, topics, channel modes
   config.py       environment-driven settings: secrets and process knobs
   policy.py       jotflow.toml schema and loader: channels, repos, labels, approvers
+  policy_writer.py  writes a Policy back to jotflow.toml; output always reloads
   cli.py          entry point
   commands/       one module per CLI subcommand, such as init and run
   slack_manifest.py  renders the Slack app manifest; default checked in under manifests/
