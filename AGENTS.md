@@ -91,6 +91,13 @@ For any non-trivial issue:
 6. At any interruption or handoff, update the plan's status and next safe action so another agent can resume without this conversation.
 7. When done, set the plan's status to `completed` and mark the PR ready for review.
 
+**Keep the issue current.** The issue is what people read, so it must never lag behind the work:
+
+- When a PR that refs or fixes an issue merges, whoever merges it updates the issue in the same sitting: tick every done-when box the merged work satisfies, and add a short dated status comment saying what merged (with the PR number), where the plan is, and what remains.
+- If nothing remains, close the issue; `Fixes #N` does this automatically, but still tick the boxes. If something remains, such as a live check, say exactly what and why it is still open.
+- When a decision or review changes an issue's scope, append a dated note to the issue body rather than rewriting it.
+- Keep the milestone's epic current with a short status comment when a milestone's state changes.
+
 The plan stays in the repository after merge as the record of what was built and why. If the implementation diverges from the plan, update the plan in the same PR.
 
 ## Commits and pull requests
