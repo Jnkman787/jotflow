@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #92
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then make `labels` optional in `policy.py`
+- Draft PR: #94
+- Status: completed
+- Last verified: `make check` green locally on Python 3.12: 315 tests, 96.78% coverage
+- Next safe action: review and merge #94; #93 (product's init wording) rebases over it, or the other way round
 
 ## Objective and done-when
 
@@ -16,9 +16,9 @@ JotFlow holds no GitHub credentials, so it cannot check that a label exists. The
 
 Done when:
 
-- [ ] A repo entry with no `labels` loads and allows any label; a list narrows; tests cover both
-- [ ] Init's labels prompt defaults to unrestricted and explains the choice
-- [ ] Architecture doc and example config describe the default
+- [x] A repo entry with no `labels` loads and allows any label; a list narrows; tests cover both
+- [x] Init's labels prompt defaults to unrestricted and explains the choice
+- [x] Architecture doc and example config describe the default
 - [x] Notes added to #23, #29, #31 (done by the team lead on 2026-10-18)
 
 **Out of scope:** proposal validation itself (#29), the drafting and execution prompts (#23, #31), and the rest of the init wording, which product is rewording in #90.
@@ -31,6 +31,7 @@ References: D2 and D7 in [roadmap.md](../roadmap.md); Configuration and Approval
   - `RepoPolicy.labels` stays a tuple that defaults to empty. Empty now means unrestricted, and `restricts_labels` says whether a list is set.
   - `check_labels` returns the requested labels, deduplicated without case, when no list is set. With a list it behaves as today: canonical spelling, or `LabelNotAllowedError`.
   - The error message says "not in {repo}'s label list".
+  - A label name that no repo could have, empty or over 50 characters, raises `InvalidLabelError` either way.
   - Duplicate entries in a list are still an error.
 - **`policy_writer.py`.** An unrestricted repo is written without a `labels` line, so the file reads as the default rather than as an empty list.
 - **`commands/init.py`.** This is the only file shared with #90, and product was told before it was touched.
@@ -54,19 +55,34 @@ Alternative considered: `labels: tuple | None`, with `None` for unrestricted and
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `policy.py` semantics and `policy_writer.py`
-- [ ] Init labels prompt default
-- [ ] Add or update tests
-- [ ] Update documentation: example config, architecture.md, roadmap.md, README
-- [ ] `make check` passes
-- [ ] Local CodeRabbit review, or skipped
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] `policy.py` semantics and `policy_writer.py`
+- [x] Init labels prompt default
+- [x] Add or update tests
+- [x] Update documentation: example config, architecture.md, roadmap.md, README
+- [x] `make check` passes
+- [x] Local CodeRabbit review, or skipped
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes, with 315 tests and total coverage at 96.78%. The new and changed tests cover:
+  - a repo without `labels` allowing any label
+  - `labels = []` meaning the same
+  - case-insensitive deduplication when unrestricted
+  - a list narrowing, with canonical spelling
+  - the error naming "label list"
+  - impossible label names rejected for both kinds of repo
+  - a label listed twice
+  - the writer omitting `labels` for an unrestricted repo and writing a list when set
+  - init defaulting to `any` and showing `[any]` in the prompt
+  - `none` explained, then asked again
+  - the answer parsing rules
+- The example config now has one repo with a narrowing list and one without, and it still round-trips through the writer.
+- CodeRabbit (local CLI, `--committed --base main -c AGENTS.md`): 0 findings.
+- Product was told the exact `init.py` changes, for its #93 rewording of init prompts.
 
 ## Handoff notes
 
-None yet.
+- #29 should call `RepoPolicy.check_labels` on every proposal. It already returns the labels unchanged, apart from duplicates, when no list is set, so #29 needs no special case.
+- #23 and #31 carry the rule that the agent uses only labels that exist on the repo. JotFlow cannot enforce it without GitHub access.
