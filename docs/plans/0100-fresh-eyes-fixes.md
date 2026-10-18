@@ -124,3 +124,33 @@ Reviewer's nit on #108, taken: on a re-run where `jotflow.toml` already names a 
 Declined: none. "Gemini CLI" in the README's diagram stays, as it is the product's name.
 
 Validation, round 2: `make check` green, 753 tests. New tests cover the Windows separator (written, skipped elsewhere, existing value kept), channel links from Copy link and the browser, preset refusal, the reworded reuse question, Ctrl-C in the intro, and the missing-scope advice.
+
+## Round 3
+
+The third fresh-eyes review (2026-10-18) found no blockers and four contradictions, which gate #100, plus minor items and jargon. Round 3 is PR #NNN, `Refs #100`; the team lead runs a fourth review on the merged text. Every quoted string was checked against the code first. The code check showed that JotFlow posts nothing in Slack in this release: no pinned help message, no `/jotflow` handler, no replies.
+
+| Finding | Fix |
+|---|---|
+| C1: setup accepts `claude-code` but the README said it "will be" the first preset | README and prompt both say `claude-code` is accepted today but does nothing until milestone 3, and other names are refused. |
+| C2: the missing-scope error said only "Reinstall" | The error gives the clicks: OAuth & Permissions, Scopes, Bot Token Scopes, Add an OAuth Scope, Reinstall to Workspace, Allow, then paste the new token. |
+| C3: README said run setup again, but setup asks again at once | The README row describes the retry: paste the new token when asked, five tries, and run setup again only if it already stopped. |
+| C4: manifests/README said the bot pins a help message | Its permission table marks every permission for a later feature *Later*, with a note that this release only reads. "What works today" says JotFlow posts nothing in Slack yet. |
+| 1: status banner | "Setup and `jotflow run` are ready to use." |
+| 2: Linux Docker Engine link | Added. |
+| 3: Create New App greyed out | Ask a workspace admin to allow app creation. |
+| 4: PowerShell clone folder | Clone outside OneDrive and Documents, for example `C:\src`; the Windows-drive warning is expected there. |
+| 5: wrapped link opens an error page | Use the fallback. |
+| 7: token rotation error gave no clicks | The error and a README row explain rotation, that Slack does not allow turning it off, and the recovery; manifests/README.md too. |
+| 8: lowercase channel id | Accepted when it is clearly an id (C or G, at least nine characters, a digit), uppercased; a name such as `general` is still refused, now with "in capitals". |
+| 9: what `re: web#42` means | Said at the nickname prompt and in the README. |
+| 10: labels clutter | Cut "which JotFlow cannot check itself" and the `labels = []` line from the README step. |
+| 12: invite | "If Slack asks whether to add the app to the channel, click Add." |
+| 13: COMPOSE_PATH_SEPARATOR note | "On Windows in PowerShell ... In WSL this doesn't apply." |
+| 14: see it working | The bot posts nothing back in this release; the log is where you see it. |
+| 15: live check with `uv run jotflow run` | Or press Ctrl-C in its terminal. |
+| 16: exact commands | `rm -r`, `sudo rm -r`, or `Remove-Item -Recurse` for the directory; `JOTFLOW_MCP_PORT=8766` in `.env` for the port; for the proxy, the same `HTTPS_PROXY` line in `.env` reaches JotFlow in Docker. Checked: the Slack SDK's web and Socket Mode clients both read `HTTPS_PROXY` from the environment, and Compose passes `.env` into the container. |
+| Jargon | Defined in "Words used here": `jotflow.toml` and TOML, label, OAuth, handle. Inline: bind source path, root, chmod, port, token rotation, orchestrator. Reworded out: mounts (also in setup's own output), exit code 3, "keys", pipe, "Compose v2.24", correlates. `thread_ts` was already explained beside the log. |
+
+Declined: none.
+
+Validation, round 3: `make check` green, 854 tests. New tests cover the missing-scope clicks and retry, the expired-token message, lowercase channel ids and names that must still be refused, and the preset and nickname wording.

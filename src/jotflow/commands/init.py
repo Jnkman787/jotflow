@@ -152,8 +152,9 @@ EXPLAIN_REPO = (
     "For example https://github.com/acme-co/web is acme-co/web. Pasting the link works too.",
 )
 EXPLAIN_NICKNAME = (
-    "A short word people type to point at this repo, as in re: web#42. "
-    "Lowercase is best. Press Enter to keep the suggestion in brackets."
+    "A short word people type to point at this repo: re: web#42 in Slack later points a "
+    "message at issue 42 here. Lowercase is best. Press Enter to keep the suggestion "
+    "in brackets."
 )
 EXPLAIN_DESCRIPTION = (
     "One sentence on what this repo is for, for example The customer-facing website.",
@@ -167,8 +168,8 @@ EXPLAIN_LABELS = (
 EXPLAIN_PRESET = (
     "Which agent program will your team run? Your team supplies and controls the agent;",
     "JotFlow only needs to know which program it is so it can start it correctly.",
-    f"Agent runs arrive in milestone 3, so press Enter to keep none for now. "
-    f"The first preset will be {FIRST_PRESET}.",
+    f"Agent runs arrive in milestone 3. {FIRST_PRESET} is accepted today but does nothing "
+    "until then, so press Enter to keep none for now.",
 )
 STEP_TITLES = {
     1: "The bot's name",
@@ -401,6 +402,9 @@ _CHANNEL_LINK = re.compile(
 _GITHUB_LINK = re.compile(r"(?:https?://)?github\.com/([^/\s]+/[^/\s]+?)(?:\.git)?/?")
 
 
+_LOWERCASE_ID = re.compile(r"[CGcg][A-Za-z0-9]{8,}")
+
+
 def _channel_id(value: str) -> str:
     """Accept a channel id or a pasted channel link."""
     if value.strip().startswith("#"):
@@ -410,7 +414,15 @@ def _channel_id(value: str) -> str:
         )
     if match := _CHANNEL_LINK.fullmatch(value.strip()):
         value = match.group(1)
-    return _check_channel(value.strip())
+    value = value.strip()
+    # Slack ids are capitals and digits. Accept one typed in lowercase, but only
+    # when it is clearly an id, so a name like "general" is never mistaken for one.
+    if _LOWERCASE_ID.fullmatch(value) and any(ch.isdigit() for ch in value):
+        value = value.upper()
+    try:
+        return _check_channel(value)
+    except ValueError as exc:
+        raise ValueError(f"{exc}. Copy the id exactly as Slack shows it, in capitals.") from None
 
 
 def _repo(value: str) -> str:
@@ -709,7 +721,8 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     console.say(_saved_tokens_message(options.env_file))
     if COMPOSE_FILE_KEY in updates:
         console.say(
-            f"  Also set {COMPOSE_FILE_KEY} there, so `docker compose up -d` mounts jotflow.toml."
+            f"  Also set {COMPOSE_FILE_KEY} there, so `docker compose up -d` "
+            "hands jotflow.toml to JotFlow."
         )
     if COMPOSE_SEPARATOR_KEY in updates:
         console.say(

@@ -725,3 +725,23 @@ def test_rerun_keeps_the_run_cap(options: InitOptions) -> None:
     script = Script(answers=["", "", "n", *POLICY])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert load_policy(options.config_file).agent.max_concurrent_runs == 6
+
+
+# --- #100 round 3 --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("typed", ["c0ideas01", "C0ideas01", " c0ideas01 "])
+def test_a_lowercase_channel_id_is_accepted(typed: str) -> None:
+    assert init._channel_id(typed) == "C0IDEAS01"
+
+
+@pytest.mark.parametrize("typed", ["general", "cgeneralchannel", "c0x"])
+def test_names_are_not_mistaken_for_ids(typed: str) -> None:
+    with pytest.raises(ValueError, match="in capitals"):
+        init._channel_id(typed)
+
+
+def test_preset_and_nickname_prompts_say_what_they_do() -> None:
+    preset = " ".join(init.EXPLAIN_PRESET)
+    assert "claude-code is accepted today but does nothing" in preset
+    assert "issue 42" in init.EXPLAIN_NICKNAME

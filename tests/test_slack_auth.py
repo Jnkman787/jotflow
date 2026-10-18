@@ -271,3 +271,26 @@ def test_missing_scope_advice_never_suggests_a_second_app() -> None:
     assert "recreate" not in message
     assert "Do not create a second app" in message
     assert "Bot Token Scopes" in message
+
+
+def test_missing_scope_message_gives_the_clicks_and_the_retry() -> None:
+    granted = [s for s in BOT_SCOPES if s not in {"pins:write", "groups:read"}]
+    api = FakeSlackApi({("auth.test", GOOD_BOT): auth_ok(granted)})
+    with pytest.raises(TokenError) as exc:
+        check_bot_token(api, GOOD_BOT)
+    message = str(exc.value)
+    for words in (
+        "Bot Token Scopes",
+        "Add an OAuth Scope",
+        "for each one",
+        "Reinstall to Workspace",
+    ):
+        assert words in message
+    assert "paste it here" in message
+
+
+def test_expired_token_explains_rotation() -> None:
+    api = FakeSlackApi({("auth.test", GOOD_BOT): error("token_expired")})
+    with pytest.raises(TokenError, match="token rotation is on") as exc:
+        check_bot_token(api, GOOD_BOT)
+    assert "Basic Information" in str(exc.value)

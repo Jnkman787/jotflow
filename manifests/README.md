@@ -13,7 +13,7 @@ A manifest is a file describing a Slack app: its name, permissions, and settings
 5. Set an icon under **Basic Information** if you like. Slack does not take icons from a manifest.
 6. Invite the bot to each channel JotFlow should watch with `/invite` and the bot's handle, for example `/invite @idea_bot`. Setup prints the handle after `Connected to Slack as`, and Slack suggests it as you type. The bot never joins channels by itself, and `jotflow run` reports configured channels it has not been invited to.
 
-JotFlow needs both tokens. Keep them secret and out of the repository. Token rotation is off, so a leaked token stays valid until you revoke it. If one leaks, choose **Revoke All OAuth Tokens** on **OAuth & Permissions**, regenerate the app-level token under **Basic Information**, and reinstall the app. `jotflow init` wraps these steps: it renders the manifest with your bot name, prints a link that opens Slack's create-app dialog with it filled in, checks both tokens, and writes them to your `.env`.
+JotFlow needs both tokens. Keep them secret and out of the repository. Token rotation, Slack's option to replace tokens automatically every few hours, is off: JotFlow needs tokens that last. So a leaked token stays valid until you revoke it. If rotation was ever turned on for this app, Slack does not let you turn it off again: create a new app from JotFlow's manifest, run setup again, and delete the old app under **Basic Information**. If one leaks, choose **Revoke All OAuth Tokens** on **OAuth & Permissions**, regenerate the app-level token under **Basic Information**, and reinstall the app. `jotflow init` wraps these steps: it renders the manifest with your bot name, prints a link that opens Slack's create-app dialog with it filled in, checks both tokens, and writes them to your `.env`.
 
 ## Add a missing scope
 
@@ -31,18 +31,20 @@ A name has at most 35 characters: letters, digits, spaces, `.`, `-` and `_`, sta
 
 ## What the manifest asks for
 
+In this release JotFlow only reads: it watches messages and reactions and checks channel details. The permissions marked *later* are for features in later releases, such as approval cards and the help message, and are asked for now so you don't have to reinstall the app when they arrive.
+
 | Setting | Value | Why |
 |---|---|---|
 | Bot scopes | `channels:history`, `groups:history` | Read messages in public and private channels the bot is in |
 | | `channels:read`, `groups:read` | Confirm the bot is in each configured channel, and detect channels shared with other organisations |
-| | `chat:write` | Post proposal cards, questions, and issue links |
-| | `reactions:read`, `reactions:write` | Keyword reactions and their acknowledgements, optional reaction approval |
-| | `pins:write` | Pin a short help message when JotFlow joins a channel |
-| | `users:read` | Show names on cards and skip guests and external users |
-| | `commands` | The `/jotflow` slash command |
+| | `chat:write` | *Later:* post proposal cards, questions, and issue links |
+| | `reactions:read`, `reactions:write` | Read reactions; *later:* acknowledge keywords and optional reaction approval |
+| | `pins:write` | *Later:* pin a short help message when JotFlow joins a channel |
+| | `users:read` | *Later:* show names on cards and skip guests and external users |
+| | `commands` | *Later:* the `/jotflow` slash command |
 | Events | `message.channels`, `message.groups`, `reaction_added` | Wake JotFlow when someone posts or reacts |
 | Socket Mode | on | No public URL is needed for a self-hosted install |
-| Interactivity | on | Approve and Request Changes buttons and dialogs |
+| Interactivity | on | *Later:* Approve and Request Changes buttons and dialogs |
 | App Home tabs | off | The app has no DM scopes, so messages sent to it would never be read |
 | Org-wide deploy | off | The app is internal to one workspace |
 
