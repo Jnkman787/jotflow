@@ -347,6 +347,7 @@ class SqliteStore:
             if row["result_json"] is None
             else ExecutionResult.model_validate_json(row["result_json"]),
             participants=[u["slack_user_id"] for u in users],
+            card_ts=row["card_ts"],
             draft_cleared_at=None
             if row["draft_cleared_at"] is None
             else from_text(row["draft_cleared_at"]),
@@ -507,6 +508,18 @@ class SqliteStore:
             return
         async with self._lock:
             await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
+        check_id(ts, "card ts")
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE proposals SET card_ts = ?, updated_at = ? WHERE id = ?",
+                (ts, to_text(self._clock()), proposal_id),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            updated = await self._get_proposal(proposal_id)
+        return _found(updated)
 
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._write():

@@ -194,6 +194,13 @@ The mode applies uniformly to creation, description edits, comments, assignment,
 - The card shows the full issue body, the target repo, labels, assignees, size, and confidence. A public target repo shows a warning.
 - Approving locks that exact content by hash. The execution run receives only those approved fields.
 - The card records who approved and when.
+- **The card itself** (`src/jotflow/orchestrator/cards.py`, #26). It shows:
+  - the full body, split into sections, and a draft too long to show on one card offers no Approve button
+  - the repo, with a dropdown of the channel's repos (D11), and a public-repo warning, or "visibility was not checked" when unknown
+  - labels, marked as not checked when the repo has no label list
+  - assignees, with unverified identities marked, and the people involved, with one-click assign and remove
+  - size, confidence, links to the source messages, and a state line
+  Agent-written text is always `plain_text`, so nothing in it can ping or link. The Approve button carries the content hash of the draft it shows. The card's message ts is stored, so later states edit the same message.
 - Guests and external Slack Connect users can never approve.
 
 **Who may approve, configurable** (D7):

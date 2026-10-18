@@ -206,6 +206,13 @@ MIGRATIONS: tuple[Migration, ...] = (
             _PACKET_MESSAGES,
         ),
     ),
+    Migration(
+        5,
+        (
+            "ALTER TABLE proposals ADD COLUMN card_ts TEXT"
+            " /* Slack ts of the proposal's card message, so later states edit it (#26) */",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

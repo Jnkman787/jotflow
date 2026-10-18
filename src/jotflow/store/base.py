@@ -266,6 +266,8 @@ def check_new_proposal(record: ProposalRecord) -> None:
     check_id(record.thread_ts, "thread ts")
     if record.state is not ProposalState.PENDING:
         raise ValueError("a new proposal must be pending")
+    if record.card_ts is not None:
+        raise ValueError("a new proposal has no card yet")
     if record.content_hash or record.approved_by or record.approved_at or record.result:
         raise ValueError("a new proposal cannot be approved or carry a result yet")
     for user in record.participants:
@@ -479,6 +481,10 @@ class Store(Protocol):
         result: ExecutionResult | None = None,
     ) -> ProposalRecord:
         """Move a proposal to ``to`` atomically; see :func:`plan_transition`."""
+        ...
+
+    async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
+        """Record the Slack ts of the proposal's card message, so later states edit it."""
         ...
 
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
