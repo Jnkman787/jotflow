@@ -276,7 +276,7 @@ Post a message in one of your channels. In this release the bot posts nothing ba
 2026-10-18 09:41:37,250 INFO jotflow.ingest: message channel=C0IDEAS01 ts=1760781697.000100 thread_ts=None
 ```
 
-In each `message` line, `ts` is the message's id in Slack, which is also the time it was posted, and `thread_ts` is the thread it is a reply in, or `None` for a new message. The log shows where a message was posted and when, never what it says. It does show channel ids and your bot and workspace names, so remove those before pasting logs into a public issue. Adding a reaction logs a `reaction` line in the same way. Press Ctrl-C to stop following the log; JotFlow keeps running. Stop it with `docker compose down`.
+In each `message` line, `ts` is the message's id in Slack, which is also the time it was posted, and `thread_ts` is the thread it is a reply in, or `None` for a new message. The log shows where a message was posted and when, never what it says, and never a token. It does show channel ids and your bot and workspace names, so remove those before pasting logs into a public issue. Adding a reaction logs a `reaction` line in the same way. Press Ctrl-C to stop following the log; JotFlow keeps running. Stop it with `docker compose down`.
 
 To run JotFlow without Docker, use `uv run jotflow run` from the same folder instead of steps 5 and 6. It prints the same lines in that terminal, rather than to `docker compose logs`; press Ctrl-C to stop it.
 

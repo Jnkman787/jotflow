@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import signal
 import sys
 from collections.abc import Callable
@@ -23,6 +24,14 @@ from slack_bolt.async_app import AsyncApp
 from slack_sdk.errors import SlackApiError
 
 from jotflow.config import Settings
+from jotflow.logs import (
+    THIRD_PARTY_LOGGERS as THIRD_PARTY_LOGGERS,  # re-exported: callers read it here
+)
+from jotflow.logs import (
+    BodiesRefused,
+    check_bodies_allowed,
+    configure_logging,
+)
 from jotflow.orchestrator.ingest import EventFilter
 from jotflow.orchestrator.slack import (
     NETWORK_ERRORS,
@@ -40,9 +49,6 @@ log = logging.getLogger("jotflow.run")
 
 LOG_LEVELS = ("debug", "info", "warning", "error")
 
-# These libraries print whole event payloads or request bodies at DEBUG.
-THIRD_PARTY_LOGGERS = ("slack_bolt", "slack_sdk", "aiohttp", "mcp", "uvicorn")
-
 EXIT_CONFIG = 2
 EXIT_SLACK = 1
 EXIT_MCP = 3
@@ -54,17 +60,14 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--log-level",
         choices=LOG_LEVELS,
         default="info",
-        help="JotFlow's log level (default: info). Message text is never logged.",
+        help="JotFlow's log level (default: info). Message text and tokens are never logged.",
     )
-
-
-def configure_logging(level: str) -> None:
-    numeric = logging.getLevelName(level.upper())
-    logging.basicConfig(
-        level=numeric, format="%(asctime)s %(levelname)s %(name)s: %(message)s", force=True
+    parser.add_argument(
+        "--log-bodies",
+        action="store_true",
+        help="Local development only: show Slack message text in library logs. Tokens stay "
+        "redacted. Refused in CI and inside JotFlow's image.",
     )
-    for name in THIRD_PARTY_LOGGERS:
-        logging.getLogger(name).setLevel(max(numeric, logging.INFO))
 
 
 def _env_name(field: str) -> str:
@@ -190,7 +193,14 @@ async def serve(settings: Settings, policy: Policy) -> int:
 
 
 def run(args: argparse.Namespace) -> int:
-    configure_logging(getattr(args, "log_level", "info"))
+    bodies = bool(getattr(args, "log_bodies", False))
+    if bodies:
+        try:
+            check_bodies_allowed(os.environ)
+        except BodiesRefused as exc:
+            print(f"jotflow run: refusing: {exc}", file=sys.stderr)
+            return EXIT_CONFIG
+    configure_logging(getattr(args, "log_level", "info"), bodies=bodies)
     try:
         settings = load_settings()
         policy = load_policy(settings.config_path)

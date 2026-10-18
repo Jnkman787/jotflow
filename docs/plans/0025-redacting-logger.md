@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #25
-- Draft PR: pending
-- Status: planning
-- Last verified: plan written on 2026-10-18, nothing built yet
-- Next safe action: commit this plan, push, open the draft PR
+- Draft PR: #121
+- Status: implementing
+- Last verified: `make check` green, 1124 tests, 98.5% coverage; `logs.py` at 100%
+- Next safe action: CodeRabbit or skip, CI on #121, mark ready
 
 ## Objective and done-when
 
@@ -14,25 +14,25 @@ Make it impossible for JotFlow's logs to carry Slack message text or a secret at
 
 The issue's boxes:
 
-- [ ] No log line at the default level contains message text or a token
-- [ ] Tests assert redaction on representative events
+- [x] No log line at the default level contains message text or a token
+- [x] Tests assert redaction on representative events
 
 Refined:
 
-- [ ] Every line JotFlow writes passes through one redacting formatter. That includes tracebacks and stack text, so redaction applies to the final text, not only to the message format.
-- [ ] Token-shaped strings are always replaced, with or without the debug flag:
+- [x] Every line JotFlow writes passes through one redacting formatter. That includes tracebacks and stack text, so redaction applies to the final text, not only to the message format.
+- [x] Token-shaped strings are always replaced, with or without the debug flag:
   - Slack tokens: `xoxb-`, `xoxp-`, `xoxa-`, `xoxe-`, `xoxs-`, `xapp-`
   - JotFlow run tokens: `jfr_`
   - GitHub tokens: `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`
   - `Authorization: Bearer` values
   - PEM private keys
-- [ ] Slack payload text fields are replaced in third-party lines: `"text"`, `'text'`, and `text=` in JSON, Python reprs, and form bodies. JotFlow's own modules never log text, as tests already enforce.
-- [ ] Third-party loggers stay capped at INFO, so library debug dumps of whole payloads never reach the output by default
-- [ ] A `--log-bodies` flag on `jotflow run` lifts the cap and the text redaction for local development:
+- [x] Slack payload text fields are replaced in third-party lines: `"text"`, `'text'`, and `text=` in JSON, Python reprs, and form bodies. JotFlow's own modules never log text, as tests already enforce.
+- [x] Third-party loggers stay capped at INFO, so library debug dumps of whole payloads never reach the output by default
+- [x] A `--log-bodies` flag on `jotflow run` lifts the cap and the text redaction for local development:
   - it prints a loud warning at startup
   - it refuses to run inside JotFlow's image, when `JOTFLOW_IMAGE` is set, or in CI
   - tokens are still redacted with it on
-- [ ] The tests replay every built-in fixture thread through ingest and through library-style debug lines that carry the raw event, and assert that no message text and no token reaches the output at the default level
+- [x] The tests replay every built-in fixture thread through ingest and through library-style debug lines that carry the raw event, and assert that no message text and no token reaches the output at the default level
 
 **Out of scope:** JSON-formatted logs; key-value lines stay. Shipping logs anywhere: there is no telemetry. The MCP audit line keeps its own content-free format.
 
@@ -59,19 +59,29 @@ Alternatives considered: a structlog dependency, rejected because it adds a depe
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `logs.py`: `redact`, `RedactingFormatter`, `configure_logging`, the body flag guard
-- [ ] Wire `run` and `check`; `--log-bodies` on `run`
-- [ ] Tests: patterns, formatter with tracebacks, the fixture-thread replay, the flag guard and warning
-- [ ] Update documentation: README troubleshooting or logging note, architecture Data and privacy logging line
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] `logs.py`: `redact`, `RedactingFormatter`, `configure_logging`, the body flag guard
+- [x] Wire `run` and `check`; `--log-bodies` on `run`
+- [x] Tests: patterns, formatter with tracebacks, the fixture-thread replay, the flag guard and warning
+- [x] Update documentation: README troubleshooting or logging note, architecture Data and privacy logging line
+- [x] `make check` passes
 - [ ] CodeRabbit local review, or skipped
 - [ ] `closingIssuesReferences` checked, then mark the PR ready
 
 ## Validation
 
-To be filled in.
+- `make check` passes: 1124 tests, 98.5% total coverage, and `logs.py` at 100%.
+- `tests/test_logs.py`, 44 tests:
+  - eight token shapes are redacted with and without `--log-bodies`: Slack bot, user, app, and refresh; JotFlow run; GitHub classic, fine-grained, and app
+  - bearer values in headers and plain text are redacted, and so are RSA and PKCS#8 private keys
+  - payload text is redacted in JSON, in nested JSON with escaped quotes, in Python reprs with either quote, in keyword reprs, and in form bodies, and kept with `--log-bodies`
+  - ordinary lines pass unchanged: ingest lines, MCP audit lines, and words like `context` or `textual`
+  - the formatter redacts exception text, tracebacks, and stack info
+  - `configure_logging` installs the formatter and caps libraries at INFO even at debug. `--log-bodies` lifts the cap and warns, while tokens stay hidden.
+  - `--log-bodies` is refused with `CI` or `JOTFLOW_IMAGE` set, and `jotflow run` exits 2 with the reason
+  - every built-in fixture thread is replayed: library-style DEBUG and INFO lines carry each raw event, its JSON body, and a token, and ingest logs its decisions. No message text, no long word from it, and no token reaches the output at the default level.
 
 ## Handoff notes
 
-None yet.
+- `configure_logging` and `THIRD_PARTY_LOGGERS` now live in `jotflow.logs`. `commands/run.py` re-exports `THIRD_PARTY_LOGGERS`, so existing imports keep working.
+- New token formats go in `_SECRETS` in `logs.py`, with a line in the test's `SECRETS` table.
