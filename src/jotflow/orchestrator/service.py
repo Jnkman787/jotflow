@@ -1,0 +1,245 @@
+"""Everything `jotflow run` runs besides the Slack connection (#55).
+
+:class:`Orchestrator` opens the store, serves the whiteboard tools over MCP,
+feeds accepted messages to the debouncer, and drives runs through
+:class:`~jotflow.orchestrator.runs.RunLifecycle` and
+:class:`~jotflow.orchestrator.launch.RunSupervisor`.
+
+**Start order:**
+
+1. Open the store.
+2. Recover interrupted runs, before anything else touches runs.
+3. Build the tools and start the MCP server.
+4. Start the supervisor and the debouncer's flush loop.
+
+**Stop order is the reverse:**
+
+1. Stop the debouncer's loop.
+2. Stop the supervisor, which tells the runners to kill live runs.
+3. Revoke every token, so no agent can act while the MCP server shuts down.
+4. Stop the MCP server.
+5. Close the store.
+
+Runs still running stay so in the store, and the next start's recovery marks
+them interrupted and queues them again.
+
+Each run kind is on only when ``[agent] preset`` is set in jotflow.toml and
+JotFlow holds that kind's runner secret, decided once at startup with one log
+line for each kind that is off. A kind that is off never starts: its runs stay
+queued and its proposals stay approved. With drafting off, nothing is queued
+from Slack. With every kind off, no token is issued and the MCP server refuses
+every call, as before.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+from typing import Protocol
+
+from slack_sdk.web.async_client import AsyncWebClient
+
+from jotflow.config import Settings
+from jotflow.models import RunKind
+from jotflow.orchestrator.debounce import Debouncer
+from jotflow.orchestrator.ingest import BotIdentity, Decision
+from jotflow.orchestrator.launch import RunnerClient, RunSupervisor
+from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
+from jotflow.orchestrator.runs import RunLifecycle
+from jotflow.orchestrator.slack import SlackThreadPoster
+from jotflow.policy import Policy
+from jotflow.store import SqliteStore, Store
+from jotflow.whiteboard.read_tools import read_tools
+from jotflow.whiteboard.tokens import TokenRegistry
+from jotflow.whiteboard.tools import ToolSpec
+from jotflow.whiteboard.write_tools import write_tools
+
+log = logging.getLogger("jotflow.orchestrator")
+
+FLUSH_SECONDS = 1.0
+
+
+class Server(Protocol):
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+
+
+ServerFactory = Callable[[Settings, TokenRegistry, Sequence[ToolSpec]], Server]
+StoreOpener = Callable[[str], Awaitable[Store]]
+
+
+async def open_sqlite(path: str) -> Store:
+    return await SqliteStore.open(path)
+
+
+CONVERSATION_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+
+
+@dataclass(frozen=True)
+class RunKinds:
+    """Which run kinds may start, decided once at startup, and why the others may not."""
+
+    on: frozenset[RunKind]
+    off: tuple[str, ...]
+
+
+def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
+    """Each kind is on only with a preset and its own runner's secret.
+
+    A kind that is off never starts: its runs stay queued and its proposals
+    stay approved, rather than failing for want of a runner.
+    """
+    if policy.agent.preset is None:
+        return RunKinds(
+            frozenset(), ("agent runs are off: [agent] preset is not set in jotflow.toml",)
+        )
+    on: set[RunKind] = set()
+    off: list[str] = []
+    if settings.runner_secret is None:
+        off.append("drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set")
+    else:
+        on |= CONVERSATION_KINDS
+    if settings.runner_exec_secret is None:
+        off.append("execution runs are off: JOTFLOW_RUNNER_EXEC_SECRET is not set")
+    else:
+        on.add(RunKind.EXECUTION)
+    return RunKinds(frozenset(on), tuple(off))
+
+
+class Orchestrator:
+    """The store, the MCP server, the debouncer, and the run supervisor, in order."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        policy: Policy,
+        client: AsyncWebClient,
+        identity: BotIdentity,
+        *,
+        make_server: ServerFactory,
+        open_store: StoreOpener = open_sqlite,
+        runner: RunnerClient | None = None,
+        flush_seconds: float = FLUSH_SECONDS,
+        tick_seconds: float | None = None,
+    ) -> None:
+        self._settings = settings
+        self._policy = policy
+        self._client = client
+        self._identity = identity
+        self._make_server = make_server
+        self._open_store = open_store
+        self._runner = runner
+        self._flush_seconds = flush_seconds
+        self._tick_seconds = tick_seconds
+        self.registry = TokenRegistry()
+        self.kinds = decide_run_kinds(settings, policy)
+        self._store: Store | None = None
+        self._server: Server | None = None
+        self._debouncer: Debouncer | None = None
+        self._supervisor: RunSupervisor | None = None
+        self._stop = asyncio.Event()
+        self._tasks: list[asyncio.Task[None]] = []
+
+    @property
+    def store(self) -> Store:
+        if self._store is None:
+            raise RuntimeError("the orchestrator has not started")
+        return self._store
+
+    @property
+    def runs_on(self) -> bool:
+        return bool(self.kinds.on)
+
+    async def start(self) -> None:
+        """Start everything in order. On failure, stops what had started, then raises."""
+        try:
+            await self._start()
+        except BaseException:
+            await self.stop()
+            raise
+
+    async def _start(self) -> None:
+        self._store = await self._open_store(self._settings.database_path)
+        lifecycle = RunLifecycle(self._store, self.registry)
+        await lifecycle.recover()
+        poster = SlackThreadPoster(self._client)
+        source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
+        tools = (
+            *read_tools(self._store, self._policy, source),
+            *write_tools(self._store, self._policy, poster),
+        )
+        self._server = self._make_server(self._settings, self.registry, tools)
+        await self._server.start()
+        for reason in self.kinds.off:
+            log.warning("%s", reason)
+        if not self.runs_on:
+            return
+        runner = self._runner or RunnerClient.from_settings(self._settings)
+        self._runner = runner
+        self._supervisor = RunSupervisor(
+            lifecycle,
+            self._store,
+            runner,
+            poster,
+            max_running=self._policy.agent.max_concurrent_runs,
+            kinds=self.kinds.on,
+        )
+        # Only drafting runs come from the debouncer; with them off, queue none.
+        if RunKind.DRAFTING in self.kinds.on:
+            self._debouncer = Debouncer(self._store, self._policy)
+        supervise = (
+            self._supervisor.run(self._stop)
+            if self._tick_seconds is None
+            else self._supervisor.run(self._stop, interval=self._tick_seconds)
+        )
+        self._tasks = [asyncio.create_task(supervise, name="jotflow-supervisor")]
+        if self._debouncer is not None:
+            self._tasks.append(
+                asyncio.create_task(self._flush_loop(self._debouncer), name="jotflow-debouncer")
+            )
+        log.info(
+            "agent runs are on for %s, up to %d at a time",
+            ", ".join(sorted(k.value for k in self.kinds.on)),
+            self._policy.agent.max_concurrent_runs,
+        )
+
+    async def note(self, decision: Decision) -> None:
+        """Take one ingest decision. Does nothing while runs are off."""
+        if self._debouncer is None:
+            return
+        try:
+            await self._debouncer.note(decision)
+        except Exception:
+            log.exception("could not note a message for the debouncer")
+
+    async def _flush_loop(self, debouncer: Debouncer) -> None:
+        while not self._stop.is_set():
+            try:
+                await debouncer.flush()
+            except Exception:
+                log.exception("debouncer flush failed")
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=self._flush_seconds)
+
+    async def stop(self) -> None:
+        """Stop in reverse order. Safe to call more than once, or after a failed start."""
+        self._stop.set()
+        # The supervisor's run() stops live runs on its runners as it exits.
+        for task in self._tasks:
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await task
+        self._tasks = []
+        revoked = self.registry.revoke_all()
+        if revoked:
+            log.info("revoked %d live run token(s) before stopping the MCP server", revoked)
+        if self._server is not None:
+            server, self._server = self._server, None
+            await server.stop()
+        if self._runner is not None:
+            await self._runner.aclose()
+        if self._store is not None:
+            store, self._store = self._store, None
+            await store.close()

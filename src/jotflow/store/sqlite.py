@@ -721,22 +721,29 @@ class SqliteStore:
     # Ties in created_at break by rowid, which is insertion order, so runs
     # queued in the same instant still start first in, first out.
 
-    async def claim_next_run(self, *, max_running: int) -> Run | None:
+    async def claim_next_run(
+        self, *, max_running: int, kinds: Collection[RunKind] | None = None
+    ) -> Run | None:
         if max_running < 1:
             raise ValueError("max_running must be at least 1")
         async with self._write():
             row = await self._one("SELECT count(*) FROM runs WHERE status = 'running'")
             if row is not None and row[0] >= max_running:
                 return None
+            allowed = sorted(k.value for k in (kinds if kinds is not None else RunKind))
+            if not allowed:
+                return None
+            marks = ", ".join("?" for _ in allowed)
             row = await self._one(
-                """
+                f"""
                 SELECT r.* FROM runs AS r
-                WHERE r.status = 'queued' AND NOT EXISTS (
+                WHERE r.status = 'queued' AND r.kind IN ({marks}) AND NOT EXISTS (
                     SELECT 1 FROM runs AS x WHERE x.status = 'running'
                     AND x.channel_id = r.channel_id AND x.thread_ts = r.thread_ts
                 )
                 ORDER BY r.created_at, r.rowid LIMIT 1
-                """
+                """,
+                tuple(allowed),
             )
             if row is None:
                 return None

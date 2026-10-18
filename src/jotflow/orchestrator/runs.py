@@ -22,6 +22,7 @@ only.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -76,9 +77,14 @@ class RunLifecycle:
         self._registry = registry
         self._now = clock
 
-    async def start_next(self, *, max_running: int) -> StartedRun | None:
-        """Claim the next run that may start and issue its token, or return None."""
-        run = await self._store.claim_next_run(max_running=max_running)
+    async def start_next(
+        self, *, max_running: int, kinds: Collection[RunKind] | None = None
+    ) -> StartedRun | None:
+        """Claim the next run that may start and issue its token, or return None.
+
+        With ``kinds``, runs of other kinds are left queued.
+        """
+        run = await self._store.claim_next_run(max_running=max_running, kinds=kinds)
         if run is None:
             return None
         if run.kind is RunKind.EXECUTION:

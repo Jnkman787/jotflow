@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -246,8 +247,10 @@ class RunSupervisor:
         poster: ThreadPoster,
         *,
         max_running: int,
+        kinds: Collection[RunKind] | None = None,
     ) -> None:
         self._lifecycle = lifecycle
+        self._kinds = frozenset(kinds) if kinds is not None else None
         self._store = store
         self._client = client
         self._poster = poster
@@ -313,7 +316,9 @@ class RunSupervisor:
     async def _launch(self) -> None:
         while len(self._live) < self._max_running:
             try:
-                started = await self._lifecycle.start_next(max_running=self._max_running)
+                started = await self._lifecycle.start_next(
+                    max_running=self._max_running, kinds=self._kinds
+                )
             except Exception:
                 log.exception("could not start the next run")
                 return
