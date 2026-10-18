@@ -80,7 +80,7 @@ def render_policy(policy: Policy) -> str:
                 f"description = {toml_string(repo.description)}",
             ]
             # No labels line means any label that exists on the repo.
-            if repo.labels:
+            if repo.labels is not None:
                 lines.append(f"labels = {_array(repo.labels)}")
     text = "\n".join(lines) + "\n"
     if parse_policy(text) != policy:

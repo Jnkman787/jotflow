@@ -352,9 +352,10 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
         ANY_LABEL,
         _labels,
     )
-    return RepoPolicy(
-        repo=repo, nickname=nickname, description=description, labels=_split_labels(labels)
-    )
+    # "any" is None: no labels line in jotflow.toml, which means any existing
+    # label. An explicit empty list would be an error there.
+    chosen = _split_labels(labels) or None
+    return RepoPolicy(repo=repo, nickname=nickname, description=description, labels=chosen)
 
 
 def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:

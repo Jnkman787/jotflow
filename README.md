@@ -130,7 +130,7 @@ Setup asks a few questions. Press Enter to accept the default in brackets, or Ct
    - each GitHub repo that channel feeds, as `owner/name` or a GitHub link
    - a short nickname, used in replies like `re: web#42`
    - one line on what the repo covers. When a channel feeds several repos, the agent picks one by this line.
-   - which labels a proposal may use. The default, `any`, allows any label that already exists on the repo; the agent is instructed to use only existing labels. A comma-separated list narrows it to just those.
+   - which labels a proposal may use. The default, `any`, allows any label that already exists on the repo. The agent's rule is to never invent a label, which its instructions carry and JotFlow cannot check. A comma-separated list narrows it to just those.
 5. **The agent preset.** This names which agent CLI will draft issues, for example `claude-code`. Type `none` for now if you only want to see JotFlow connect; agent runs arrive in milestone 3.
 
 A session looks like this, shortened. Your answers are on the right of each prompt.

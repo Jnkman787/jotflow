@@ -179,17 +179,18 @@ def test_a_label_list_narrows() -> None:
 
 def test_a_repo_without_labels_allows_any_label() -> None:
     repo = parse_policy(MINIMAL).repo("C0TEST1", "api")
-    assert repo.labels == ()
+    assert repo.labels is None
     assert not repo.restricts_labels
     assert repo.check_labels([]) == []
     assert repo.check_labels(["bug", "Needs Design", "size:m"]) == ["bug", "Needs Design", "size:m"]
 
 
-def test_an_empty_label_list_also_allows_any_label() -> None:
+def test_an_explicit_empty_label_list_is_an_error() -> None:
     text = MINIMAL.replace('description = "The API"', 'description = "The API"\nlabels = []')
-    repo = parse_policy(text).repo("C0TEST1", "api")
-    assert not repo.restricts_labels
-    assert repo.check_labels(["wontfix"]) == ["wontfix"]
+    assert problems(text) == [
+        "channels.C0TEST1.repos[1].labels: an empty labels list is ambiguous; remove the "
+        "labels line to allow any existing label, or list the labels to allow"
+    ]
 
 
 def test_unrestricted_labels_drop_duplicates_ignoring_case() -> None:

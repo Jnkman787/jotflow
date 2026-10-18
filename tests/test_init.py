@@ -241,7 +241,7 @@ def test_fresh_setup_writes_a_valid_policy(options: InitOptions) -> None:
     assert list(policy.channels) == ["C0TEST1"]
     (repo,) = policy.channels["C0TEST1"].repos
     assert (repo.repo, repo.nickname, repo.description) == ("acme/web", "web", "The web app")
-    assert repo.labels == ()
+    assert repo.labels is None
     assert not repo.restricts_labels
     assert policy.agent.preset == "claude-code"
     assert not policy.approval.approvers_enabled
@@ -280,7 +280,7 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
     first = policy.channels["C0LINKS1"].repos
     assert [(r.repo, r.nickname, r.labels) for r in first] == [
         ("acme/Web-App", "web-app", ("bug", "size:s")),
-        ("acme/api", "api", ()),
+        ("acme/api", "api", None),
     ]
     assert policy.agent.preset is None
     assert "already used in this channel" in script.text
@@ -428,3 +428,10 @@ def test_labels_prompt_defaults_to_any(options: InitOptions) -> None:
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     [labels_prompt] = [p for p in script.prompts if "Labels a proposal may use" in p]
     assert "any existing label, or a comma-separated list to narrow it [any]" in labels_prompt
+
+
+def test_any_writes_no_labels_line(options: InitOptions) -> None:
+    script = Script(answers=["", *POLICY], secrets=[GOOD_BOT, GOOD_APP])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    text = options.config_file.read_text(encoding="utf-8")
+    assert "labels" not in text.split("[[channels.C0TEST1.repos]]", 1)[1]

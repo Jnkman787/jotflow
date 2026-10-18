@@ -30,9 +30,10 @@ debounce_seconds = 60
 
 # The repos this channel may feed. The agent picks one by its description.
 # labels is optional. Without it, a proposal may use any label that already
-# exists on the repo; the agent is instructed to use only existing labels,
-# which JotFlow cannot check itself. A list narrows that to only the labels
-# listed, and JotFlow enforces it.
+# exists on the repo. Rule for the agent: never invent a label. JotFlow cannot
+# check that rule itself; the agent's instructions carry it. A list narrows
+# the choice to only the labels listed, and JotFlow enforces it. An empty
+# list (labels = []) is an error: leave the line out to allow any label.
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"

@@ -18,7 +18,15 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from jotflow.models import RepoName, shown
 
@@ -136,24 +144,36 @@ class RepoPolicy(_Strict):
     description: str = Field(
         min_length=1, max_length=200, description="What the repo covers; the agent picks by this"
     )
-    labels: tuple[Label, ...] = Field(
-        default=(),
+    labels: tuple[Label, ...] | None = Field(
+        default=None,
         description=(
-            "Optional. Narrows the labels a proposal may set to this list. Missing or empty "
-            "means any label that already exists on the repo"
+            "Optional. Narrows the labels a proposal may set to this list. Missing means "
+            "any label that already exists on the repo; an empty list is an error"
         ),
     )
 
+    @field_validator("labels")
+    @classmethod
+    def _no_empty_list(cls, labels: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        # None, or a missing key, means any existing label. An admin who writes
+        # an empty list may mean "no labels", so it is an error, not a silent "any".
+        if labels is not None and not labels:
+            raise ValueError(
+                "an empty labels list is ambiguous; remove the labels line to allow any "
+                "existing label, or list the labels to allow"
+            )
+        return labels
+
     @model_validator(mode="after")
     def _unique_labels(self) -> RepoPolicy:
-        if dupes := _duplicates(self.labels):
+        if self.labels and (dupes := _duplicates(self.labels)):
             raise ValueError(f"labels listed more than once: {', '.join(dupes)}")
         return self
 
     @property
     def restricts_labels(self) -> bool:
         """Whether a label list narrows what proposals may set."""
-        return bool(self.labels)
+        return self.labels is not None
 
     def check_labels(self, labels: Iterable[str]) -> list[str]:
         """The labels a proposal may set, without duplicates.
@@ -177,7 +197,7 @@ class RepoPolicy(_Strict):
                     seen.add(label.casefold())
                     unique.append(label)
             return unique
-        allowed = {label.casefold(): label for label in self.labels}
+        allowed = {label.casefold(): label for label in self.labels or ()}
         rejected = [label for label in wanted if label.casefold() not in allowed]
         if rejected:
             raise LabelNotAllowedError(self.repo, rejected)
