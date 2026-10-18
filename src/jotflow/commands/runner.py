@@ -10,12 +10,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import os
 import sys
 
 import uvicorn
 from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from jotflow.adapters.presets import DEFAULT_GITHUB_MCP
 from jotflow.adapters.runner import (
     RUNNER_PORT,
     ConfigError,
@@ -23,6 +25,7 @@ from jotflow.adapters.runner import (
     RunnerConfig,
     build_runner_app,
     parse_command,
+    parse_preset,
     remove_stale,
 )
 from jotflow.logs import configure_logging
@@ -39,7 +42,17 @@ class RunnerSettings(BaseSettings):
     )
 
     runner_secret: SecretStr = Field(description="Shared with JotFlow; never given to the agent")
-    agent_command: str = Field(description="JSON list: the agent CLI and its arguments")
+    agent_preset: str | None = Field(default=None, description="A preset name, such as claude-code")
+    agent_command: str | None = Field(
+        default=None, description="JSON list: the agent CLI and its arguments, without a preset"
+    )
+    agent_model: str | None = Field(default=None, description="The model for every run kind")
+    agent_model_drafting: str | None = None
+    agent_model_question: str | None = None
+    agent_model_execution: str | None = None
+    github_mcp_command: str = Field(
+        default=DEFAULT_GITHUB_MCP, description="The pinned GitHub MCP server, for presets"
+    )
     github_read_token: SecretStr | None = None
     github_write_token: SecretStr | None = None
     agent_env_allow: str = Field(default="", description="Comma-separated names to pass on")
@@ -60,14 +73,38 @@ def _kinds(raw: str) -> frozenset[RunKind]:
         raise ConfigError(f"JOTFLOW_RUNNER_KINDS has an unknown run kind: {raw!r}") from None
 
 
+def _models(settings: RunnerSettings, kinds: frozenset[RunKind]) -> dict[RunKind, str]:
+    """JOTFLOW_AGENT_MODEL for every kind served, then any per-kind override."""
+    models = {kind: settings.agent_model for kind in kinds if settings.agent_model}
+    for kind, model in (
+        (RunKind.DRAFTING, settings.agent_model_drafting),
+        (RunKind.QUESTION, settings.agent_model_question),
+        (RunKind.EXECUTION, settings.agent_model_execution),
+    ):
+        if model:
+            models[kind] = model
+    return models
+
+
 def build_config(settings: RunnerSettings) -> RunnerConfig:
+    if (settings.agent_preset is None) == (settings.agent_command is None):
+        raise ConfigError("set exactly one of JOTFLOW_AGENT_PRESET and JOTFLOW_AGENT_COMMAND")
+    preset = None if settings.agent_preset is None else parse_preset(settings.agent_preset)
+    if preset is not None and preset.needs_github_mcp:
+        path = settings.github_mcp_command
+        if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+            raise ConfigError(f"the GitHub MCP server is not installed at {path}")
+    kinds = _kinds(settings.runner_kinds)
     port = settings.runner_port
     names = [h.strip() for h in settings.runner_allowed_hosts.split(",") if h.strip()]
     hosts = {f"{name}:{port}" for name in [*names, "127.0.0.1", "localhost"]}
     return RunnerConfig(
         secret=settings.runner_secret.get_secret_value(),
         mcp_url=settings.mcp_url,
-        command=parse_command(settings.agent_command),
+        command=() if settings.agent_command is None else parse_command(settings.agent_command),
+        preset=preset,
+        models=_models(settings, kinds),
+        github_mcp=settings.github_mcp_command,
         read_token=(
             settings.github_read_token.get_secret_value() if settings.github_read_token else None
         ),
@@ -75,7 +112,7 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
             settings.github_write_token.get_secret_value() if settings.github_write_token else None
         ),
         env_allow=tuple(n.strip() for n in settings.agent_env_allow.split(",") if n.strip()),
-        kinds=_kinds(settings.runner_kinds),
+        kinds=kinds,
         allowed_hosts=frozenset(hosts),
     )
 

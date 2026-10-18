@@ -51,28 +51,34 @@ The runner gets these settings:
 
 ```python
 @dataclass(frozen=True)
-class RunContext:          # everything a preset may use, nothing else
+class RunContext:  # everything a preset may use, nothing else
     kind: RunKind
     run_id: str
-    run_dir: Path          # the run's 0700 directory, removed after the run
-    config_path: Path      # run_dir / "mcp.json", written 0600 by the runner
+    run_dir: Path  # the run's 0700 directory, removed after the run
+    config_path: Path  # run_dir / "mcp.json", written 0600 by the runner
     mcp_url: str
-    mcp_token: str         # the run's JotFlow token
-    github_token: str      # the one token for this kind
+    mcp_token: str  # the run's JotFlow token
+    github_token: str  # the one token for this kind
     model: str | None
     github_mcp: str
+
 
 @dataclass(frozen=True)
 class RunPlan:
     argv: tuple[str, ...]
-    config: Mapping[str, Any]      # written to config_path
-    env: Mapping[str, str]         # extra env, on top of the runner's allowlist
-    github_token_env: bool         # whether GITHUB_TOKEN and GH_TOKEN are set
+    config: Mapping[str, Any]  # written to config_path
+    env: Mapping[str, str]  # extra env, on top of the runner's allowlist
+    github_token_env: bool  # whether GITHUB_TOKEN and GH_TOKEN are set
 
-class Preset(Protocol):
+
+class Preset(Protocol):  # read-only properties in the code
     name: str
     default_models: Mapping[RunKind, str]
+    needs_github_mcp: bool  # the runner checks the binary at startup
+    github_token_in_config: bool  # the runner checks the token's characters
+
     def plan(self, run: RunContext) -> RunPlan: ...
+
 
 PRESETS: Mapping[str, Preset] = {"claude-code": CLAUDE_CODE}
 ```
@@ -169,12 +175,12 @@ The model login: `ANTHROPIC_API_KEY` in the env file, passed through `JOTFLOW_AG
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `presets.py`: `RunContext`, `RunPlan`, `CommandPreset`, `ClaudeCodePreset`, and the registry
-- [ ] Runner: the preset or command setting, the model per kind, the GitHub MCP path, token character checks, and `_run` using the plan
-- [ ] `Dockerfile.agent`: the checksum-pinned GitHub MCP server, and the Claude Code pin in the docs and Compose
-- [ ] Tests: the exact argv per kind, the config shape and 0600 mode, cleanup, env rules, the JotFlow tool table against the whiteboard kinds, config errors, and that the orchestrator doesn't import presets
-- [ ] Docs: env examples, architecture.md, and `docs/presets.md`
+- [x] Commit this plan and open the draft PR
+- [x] `presets.py`: `RunContext`, `RunPlan`, `CommandPreset`, `ClaudeCodePreset`, and the registry
+- [x] Runner: the preset or command setting, the model per kind, the GitHub MCP path, token character checks, and `_run` using the plan
+- [x] `Dockerfile.agent`: the checksum-pinned GitHub MCP server, and the Claude Code pin in the docs and Compose
+- [x] Tests: the exact argv per kind, the config shape and 0600 mode, cleanup, env rules, the JotFlow tool table against the whiteboard kinds, config errors, and that the orchestrator doesn't import presets
+- [x] Docs: env examples, architecture.md, and `docs/presets.md`
 - [ ] `make check` passes
 - [ ] Mark the PR ready for review
 - [ ] Second PR: the Codex CLI preset
@@ -201,6 +207,10 @@ I ran github-mcp-server 2.0.2's `tools/list` directly:
 - without `--read-only`, the execution tool list listed exactly those five tools
 
 The release tarball for Linux x86_64 matched its published sha256.
+
+During implementation I built the agent image with `AGENT_NPM_PACKAGES=@anthropic-ai/claude-code@2.1.303` and ran the real drafting and execution plans from `ClaudeCodePreset` inside it. The init event matched the table above for both kinds. The run used the `sonnet` model for drafting and `haiku` for execution, and showed version 2.1.303. No sentinel appeared in the output or under `HOME`.
+
+That run turned up an empty `~/.claude/projects/<run dir>/memory` directory for each run. The preset now sets `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, and with it no projects directory is created. ADD's `--checksum` checks the GitHub MCP server tarball, and the image runs `github-mcp-server --version` as a build step.
 
 ## Handoff notes
 
