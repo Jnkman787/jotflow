@@ -113,7 +113,7 @@ async def test_the_index_is_capped(store: Store, clock: Clock) -> None:
         clock.now = START + timedelta(minutes=i)
         await store.create_topic(CH, f"Idea {i}")
     index = await build_index(store, CH, window_days=14, now=clock.now, limit=3)
-    assert [t.title for t in index.topics] == ["Idea 4", "Idea 3", "Idea 2"]
+    assert [t.title.text for t in index.topics] == ["Idea 4", "Idea 3", "Idea 2"]
     assert index.more == 2
     assert json.loads(index.to_prompt())["more"] == 2
 
@@ -132,7 +132,8 @@ async def test_compact_prompt_form(store: Store, clock: Clock) -> None:
     assert "\n" not in text and ": " not in text and "null" not in text
     data = json.loads(text)
     assert data["note"] == TOPIC_INDEX_NOTE
-    assert data["topics"][0]["title"] == "Progress bar"
+    # The compact form keeps the untrusted label on every title (#14).
+    assert data["topics"][0]["title"] == {"untrusted": True, "text": "Progress bar"}
     assert "repo" not in data["topics"][0]
     assert "more" not in data
     assert TopicIndex.model_validate_json(text) == index
@@ -155,7 +156,7 @@ async def test_titles_are_cleaned_again_on_the_way_out(store: Store, clock: Cloc
             ("<!channel> click https://evil.example", created.topic.id),
         )
     (summary,) = (await build_index(store, CH, window_days=14, now=clock.now)).topics
-    assert summary.title == "click"
+    assert summary.title.text == "click"
 
 
 async def test_list_topics_uses_the_policy_window(store: Store, clock: Clock) -> None:

@@ -451,15 +451,14 @@ async def test_the_database_refuses_an_execution_run_without_a_proposal(tmp_path
 
 
 def test_no_run_outlives_its_token() -> None:
-    from jotflow.models import Run
+    from jotflow.models import MAX_RUN_SECONDS
     from jotflow.store.base import MAX_RUN_TIMEOUT_SECONDS
     from jotflow.whiteboard.tokens import MAX_TOKEN_TTL_SECONDS
 
-    assert MAX_RUN_TIMEOUT_SECONDS == MAX_TOKEN_TTL_SECONDS
-    limit = next(m for m in Run.model_fields["timeout_seconds"].metadata if hasattr(m, "le"))
-    assert limit.le == MAX_TOKEN_TTL_SECONDS
+    # One constant, read by the store and the token registry alike.
+    assert MAX_RUN_TIMEOUT_SECONDS == MAX_TOKEN_TTL_SECONDS == MAX_RUN_SECONDS
     for timeout in DEFAULT_RUN_TIMEOUTS.values():
-        assert timeout.total_seconds() <= MAX_TOKEN_TTL_SECONDS
+        assert timeout.total_seconds() <= MAX_RUN_SECONDS
 
 
 async def test_a_two_hour_timeout_is_allowed(store: Store) -> None:

@@ -33,12 +33,14 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 |---|---|
 | `list_topics` | Active topics for a channel with ids, titles, linked issues |
 | `get_topic` | A topic's linked Slack messages and issue state |
-| `get_work` | The run's packet: new thread text, the active topic index, and related-thread excerpts for a drafting run; only the approved structured proposal for an execution run |
+| `get_work` | The run's packet: thread text, the active topic index, and related-thread excerpts for a drafting or question run; only the approved structured proposal for an execution run |
 | `propose_issue` | Structured draft: repo, title, body, labels, assignees, size |
 | `propose_update` | Structured change to an existing issue: body edit, comment, label or assignee change |
 | `link_message` | Associate a Slack message with a topic, or mark it as chatter |
 | `ask_channel` | Post a clarifying question into the source thread only |
 | `record_result` | Report the issue URL, or the error, after executing an approved proposal |
+
+Every tool reads its channel, thread, run, and proposal from the caller's token, never from its arguments. A topic in another channel is reported exactly like a missing one. Text written in Slack, and anything an earlier run wrote, such as topic titles, sits in fields marked untrusted, and each packet carries a fixed notice saying how to treat them. No such text reaches a tool description. A failure the agent should act on, such as a finished run or an unknown topic, comes back as a tool result with `isError` set and a short reason. Tools also advertise an output schema, so those labels show in what the agent reads.
 
 Every call carries a token, and what a token may do depends on who holds it:
 
@@ -89,7 +91,7 @@ The server declares only the `tools` capability, with `listChanged: false`: no p
 - A preset defines, per run kind, which of the CLI's tools are allowed. Drafting runs get no shell and no file-write tools, and only the team's read-only GitHub token. Execution runs get the write token, used to create or update one issue. Presets disable session transcripts where the CLI supports it.
 - Later: an HTTP adapter and a reference SDK adapter.
 
-**Agent output contract.** The agent acts only by calling the whiteboard MCP tools. JotFlow records each call as it happens; the agent's stdout is ignored. The prompt handed to the agent is minimal: a run id and the instruction to call `get_work` and then act.
+**Agent output contract.** The agent acts only by calling the whiteboard MCP tools. JotFlow records each call as it happens; the agent's stdout is ignored. The prompt handed to the agent is minimal: the instruction to call `get_work` and then act. `get_work` takes no arguments, because the run's token already names the run, its channel, and its thread.
 
 **Execution runs.** JotFlow's code never uses GitHub credentials. When a proposal is approved, or immediately in `auto` mode, JotFlow launches the agent again. Its work packet contains only the approved structured fields, never the thread itself. The approved title and body were drafted from Slack and can carry injected text verbatim, so they are passed as labelled content to write, and the execution prompt treats them as content, never as instructions. Every proposal carries a random marker id, written into the issue body or comment as a hidden HTML comment; it is random so it reveals nothing even with `issue_links = "none"`. Before writing, the agent lists the target repo's recently created issues, or the issue's recent comments for an update, and looks for the marker. It lists rather than searches because GitHub's search index lags and a quick retry could miss a fresh issue. Then it performs the write with the GitHub access the team gave it and calls `record_result` with the issue URL. JotFlow checks that the URL points at the approved repo, stores it, replies in the Slack thread, and updates the card. A team may configure a cheaper model for execution runs, since they make a single write.
 

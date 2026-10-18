@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from jotflow.models import TopicIndex, TopicSummary
+from jotflow.models import TopicIndex, TopicSummary, UntrustedText
 from jotflow.policy import Policy
 from jotflow.store.base import Store, TopicRecord, utc_now
 from jotflow.store.titles import clean_title
@@ -35,7 +35,7 @@ def _summary(record: TopicRecord) -> TopicSummary:
         title = "(untitled)"
     return TopicSummary(
         id=topic.id,
-        title=title,
+        title=UntrustedText(text=title),
         repo=topic.repo,
         issue_number=topic.issue_number,
         message_count=len(topic.messages),
