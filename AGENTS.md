@@ -87,7 +87,7 @@ For any non-trivial issue:
 
 1. Confirm the issue is ready: a bounded objective, testable done-when criteria, and no unresolved decision. If a decision is open, ask on the issue instead of starting.
 2. Create a branch named `<type>/<short-topic>`, for example `feat/slack-app-manifest`.
-3. Copy [docs/plans/TEMPLATE.md](docs/plans/TEMPLATE.md) to `docs/plans/<short-topic>.md` and fill it in. The plan links its issue and any relevant roadmap or architecture sections.
+3. Copy [docs/plans/TEMPLATE.md](docs/plans/TEMPLATE.md) to `docs/plans/NNNN-short-topic.md`, where `NNNN` is the issue number padded to four digits, for example `docs/plans/0007-jotflow-init.md` for #7. A plan that serves several issues takes the number of the one it closes or mainly serves, and lists the others on its "Also serves" line. Fill it in. The plan links its issue and any relevant roadmap or architecture sections.
 4. Commit the plan before any implementation and open a draft PR that links the issue.
 5. Work through the plan's checklist in order. Record decisions, deviations, and validation results in the plan as they happen.
 6. At any interruption or handoff, update the plan's status and next safe action so another agent can resume without this conversation.

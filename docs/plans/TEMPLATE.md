@@ -1,10 +1,11 @@
 # <Short work title>
 
-Copy this file to `docs/plans/<short-topic>.md` when you start work on an issue, before writing any code. Delete this paragraph. See the plan-first section of [AGENTS.md](../../AGENTS.md).
+Copy this file to `docs/plans/NNNN-short-topic.md` when you start work on an issue, before writing any code. `NNNN` is the issue number padded to four digits, for example `0007-jotflow-init.md` for #7. A plan that serves several issues takes the number of the one it closes or mainly serves, and lists the others under Also serves. Delete this paragraph. See the plan-first section of [AGENTS.md](../../AGENTS.md).
 
 ## Links and status
 
 - Issue: #<N>
+- Also serves: #<N>, or delete this line
 - Draft PR: #<N>
 - Status: planning | implementing | blocked | ready for review | handed off | completed
 - Last verified: <commit, check, or command and when>
