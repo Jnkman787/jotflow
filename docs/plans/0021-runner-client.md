@@ -4,10 +4,10 @@
 
 - Issue: #21
 - Also serves: #54, whose open box "JotFlow can launch a run in the agent container" needs this side
-- Draft PR: pending
-- Status: planning
-- Last verified: plan only
-- Next safe action: the lead confirms the plan, then implement the client and supervisor
+- Draft PR: #131
+- Status: ready for review
+- Last verified: `make check` green, 1438 tests, 98.5% coverage, on 2026-10-18
+- Next safe action: reviewer reviews #131. The first issue that enqueues live runs wires `RunSupervisor` into `jotflow run`
 
 ## Objective and done-when
 
@@ -15,17 +15,17 @@
 
 The issue's boxes, refined by its dated notes and the #54 split:
 
-- [ ] Template substitution for prompt, MCP config path, and token. The runner does this (#54): the token goes only into the 0600 MCP config, and the argv template takes `{mcp_config}` and `{run_id}`. This PR adds the client that hands the runner the run id, kind, and token, and a test that runs the real runner app and the real MCP server with a stub agent. The prompt text belongs to #22's presets.
-- [ ] Timeout kills the process and marks the run failed. JotFlow times the run out through `RunLifecycle.expire_overdue`, which revokes the token first, and then sends the runner `DELETE /runs/{id}`, which kills the process group. The run ends as `timed_out`, one of the failed statuses.
-- [ ] Failures surface in the Slack thread as a short notice. The text is fixed per outcome and names the run id only. It never carries agent output, exit codes, or runner replies.
+- [x] Template substitution for prompt, MCP config path, and token. The runner does this (#54): the token goes only into the 0600 MCP config, and the argv template takes `{mcp_config}` and `{run_id}`. This PR adds the client that hands the runner the run id, kind, and token, and a test that runs the real runner app and the real MCP server with a stub agent. The prompt text belongs to #22's presets.
+- [x] Timeout kills the process and marks the run failed. JotFlow times the run out through `RunLifecycle.expire_overdue`, which revokes the token first, and then sends the runner `DELETE /runs/{id}`, which kills the process group. The run ends as `timed_out`, one of the failed statuses.
+- [x] Failures surface in the Slack thread as a short notice. The text is fixed per outcome and names the run id only. It never carries agent output, exit codes, or runner replies.
 - Already done in the runner (#54): the 0600 config in a 0700 directory removed at the end, and the environment allowlist.
 
 More done-when, from the lead's brief and the #54 handoff:
 
-- [ ] Routing by kind, with no fallback. Drafting and question runs go to `JOTFLOW_RUNNER_URL` (default `http://agent:8766`) with `JOTFLOW_RUNNER_SECRET`. Execution runs go to `JOTFLOW_EXEC_RUNNER_URL` (default `http://agent-exec:8766`) with `JOTFLOW_EXEC_RUNNER_SECRET`. A secret is only ever sent to its own runner. A test asserts each request's URL and `Authorization` header by kind.
-- [ ] Missing secret for a kind means that kind's runs fail with a fixed reason. JotFlow never sends one runner's secret to the other.
-- [ ] `Settings` refuses identical runner secrets, since the exec runner's isolation rests on them differing.
-- [ ] Every run reaches a final status on every path: success, non-zero exit, a launch refusal, a lost run, a timeout, and runner unreachable at launch.
+- [x] Routing by kind, with no fallback. Drafting and question runs go to `JOTFLOW_RUNNER_URL` (default `http://agent:8766`) with `JOTFLOW_RUNNER_SECRET`. Execution runs go to `JOTFLOW_EXEC_RUNNER_URL` (default `http://agent-exec:8766`) with `JOTFLOW_EXEC_RUNNER_SECRET`. A secret is only ever sent to its own runner. A test asserts each request's URL and `Authorization` header by kind.
+- [x] Missing secret for a kind means that kind's runs fail with a fixed reason. JotFlow never sends one runner's secret to the other.
+- [x] `Settings` refuses identical runner secrets, since the exec runner's isolation rests on them differing.
+- [x] Every run reaches a final status on every path: success, non-zero exit, a launch refusal, a lost run, a timeout, and runner unreachable at launch.
 
 **Out of scope:**
 
@@ -89,19 +89,27 @@ A failed post is logged with Slack's error code and never raised.
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Settings fields and validators
-- [ ] `RunnerClient` with routing, strict replies, and fixed errors
-- [ ] `RunSupervisor` with timeouts, polling, launch, notices, and close
-- [ ] Tests, including the real runner app in process
-- [ ] Docs: architecture's How runs start, README env table, and the #54 handoff
-- [ ] `make check` passes
+- [x] Commit this plan and open the draft PR
+- [x] Settings fields and validators
+- [x] `RunnerClient` with routing, strict replies, and fixed errors
+- [x] `RunSupervisor` with timeouts, polling, launch, notices, and close
+- [x] Tests, including the real runner app in process
+- [x] Docs: architecture's How runs start and its environment-tier list. README and the #54 handoff are left alone, because #128 renames the secret there
+- [x] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-Pending.
+- `make check`: green, with 1438 tests and 98.5% coverage. `launch.py` is at 99%, and the uncovered branches are loop exits.
+- `tests/test_launch.py` has 61 tests:
+  - Routing and headers for each kind, against a mock transport.
+  - Both real runner apps in process, chosen by host. Each accepts only its own kind and secret, so a swapped secret gets 401. A DELETE kills a sleeping stub agent.
+  - The supervisor on every ending path, with one notice per run, through a scripted runner.
+  - End to end in process: the supervisor starts a queued run on the real runner. Its stub agent calls the real MCP server with its token and gets 200, and the run ends `succeeded` with its token revoked.
 
 ## Handoff notes
 
 Worktree `~/jotflow-work/wt-security-client`, branch `feat/runner-client`.
+
+- To wire it in, build `RunnerClient.from_settings(settings)` and a `RunSupervisor` with the lifecycle, store, a `SlackThreadPoster`, and the policy's `max_concurrent_runs`. Run `supervisor.run(stop)` as a task beside the Socket Mode connection. Call `lifecycle.recover()` first.
+- `httpx2` is now a runtime dependency. The lock only changed its own dependency list.
