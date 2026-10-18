@@ -402,9 +402,6 @@ _CHANNEL_LINK = re.compile(
 _GITHUB_LINK = re.compile(r"(?:https?://)?github\.com/([^/\s]+/[^/\s]+?)(?:\.git)?/?")
 
 
-_LOWERCASE_ID = re.compile(r"[CGcg][A-Za-z0-9]{8,}")
-
-
 def _channel_id(value: str) -> str:
     """Accept a channel id or a pasted channel link."""
     if value.strip().startswith("#"):
@@ -415,14 +412,34 @@ def _channel_id(value: str) -> str:
     if match := _CHANNEL_LINK.fullmatch(value.strip()):
         value = match.group(1)
     value = value.strip()
-    # Slack ids are capitals and digits. Accept one typed in lowercase, but only
-    # when it is clearly an id, so a name like "general" is never mistaken for one.
-    if _LOWERCASE_ID.fullmatch(value) and any(ch.isdigit() for ch in value):
-        value = value.upper()
     try:
         return _check_channel(value)
     except ValueError as exc:
-        raise ValueError(f"{exc}. Copy the id exactly as Slack shows it, in capitals.") from None
+        problem = exc
+    # Never guess: a name such as customer12 would pass once uppercased, so a value
+    # that only fits the id pattern in capitals is refused with a hint.
+    shouted = value.upper()
+    if shouted != value and _fits_id(shouted):
+        if any(ch.isdigit() for ch in value):
+            raise ValueError(
+                f"Slack channel ids use capital letters, like C0123456789. If {value} is "
+                f"the id, did you mean {shouted}? If it is the channel's name, copy the id "
+                "from the channel's details instead, or paste the channel link."
+            ) from None
+        raise ValueError(
+            "That looks like the channel's name. Setup needs its id, which starts with C or G: "
+            "click the channel's name at the top and look at the bottom of the About tab, "
+            "or paste the channel link."
+        ) from None
+    raise ValueError(f"{problem}. Copy the id exactly as Slack shows it, in capitals.") from None
+
+
+def _fits_id(value: str) -> bool:
+    try:
+        _check_channel(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _repo(value: str) -> str:

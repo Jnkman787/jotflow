@@ -141,7 +141,7 @@ The third fresh-eyes review (2026-10-18) found no blockers and four contradictio
 | 4: PowerShell clone folder | Clone outside OneDrive and Documents, for example `C:\src`; the Windows-drive warning is expected there. |
 | 5: wrapped link opens an error page | Use the fallback. |
 | 7: token rotation error gave no clicks | The error and a README row explain rotation, that Slack does not allow turning it off, and the recovery; manifests/README.md too. |
-| 8: lowercase channel id | Accepted when it is clearly an id (C or G, at least nine characters, a digit), uppercased; a name such as `general` is still refused, now with "in capitals". |
+| 8: lowercase channel id | Refused with a hint, never guessed: an input that fits the id pattern only in capitals gets "Slack channel ids use capital letters ... did you mean C...?" if it has a digit, or "looks like the channel's name" if not. Reviewer found the first version uppercased names such as `customer12` into valid-looking ids. |
 | 9: what `re: web#42` means | Said at the nickname prompt and in the README. |
 | 10: labels clutter | Cut "which JotFlow cannot check itself" and the `labels = []` line from the README step. |
 | 12: invite | "If Slack asks whether to add the app to the channel, click Add." |
