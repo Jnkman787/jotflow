@@ -317,7 +317,7 @@ class ServeHarness:
         self.mcp_start_error: BaseException | None = None
         monkeypatch.setattr(run_command, "AsyncApp", lambda **_: self.app)
         monkeypatch.setattr(
-            run_command, "make_mcp_server", lambda _: FakeMcp(self.mcp_calls, self.mcp_start_error)
+            run_command, "make_mcp_server", lambda *_: FakeMcp(self.mcp_calls, self.mcp_start_error)
         )
         monkeypatch.setattr(run_command, "AsyncSocketModeHandler", self._handler)
         monkeypatch.setattr(run_command, "install_stop_signals", self._install)
@@ -413,8 +413,10 @@ async def test_serve_stops_when_the_mcp_server_cannot_start(
 
 
 def test_make_mcp_server_uses_the_settings() -> None:
+    from jotflow.whiteboard.tokens import TokenRegistry
+
     settings, _ = serve_inputs()
-    server = run_command.make_mcp_server(settings)
+    server = run_command.make_mcp_server(settings, TokenRegistry())
     assert (server.host, server.port) == ("127.0.0.1", 8765)
 
 

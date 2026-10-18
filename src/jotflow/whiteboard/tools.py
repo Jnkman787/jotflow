@@ -7,6 +7,10 @@ server runs, so an agent never sees a tool it was not built with (no tool
 poisoning, no ``list_changed``). Input schemas derive from Pydantic models,
 the same ones the rest of JotFlow validates with.
 
+Each tool names the run kinds that may call it, per the token table in
+docs/architecture.md. A run lists and calls only its own kind's tools, and a
+tool outside its kind looks exactly like a tool that does not exist.
+
 The registry is empty until the read tools (#14) and write tools (#15) land.
 """
 
@@ -19,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from jotflow.models import RunKind
 from jotflow.whiteboard.tokens import Grant
 
 # The MCP specification's tool-name rule.
@@ -33,6 +38,8 @@ class ToolSpec:
     description: str
     input_model: type[BaseModel]
     handler: Handler
+    # Run kinds that may call this tool; see the token table in architecture.md.
+    kinds: frozenset[RunKind] = frozenset()
 
     def input_schema(self) -> dict[str, Any]:
         return self.input_model.model_json_schema()
@@ -55,5 +62,7 @@ def checked_registry(tools: Sequence[ToolSpec]) -> dict[str, ToolSpec]:
             raise RegistryError(f"tool {tool.name!r} is registered twice")
         if not tool.description.strip():
             raise RegistryError(f"tool {tool.name!r} has no description")
+        if not tool.kinds:
+            raise RegistryError(f"tool {tool.name!r} names no run kind that may call it")
         by_name[tool.name] = tool
     return by_name
