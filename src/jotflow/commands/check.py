@@ -7,8 +7,11 @@ exactly as ``jotflow run`` does and reports what it found.
 it again; see :mod:`jotflow.live_check`. It is for a person verifying an
 install by hand, so it refuses to run unless ``JOTFLOW_LIVE_CHECK=1`` is set
 in the environment for that run, and it refuses outright when ``CI`` is set.
-The opt-in is read from the process environment only, never from ``.env``,
-so it cannot be left switched on.
+JotFlow reads the opt-in from the process environment, never from ``.env``,
+and refuses if ``.env`` contains it. That does not stop every way of leaving
+it on: Compose's ``env_file`` turns ``.env`` lines into the container's
+environment, and a shell profile can export it. So the opt-in belongs on the
+command line, and an interactive run also asks before it posts.
 """
 
 from __future__ import annotations
@@ -17,7 +20,8 @@ import argparse
 import asyncio
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from pathlib import Path
 
 from jotflow.commands.run import (
     SettingsError,
@@ -25,6 +29,7 @@ from jotflow.commands.run import (
     load_settings,
 )
 from jotflow.config import Settings
+from jotflow.envfile import read_env
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
 from jotflow.policy import Policy, PolicyError, load_policy
 
@@ -54,6 +59,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_TIMEOUT,
         help=f"Seconds to wait for the test message's event (default: {DEFAULT_TIMEOUT:g})",
     )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Do not ask before posting, even in a terminal",
+    )
 
 
 class Refusal(Exception):
@@ -64,9 +74,14 @@ def _truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() not in {"", "0", "false", "no"}
 
 
-def check_opt_in(environ: Mapping[str, str]) -> None:
+def check_opt_in(environ: Mapping[str, str], dotenv: Mapping[str, str]) -> None:
     if _truthy(environ.get("CI")):
         raise Refusal("the live check never runs in CI; CI must not hold Slack tokens")
+    if OPT_IN in dotenv:
+        raise Refusal(
+            f"remove {OPT_IN} from .env; the opt-in is given on the command line for each "
+            "run, so it is never left on"
+        )
     if environ.get(OPT_IN) != "1":
         raise Refusal(
             f"the live check posts to Slack, so it runs only when you opt in for this run: "
@@ -91,6 +106,22 @@ def choose_channel(requested: str | None, environ: Mapping[str, str], policy: Po
             "configured channel"
         )
     return channel
+
+
+def confirm(
+    channel: str,
+    *,
+    interactive: bool,
+    ask: Callable[[str], str] | None = None,
+) -> bool:
+    """In a terminal, ask before posting. Scripts and ``--yes`` are not asked."""
+    if not interactive:
+        return True
+    try:
+        answer = (ask or input)(f"Post one test message to channel {channel}? [y/N] ")
+    except EOFError:
+        return False
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def _load() -> tuple[Settings, Policy]:
@@ -121,7 +152,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         if timeout <= 0:
             raise Refusal("--timeout must be more than 0 seconds")
-        check_opt_in(os.environ)
+        check_opt_in(os.environ, read_env(Path(".env")))
         channel = choose_channel(getattr(args, "channel", None), os.environ, policy)
     except Refusal as exc:
         print(f"jotflow check: refusing: {exc}", file=sys.stderr)
@@ -129,6 +160,10 @@ def run(args: argparse.Namespace) -> int:
 
     print(f"Live check: posting one test message to channel {channel}, then deleting it.")
     print("Stop any running JotFlow first: Slack sends each event to only one connection.")
+    interactive = not getattr(args, "yes", False) and sys.stdin.isatty()
+    if not confirm(channel, interactive=interactive):
+        print("jotflow check: not posting; nothing was sent", file=sys.stderr)
+        return EXIT_REFUSED
     return asyncio.run(
         run_live_check(make_slack(settings), channel, out=sys.stdout, timeout=timeout)
     )

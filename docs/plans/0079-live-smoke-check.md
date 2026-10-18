@@ -105,6 +105,11 @@ References: Permissions and Components in [architecture.md](../architecture.md);
   - with two configured channels and no choice it exits 2 and lists them
 - No workspace, channel, or company name appears in the diff.
 - CodeRabbit (local CLI, `--committed --base main -c AGENTS.md`): 2 findings, both fixed. One: Slack sends each event to only one Socket Mode connection, so the command, the timeout message, and the README now say to stop JotFlow first. Two: this plan's status and validation were not yet filled in.
+- Security review: approved, with 3 nits, all taken.
+  1. The claim that the opt-in "cannot be left on" overstated it. The check now refuses when `.env` contains `JOTFLOW_LIVE_CHECK`, and the docstring and README say what remains. Through Compose, `env_file` turns `.env` lines into the container's environment, and a shell profile can export the opt-in. A check inside the container cannot see the host's `.env`, so for that path the guards are the README rule and the prompt.
+  2. The README now says the reverse risk too: while the check is connected, a running JotFlow can miss real messages.
+  3. In a terminal the check asks "Post one test message to channel C...? [y/N]" before posting. `--yes` skips the question, and scripts without a terminal are not asked. A "no" or a closed input posts nothing and exits 2.
+- After the review: 290 tests pass, with total coverage at 96.59% and `commands/check.py` at 100%.
 - Not done here: the live run against the sandbox workspace. That is the maintainer's, and it is why the PR says `Refs #79`.
 
 ## Handoff notes

@@ -208,7 +208,7 @@ To run JotFlow without Docker, use `uv run jotflow run` from the same directory 
 
 ## Troubleshooting
 
-**Verify a fresh install** with the live check. It posts one marked test message to a channel listed in `jotflow.toml`, confirms JotFlow receives it and logs it without its text, then deletes it. It runs only when you opt in for that run. Stop JotFlow first, because Slack sends each event to only one connection, and a running JotFlow could take the check's event:
+**Verify a fresh install** with the live check. It posts one marked test message to a channel listed in `jotflow.toml`, confirms JotFlow receives it and logs it without its text, then deletes it. It runs only when you opt in for that run, and in a terminal it asks before posting. Stop JotFlow first. Slack sends each event to only one connection, so a running JotFlow could take the check's event, and while the check is connected JotFlow could miss real messages:
 
 ```sh
 docker compose stop jotflow
@@ -216,7 +216,7 @@ JOTFLOW_LIVE_CHECK=1 uv run jotflow check --live
 docker compose start jotflow
 ```
 
-Each step prints `ok` or `FAIL` with what to fix. If `jotflow.toml` lists several channels, pick one with `--channel C0123ABCD`. `uv run jotflow check` without `--live` only checks `.env` and `jotflow.toml`, and posts nothing. The live check refuses to run when `CI` is set, so it never runs in a pipeline.
+Keep `JOTFLOW_LIVE_CHECK` out of `.env` and your shell profile; the check refuses when `.env` has it. Each step prints `ok` or `FAIL` with what to fix. Add `--yes` to skip the question. If `jotflow.toml` lists several channels, pick one with `--channel C0123ABCD`. `uv run jotflow check` without `--live` only checks `.env` and `jotflow.toml`, and posts nothing. The live check refuses to run when `CI` is set, so it never runs in a pipeline.
 
 Every error names what to fix. The common ones:
 

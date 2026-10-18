@@ -62,7 +62,7 @@ def no_slack(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, float]]:
 
 
 def live_args(**overrides: Any) -> argparse.Namespace:
-    values: dict[str, Any] = {"live": True, "channel": None, "timeout": 30.0}
+    values: dict[str, Any] = {"live": True, "channel": None, "timeout": 30.0, "yes": False}
     values.update(overrides)
     return argparse.Namespace(**values)
 
@@ -100,6 +100,74 @@ def test_opt_in_in_dotenv_is_not_enough(
     (workspace / ".env").write_text("JOTFLOW_LIVE_CHECK=1\n", encoding="utf-8")
     assert check_command.run(live_args()) == 2
     assert no_slack == []
+
+
+def test_opt_in_left_in_dotenv_is_refused_even_with_the_variable_set(
+    workspace: Path,
+    no_slack: list[Any],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    (workspace / ".env").write_text("JOTFLOW_LIVE_CHECK=1\n", encoding="utf-8")
+    assert check_command.run(live_args()) == 2
+    assert "remove JOTFLOW_LIVE_CHECK from .env" in capsys.readouterr().err
+    assert no_slack == []
+
+
+class FakeStdin:
+    def __init__(self, tty: bool) -> None:
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+def test_terminal_run_asks_and_a_no_posts_nothing(
+    workspace: Path,
+    no_slack: list[Any],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    monkeypatch.setattr("sys.stdin", FakeStdin(tty=True))
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert check_command.run(live_args()) == 2
+    assert "not posting; nothing was sent" in capsys.readouterr().err
+    assert no_slack == []
+
+
+def test_terminal_run_posts_after_a_yes(
+    workspace: Path, no_slack: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    monkeypatch.setattr("sys.stdin", FakeStdin(tty=True))
+    prompts: list[str] = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
+    assert check_command.run(live_args()) == 0
+    assert prompts == ["Post one test message to channel C0TEST1? [y/N] "]
+    assert no_slack == [("C0TEST1", 30.0)]
+
+
+def test_yes_flag_skips_the_question(
+    workspace: Path, no_slack: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
+    monkeypatch.setattr("sys.stdin", FakeStdin(tty=True))
+    monkeypatch.setattr("builtins.input", pytest.fail)
+    assert check_command.run(live_args(yes=True)) == 0
+    assert no_slack == [("C0TEST1", 30.0)]
+
+
+def test_confirm_rules() -> None:
+    assert check_command.confirm("C1", interactive=False, ask=pytest.fail)
+    assert check_command.confirm("C1", interactive=True, ask=lambda p: " YES ")
+    assert not check_command.confirm("C1", interactive=True, ask=lambda p: "")
+
+    def closed(prompt: str) -> str:
+        raise EOFError
+
+    assert not check_command.confirm("C1", interactive=True, ask=closed)
 
 
 @pytest.mark.parametrize("value", ["true", "1", "yes"])
