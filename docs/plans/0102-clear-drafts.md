@@ -5,7 +5,7 @@
 - Issue: #102
 - Also serves: #11 (the store), #96
 - Draft PR: #103
-- Status: implementing
+- Status: ready for review
 - Last verified: `make check` green locally on 2026-10-18 after rebasing onto main with #96
 - Next safe action: review
 
@@ -49,15 +49,16 @@ Team lead's decision, 2026-10-18: clear applied, rejected, and superseded drafts
 - [x] `clear_draft` and the refused retry
 - [x] Contract tests
 - [x] architecture.md retention rule
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: no findings
 - [x] `make check` passes
 - [x] Rebase onto main after #96 merges
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
 - Contract tests, run against both stores: applied, rejected, and superseded drafts are cleared with the hash, approver, approval time, result, participants, and non-text fields intact; an update draft loses only its body and comment; a failed draft stays until `clear_draft`, after which a retry raises `DraftClearedError` and `try_transition` returns None; a live draft (pending, approved, executing, reconciling) cannot be cleared; `clear_draft` is a no-op once final.
 - `secure_delete`: a SQLite test writes a draft, rejects it, closes the store, and finds no copy of the text in any file. With `secure_delete` off, the same steps leave the text in the main database file, so the test is meaningful.
+- CodeRabbit: completed with no findings.
 - Schema test: SQLite splices an added column into the stored CREATE TABLE after the last column, mid-line, and a `--` comment in the ALTER would swallow the closing parenthesis. Added columns therefore use `/* */` comments, documented in `migrations.py`, and the schema test now tokenises the column list and gives a `--` comment to the column that starts its line. Tests cover added columns, a bad comment on one, and the spliced proposals table.
 
 ## Handoff notes
