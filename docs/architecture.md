@@ -272,7 +272,7 @@ stateDiagram-v2
     executing --> reconciling: timeout, crash, or restart
     reconciling --> applied: marker found in repo
     reconciling --> approved: marker absent, retry allowed
-    reconciling --> failed: retry limit reached
+    reconciling --> failed: retry limit reached, or the agent reports an error
     executing --> failed: agent reports an error
     failed --> approved: a person retries from the card, while the draft is kept
     applied --> [*]
