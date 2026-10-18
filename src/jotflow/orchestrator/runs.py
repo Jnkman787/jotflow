@@ -91,7 +91,7 @@ class RunLifecycle:
             token = self._registry.issue(grant_for(run), token_ttl(run, self._now()))
         except Exception:
             log.exception("run %s: %s", run.id, TOKEN_FAILURE)
-            await self._store.finish_run(run.id, RunStatus.FAILED, error=TOKEN_FAILURE)
+            await self.finish(run.id, RunStatus.FAILED, error=TOKEN_FAILURE)
             raise
         log.info("run %s started (%s)", run.id, run.kind.value)
         return StartedRun(run, token)

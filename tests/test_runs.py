@@ -201,6 +201,20 @@ async def test_a_token_failure_fails_the_run(
     assert (run.status, run.error) == (RunStatus.FAILED, TOKEN_FAILURE)
 
 
+async def test_a_token_failure_on_an_execution_run_reconciles_its_proposal(
+    store: Store, clock: Clock
+) -> None:
+    full = TokenRegistry(clock=clock.mono, max_live=0)
+    lifecycle = RunLifecycle(store, full, clock=clock)
+    await _approved(store)
+    with pytest.raises(Exception, match="live run tokens"):
+        await _start_execution(store, lifecycle)
+    (run,) = await store.thread_runs(CH, THREAD)
+    assert (run.status, run.error) == (RunStatus.FAILED, TOKEN_FAILURE)
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.RECONCILING
+
+
 async def test_the_token_is_never_stored_or_logged(
     tmp_path: Path, clock: Clock, caplog: pytest.LogCaptureFixture
 ) -> None:
