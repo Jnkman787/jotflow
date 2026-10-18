@@ -24,9 +24,12 @@ def test_bot_scopes_match_architecture_permissions() -> None:
         [
             "channels:history",
             "groups:history",
+            "channels:read",
+            "groups:read",
             "chat:write",
             "reactions:read",
             "reactions:write",
+            "pins:write",
             "users:read",
             "commands",
         ]

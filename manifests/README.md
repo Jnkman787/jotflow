@@ -27,8 +27,10 @@ A name has at most 35 characters: letters, digits, spaces, `.`, `-` and `_`, sta
 | Setting | Value | Why |
 |---|---|---|
 | Bot scopes | `channels:history`, `groups:history` | Read messages in public and private channels the bot is in |
+| | `channels:read`, `groups:read` | Confirm the bot is in each configured channel, and detect channels shared with other organisations |
 | | `chat:write` | Post proposal cards, questions, and issue links |
 | | `reactions:read`, `reactions:write` | Keyword reactions and their acknowledgements, optional reaction approval |
+| | `pins:write` | Pin a short help message when JotFlow joins a channel |
 | | `users:read` | Show names on cards and skip guests and external users |
 | | `commands` | The `/jotflow` slash command |
 | Events | `message.channels`, `message.groups`, `reaction_added` | Wake JotFlow when someone posts or reacts |

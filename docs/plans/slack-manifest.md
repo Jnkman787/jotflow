@@ -14,7 +14,7 @@ Each team creates its own Slack app for JotFlow by pasting a manifest into Slack
 
 Done when:
 
-- [x] `render_manifest(bot_name)` returns a manifest with exactly the bot scopes in the architecture Permissions section for v1: `channels:history`, `groups:history`, `chat:write`, `reactions:read`, `reactions:write`, `users:read`, `commands`
+- [x] `render_manifest(bot_name)` returns a manifest with exactly the bot scopes in the architecture Permissions section for v1: `channels:history`, `groups:history`, `channels:read`, `groups:read`, `chat:write`, `reactions:read`, `reactions:write`, `pins:write`, `users:read`, `commands`. The three read and pin scopes were added in review, along with the matching Permissions row in architecture.md
 - [x] Socket Mode is on, and event subscriptions cover `message.channels`, `message.groups`, and `reaction_added`
 - [x] The `/jotflow` slash command is declared
 - [x] Interactivity is on, so Approve, Request Changes, and dialogs can reach JotFlow over Socket Mode

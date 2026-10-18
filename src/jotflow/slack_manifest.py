@@ -24,13 +24,16 @@ _BOT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
 # v1 bot scopes, from the Permissions section of docs/architecture.md.
 # app_mentions:read arrives with questions in M5 (D12).
 BOT_SCOPES: tuple[str, ...] = (
-    "channels:history",
-    "groups:history",
-    "chat:write",
-    "reactions:read",
-    "reactions:write",
-    "users:read",
-    "commands",
+    "channels:history",  # read messages and threads in public channels the bot is in
+    "groups:history",  # read messages and threads in private channels the bot is in
+    "channels:read",  # check membership and detect shared public channels (D7 auto warning)
+    "groups:read",  # the same for private channels
+    "chat:write",  # post proposal cards, questions, and issue links
+    "reactions:read",  # keyword reactions and optional reaction approval (D7, D10)
+    "reactions:write",  # acknowledge a recognised keyword with a reaction
+    "pins:write",  # pin the short help message when JotFlow joins a channel
+    "users:read",  # display names on cards; skip guests and external users
+    "commands",  # the /jotflow slash command
 )
 
 # message.channels and message.groups need the two history scopes;

@@ -29,6 +29,7 @@ src/jotflow/
   models.py       shared contracts: proposals, classifications, topics, channel modes
   config.py       environment-driven settings
   cli.py          entry point
+  commands/       one module per CLI subcommand, such as init and run
   slack_manifest.py  renders the Slack app manifest; default checked in under manifests/
   orchestrator/   event ingest, debouncing, topic index, proposal lifecycle, approval cards
   whiteboard/     the MCP server
