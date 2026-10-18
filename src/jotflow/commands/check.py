@@ -128,6 +128,7 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
 
     print(f"Live check: posting one test message to channel {channel}, then deleting it.")
+    print("Stop any running JotFlow first: Slack sends each event to only one connection.")
     return asyncio.run(
         run_live_check(make_slack(settings), channel, out=sys.stdout, timeout=timeout)
     )

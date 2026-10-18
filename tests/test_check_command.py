@@ -136,6 +136,7 @@ def test_live_check_names_the_channel_before_posting(
     assert check_command.run(live_args(timeout=5.0)) == 0
     out = capsys.readouterr().out
     assert "posting one test message to channel C0TEST1, then deleting it" in out
+    assert "Stop any running JotFlow first" in out
     assert no_slack == [("C0TEST1", 5.0)]
 
 

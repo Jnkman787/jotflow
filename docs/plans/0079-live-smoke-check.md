@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #79
-- Draft PR: to be opened
-- Status: implementing
-- Last verified: plan written, no code yet
-- Next safe action: open the draft PR, then write the check's core in `src/jotflow/live_check.py`
+- Draft PR: #83
+- Status: completed
+- Last verified: `make check` green locally on Python 3.12 after rebasing onto `main`: 285 tests, 96.55% coverage
+- Next safe action: review and merge #83; then the maintainer runs `JOTFLOW_LIVE_CHECK=1 make live-check` in the sandbox workspace with JotFlow stopped, and ticks the live items on #79 and the issues it covers
 
 ## Objective and done-when
 
@@ -14,11 +14,11 @@ A maintainer runs one command against a real Slack workspace to prove that a fre
 
 Done when:
 
-- [ ] `jotflow check --live` runs against any workspace configured with `jotflow init`, with no hard-coded workspace details
-- [ ] It refuses to run unless `JOTFLOW_LIVE_CHECK=1` is set, refuses outright when `CI` is set, and names the channel it will post to before posting
-- [ ] It deletes its own test message, including after a failure partway through
-- [ ] Unit tests cover its logic with fakes; no CI job runs it live
-- [ ] README troubleshooting names it as the way to verify a fresh install
+- [x] `jotflow check --live` runs against any workspace configured with `jotflow init`, with no hard-coded workspace details
+- [x] It refuses to run unless `JOTFLOW_LIVE_CHECK=1` is set, refuses outright when `CI` is set, and names the channel it will post to before posting
+- [x] It deletes its own test message, including after a failure partway through
+- [x] Unit tests cover its logic with fakes; no CI job runs it live
+- [x] README troubleshooting names it as the way to verify a fresh install
 
 This PR uses `Refs #79`. The live run itself is the maintainer's, and #79 stays open until it passes.
 
@@ -45,7 +45,7 @@ References: Permissions and Components in [architecture.md](../architecture.md);
 2. **Membership.** `orchestrator.slack.missing_channels` for the chosen channel. A non-member fails with the `/invite` instruction.
 3. **Socket Mode.** Connect with the app token and listen for `message` events. Bolt's self-event filter is turned off for this connection only, because the point is to receive the bot's own message.
 4. **Post.** Print the channel id, then post one message marked as a JotFlow live check, with a random nonce. Everything after this step runs inside `try`/`finally` so the message is always deleted.
-5. **Receive.** Wait for the event whose channel and ts match the posted message. A timeout fails with a hint about the `message.channels` and `message.groups` event subscriptions.
+5. **Receive.** Wait for the event whose channel and ts match the posted message. Slack sends each event to only one Socket Mode connection, so a running JotFlow could take it. The command says to stop JotFlow before posting, and the timeout message repeats it, along with a hint about the `message.channels` and `message.groups` event subscriptions.
 6. **Self-filter.** Run the received payload through JotFlow's real `EventFilter` with the bot's identity. It must be ignored. That is D8's rule, checked against a real Slack payload instead of a fixture.
 7. **Redaction.** Run the same payload through a filter that treats the sender as a stranger. Capture the log line `log_decision` writes, and check that it carries the channel id and ts but not the message text.
 8. **Clean up.** `chat.delete` the test message, then close the connection. If the delete fails, the check prints the ts so the message can be removed by hand, and exits 1.
@@ -63,20 +63,59 @@ References: Permissions and Components in [architecture.md](../architecture.md);
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Core steps and the `LiveSlack` protocol in `live_check.py`
-- [ ] `BoltLiveSlack` adapter
-- [ ] `jotflow check` with `--live`, opt-in, CI refusal, and channel choice; `make live-check`
-- [ ] Add or update tests
-- [ ] Update documentation: README troubleshooting, AGENTS.md layout and commands
-- [ ] `make check` passes
-- [ ] Local CodeRabbit review, or skipped
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] Core steps and the `LiveSlack` protocol in `live_check.py`
+- [x] `BoltLiveSlack` adapter
+- [x] `jotflow check` with `--live`, opt-in, CI refusal, and channel choice; `make live-check`
+- [x] Add or update tests
+- [x] Update documentation: README troubleshooting, AGENTS.md layout and commands
+- [x] `make check` passes
+- [x] Local CodeRabbit review, or skipped
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check`: line endings, ruff, and mypy strict are clean. 285 tests pass, with total coverage at 96.55%. `live_check.py` and `commands/check.py` are both at 100%. 42 tests are new, in `tests/test_live_check.py` and `tests/test_check_command.py`.
+- The steps are tested with a fake `LiveSlack`:
+  - a full pass in the expected call order
+  - the message text never reaching the report
+  - unrelated events skipped
+  - the legacy `bot_message` subtype
+  - a bad token, a non-member, a Socket Mode failure, or a failed post: nothing is posted or deleted where it should not be
+  - a receive timeout that still deletes the message
+  - an own message that is accepted
+  - text in the log, and a log line without pointers
+  - a message ignored for others
+  - a failed delete, which names the ts
+  - the ingest logger restored afterwards
+- The adapter is tested against fake Bolt objects: scopes and ids, missing scopes, an unreachable Slack, membership and missing scope, message routing and an idempotent close, connect failures, post and delete, their failures, and a missing ts. A real `AsyncApp` built by the adapter has no `AsyncIgnoringSelfEvents` middleware; a default `AsyncApp` has it, so that test is not vacuous.
+- The command is tested for:
+  - offline success and configuration errors
+  - refusing without the opt-in
+  - refusing with the opt-in only in `.env`
+  - refusing when `CI` is `true`, `1`, or `yes`; `CI=false` does not block
+  - naming the channel and the stop-JotFlow note before posting
+  - a non-positive timeout
+  - the channel choice rules
+  - building the real adapter
+- Manual, offline, with made-up tokens and the example policy:
+  - `jotflow check` exits 0
+  - `--live` without the opt-in exits 2
+  - with `CI=true` it exits 2
+  - with two configured channels and no choice it exits 2 and lists them
+- No workspace, channel, or company name appears in the diff.
+- CodeRabbit (local CLI, `--committed --base main -c AGENTS.md`): 2 findings, both fixed. One: Slack sends each event to only one Socket Mode connection, so the command, the timeout message, and the README now say to stop JotFlow first. Two: this plan's status and validation were not yet filled in.
+- Not done here: the live run against the sandbox workspace. That is the maintainer's, and it is why the PR says `Refs #79`.
 
 ## Handoff notes
 
-None yet.
+- Run it from the repository folder, with JotFlow stopped, using `docker compose stop jotflow`:
+  ```sh
+  JOTFLOW_LIVE_CHECK=1 make live-check
+  ```
+  Add `--channel` through `uv run jotflow check --live --channel C...` if `jotflow.toml` lists several channels. Start JotFlow again afterwards.
+- A pass covers these live items:
+  - #5: the app installs from the manifest; the bot reads a channel it is in, and private channels when a private one is chosen
+  - #7 and #10: the tokens `jotflow init` saved work
+  - #8: connects, and its event filtering and redaction hold on a real payload
+- The reconnect criterion on #8 still needs a manual network drop. The check does not simulate one.

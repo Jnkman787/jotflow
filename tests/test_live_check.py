@@ -187,6 +187,7 @@ async def test_missing_event_times_out_and_still_deletes() -> None:
     assert code == EXIT_FAILED
     assert "FAIL  receive: no event for the test message within 0.05s" in out
     assert "message.channels and message.groups" in out
+    assert "stop any running JotFlow first" in out
     assert f"delete {CHANNEL} {TS}" in slack.calls
     assert "ok    clean up: test message deleted" in out
 

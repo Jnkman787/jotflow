@@ -182,8 +182,10 @@ async def _wait_for(
     except TimeoutError:
         raise StepFailed(
             "receive",
-            f"no event for the test message within {timeout:g}s. Check that the app "
-            "subscribes to message.channels and message.groups, and that Socket Mode is on",
+            f"no event for the test message within {timeout:g}s. Slack sends each event to "
+            "only one Socket Mode connection, so stop any running JotFlow first "
+            "(docker compose stop jotflow). Then check that the app subscribes to "
+            "message.channels and message.groups, and that Socket Mode is on",
         ) from None
 
 
