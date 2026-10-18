@@ -70,7 +70,7 @@ Proposals take `ProposeIssueArgs` and `ProposeUpdateArgs`, the fixture models pl
 - [x] CLI command
 - [x] Tests: every fixture, sockets blocked, CLI output
 - [x] README demo section
-- [x] CodeRabbit once, or skipped: see Validation
+- [x] CodeRabbit: skipped, rate-limited
 - [x] `make check` passes
 - [x] Mark the PR ready for review
 
