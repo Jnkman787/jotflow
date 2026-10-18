@@ -4,7 +4,26 @@
 # which starts each run when JotFlow asks. It never holds JotFlow's .env, Slack
 # tokens, or database; it gets its own agent.env from Compose.
 #
-# Base images match the JotFlow image's, pinned by tag and digest.
+# Base images match the JotFlow image's, pinned by tag and digest. The GitHub
+# MCP server the presets start (#22) is pinned by release and sha256, one
+# checksum per architecture, from the release's checksums file.
+
+ARG TARGETARCH
+ARG GITHUB_MCP_VERSION=2.0.2
+
+FROM scratch AS github-mcp-amd64
+ARG GITHUB_MCP_VERSION
+ADD --checksum=sha256:815e27d931c796af0c97f24fd211e14f8a4607d4528377719a5ad2352086b0b0 \
+    https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_VERSION}/github-mcp-server_Linux_x86_64.tar.gz \
+    /github-mcp-server.tar.gz
+
+FROM scratch AS github-mcp-arm64
+ARG GITHUB_MCP_VERSION
+ADD --checksum=sha256:73f5e76c6a3b5e0d731e1134a7c38575df6ec96c646192095a3be2d4d0d6c1fc \
+    https://github.com/github/github-mcp-server/releases/download/v${GITHUB_MCP_VERSION}/github-mcp-server_Linux_arm64.tar.gz \
+    /github-mcp-server.tar.gz
+
+FROM github-mcp-${TARGETARCH} AS github-mcp
 
 FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
 
@@ -32,8 +51,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
 
-# The agent CLIs install through npm. Presets (#22) name exact versions, for
-# example "@anthropic-ai/claude-code@2.1.0". Empty builds a runner-only image.
+# The agent CLIs install through npm, at the exact versions the presets were
+# verified with (docs/presets.md): docker-compose.yml passes
+# "@anthropic-ai/claude-code@2.1.303". Empty builds a runner-only image.
 ARG AGENT_NPM_PACKAGES=""
 ARG AGENT_UID=10002
 
@@ -44,6 +64,12 @@ RUN apt-get update \
          npm install --global --no-fund --no-audit ${AGENT_NPM_PACKAGES} \
          && npm cache clean --force; \
        fi
+
+RUN --mount=type=bind,from=github-mcp,source=/github-mcp-server.tar.gz,target=/tmp/github-mcp-server.tar.gz \
+    tar -xzf /tmp/github-mcp-server.tar.gz -C /usr/local/bin github-mcp-server \
+    && chown root:root /usr/local/bin/github-mcp-server \
+    && chmod 0755 /usr/local/bin/github-mcp-server \
+    && /usr/local/bin/github-mcp-server --version
 
 RUN groupadd --system --gid "${AGENT_UID}" agent \
     && useradd --system --uid "${AGENT_UID}" --gid agent \

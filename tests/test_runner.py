@@ -18,6 +18,7 @@ import httpx2
 import pytest
 
 from jotflow import cli
+from jotflow.adapters.presets import argv_for, mcp_config
 from jotflow.adapters.runner import (
     CONVERSATION_KINDS,
     DIR_PREFIX,
@@ -27,10 +28,8 @@ from jotflow.adapters.runner import (
     Runner,
     RunnerConfig,
     RunState,
-    argv_for,
     build_runner_app,
     child_env,
-    mcp_config,
     parse_command,
     remove_stale,
 )
@@ -140,7 +139,7 @@ async def finish(runner: Runner, run_id: str) -> dict[str, Any]:
     ("overrides", "problem"),
     [
         ({"secret": "short"}, "at least 32 characters"),
-        ({"command": ()}, "agent command is empty"),
+        ({"command": ()}, "exactly one of JOTFLOW_AGENT_PRESET"),
         ({"mcp_url": "file:///x"}, "http or https"),
         ({"env_allow": ("bad name",)}, "not an environment variable name"),
         ({"env_allow": ("JOTFLOW_SLACK_BOT_TOKEN",)}, "may not be passed to the agent"),

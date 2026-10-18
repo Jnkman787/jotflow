@@ -14,6 +14,9 @@ as a child process with only what that run may have:
   write token. A missing token refuses the run; there is no fallback.
 - a time limit, after which the whole process group is killed
 
+What to start comes from a named preset (#22), ``JOTFLOW_AGENT_PRESET``, or
+from the team's own ``JOTFLOW_AGENT_COMMAND``. See :mod:`jotflow.adapters.presets`.
+
 The runner authenticates JotFlow with a shared secret, compared in constant
 time and never passed to the agent. It refuses any ``Origin``, any ``Host`` off
 its allowlist, query strings, and large bodies, like the MCP gate does. The
@@ -33,7 +36,7 @@ import re
 import shutil
 import signal
 import tempfile
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -46,6 +49,15 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from jotflow.adapters.presets import (
+    DEFAULT_GITHUB_MCP,
+    GITHUB_TOKEN_CHARS,
+    MODEL_NAME,
+    PRESETS,
+    CommandPreset,
+    Preset,
+    RunContext,
+)
 from jotflow.models import RunKind
 from jotflow.store.base import DEFAULT_RUN_TIMEOUTS
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, MAX_TOKEN_TTL_SECONDS, TOKEN_PREFIX
@@ -117,7 +129,9 @@ class RunnerConfig:
 
     secret: str = field(repr=False)
     mcp_url: str
-    command: tuple[str, ...]
+    # Exactly one of these: the team's own argv template, or a named preset.
+    command: tuple[str, ...] = ()
+    preset: Preset | None = None
     kinds: frozenset[RunKind] = CONVERSATION_KINDS
     read_token: str | None = field(default=None, repr=False)
     write_token: str | None = field(default=None, repr=False)
@@ -125,12 +139,15 @@ class RunnerConfig:
     allowed_hosts: frozenset[str] = frozenset()
     max_live: int = MAX_LIVE_RUNS
     workdir: Path | None = None
+    # The model per run kind; a kind left out gets the preset's default.
+    models: Mapping[RunKind, str] = field(default_factory=dict)
+    github_mcp: str = DEFAULT_GITHUB_MCP
 
     def __post_init__(self) -> None:
         if len(self.secret) < 32:
             raise ConfigError("the runner secret must be at least 32 characters")
-        if not self.command:
-            raise ConfigError("the agent command is empty")
+        if bool(self.command) == (self.preset is not None):
+            raise ConfigError("set exactly one of JOTFLOW_AGENT_PRESET and JOTFLOW_AGENT_COMMAND")
         if not self.mcp_url.startswith(("http://", "https://")):
             raise ConfigError("the MCP URL must be http or https")
         if self.kinds not in (CONVERSATION_KINDS, EXECUTION_KINDS):
@@ -154,6 +171,25 @@ class RunnerConfig:
                     f"{name} may not be passed to the agent: JotFlow, Slack, and GitHub "
                     "variables are set by the runner itself"
                 )
+        self._check_preset()
+
+    def _check_preset(self) -> None:
+        if self.preset is None and self.models:
+            raise ConfigError(
+                "JOTFLOW_AGENT_MODEL settings need a preset; put the model in "
+                "JOTFLOW_AGENT_COMMAND instead"
+            )
+        for kind, model in self.models.items():
+            if kind not in self.kinds:
+                raise ConfigError(
+                    f"this runner does not serve {kind.value} runs, so has no model for them"
+                )
+            if not MODEL_NAME.fullmatch(model):
+                raise ConfigError(f"{model!r} is not a model name")
+        if self.preset is not None and self.preset.github_token_in_config:
+            for token in (self.read_token, self.write_token):
+                if token is not None and not GITHUB_TOKEN_CHARS.fullmatch(token):
+                    raise ConfigError("the GitHub token holds characters a GitHub token never has")
 
     @property
     def serves_execution(self) -> bool:
@@ -163,6 +199,13 @@ class RunnerConfig:
     def live_limit(self) -> int:
         """Execution runs go one at a time; conversation runs up to ``max_live``."""
         return 1 if self.serves_execution else self.max_live
+
+    @property
+    def agent(self) -> Preset:
+        return self.preset if self.preset is not None else CommandPreset(self.command)
+
+    def model(self, kind: RunKind) -> str | None:
+        return self.models.get(kind) or self.agent.default_models.get(kind)
 
     def github_token(self, kind: RunKind) -> str | None:
         """The one GitHub token a run of ``kind`` gets. No fallback between them."""
@@ -182,49 +225,46 @@ def parse_command(raw: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-def mcp_config(url: str, token: str) -> dict[str, Any]:
-    """The per-run MCP config, in the ``mcpServers`` shape agent CLIs read."""
-    return {
-        "mcpServers": {
-            "jotflow": {
-                "type": "http",
-                "url": url,
-                "headers": {"Authorization": f"Bearer {token}"},
-            }
-        }
-    }
+def parse_preset(raw: str) -> Preset:
+    """``JOTFLOW_AGENT_PRESET``: one of :data:`PRESETS`, by name."""
+    preset = PRESETS.get(raw.strip())
+    if preset is None:
+        names = ", ".join(sorted(PRESETS))
+        raise ConfigError(f"JOTFLOW_AGENT_PRESET must be one of: {names}")
+    return preset
 
 
 def child_env(
-    config: RunnerConfig, kind: RunKind, run_id: str, run_dir: Path, environ: Mapping[str, str]
+    config: RunnerConfig,
+    kind: RunKind,
+    run_id: str,
+    run_dir: Path,
+    environ: Mapping[str, str],
+    *,
+    extra: Mapping[str, str] | None = None,
+    github_token_env: bool = True,
 ) -> dict[str, str]:
-    """The agent's whole environment. Only what is named here, from ``environ``."""
+    """The agent's whole environment. Only what is named here, from ``environ``,
+    plus a preset's ``extra``, which never overrides the runner's own names."""
     env = {name: environ[name] for name in (*BASE_ENV, *config.env_allow) if name in environ}
+    env.update({k: v for k, v in (extra or {}).items() if not _FORBIDDEN_ENV.search(k)})
     token = config.github_token(kind)
     if token is None:  # pragma: no cover - launch refuses this first
         raise ConfigError(f"no GitHub token for {kind.value} runs")
+    if github_token_env:
+        env.update({"GITHUB_TOKEN": token, "GH_TOKEN": token})
     env.update(
         {
             # HOME stays the agent user's own, where the CLI keeps its model login;
             # only scratch files go to the run's private directory.
             "HOME": environ.get("HOME", str(run_dir)),
             "TMPDIR": str(run_dir),
-            "GITHUB_TOKEN": token,
-            "GH_TOKEN": token,
             "JOTFLOW_RUN_ID": run_id,
             "JOTFLOW_RUN_KIND": kind.value,
             "JOTFLOW_MCP_CONFIG": str(run_dir / "mcp.json"),
         }
     )
     return env
-
-
-def argv_for(command: Sequence[str], run_id: str, config_path: Path) -> list[str]:
-    """Fill ``{mcp_config}`` and ``{run_id}`` in each argument. No shell, no other fields."""
-    return [
-        part.replace("{mcp_config}", str(config_path)).replace("{run_id}", run_id)
-        for part in command
-    ]
 
 
 def time_limit(kind: RunKind) -> float:
@@ -327,13 +367,37 @@ class Runner:
         run_dir = Path(tempfile.mkdtemp(prefix=DIR_PREFIX, dir=self._config.workdir))
         try:
             config_path = run_dir / "mcp.json"
+            github_token = self._config.github_token(run.kind)
+            if github_token is None:  # pragma: no cover - launch refuses this first
+                raise ConfigError(f"no GitHub token for {run.kind.value} runs")
+            plan = self._config.agent.plan(
+                RunContext(
+                    kind=run.kind,
+                    run_id=run.run_id,
+                    run_dir=run_dir,
+                    config_path=config_path,
+                    mcp_url=self._config.mcp_url,
+                    mcp_token=token,
+                    github_token=github_token,
+                    model=self._config.model(run.kind),
+                    github_mcp=self._config.github_mcp,
+                )
+            )
             fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(mcp_config(self._config.mcp_url, token), handle)
-            env = child_env(self._config, run.kind, run.run_id, run_dir, self._environ)
+                json.dump(plan.config, handle)
+            env = child_env(
+                self._config,
+                run.kind,
+                run.run_id,
+                run_dir,
+                self._environ,
+                extra=plan.env,
+                github_token_env=plan.github_token_env,
+            )
             try:
                 run.process = await asyncio.create_subprocess_exec(
-                    *argv_for(self._config.command, run.run_id, config_path),
+                    *plan.argv,
                     cwd=run_dir,
                     env=env,
                     stdin=asyncio.subprocess.DEVNULL,
