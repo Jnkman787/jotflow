@@ -54,12 +54,12 @@ Make these changes in one pull request, `chore(release): 0.1.0`, through the nor
 1. **The version**, in three places that must agree:
    - `version` in `pyproject.toml`
    - `__version__` in `src/jotflow/__init__.py`
-   - `uv.lock`, by running `uv lock` after the first two
+   - `uv.lock`, by running `uv lock` after the first two. CI's `uv sync --locked` fails the pull request if you forget, and the release's `uv lock --check` fails the tag
 2. **CHANGELOG.md:** change `## [0.1.0] - unreleased` to today's date, as `## [0.1.0] - 2026-10-20`.
 3. **README.md:** make the status banner say the release, for example `**Status: 0.1.0, the first release.**`. Remove any line that still says "preparing".
 4. **docs/releases/v0.1.0.md:** read it once more against the CHANGELOG.
 
-`make check` passes, and the pull request also runs release.yml's dry run, because it touches `pyproject.toml`. That dry run builds all four images and the package and pushes nothing, so a release is proven before its tag exists. Merge only when every check is green.
+`make check` passes, and the pull request also runs release.yml's dry run, because it touches `pyproject.toml`. That dry run builds both images for both architectures, and the package, and pushes nothing, so a release is proven before its tag exists. Merge only when every check is green.
 
 ## Tag and push
 
@@ -80,7 +80,7 @@ Push the one tag by name. Never push with `--tags`, which pushes every local tag
 
 Open **Actions**, then the **Release** run for `v0.1.0`. The jobs run in this order:
 
-1. **Version matches the tag.** It fails at once if the tag, `pyproject.toml`, and `__version__` disagree. Nothing has been published yet, so see [A bad tag](#a-bad-tag).
+1. **Version matches the tag.** It fails at once if `uv.lock` is stale, as `uv lock --check` reports, or if the tag, `pyproject.toml`, and `__version__` disagree. Nothing has been published yet, so see [A bad tag](#a-bad-tag).
 2. **Build the Python package**, alongside the image builds. It also installs the wheel alone and renders the published Compose files.
 3. **Build jotflow and jotflow-agent**, once per architecture. The arm64 builds run on GitHub's arm64 runners and take the longest.
 4. **Publish jotflow and jotflow-agent.** Each tags one index as `:0.1.0`, and as `:latest` when this is the highest release, then attests it.
@@ -166,4 +166,4 @@ Then release the fix as the next patch version, such as `v0.1.1`, through this r
 
 ### Bad images
 
-Don't delete a published image version. Fix forward with the next patch version. Its publish job moves `:latest` to the fix, and `jotflow init` pins new installs to it. In the GitHub release for the bad version, say which version to use instead, and mark the release as not the latest.
+Don't delete a published image version. Fix forward with the next patch version. Its publish job moves `:latest` to the fix, and `jotflow init` pins new installs to it. Anyone who pinned the bad version, in `.env` or in a Compose file setup wrote, can still pull it, and nothing tells them to move. So the GitHub release for the bad version is where they find out. Edit it to name the version to use instead, and mark it as not the latest.

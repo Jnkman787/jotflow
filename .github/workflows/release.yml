@@ -54,6 +54,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          # A release checks from a clean slate: no cache another run could have poisoned.
+          enable-cache: false
+
+      - name: Check uv.lock matches pyproject.toml
+        # A version bump without `uv lock` leaves the lock naming the old
+        # version; fail the release rather than tag a stale lock.
+        run: uv lock --check
+
       - name: Check the tag, pyproject.toml and __version__ agree
         id: check
         env:
