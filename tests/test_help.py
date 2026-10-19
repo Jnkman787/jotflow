@@ -11,6 +11,7 @@ import pytest
 
 from jotflow.models import ChannelMode
 from jotflow.orchestrator.help import (
+    MODE_LINES,
     NOT_SET_UP,
     TIP,
     BoltHelpSlack,
@@ -395,3 +396,12 @@ async def test_the_slash_command_routes_repos() -> None:
 
     await app.commands[SLASH_COMMAND](ack=ack, command={"text": "repos", "channel_id": CH})
     assert answers[0].startswith("This channel feeds:")
+
+
+def test_help_for_a_paused_channel_says_a_running_write_may_finish() -> None:
+    # Queued runs wait, but one already running may finish its write (#155).
+    text = MODE_LINES[ChannelMode.PAUSED]
+    assert text == (
+        "JotFlow is paused here: it starts nothing new and posts nothing. "
+        "A run already in progress may finish."
+    )

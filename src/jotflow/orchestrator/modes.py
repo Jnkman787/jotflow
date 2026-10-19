@@ -52,7 +52,8 @@ MEANING = {
         "posts it as a card."
     ),
     ChannelMode.PAUSED: (
-        "JotFlow reads nothing and writes nothing here until someone sets another mode."
+        "JotFlow starts nothing new and posts nothing here until someone sets another mode. "
+        "A run already in progress may finish."
     ),
 }
 AUTO_WARNING = (
