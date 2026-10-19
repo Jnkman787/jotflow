@@ -1058,14 +1058,15 @@ def _plan_agent_files(options: InitOptions, choice: AgentChoice, env: dict[str, 
         if profiles is not None:
             env_updates[agent_setup.PROFILES_KEY] = profiles
             notes.append(
-                f"  Also set {agent_setup.PROFILES_KEY}={profiles} in {options.env_file}, so "
+                f"  Setup also set {agent_setup.PROFILES_KEY}={profiles} in {options.env_file}, so "
                 "`docker compose up -d` starts the agent containers too."
             )
     else:
         notes.append(
             f"  Before the agent containers can start, fill in {agent_setup.READ_TOKEN_KEY} in "
             f"{options.agent_file} and {agent_setup.WRITE_TOKEN_KEY} in {options.agent_exec_file}, "
-            "and the model login, as their comments describe. Then run jotflow init again, "
+            f"and the model login, as their comments describe. Then run {launch_command()} init "
+            "again, "
             f"or add {agent_setup.PROFILES_KEY}={agent_setup.AGENT_PROFILE} to {options.env_file}."
         )
     if {drafting.how, execution.how} & {"rotated", "regenerated"}:
@@ -1153,7 +1154,7 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     console.say(_saved_tokens_message(options.env_file))
     if COMPOSE_FILE_KEY in updates:
         console.say(
-            f"  Also set {COMPOSE_FILE_KEY} there, so `docker compose up -d` "
+            f"  Setup also set {COMPOSE_FILE_KEY} there, so `docker compose up -d` "
             "hands jotflow.toml to JotFlow."
         )
     if COMPOSE_SEPARATOR_KEY in updates:

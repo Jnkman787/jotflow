@@ -187,7 +187,7 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
    - **a nickname**, a short word people type to point at the repo. Later, starting a Slack message with `re: web#42` points it at issue 42 in that repo.
    - **what it covers**, in one sentence, for example `The customer-facing website`. When a channel feeds several repos, the agent uses these sentences to choose one.
    - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo. A comma-separated list, for example `bug, enhancement`, narrows it to just those; list only labels that already exist on the repo.
-6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Setup accepts `claude-code`; `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent; or `none` to leave the agent off, which is the default for now. Any other name is refused for now. When your agent files already set a command, the default is `command`. If you choose `claude-code`, setup then asks which model the agent should use. Press Enter for the preset's defaults. A name you type applies to both drafting and execution; for a different model per run kind, set `JOTFLOW_AGENT_MODEL_DRAFTING`, `JOTFLOW_AGENT_MODEL_QUESTION`, or `JOTFLOW_AGENT_MODEL_EXECUTION` in the agent env files by hand, and setup keeps them. It also sets up the agent containers' files; see [the agent containers](#the-agent-containers) below.
+6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Setup accepts `claude-code`; `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent; or `none` to leave the agent off, which is the default for now. Any other name is refused for now. The experimental `codex` preset, for drafting and question runs only, isn't offered by setup: set it by hand as `[agent] preset = "codex"` in `jotflow.toml` and `JOTFLOW_AGENT_PRESET=codex` in `agent.env`, and keep `agent-exec.env` on `claude-code`. See [docs/presets.md](docs/presets.md). When your agent files already set a command, the default is `command`. If you choose `claude-code`, setup then asks which model the agent should use. Press Enter for the preset's defaults. A name you type applies to both drafting and execution; for a different model per run kind, set `JOTFLOW_AGENT_MODEL_DRAFTING`, `JOTFLOW_AGENT_MODEL_QUESTION`, or `JOTFLOW_AGENT_MODEL_EXECUTION` in the agent env files by hand, and setup keeps them. It also sets up the agent containers' files; see [the agent containers](#the-agent-containers) below.
 
 A session looks like this, shortened. Your answers are on the right of each prompt; a hidden token shows nothing.
 
@@ -242,9 +242,9 @@ Agent model:
   agent.env got a new runner secret.
   agent-exec.env got a new runner secret.
 Saved agent.env and agent-exec.env. Only your user can read them.
-  Before the agent containers can start, fill in JOTFLOW_GITHUB_READ_TOKEN in agent.env and JOTFLOW_GITHUB_WRITE_TOKEN in agent-exec.env, and the model login, as their comments describe. Then run jotflow init again, or add COMPOSE_PROFILES=agent to .env.
+  Before the agent containers can start, fill in JOTFLOW_GITHUB_READ_TOKEN in agent.env and JOTFLOW_GITHUB_WRITE_TOKEN in agent-exec.env, and the model login, as their comments describe. Then run uvx jotflow init again, or add COMPOSE_PROFILES=agent to .env.
 Saved both tokens to .env. Only your user can read that file.
-  Also set COMPOSE_FILE there, so `docker compose up -d` hands jotflow.toml to JotFlow.
+  Setup also set COMPOSE_FILE there, so `docker compose up -d` hands jotflow.toml to JotFlow.
 Wrote jotflow.toml: 1 channel, 1 repo, claude-code.
 Wrote docker-compose.yml.
 Wrote docker-compose.policy.yml.

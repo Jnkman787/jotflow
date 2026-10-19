@@ -78,6 +78,13 @@ class Refusal(Exception):
     """The live check will not run. The message says why."""
 
 
+def _jotflow() -> str:
+    """The command to run jotflow again, as this run was started (#41)."""
+    from jotflow.commands.init import launch_command
+
+    return launch_command()
+
+
 def _truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() not in {"", "0", "false", "no"}
 
@@ -93,12 +100,12 @@ def check_opt_in(environ: Mapping[str, str], dotenv: Mapping[str, str]) -> None:
     if OPT_IN in dotenv:
         raise Refusal(
             f"remove the {OPT_IN} line from .env and set it only for this one run: "
-            f"{OPT_IN}=1 jotflow check --live"
+            f"{OPT_IN}=1 {_jotflow()} check --live"
         )
     if environ.get(OPT_IN) != "1":
         raise Refusal(
             f"the live check posts to Slack, so it runs only when you opt in for this run: "
-            f"{OPT_IN}=1 jotflow check --live"
+            f"{OPT_IN}=1 {_jotflow()} check --live"
         )
 
 
@@ -162,7 +169,7 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
         return []
     if not (folder / ".env").exists():
         # Inside JotFlow's container, say: the agent files are only in the JotFlow folder.
-        return ["not checked here: run jotflow check in your JotFlow folder, next to .env"]
+        return [f"not checked here: run {_jotflow()} check in your JotFlow folder, next to .env"]
     found: list[str] = []
     try:
         dotenv = read_env(folder / ".env")
@@ -170,7 +177,7 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
         return [".env can't be read by this user"]
     for key in (agent_setup.ENV_DRAFTING_KEY, agent_setup.ENV_EXECUTION_KEY):
         if not dotenv.get(key, "").strip():
-            found.append(f".env has no {key}; run jotflow init again to set it")
+            found.append(f".env has no {key}; run {_jotflow()} init again to set it")
     profiles = {p.strip() for p in dotenv.get(agent_setup.PROFILES_KEY, "").split(",")}
     if agent_setup.AGENT_PROFILE not in profiles:
         found.append(
@@ -180,7 +187,7 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
     for name, token_key in AGENT_FILES:
         path = folder / name
         if not path.exists():
-            found.append(f"{name} is missing; run jotflow init again to write it")
+            found.append(f"{name} is missing; run {_jotflow()} init again to write it")
             continue
         try:
             env = read_env(path)
