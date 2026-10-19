@@ -14,6 +14,10 @@ A drafting packet also carries JotFlow's own drafting instructions (#23), read
 from ``instructions/drafting.md`` in this package, the channel's repos from the
 policy, and the thread's people with their linked GitHub logins.
 
+An operator token (#58) reads topics in its own channels only. Each of its calls
+is logged to ``jotflow.operator.audit`` with the token id, tool, channel and
+time, and never a topic id, title or message.
+
 Thread text comes from a :class:`WorkSource`. #20 implements it with a live
 Slack fetch. Until then :class:`NoWorkSource` refuses clearly, so ``get_work``
 never hands a drafting run an empty thread.
@@ -21,6 +25,7 @@ never hands a drafting run an empty thread.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import datetime
 from importlib import resources
@@ -274,6 +279,8 @@ class NoWorkSource:
 
 Clock = Callable[[], datetime]
 
+operator_audit = logging.getLogger("jotflow.operator.audit")
+
 
 def read_tools(
     store: Store,
@@ -286,6 +293,17 @@ def read_tools(
     """The three read tools, bound to their dependencies. Built once at startup."""
     work_source: WorkSource = source or NoWorkSource()
 
+    def _audit(grant: Grant, tool: str, channel: str) -> None:
+        """One line per operator call: who, which tool, which channel, when. No content."""
+        if grant.kind is RunKind.OPERATOR:
+            operator_audit.info(
+                "operator call token=%s tool=%s channel=%s at=%s",
+                grant.run_id.removeprefix("operator:"),
+                tool,
+                channel,
+                clock().isoformat(),
+            )
+
     def _channel_for(grant: Grant, requested: str | None) -> str:
         """The channel a call may read: the run's own, or one of an operator's (#58)."""
         if grant.kind is RunKind.OPERATOR:
@@ -293,6 +311,7 @@ def read_tools(
                 return grant.channel_id
             if requested in grant.channels:
                 return requested
+            _audit(grant, "list_topics", "-")
             raise ToolError(
                 "name one of this token's channels: " + ", ".join(sorted(grant.channels))
             )
@@ -302,6 +321,7 @@ def read_tools(
 
     async def topics(grant: Grant, arguments: ListTopicsInput | NoArguments) -> TopicIndex:
         channel = _channel_for(grant, getattr(arguments, "channel", None))
+        _audit(grant, "list_topics", channel)
         try:
             index = await build_topic_list(store, policy, channel, now=clock())
         except UnknownChannelError:
@@ -329,9 +349,11 @@ def read_tools(
         record = await store.get_topic(arguments.topic_id)
         readable = grant.channels if grant.kind is RunKind.OPERATOR else {grant.channel_id}
         if record is None or record.topic.channel_id not in readable:
+            _audit(grant, "get_topic", "-")
             # The same answer for a topic elsewhere, so ids cannot be probed.
             raise ToolError(f"no topic {arguments.topic_id} in this channel")
         found = record.topic
+        _audit(grant, "get_topic", found.channel_id)
         return TopicDetail(
             id=found.id,
             title=UntrustedText(text=found.title),

@@ -752,15 +752,14 @@ class SqliteStore:
 
     async def revoke_operator_token(self, name: str) -> OperatorToken | None:
         async with self._write():
-            await self._db.execute(
+            cursor = await self._db.execute(
                 "UPDATE operator_tokens SET revoked_at = ? WHERE name = ? AND revoked_at IS NULL",
                 (to_text(self._clock()), name),
             )
+            if cursor.rowcount == 0:
+                return None
             row = await self._one("SELECT * FROM operator_tokens WHERE name = ?", (name,))
-        if row is None:
-            return None
-        token = self._operator(row)
-        return token if token.revoked_at is not None else None
+        return None if row is None else self._operator(row)
 
     async def touch_operator_tokens(self, used: Mapping[str, datetime]) -> None:
         if not used:
