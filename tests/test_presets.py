@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -365,11 +366,23 @@ def test_claude_code_needs_its_cli_installed() -> None:
     assert CLAUDE_CODE.check_install(which=lambda name: f"/usr/bin/{name}") is None
 
 
-def test_the_claude_code_pin_matches_docker_compose() -> None:
+def test_codex_names_the_package_when_its_cli_is_missing() -> None:
+    assert presets.CODEX.check_install(which=lambda _: None) == (
+        f"the codex CLI is not installed; add @openai/codex@{presets.CODEX_VERSION} "
+        "to AGENT_NPM_PACKAGES"
+    )
+
+
+def test_the_published_image_pins_both_clis_at_their_presets_versions() -> None:
+    # release.yml builds the published agent image from docker-compose.yml's pin.
+    expected = (
+        f"@anthropic-ai/claude-code@{presets.CLAUDE_CODE_VERSION} "
+        f"@openai/codex@{presets.CODEX_VERSION}"
+    )
     root = SRC.parent.parent
     for compose in (root / "docker-compose.yml", SRC / "templates" / "docker-compose.yml"):
-        pin = f"@anthropic-ai/claude-code@{presets.CLAUDE_CODE_VERSION}"
-        assert pin in compose.read_text(encoding="utf-8"), compose
+        [pin] = re.findall(r'AGENT_NPM_PACKAGES: "([^"]+)"', compose.read_text(encoding="utf-8"))
+        assert pin == expected, compose
 
 
 def test_a_claude_code_runner_without_the_cli_refuses_to_start(
@@ -495,7 +508,7 @@ def test_preset_env_cannot_replace_base_allowlisted_or_runner_names(tmp_path: Pa
     assert env["XDG_CACHE_HOME"] == str(tmp_path / "cache")
 
 
-# Codex CLI (experimental)
+# Codex CLI
 
 
 def codex_context(kind: RunKind, tmp_path: Path, model: str | None = None) -> RunContext:
@@ -509,9 +522,10 @@ def codex_config(kind: RunKind, tmp_path: Path, model: str | None = None) -> dic
     return tomllib.loads(plan.files["codex/config.toml"])
 
 
-def test_codex_is_an_experimental_preset() -> None:
+def test_codex_is_a_preset_on_equal_terms() -> None:
     assert parse_preset("codex") is presets.CODEX
-    assert {"codex"} == presets.EXPERIMENTAL
+    # The maintainer dropped codex's experimental label on 2026-10-19 (#41).
+    assert frozenset() == presets.EXPERIMENTAL
     assert "claude-code" not in presets.EXPERIMENTAL
 
 
@@ -607,7 +621,16 @@ async def test_a_codex_run_writes_its_private_home(tmp_path: Path) -> None:
             write_private(tmp_path, bad, "x")
 
 
-def test_the_startup_line_marks_an_experimental_preset() -> None:
+def test_the_startup_line_names_codex_plainly() -> None:
+    config = preset_config(preset=presets.CODEX)
+    assert runner_command.startup_line(config) == (
+        "runner serving drafting, question with preset codex"
+    )
+
+
+def test_the_startup_line_marks_an_experimental_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Kept for a future preset that adapter guide step 5 holds back.
+    monkeypatch.setattr(runner_command, "EXPERIMENTAL", frozenset({"codex"}))
     config = preset_config(preset=presets.CODEX)
     assert runner_command.startup_line(config) == (
         "runner serving drafting, question with preset codex (experimental)"

@@ -375,7 +375,7 @@ CODEX_PROMPTS = CLAUDE_PROMPTS
 
 @dataclass(frozen=True)
 class CodexPreset:
-    """Codex CLI's ``codex exec`` (experimental; see docs/presets.md).
+    """Codex CLI's ``codex exec``, for drafting and question runs (see docs/presets.md).
 
     The run gets its own ``CODEX_HOME`` in the run directory, holding a 0600
     ``config.toml`` with JotFlow and the pinned GitHub server and the run kind's
@@ -411,8 +411,9 @@ class CodexPreset:
         codex = which("codex")
         if codex is None:
             return (
-                "the codex CLI is not installed; set AGENT_NPM_PACKAGES to @openai/codex@"
+                "the codex CLI is not installed; add @openai/codex@"
                 + CODEX_VERSION
+                + " to AGENT_NPM_PACKAGES"
             )
         try:
             version = run([codex, "--version"], capture_output=True, text=True, timeout=30)
@@ -486,5 +487,6 @@ class CodexPreset:
 CODEX = CodexPreset()
 
 PRESETS: Mapping[str, Preset] = {CLAUDE_CODE.name: CLAUDE_CODE, CODEX.name: CODEX}
-# Presets not yet confirmed by a real model run; the docs and the runner say so.
-EXPERIMENTAL: frozenset[str] = frozenset({CODEX.name})
+# Presets the maintainer has marked experimental; the runner's startup line says
+# so. None today: codex left it on 2026-10-19 (docs/agent-adapters.md, step 5).
+EXPERIMENTAL: frozenset[str] = frozenset()

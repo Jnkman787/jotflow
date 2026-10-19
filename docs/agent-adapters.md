@@ -58,7 +58,7 @@ class ExamplePreset:
         )
 ```
 
-Then add it to `PRESETS`, and to `EXPERIMENTAL` until a real run has confirmed it.
+Then add it to `PRESETS`, and to `EXPERIMENTAL` until the maintainer drops the label (step 5).
 
 **`RunContext`** is everything a preset may use:
 - the run kind and run id
@@ -134,11 +134,11 @@ jotflow replay --all --agent <preset> --execute --yes
 
 Both print the run count and the model before they start, and refuse without `--yes`. Drafting is compared with each fixture's expected outcome. Execution is compared exactly with the writes JotFlow planned, and again after a scripted interrupted attempt, which must find the marker and write nothing. Record the pass counts and token totals in the preset's plan and in presets.md. Keep counts only, never transcripts or fixture text.
 
-**5. Drop the experimental label** only when the gate passes in CI and a real pass of both drafting and execution has been recorded. Until then, keep the preset in `EXPERIMENTAL`, so the runner's startup line says "(experimental)", and say what's unconfirmed in presets.md.
+**5. Drop the experimental label** when the maintainer decides to. The gate must pass in CI first, and usually a real pass of every kind the preset serves is recorded too. Until then, keep the preset in `EXPERIMENTAL`, so the runner's startup line says "(experimental)". Either way, presets.md says what's verified and what isn't. Codex dropped the label on 2026-10-19, by the maintainer's decision, with its gate passing and no real pass recorded yet.
 
 ## A checklist for a new preset's PR
 
-- [ ] The preset is in `PRESETS` and `EXPERIMENTAL`, and the CLI is pinned to an exact version
+- [ ] The preset is in `PRESETS`, and in `EXPERIMENTAL` until step 5, and the CLI is pinned to an exact version
 - [ ] `argv` and the config are pinned per run kind in tests, and no run data is in the prompt or `argv`
 - [ ] Only JotFlow and the GitHub server are loaded, each limited to the kind's tools, with GitHub `--read-only` for conversation runs
 - [ ] Execution runs have no resource-read or other context-pulling tools, or the preset's `run_kinds` excludes execution, with a test that an execution runner set to it refuses to start (as for codex, which is drafting and question only)
@@ -148,7 +148,7 @@ Both print the run count and the model before they start, and refuse without `--
 - [ ] `check_install()` fails closed on version and flags, and `verified_models` is set if the tool set depends on the model
 - [ ] `jotflow replay --agent scripted` and `--execute` pass
 - [ ] presets.md has the preset's section: command, config, login, what was checked, and what's unconfirmed
-- [ ] A real pass is recorded, or the preset stays experimental
+- [ ] A real pass is recorded, or presets.md says none is, and the preset stays experimental unless the maintainer has dropped the label
 
 ## Upgrading a pinned CLI
 

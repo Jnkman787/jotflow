@@ -58,8 +58,9 @@ services:
       context: .
       dockerfile: Dockerfile.agent
       args:
-        # The CLI version the claude-code preset was verified with (docs/presets.md).
-        AGENT_NPM_PACKAGES: "@anthropic-ai/claude-code@2.1.303"
+        # Both agent CLIs, at the versions their presets were verified with
+        # (docs/presets.md). Execution runs use claude-code under either preset.
+        AGENT_NPM_PACKAGES: "@anthropic-ai/claude-code@2.1.303 @openai/codex@0.163.0"
     image: ${JOTFLOW_AGENT_IMAGE_REF:-jotflow-agent:local}
     restart: unless-stopped
     # Drafting and question runs: the read-only GitHub token and the model

@@ -187,18 +187,13 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
    - **a nickname**, a short word people type to point at the repo. Later, starting a Slack message with `re: web#42` points it at issue 42 in that repo.
    - **what it covers**, in one sentence, for example `The customer-facing website`. When a channel feeds several repos, the agent uses these sentences to choose one.
    - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo. A comma-separated list, for example `bug, enhancement`, narrows it to just those; list only labels that already exist on the repo.
-6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Type `claude-code`, then press Enter at the model question for the preset's defaults. Setup also sets up the agent containers' files; see [the agent containers](#the-agent-containers) below. Or press Enter at the preset for `none`, the default for now, to leave the agent off and turn it on later.
+6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Type `claude-code` for Claude Code, or `codex` for Codex CLI. With `claude-code`, press Enter at the model question for the preset's defaults. With `codex`, setup asks for an OpenAI API key instead, hidden, or you can press Enter and add it later. Setup also sets up the agent containers' files; see [the agent containers](#the-agent-containers) below. Or press Enter at the preset for `none`, the default for now, to leave the agent off and turn it on later.
 
 **Other agents and models.** Most teams can skip this.
 
 - **Your own agent.** Setup also accepts `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent. When your agent files already set a command, the default is `command`. Any other name is refused for now.
 - **The model.** A model name you type at the model question applies to both drafting and execution. For a different model per run kind, set `JOTFLOW_AGENT_MODEL_DRAFTING`, `JOTFLOW_AGENT_MODEL_QUESTION`, or `JOTFLOW_AGENT_MODEL_EXECUTION` in the agent env files by hand, and setup keeps them.
-- **Codex.** The experimental `codex` preset, for drafting and question runs only, isn't offered by setup and isn't in the published agent image. It needs:
-  - a custom agent image built with both CLIs
-  - an OpenAI API key, `CODEX_API_KEY` or `OPENAI_API_KEY`, in `agent.env`, while `agent-exec.env` keeps the Anthropic login
-  - hand edits: `[agent] preset = "codex"` in `jotflow.toml`, and `JOTFLOW_AGENT_PRESET=codex` in `agent.env`, with `agent-exec.env` kept on `claude-code`
-
-  [docs/presets.md](docs/presets.md) has every step.
+- **Codex's two limits.** `codex` serves drafting and question runs only, so approved issues are still written by Claude Code, from `agent-exec.env` with its Anthropic login. Setup keeps that file on `claude-code`. Codex also runs only `gpt-5.5`, so setup asks no model question for it. [docs/presets.md](docs/presets.md) explains why.
 
 A session looks like this, shortened. Your answers are on the right of each prompt; a hidden token shows nothing.
 
@@ -265,6 +260,21 @@ Next:
   1. Invite @idea_bot to each channel JotFlow should watch with /invite @idea_bot. It never joins channels by itself.
   2. Check the setup with: uvx jotflow check
   3. Start JotFlow with: docker compose up -d
+```
+
+With `codex` as the preset, setup asks for the OpenAI API key instead of the model, and the rest is the same:
+
+```
+Agent preset [none]: codex
+
+Codex logs in with an OpenAI API key, from https://platform.openai.com/api-keys.
+  ...
+Paste the OpenAI API key (sk-, hidden), or press Enter to add it later:
+
+  agent.env got a new runner secret.
+  agent-exec.env got a new runner secret.
+  agent-exec.env stays on claude-code, since codex doesn't serve execution runs. It uses the Anthropic login, as its comments describe.
+Saved agent.env and agent-exec.env. Only your user can read them.
 ```
 
 With `none` as the preset, setup skips the model question and the agent files, and JotFlow connects to Slack but drafts nothing.
@@ -365,27 +375,29 @@ When a channel later feeds a new repo, add it to both tokens on GitHub too. [doc
   docker compose run --rm --no-deps agent-exec claude auth login
   ```
 
-  `--rm` removes only that one-off container. The login is saved in the service's own Docker volume, `agent-home` or `agent-exec-home`, so it survives restarts, upgrades, and `docker compose down`. Only `docker compose down -v`, which deletes volumes, removes it, and then you log in again. A login token can't go in the env file instead: the runner refuses to pass any variable ending in `_TOKEN`, such as `CLAUDE_CODE_OAUTH_TOKEN`. The experimental `codex` preset takes an API key only.
+  `--rm` removes only that one-off container. The login is saved in the service's own Docker volume, `agent-home` or `agent-exec-home`, so it survives restarts, upgrades, and `docker compose down`. Only `docker compose down -v`, which deletes volumes, removes it, and then you log in again. A login token can't go in the env file instead: the runner refuses to pass any variable ending in `_TOKEN`, such as `CLAUDE_CODE_OAUTH_TOKEN`.
+
+**The model login, for `codex`,** is an OpenAI API key only, from <https://platform.openai.com/api-keys>. Setup asks for it and saves it in `agent.env` as `CODEX_API_KEY`. `agent-exec.env` still needs one of the Anthropic logins above, since execution runs on claude-code.
 
 **Turn the agent on:**
 
 1. Make the two GitHub tokens and get the model login, as above.
-2. In `agent.env`, fill in `JOTFLOW_GITHUB_READ_TOKEN` and `ANTHROPIC_API_KEY`. In `agent-exec.env`, fill in `JOTFLOW_GITHUB_WRITE_TOKEN` and `ANTHROPIC_API_KEY`. With a Claude account login instead, remove `ANTHROPIC_API_KEY` and its `JOTFLOW_AGENT_ENV_ALLOW` entry from both files, as above, and run the two login commands after step 3.
+2. In `agent.env`, fill in `JOTFLOW_GITHUB_READ_TOKEN` and `ANTHROPIC_API_KEY`. In `agent-exec.env`, fill in `JOTFLOW_GITHUB_WRITE_TOKEN` and `ANTHROPIC_API_KEY`. With a Claude account login instead, remove `ANTHROPIC_API_KEY` and its `JOTFLOW_AGENT_ENV_ALLOW` entry from both files, as above, and run the two login commands after step 3. With `codex`, `agent.env` takes `CODEX_API_KEY` instead of `ANTHROPIC_API_KEY`, unless you pasted it during setup.
 3. Run `uvx jotflow init` again, and answer:
    - `Keep it? [Y/n]` for the app-level token, then again for the bot token: press Enter for yes
    - `Keep its channels and repos? [Y/n]`: press Enter for yes
-   - `Agent preset [claude-code]` and `Agent model`: press Enter for each
+   - `Agent preset`, which shows your choice, such as `[claude-code]` or `[codex]`: press Enter. With `claude-code`, press Enter at `Agent model` too.
 
    Setup keeps the runner secrets and adds `COMPOSE_PROFILES=agent` to `.env`.
-4. Run `uvx jotflow check`. Every line should say `ok`, including `ok    agent: claude-code, both agent files filled in`.
+4. Run `uvx jotflow check`. Every line should say `ok`, including `ok    agent: claude-code, both agent files filled in`, or the same with `codex`.
 5. Run `docker compose up -d` again. JotFlow is already running from step 6, but only this starts the two agent containers.
-6. Run `docker compose logs agent agent-exec`. Each runner logs what it serves, such as `runner serving drafting, question with preset claude-code` and `runner serving execution with preset claude-code`.
+6. Run `docker compose logs agent agent-exec`. Each runner logs what it serves, such as `runner serving drafting, question with preset claude-code` and `runner serving execution with preset claude-code`. With `codex`, the first says `preset codex`.
 
 Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Neither file holds Slack tokens, and neither agent sees `.env`.
 
 To replace a secret, for example after it leaked, run setup with `--rotate-runner-secret` for drafting, `--rotate-exec-secret` for execution, or both. Then run `docker compose up -d` so every container picks up the new value. Setup writes `.env` and both agent files as one step: if one cannot be written, none of them changes. If `.env` and an agent file ever hold different secrets, for example after you replaced one by hand, setup makes a new secret for both rather than guessing which is right, and asks you to restart. With the `command` preset, setup writes each file's secret but no preset or model, since the runner refuses those next to a command.
 
-Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. The one exception is the experimental `codex`, which doesn't write issues: with it, the drafting runner (`agent.env`) uses `codex` and the execution runner (`agent-exec.env`) stays on `claude-code`, which JotFlow expects. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
+Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, `codex`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. The one exception is `codex`, which doesn't write issues: with it, the drafting runner (`agent.env`) uses `codex` and the execution runner (`agent-exec.env`) stays on `claude-code`, which JotFlow expects. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 
 The first start downloads JotFlow's images, which takes a minute or two. Setup pinned them to the release you ran, `ghcr.io/jnkman787/jotflow:X.Y.Z` and `ghcr.io/jnkman787/jotflow-agent:X.Y.Z`, so nothing is built and an upgrade happens only when you change the version. [docs/deployment.md](docs/deployment.md) covers upgrades and rollback. Each published image carries a signed build provenance attestation, which GitHub's CLI checks:
 

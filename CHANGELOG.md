@@ -12,7 +12,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 - **Guided setup.**
   - Setup creates the Slack app from a link with the manifest filled in, checks both tokens with Slack, and asks which channels to watch and which repos each one feeds. Every question explains itself first.
   - With the GitHub CLI signed in, setup lists repos to pick from.
-  - It writes the agent containers' files, each with its own runner secret. `--rotate-runner-secret` and `--rotate-exec-secret` replace them.
+  - It asks which agent your team runs, `claude-code` or `codex`, or `none` for now. Then it writes the agent containers' files, each with its own runner secret. `--rotate-runner-secret` and `--rotate-exec-secret` replace them.
 - **Published artifacts.** The package is on PyPI, and the `jotflow` and `jotflow-agent` images are on GHCR for amd64 and arm64. All are built from the same tag and version, with signed build provenance.
 
 ### In Slack
@@ -34,7 +34,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 ### The agent
 
 - **Your agent, in its own containers.** Drafting and questions run in one container with a read-only GitHub token. Approved writes run in another, with the token that can write. The write token never sits where untrusted Slack text is read.
-- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `codex` is experimental and serves drafting and question runs only. `command` runs your own agent instead.
+- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `codex` starts Codex CLI with the same limits, for drafting and question runs on `gpt-5.5`, while execution stays on claude-code. The published agent image carries both CLIs. `command` runs your own agent instead.
 - **Exact writes.** An execution run gets only the approved fields. It finds an issue it already wrote by a hidden marker before writing again, and JotFlow checks the reported issue URL against the approved repo. A failed write is retried a few times, then reported on the card.
 - **Issue bodies** carry permalinks to the Slack messages they came from, or no Slack details at all with `issue_links = "none"`.
 
@@ -60,7 +60,7 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - GitHub logins linked with `/jotflow link` are self-declared. Cards mark them "(unverified)", and verifying them is planned after 0.1.0 (#195).
 - Approval is open to anyone in the channel by default, including the poster. Turn approvers on for wide or external membership.
 - With `issue_links = "none"`, names typed into a message can't be detected mechanically. A person reads the full body before approving.
-- The Codex preset is experimental and not a default.
+- The Codex preset serves drafting and question runs only, on `gpt-5.5` only. Its tool set is checked in CI, but no real-model pass is recorded yet.
 - Runs of the same kind can read each other's environment. They already hold the same token, and per-run isolation is planned after 0.1.0 (#181).
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).

@@ -150,7 +150,7 @@ AGENT_FILES = (
     ("agent.env", agent_setup.READ_TOKEN_KEY, CONVERSATION_KINDS),
     ("agent-exec.env", agent_setup.WRITE_TOKEN_KEY, EXECUTION_KINDS),
 )
-ENV_ALLOW_KEY = "JOTFLOW_AGENT_ENV_ALLOW"
+ENV_ALLOW_KEY = agent_setup.ENV_ALLOW_KEY
 
 
 def _shown(named: str) -> str:

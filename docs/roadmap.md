@@ -70,7 +70,7 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 - Work packet: thread text fetched live from Slack plus the compact topic index and excerpts of likely-related threads, several topics per thread allowed, served by `get_work` (D9)
 - Generic command adapter: command template, MCP config injection, per-run token, timeout, environment allowlist
 - Agent container: separate from JotFlow, started by the same Compose file, with a runner on the internal network that starts runs; no Docker socket, no published ports, read and write GitHub tokens chosen per run kind (D6)
-- Presets for Claude Code and Codex CLI: read-only GitHub and no shell or write tools for drafting runs, transcripts off (D6). Claude Code is supported, and Codex is experimental, for drafting and question runs only (#22)
+- Presets for Claude Code and Codex CLI: read-only GitHub and no shell or write tools for drafting runs, transcripts off (D6). Setup offers both. Codex serves drafting and question runs only, and execution stays on Claude Code (#22, #41)
 - Minimal end-to-end execution with one preset against the sandbox, to prove D5 before the gate is built
 - Agent prompt: classify messages, honour keyword hints, choose among the channel's repos, search duplicates with read-only GitHub access, propose, ask when unsure (D10, D11)
 - Proposal capture: tool calls recorded with `pending` state

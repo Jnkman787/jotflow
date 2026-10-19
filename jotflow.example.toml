@@ -32,9 +32,9 @@ issue_reaction = "ticket"
 # where agent-exec.env stays on claude-code, as JotFlow expects. Setup writes
 # all of them when you choose one. Leave it out and JotFlow connects to Slack
 # but starts no agent runs.
-#   claude-code  supported, for every run kind
-#   codex        experimental, for drafting and question runs only; its
-#                agent-exec.env still uses claude-code (docs/presets.md)
+#   claude-code  Claude Code, for every run kind
+#   codex        Codex CLI, for drafting and question runs; agent-exec.env
+#                stays on claude-code for execution (docs/presets.md)
 #   command      your own JOTFLOW_AGENT_COMMAND in the agent files
 # preset = "claude-code"
 # How many agent runs may run at once, across all channels. One thread never
