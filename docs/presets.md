@@ -1,5 +1,7 @@
 # Agent presets
 
+To add a preset of your own, or check one, see [agent-adapters.md](agent-adapters.md).
+
 A preset is how the agent container's runner starts an agent CLI for one run. Name it in `agent.env` and `agent-exec.env`:
 
 ```
