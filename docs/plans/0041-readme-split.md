@@ -59,6 +59,7 @@ Done when:
 - [ ] Move the blocks, rewrite the links, and shorten the Quickstart
 - [ ] Point the two tests and two docstrings at the new files
 - [ ] Make the README's docs/ links absolute, and add the pin-to-tag note to docs/releasing.md
+- [ ] In CONTRIBUTING and docs/install.md's checkout notes, after #226, say: an older checkout's .env may hold `COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml`; remove that line, then use `make up`. Also use #226's checkout commands, `make up` or `docker compose --project-directory . -f docker/...`, and drop the claim that setup writes COMPOSE_FILE in a checkout
 - [ ] Run the no-fact-lost script and the link checker, and list every moved block in the PR
 - [ ] CodeRabbit once, `make check`, then mark ready
 
