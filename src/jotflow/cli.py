@@ -15,6 +15,7 @@ from types import ModuleType
 from jotflow import __version__
 from jotflow.commands import check as check_command
 from jotflow.commands import fixture as fixture_command
+from jotflow.commands import health as health_command
 from jotflow.commands import init as init_command
 from jotflow.commands import replay as replay_command
 from jotflow.commands import run as run_command
@@ -32,6 +33,10 @@ COMMANDS: dict[str, tuple[ModuleType, str]] = {
         "Run a saved thread through JotFlow offline and compare it with its expected outcome",
     ),
     "runner": (runner_command, "Inside the agent container: start agent runs for JotFlow"),
+    "health": (
+        health_command,
+        "Exit 0 if JotFlow is connected to Slack, judged by its heartbeat; no network",
+    ),
     "execute-fixture": (
         fixture_command,
         "Queue an execution run for a hand-approved proposal, to check an install end to end",

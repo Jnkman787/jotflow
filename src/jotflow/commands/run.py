@@ -36,6 +36,7 @@ from jotflow.logs import (
     configure_logging,
 )
 from jotflow.orchestrator.approval import register_actions
+from jotflow.orchestrator.health import ConnectionWatch, Heartbeat, Watched, heartbeat_path
 from jotflow.orchestrator.ingest import EventFilter
 from jotflow.orchestrator.service import Orchestrator
 from jotflow.orchestrator.slack import (
@@ -135,14 +136,41 @@ def install_stop_signals(stop: asyncio.Event) -> Callable[[], None]:
     return remove
 
 
+def _watched(connection: object) -> Watched | None:
+    """What reports whether Socket Mode is connected: the handler's client, or a fake."""
+    for candidate in (connection, getattr(connection, "client", None)):
+        if candidate is not None and callable(getattr(candidate, "is_connected", None)):
+            return candidate  # type: ignore[return-value]
+    return None
+
+
 async def run_until_stopped(connection: Connection, stop: asyncio.Event) -> None:
-    """Connect, wait for ``stop``, then close, even if waiting is cancelled."""
+    """Connect, wait for ``stop``, then close, even if waiting is cancelled.
+
+    While connected, a :class:`ConnectionWatch` logs drops and reconnects and
+    keeps the heartbeat ``jotflow health`` reads (#133).
+    """
     await connection.connect_async()
     log.info("connected to Slack over Socket Mode")
+    watched = _watched(connection)
+    heartbeat = Heartbeat(heartbeat_path())
+    watching = asyncio.Event()
+    watch = (
+        asyncio.create_task(ConnectionWatch(watched, heartbeat).run(watching), name="jotflow-watch")
+        if watched is not None
+        else None
+    )
     try:
         await stop.wait()
         log.info("shutting down")
     finally:
+        watching.set()
+        if watch is not None:
+            with contextlib.suppress(Exception):
+                await watch
+        # Stopping on purpose is not a health signal to keep.
+        with contextlib.suppress(OSError):
+            heartbeat.path.unlink()
         await connection.close_async()
         log.info("disconnected")
 
