@@ -419,3 +419,78 @@ def test_without_dotenv_the_agent_files_are_not_checked_here(
     _with_preset(workspace)
     assert main(["check"]) == 0
     assert "not checked here: run jotflow check in your JotFlow folder" in capsys.readouterr().out
+
+
+def test_under_codex_agent_exec_must_run_claude_code(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace, "codex")
+    _agent_folder(workspace, exec_preset=True)  # agent-exec.env names codex
+    (workspace / "agent.env").write_text(
+        (workspace / "agent.env").read_text().replace("claude-code", "codex")
+    )
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert "warn  agent: agent-exec.env names codex, but execution runs need claude-code" in out
+    assert "agent.env names" not in out.replace("agent-exec.env names", "")
+
+
+def test_an_unknown_preset_is_never_echoed(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace)
+    agent = workspace / "agent.env"
+    agent.write_text(
+        agent.read_text().replace(
+            "JOTFLOW_AGENT_PRESET=claude-code", "JOTFLOW_AGENT_PRESET=my-secret-SENTINEL"
+        )
+    )
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert "agent.env names an unknown preset, but jotflow.toml's [agent] preset is" in out
+    assert "SENTINEL" not in out
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+@pytest.mark.parametrize("name", ["agent.env", "agent-exec.env"])
+def test_an_unreadable_agent_file_is_a_warning_not_a_crash(
+    workspace: Path, capsys: pytest.CaptureFixture[str], name: str
+) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace)
+    (workspace / name).chmod(0)
+    try:
+        assert main(["check"]) == 0
+    finally:
+        (workspace / name).chmod(0o600)
+    assert f"warn  agent: {name} can't be read by this user" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_an_unreadable_dotenv_is_refused_clearly(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace)
+    (workspace / ".env").chmod(0)
+    try:
+        assert main(["check"]) == check_command.EXIT_REFUSED
+    finally:
+        (workspace / ".env").chmod(0o600)
+    err = capsys.readouterr().err
+    assert "jotflow check: can't read .env as this user" in err
+    assert SECRET_A not in err
+
+
+def test_readiness_names_an_unreadable_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text("x=1\n")
+    policy = parse_policy('[agent]\npreset = "claude-code"\n' + ONE_CHANNEL)
+
+    def denied(path: Path) -> dict[str, str]:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(check_command, "read_env", denied)
+    assert check_command.agent_readiness(policy, tmp_path) == [".env can't be read by this user"]

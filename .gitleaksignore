@@ -1,0 +1,11 @@
+# gitleaks false positives. Each line is a finding's fingerprint.
+#
+# tests/test_logs.py checks that the log formatter redacts private keys. Its
+# inputs are deliberately truncated fake PEM blocks: only the standard header
+# bytes, never a usable key. These lines cover history scans of the commits
+# that added them. In the working tree, a `# gitleaks:allow` comment on each
+# line covers them, so editing the file can't bring them back.
+b2862ea38f1a1feb1521a79ff9c872d7ffc5e33f:tests/test_logs.py:private-key:70
+b2862ea38f1a1feb1521a79ff9c872d7ffc5e33f:tests/test_logs.py:private-key:71
+cd0a53d97623b43d9a84472abc3491a9d42e18a6:tests/test_logs.py:private-key:70
+cd0a53d97623b43d9a84472abc3491a9d42e18a6:tests/test_logs.py:private-key:71
