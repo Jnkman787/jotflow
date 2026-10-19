@@ -4,10 +4,10 @@
 
 - Issue: #41
 - Also serves: #172, which added the codex preset
-- Draft PR: to be opened with this plan
-- Status: implementing
-- Last verified: origin/main 2ef2e25, 2026-10-19
-- Next safe action: build the setup changes in `commands/init.py`, then the image pin
+- Draft PR: #219
+- Status: ready for review
+- Last verified: `make check` and local image builds, 2026-10-19
+- Next safe action: review by security and the reviewer
 
 ## Objective and done-when
 
@@ -71,15 +71,29 @@ The pasted key is held in a `Secret`-like value whose `repr` hides it. It's writ
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] Setup: offer codex, write agent.env and agent-exec.env, ask for the key
-- [ ] Image: pin both CLIs, add the version test, measure the size
-- [ ] Drop the label, in code and docs
-- [ ] Re-capture the README sample session
-- [ ] Add or update tests
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] Setup: offer codex, write agent.env and agent-exec.env, ask for the key
+- [x] Image: pin both CLIs, add the version test, measure the size
+- [x] Drop the label, in code and docs
+- [x] Re-capture the README sample session
+- [x] Add or update tests
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
+- `make check` passes.
+- **Setup, captured from real runs** of `run_init` with the test fakes: the claude-code path still matches the README sample line for line, since step 6's explanation is elided there. The codex path is added to the README from its capture. The pasted key appears in no output or prompt.
+- **jotflow check:** after a codex setup with the tokens and the exec Anthropic key filled in, `agent_readiness` reports nothing, so check prints the ok line.
+- **Image, built locally from this Dockerfile:** with both CLIs, the build's npm purge guard passes, `claude --version` is 2.1.303, and `codex --version` is 0.163.0. A runner with `codex` for drafting and question, and one with `claude-code` for execution, both start from that one image. Neither startup line says "(experimental)".
+
+| Agent image | Content size | `docker images` size |
+| --- | --- | --- |
+| claude-code only | 367 MB | 1.28 GB |
+| claude-code and codex | 530 MB | 1.87 GB |
+
+The image grows by about 164 MB of content, or 45%.
+
 ## Handoff notes
+
+Either of codex's limits is lifted only by the maintainer's decision. Each is enforced at runner startup, by the orchestrator's runner check, and by `jotflow check`.

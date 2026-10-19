@@ -52,8 +52,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS runtime
 
 # The agent CLIs install through npm, at the exact versions the presets were
-# verified with (docs/presets.md): docker-compose.yml passes
-# "@anthropic-ai/claude-code@2.1.303". Empty builds a runner-only image.
+# verified with (docs/presets.md): docker-compose.yml passes both
+# "@anthropic-ai/claude-code@2.1.303 @openai/codex@0.163.0", space-separated.
+# Empty builds a runner-only image.
 ARG AGENT_NPM_PACKAGES=""
 ARG AGENT_UID=10002
 

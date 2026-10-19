@@ -656,11 +656,14 @@ def test_a_channel_name_gets_a_clear_message(options: InitOptions) -> None:
     assert "That is the channel's name. Setup needs its id" in script.text
 
 
-def test_preset_defaults_to_none_and_names_the_first_preset(options: InitOptions) -> None:
+def test_preset_defaults_to_none_and_names_both_agents(options: InitOptions) -> None:
     script = _fresh_session(options)
     [prompt] = [p for p in script.prompts if p.startswith("Agent preset")]
     assert "[none]" in prompt
-    assert init.FIRST_PRESET in " ".join(init.EXPLAIN_PRESET)
+    explained = " ".join(init.EXPLAIN_PRESET)
+    # Both agents, named the same way, and neither is the default (#41).
+    assert "Type claude-code for Claude Code, or codex for Codex CLI" in explained
+    assert "default" not in explained.lower()
     assert load_policy(options.config_file).agent.preset is None
 
 
@@ -1435,3 +1438,137 @@ def test_the_agent_profile_hint_names_the_command_as_launched(options: InitOptio
     assert f"Then run {init.launch_command()} init again, or add COMPOSE_PROFILES" in script.text
     assert "Setup also set COMPOSE_FILE there" in script.text
     assert "  Also set " not in script.text
+
+
+# --- #41: codex on equal terms ------------------------------------------------
+
+CODEX_POLICY = [*POLICY[:-1], "codex"]
+# Fictional, in an OpenAI key's shape.
+OPENAI_KEY = "sk-proj-" + "x1" * 12
+ALLOW = "JOTFLOW_AGENT_ENV_ALLOW"
+
+
+def _with_codex(options: InitOptions, *keys: str) -> Script:
+    script = Script(answers=["", "", *CODEX_POLICY], secrets=[GOOD_APP, GOOD_BOT, *keys])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    return script
+
+
+def _rerun_with(options: InitOptions, preset: str, *keys: str, model: str = "") -> Script:
+    """Keep the tokens and the channels, and choose ``preset``."""
+    answers = ["", "", "", preset] + ([model] if preset == "claude-code" else [])
+    script = Script(answers=answers, secrets=list(keys))
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    return script
+
+
+def test_codex_writes_agent_env_for_codex_and_keeps_execution_on_claude_code(
+    options: InitOptions,
+) -> None:
+    script = _with_codex(options, OPENAI_KEY)
+    env, agent, agent_exec = _files(options)
+    assert load_policy(options.config_file).agent.preset == "codex"
+    assert agent["JOTFLOW_AGENT_PRESET"] == "codex"
+    assert agent_exec["JOTFLOW_AGENT_PRESET"] == "claude-code"
+    assert agent["CODEX_API_KEY"] == OPENAI_KEY and agent[ALLOW] == "CODEX_API_KEY"
+    # The blank Anthropic slot goes; codex doesn't use it.
+    assert "ANTHROPIC_API_KEY" not in agent
+    # agent-exec.env keeps its Anthropic login, and no OpenAI key reaches it.
+    assert agent_exec[ALLOW] == "ANTHROPIC_API_KEY" and "CODEX_API_KEY" not in agent_exec
+    assert stat.S_IMODE(options.agent_file.stat().st_mode) == 0o600
+    # No model question: codex runs only gpt-5.5.
+    assert not [p for p in script.prompts if p.startswith("Agent model")]
+    assert "JOTFLOW_AGENT_MODEL" not in agent
+    assert script.text.count("stays on claude-code, since codex doesn't serve execution") == 1
+    assert "It uses the Anthropic login, as its comments describe." in script.text
+    assert "https://platform.openai.com/api-keys" in script.text
+    assert OPENAI_KEY not in script.text and all(OPENAI_KEY not in p for p in script.prompts)
+    assert env[DRAFT_KEY] == agent[DRAFT_KEY] and env[EXEC_KEY] == agent_exec[DRAFT_KEY]
+
+
+def test_codex_setup_agrees_with_jotflow_check(options: InitOptions) -> None:
+    from jotflow.commands.check import agent_readiness
+
+    _with_codex(options, OPENAI_KEY)
+    found = agent_readiness(load_policy(options.config_file), options.env_file.parent)
+    # What's left is filling in tokens and logins; the presets and the key agree.
+    assert not [line for line in found if "names" in line or "CODEX" in line], found
+    assert "ANTHROPIC_API_KEY is blank in agent-exec.env, which passes it to the agent" in found
+
+
+def test_the_codex_key_can_wait(options: InitOptions) -> None:
+    script = _with_codex(options, "")
+    _, agent, _ = _files(options)
+    assert agent["CODEX_API_KEY"] == "" and agent[ALLOW] == "CODEX_API_KEY"
+    assert "Fill in CODEX_API_KEY in" in script.text
+
+
+def test_a_wrong_key_is_named_and_asked_again(options: InitOptions) -> None:
+    script = _with_codex(options, "sk-ant-api03-" + "y" * 20, "not-a-key", OPENAI_KEY)
+    assert "That is an Anthropic key. Codex needs an OpenAI API key." in script.text
+    assert "An OpenAI API key starts with sk-" in script.text
+    assert read_env(options.agent_file)["CODEX_API_KEY"] == OPENAI_KEY
+    assert "sk-ant-api03" not in script.text and "not-a-key" not in script.text
+
+
+def test_too_many_wrong_keys_stop_setup(options: InitOptions) -> None:
+    script = Script(
+        answers=["", "", *CODEX_POLICY],
+        secrets=[GOOD_APP, GOOD_BOT, *(["bad"] * init.MAX_ATTEMPTS)],
+    )
+    assert init.run(_args(options), console=script.console(), api=FakeSlackApi.working()) == 1
+    assert "Too many attempts." in script.text
+    # Asked before anything is written, so stopping here leaves no file behind.
+    for path in (options.env_file, options.config_file, options.agent_file):
+        assert not path.exists()
+
+
+@pytest.mark.parametrize("name", ["CODEX_API_KEY", "OPENAI_API_KEY"])
+def test_a_key_already_there_is_kept_without_asking(options: InitOptions, name: str) -> None:
+    _with_agent(options)
+    text = options.agent_file.read_text().replace("ANTHROPIC_API_KEY=\n", f"{name}=sk-kept\n")
+    options.agent_file.write_text(text)
+    script = _rerun_with(options, "codex")
+    agent = read_env(options.agent_file)
+    assert agent[name] == "sk-kept" and agent[ALLOW] == name
+    assert f"already has {name} for Codex, so setup keeps it" in script.text
+    assert not [p for p in script.prompts if "OpenAI API key" in p]
+
+
+def test_switching_to_codex_drops_the_claude_model_and_names_what_it_keeps(
+    options: InitOptions,
+) -> None:
+    _with_agent(options, model="claude-opus-5-5")
+    text = options.agent_file.read_text().replace(
+        "ANTHROPIC_API_KEY=\n", "ANTHROPIC_API_KEY=sk-ant-kept\n"
+    )
+    options.agent_file.write_text(text + "JOTFLOW_AGENT_MODEL_DRAFTING=claude-opus-5-5\n")
+    script = _rerun_with(options, "codex", OPENAI_KEY)
+    agent, agent_exec = read_env(options.agent_file), read_env(options.agent_exec_file)
+    assert "JOTFLOW_AGENT_MODEL" not in agent
+    # A person's own values stay, with a note: setup never deletes a typed secret.
+    assert agent["ANTHROPIC_API_KEY"] == "sk-ant-kept"
+    assert agent[ALLOW] == "ANTHROPIC_API_KEY,CODEX_API_KEY"
+    assert "still passes ANTHROPIC_API_KEY to the agent, which codex doesn't use" in script.text
+    assert agent["JOTFLOW_AGENT_MODEL_DRAFTING"] == "claude-opus-5-5"
+    assert "sets JOTFLOW_AGENT_MODEL_DRAFTING, which codex refuses" in script.text
+    # Execution keeps claude-code and the model chosen for it.
+    assert agent_exec["JOTFLOW_AGENT_PRESET"] == "claude-code"
+    assert agent_exec["JOTFLOW_AGENT_MODEL"] == "claude-opus-5-5"
+    assert "sk-ant-kept" not in script.text
+
+
+def test_switching_back_to_claude_code_says_the_openai_key_is_still_passed(
+    options: InitOptions,
+) -> None:
+    _with_codex(options, OPENAI_KEY)
+    script = _rerun_with(options, "claude-code")
+    agent = read_env(options.agent_file)
+    assert agent["JOTFLOW_AGENT_PRESET"] == "claude-code"
+    assert "still passes CODEX_API_KEY to the agent, which claude-code doesn't use" in script.text
+    assert "stays on claude-code" not in script.text
+
+
+def test_a_codex_key_never_shows_in_the_choice() -> None:
+    choice = init.AgentChoice("codex", codex_key=OPENAI_KEY)
+    assert OPENAI_KEY not in repr(choice)

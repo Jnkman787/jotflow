@@ -27,9 +27,10 @@ from typing import Any, TextIO, cast
 from pydantic import TypeAdapter, ValidationError
 
 from jotflow import __version__, agent_setup, deploy
-from jotflow.envfile import EnvChange, read_env, write_envs
+from jotflow.adapters.presets import CODEX_VERIFIED_MODELS
+from jotflow.envfile import EnvChange, parse_env, read_env, write_envs
 from jotflow.github_cli import ListedRepo, gh_login, gh_repos, gh_visibility
-from jotflow.models import RepoName, RepoVisibility
+from jotflow.models import RepoName, RepoVisibility, RunKind, expected_runner_preset
 from jotflow.policy import (
     ChannelId,
     ChannelPolicy,
@@ -75,13 +76,20 @@ POLICY_FILE_MODE = 0o644
 CREATE_APP_URL = "https://api.slack.com/apps"
 DEFAULT_MANIFEST_OUT = "slack-app-manifest.json"
 MAX_ATTEMPTS = 5
-# Agent runs arrive in milestone 3, so a fresh setup connects without one.
+# A fresh setup connects without an agent until the team picks one.
 DEFAULT_PRESET: str | None = None
-FIRST_PRESET = "claude-code"
+# The agents setup offers by name. The team picks; setup prefers neither (#41).
+CLAUDE_CODE_PRESET = "claude-code"
+CODEX_PRESET = "codex"
+AGENT_PRESETS = (CLAUDE_CODE_PRESET, CODEX_PRESET)
 # The team's own JOTFLOW_AGENT_COMMAND, as the runner reports it in GET /info (#142).
 COMMAND_PRESET = "command"
 # Presets setup accepts today; others are refused until JotFlow ships them.
-SUPPORTED_PRESETS = (FIRST_PRESET, COMMAND_PRESET)
+SUPPORTED_PRESETS = (*AGENT_PRESETS, COMMAND_PRESET)
+CONVERSATION_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+EXECUTION_KINDS = frozenset({RunKind.EXECUTION})
+# An OpenAI API key, as Codex takes it. An Anthropic key starts sk-ant-.
+_OPENAI_KEY = re.compile(r"sk-[A-Za-z0-9_-]{16,300}")
 STEPS = 6
 ANY_LABEL = "any"
 MAX_CHANNELS = 50
@@ -180,9 +188,18 @@ EXPLAIN_LABELS = (
 EXPLAIN_PRESET = (
     "Which agent program will your team run? Your team supplies and controls the agent;",
     "JotFlow only needs to know which program it is so it can start it correctly.",
-    f"Choosing {FIRST_PRESET} also sets up agent.env and agent-exec.env for the two agent",
-    "containers, each with its own new secret. Type none to leave the agent off for now.",
+    f"Type {CLAUDE_CODE_PRESET} for Claude Code, or {CODEX_PRESET} for Codex CLI. Either one also "
+    "sets up",
+    "agent.env and agent-exec.env for the two agent containers, each with its own new secret.",
+    "Type none to leave the agent off for now.",
     f"Type {COMMAND_PRESET} if your agent files set JOTFLOW_AGENT_COMMAND to run your own agent.",
+)
+EXPLAIN_CODEX_KEY = (
+    "Codex logs in with an OpenAI API key, from https://platform.openai.com/api-keys.",
+    f"Setup saves it in agent.env as {agent_setup.CODEX_KEYS[0]}, "
+    "which the runner passes to Codex.",
+    f"JotFlow runs Codex only on {CODEX_VERIFIED_MODELS[0]}, the model its tool checks cover, so",
+    "there is no model to choose.",
 )
 EXPLAIN_MODEL = (
     "Which model should the agent use? Press Enter for the preset's defaults: a stronger",
@@ -884,11 +901,51 @@ def _model_answer(value: str) -> str:
 
 @dataclass(frozen=True)
 class AgentChoice:
-    """What setup will write to the agent env files. ``model`` None removes it."""
+    """What setup will write to the agent env files. ``model`` None removes it.
+
+    ``codex_key`` is an OpenAI API key pasted for codex, or None to keep or add
+    a slot. It never appears in ``repr``.
+    """
 
     preset: str
     change_model: bool = False
     model: str | None = None
+    codex_key: str | None = field(default=None, repr=False)
+
+
+def _codex_key_answer(value: str) -> str:
+    if value.startswith("sk-ant-"):
+        raise ValueError("That is an Anthropic key. Codex needs an OpenAI API key.")
+    if not _OPENAI_KEY.fullmatch(value):
+        raise ValueError("An OpenAI API key starts with sk-, then letters, digits, _ and -.")
+    return value
+
+
+def _kept_codex_key(agent: Mapping[str, str]) -> str | None:
+    """The name of a Codex key agent.env already holds, if any."""
+    return next((k for k in agent_setup.CODEX_KEYS if agent.get(k, "").strip()), None)
+
+
+def _ask_codex_key(console: Console, options: InitOptions) -> str | None:
+    """A pasted OpenAI API key, or None to keep the one there or add it later."""
+    kept = _kept_codex_key(read_env(options.agent_file))
+    console.say()
+    if kept is not None:
+        console.say(f"  {options.agent_file} already has {kept} for Codex, so setup keeps it.")
+        return None
+    _explain(console, EXPLAIN_CODEX_KEY)
+    for _ in range(MAX_ATTEMPTS):
+        key = console.secret(
+            "Paste the OpenAI API key (sk-, hidden), or press Enter to add it later"
+        )
+        if not key:
+            return None
+        try:
+            return _codex_key_answer(key)
+        except ValueError as exc:
+            console.say(f"  {exc}")
+    console.say("  Too many attempts.")
+    raise SetupAborted
 
 
 def _ask_agent(console: Console, options: InitOptions, preset: str | None) -> AgentChoice | None:
@@ -899,6 +956,9 @@ def _ask_agent(console: Console, options: InitOptions, preset: str | None) -> Ag
     if preset == COMMAND_PRESET:
         # The runner refuses model settings next to a raw command.
         return AgentChoice(preset)
+    if preset == CODEX_PRESET:
+        # One model passes the runner, so there is nothing to ask.
+        return AgentChoice(preset, codex_key=_ask_codex_key(console, options))
     files = [read_env(options.agent_file), read_env(options.agent_exec_file)]
     current = next((f[agent_setup.MODEL_KEY] for f in files if f.get(agent_setup.MODEL_KEY)), None)
     console.say()
@@ -1018,13 +1078,14 @@ def _plan_agent_files(options: InitOptions, choice: AgentChoice, env: dict[str, 
         rotate_execution=options.rotate_exec_secret,
     )
     pairs = [
-        (options.agent_file, agent, drafting),
-        (options.agent_exec_file, agent_exec, execution),
+        (options.agent_file, agent, drafting, CONVERSATION_KINDS),
+        (options.agent_exec_file, agent_exec, execution, EXECUTION_KINDS),
     ]
     changes: list[EnvChange] = []
     notes: list[str] = []
-    for path, values, secret in pairs:
+    for path, values, secret, kinds in pairs:
         updates: dict[str, str | None] = {agent_setup.AGENT_SECRET_KEY: secret.value}
+        stays: str | None = None
         command = agent_setup.uses_command(values)
         if choice.preset == COMMAND_PRESET:
             # The runner refuses a preset next to a command, so a stray one goes.
@@ -1042,11 +1103,33 @@ def _plan_agent_files(options: InitOptions, choice: AgentChoice, env: dict[str, 
                 f"{COMMAND_PRESET}."
             )
         else:
-            updates[agent_setup.PRESET_KEY] = choice.preset
-            if choice.change_model:
-                updates[agent_setup.MODEL_KEY] = choice.model
+            # The same rule as the orchestrator and jotflow check: codex hands
+            # execution to claude-code (#172).
+            runs = expected_runner_preset(kinds, choice.preset)
+            updates[agent_setup.PRESET_KEY] = runs
+            # A new file starts from the example, so judge its keys from there.
+            if not path.exists():
+                values = parse_env(_example(path))
+            if runs == CODEX_PRESET:
+                updates.update(_codex_updates(path, values, choice.codex_key, notes))
+            else:
+                if choice.change_model:
+                    updates[agent_setup.MODEL_KEY] = choice.model
+                if (kept := _kept_codex_key(values)) and kept in _allowed(values):
+                    notes.append(
+                        f"  {path} still passes {kept} to the agent, which {runs} doesn't "
+                        f"use. Remove it from {agent_setup.ENV_ALLOW_KEY} if nothing else "
+                        "needs it."
+                    )
+            if runs != choice.preset:
+                stays = (
+                    f"  {path} stays on {runs}, since {choice.preset} doesn't serve execution "
+                    "runs. It uses the Anthropic login, as its comments describe."
+                )
         changes.append((path, updates, _example(path)))
         notes.append(f"  {path} {_HOW[secret.how]}.")
+        if stays is not None:
+            notes.append(stays)
     notes.append(_saved_agent_message(options))
 
     env_updates = {
@@ -1075,6 +1158,57 @@ def _plan_agent_files(options: InitOptions, choice: AgentChoice, env: dict[str, 
             "use the new secret."
         )
     return AgentFiles(changes, env_updates, notes)
+
+
+def _allowed(values: Mapping[str, str]) -> list[str]:
+    raw = values.get(agent_setup.ENV_ALLOW_KEY, "")
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def _codex_updates(
+    path: Path, values: Mapping[str, str], key: str | None, notes: list[str]
+) -> dict[str, str | None]:
+    """agent.env's changes for codex: its login, and no claude-code model."""
+    updates: dict[str, str | None] = {}
+    allow = _allowed(values)
+    name = _kept_codex_key(values)
+    if key is not None:
+        name = agent_setup.CODEX_KEYS[0]
+        updates[name] = key
+    elif name is None:
+        # A slot to fill in; jotflow check reports it blank until then.
+        name = agent_setup.CODEX_KEYS[0]
+        if name not in values:
+            updates[name] = ""
+        notes.append(
+            f"  Fill in {name} in {path} with an OpenAI API key before the agent containers start."
+        )
+    if name not in allow:
+        allow.append(name)
+    anthropic = agent_setup.ANTHROPIC_KEY
+    if anthropic in allow:
+        if values.get(anthropic, "").strip():
+            notes.append(
+                f"  {path} still passes {anthropic} to the agent, which codex doesn't use. "
+                f"Remove it from {agent_setup.ENV_ALLOW_KEY} if nothing else needs it."
+            )
+        else:
+            allow.remove(anthropic)
+            updates[anthropic] = None
+    if allow != _allowed(values):
+        updates[agent_setup.ENV_ALLOW_KEY] = ",".join(allow)
+    # The runner refuses any model but the verified one, so a claude-code name goes.
+    if values.get(agent_setup.MODEL_KEY):
+        updates[agent_setup.MODEL_KEY] = None
+    for kind in ("DRAFTING", "QUESTION"):
+        model_key = f"{agent_setup.MODEL_KEY}_{kind}"
+        model = values.get(model_key, "").strip()
+        if model and model not in CODEX_VERIFIED_MODELS:
+            notes.append(
+                f"  {path} sets {model_key}, which codex refuses: it runs only "
+                f"{CODEX_VERIFIED_MODELS[0]}. Remove that line."
+            )
+    return updates
 
 
 def _saved_agent_message(options: InitOptions) -> str:

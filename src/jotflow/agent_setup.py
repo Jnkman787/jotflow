@@ -27,6 +27,11 @@ PROFILES_KEY = "COMPOSE_PROFILES"
 AGENT_PROFILE = "agent"
 READ_TOKEN_KEY = "JOTFLOW_GITHUB_READ_TOKEN"
 WRITE_TOKEN_KEY = "JOTFLOW_GITHUB_WRITE_TOKEN"
+# The variables the runner passes to the agent, by name, comma-separated.
+ENV_ALLOW_KEY = "JOTFLOW_AGENT_ENV_ALLOW"
+ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
+# Codex reads either; setup writes the first, which names its one use.
+CODEX_KEYS = ("CODEX_API_KEY", "OPENAI_API_KEY")
 
 # The runner refuses a shorter secret.
 MIN_SECRET_LENGTH = 32

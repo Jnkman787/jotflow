@@ -2,7 +2,7 @@
 
 To add a preset of your own, or check one, see [agent-adapters.md](agent-adapters.md).
 
-A preset is how the agent container's runner starts an agent CLI for one run. Name it in `agent.env` and `agent-exec.env`:
+A preset is how the agent container's runner starts an agent CLI for one run. JotFlow ships two, `claude-code` and `codex`, and the team picks one; `jotflow init` offers both. Setup names the preset in `agent.env` and `agent-exec.env`, or by hand:
 
 ```
 JOTFLOW_AGENT_PRESET=claude-code
@@ -13,7 +13,7 @@ The preset sets the CLI's flags, the MCP config, which tools each run kind may u
 | Preset | CLI | Verified with | GitHub MCP server |
 |---|---|---|---|
 | `claude-code` | Claude Code, `@anthropic-ai/claude-code` | 2.1.303, 2026-10-18 | github-mcp-server 2.0.2 |
-| `codex` (experimental) | Codex CLI, `@openai/codex` | 0.163.0, 2026-10-19, without a model call | github-mcp-server 2.0.2 |
+| `codex` | Codex CLI, `@openai/codex` | 0.163.0, 2026-10-19, by the CI tool-set gate; no real-model pass recorded yet | github-mcp-server 2.0.2 |
 
 ## claude-code
 
@@ -104,17 +104,19 @@ Then plan a run with the preset and start it with `--output-format stream-json -
 
 Update the table above with the new versions and date.
 
-## codex (experimental)
+## codex
 
-**Experimental.** It hasn't been confirmed by a real model run. Use claude-code for real channels until a real `jotflow replay --agent codex` pass (and `--execute`) is recorded here. The runner's startup line says "(experimental)".
+**What's verified.** The security gate below runs Codex 0.163.0 on every pull request, with this preset's own config, and checks its tool set for each run kind it serves. A real-model pass, `jotflow replay --agent codex`, hasn't been recorded yet. "Not yet confirmed", at the end of this section, lists what one would check.
 
-**Drafting and question runs only.** Codex keeps its MCP resource tools (`read_mcp_resource`, `list_mcp_resource_templates`), which can pull any repository text into the agent's context. That's acceptable for drafting, whose input is untrusted anyway. An execution run holds the write token and must see only the approved fields, so the codex preset refuses execution: an `agent-exec` runner set to `codex` won't start. Use `claude-code` in `agent-exec.env`.
+Codex has two limits that claude-code doesn't. Both are enforced at runner startup.
 
-**Install it.** Both agent services use one image, and the execution runner still runs claude-code, so build the agent image with both CLIs: `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @openai/codex@0.163.0"`, the versions these presets were checked against. A runner set to either preset won't start if its CLI is missing. Set `JOTFLOW_AGENT_PRESET=codex` in `agent.env` only, and keep `JOTFLOW_AGENT_PRESET=claude-code` in `agent-exec.env`.
+**Limit: drafting and question runs only.** Codex keeps its MCP resource tools (`read_mcp_resource`, `list_mcp_resource_templates`), which can pull any repository text into the agent's context. That's acceptable for drafting, whose input is untrusted anyway. An execution run holds the write token and must see only the approved fields, so the codex preset refuses execution: an `agent-exec` runner set to `codex` won't start. Use `claude-code` in `agent-exec.env`.
 
-**The model login is an API key only.** Put `CODEX_API_KEY` or `OPENAI_API_KEY` in `agent.env`, and list it in its `JOTFLOW_AGENT_ENV_ALLOW`. `agent-exec.env` keeps claude-code's login, `ANTHROPIC_API_KEY` or a Claude account login. Each run gets its own `CODEX_HOME`, so a ChatGPT login saved by `codex login` in the home volume isn't seen.
+**Limit: `gpt-5.5` only.** Codex 0.163.0 runs most current models (the gpt-6 family and gpt-5.6) in "code mode". That adds a JavaScript `exec` tool, with other tools nested inside it, and a sub-agent namespace (`spawn_agent`, `send_message`, and others), whatever the config says. Of the listed models in Codex's bundled catalog, only `gpt-5.5` keeps the flat tool set checked below. So the preset uses `gpt-5.5` by default, and the runner refuses to start if `JOTFLOW_AGENT_MODEL` or a per-kind model names anything else.
 
-**The model is pinned to `gpt-5.5`.** Codex 0.163.0 runs most current models (the gpt-6 family and gpt-5.6) in "code mode". That adds a JavaScript `exec` tool, with other tools nested inside it, and a sub-agent namespace (`spawn_agent`, `send_message`, and others), whatever the config says. Of the listed models in Codex's bundled catalog, only `gpt-5.5` keeps the flat tool set checked below. So the preset uses `gpt-5.5` by default, and the runner refuses to start if `JOTFLOW_AGENT_MODEL` or a per-kind model names anything else.
+**Set it up.** Type `codex` at setup's agent preset question. Setup writes `JOTFLOW_AGENT_PRESET=codex` in `agent.env`, and keeps `agent-exec.env` on `claude-code`, as the first limit needs. With a hand-built image, install both CLIs, since the execution runner still runs claude-code: `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @openai/codex@0.163.0"`. The published agent image already has both. A runner set to either preset won't start if its CLI is missing.
+
+**The model login is an API key only.** Setup asks for an OpenAI API key and saves it in `agent.env` as `CODEX_API_KEY`, listed in `JOTFLOW_AGENT_ENV_ALLOW`. By hand, `OPENAI_API_KEY` works too. `agent-exec.env` keeps claude-code's login, `ANTHROPIC_API_KEY` or a Claude account login. Each run gets its own `CODEX_HOME`, so a ChatGPT login saved by `codex login` in the home volume isn't seen.
 
 **The runner fails closed.** At startup it checks that `codex --version` is exactly 0.163.0 and that `codex features list` still has `mcp_2026_07_28`. Otherwise it refuses to start, naming the problem.
 
@@ -148,7 +150,7 @@ Codex talks only to `jotflow.testing.fake_responses_api` on 127.0.0.1, so it cos
 - **Built-in tools:** for drafting runs, the request carried only `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `apply_patch`, and `tool_search`. There was no shell. Codex reaches MCP tools through `tool_search`.
 - **Tokens:** neither sentinel token appeared in the output or the request, and nothing was written to `HOME`. `CODEX_HOME` was 0700 and `config.toml` was 0600.
 
-**Not yet confirmed, which is why it's still experimental.** These need a real model run:
+**Not yet confirmed.** These need a real model run:
 - that `tool_search` finds JotFlow's tools. Only GitHub, which sends server instructions, was listed as a search source.
 - that MCP calls run without an approval prompt
 - that the real model's metadata, which Codex may fetch from OpenAI, still gives `gpt-5.5` the flat tool set
