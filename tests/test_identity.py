@@ -336,10 +336,12 @@ async def test_if_the_note_fails_the_actor_is_asked_to_tell_them() -> None:
     assert len(await store.identity_unlinks()) == 1
 
 
-async def test_naming_yourself_is_a_plain_self_unlink_and_is_not_recorded() -> None:
+@pytest.mark.parametrize("typed", [MALLORY, f"<@{MALLORY}>", f"<@{MALLORY}|mallory>"])
+async def test_naming_yourself_is_a_plain_self_unlink_and_is_not_recorded(typed: str) -> None:
+    """Anyone who may self-unlink may name themselves; it's not "someone else"."""
     links, store, _, notes = admin_command()
     await store.link_identity(MALLORY, "octo-cat")
-    reply = await links.handle(MALLORY, "unlink", MALLORY)
+    reply = await links.handle(MALLORY, "unlink", typed)
     assert reply.text.startswith("Unlinked GitHub login octo-cat")
     assert notes.sent == [] and await store.identity_unlinks() == []
 
