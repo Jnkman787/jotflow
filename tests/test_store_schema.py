@@ -263,7 +263,7 @@ async def test_after_the_upgrade_only_waiting_proposals_get_a_card(tmp_path: Pat
     from tests.test_store_contract import draft
 
     path = tmp_path / "jotflow.db"
-    old = await SqliteStore.open(path, migrations=MIGRATIONS[:-1])
+    old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 8])
     await old.close()
     with sqlite3.connect(path) as db:
         rows = (
@@ -285,5 +285,32 @@ async def test_after_the_upgrade_only_waiting_proposals_get_a_card(tmp_path: Pat
     store = await SqliteStore.open(path)
     try:
         assert [p.id for p in await store.cards_due()] == ["waiting"]
+    finally:
+        await store.close()
+
+
+async def test_after_the_upgrade_old_applied_threads_are_not_told_again(tmp_path: Path) -> None:
+    from jotflow.store.hashing import canonical_json
+    from tests.test_store_contract import draft
+
+    path = tmp_path / "jotflow.db"
+    old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 9])
+    await old.close()
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "INSERT INTO proposals (id, channel_id, thread_ts, run_id, state, kind, repo,"
+            " draft_json, created_at, updated_at, content_hash, result_json)"
+            " VALUES ('old', 'C0IDEAS01', '1760781600.000100', 'run-1', 'applied',"
+            " 'create_issue', 'acme-co/web', ?, '2026-10-18T09:00:00+00:00',"
+            " '2026-10-18T09:00:00+00:00', ?, ?)",
+            (
+                canonical_json(draft()),
+                "0" * 64,
+                '{"issue_url": "https://github.com/acme-co/web/issues/1"}',
+            ),
+        )
+    store = await SqliteStore.open(path)
+    try:
+        assert await store.threads_due() == []
     finally:
         await store.close()

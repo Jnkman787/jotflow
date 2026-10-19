@@ -306,6 +306,10 @@ class ProposalRecord(BaseModel):
         ge=1,
         description="The revision the posted card shows; behind revision means it needs an edit",
     )
+    thread_told_at: AwareDatetime | None = Field(
+        default=None,
+        description="When the thread was told the issue URL, once the proposal was applied (#32)",
+    )
 
     @property
     def card_due(self) -> bool:

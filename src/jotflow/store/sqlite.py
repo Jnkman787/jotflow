@@ -353,6 +353,9 @@ class SqliteStore:
             card_ts=row["card_ts"],
             revision=row["revision"],
             card_revision=row["card_revision"],
+            thread_told_at=None
+            if row["thread_told_at"] is None
+            else from_text(row["thread_told_at"]),
             draft_cleared_at=None
             if row["draft_cleared_at"] is None
             else from_text(row["draft_cleared_at"]),
@@ -558,6 +561,27 @@ class SqliteStore:
                 " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision))"
                 " WHERE id = ?",
                 (revision, proposal_id),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(f"no proposal {proposal_id}")
+
+    async def threads_due(self, limit: int = 50) -> list[ProposalRecord]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM proposals AS p"
+                " WHERE p.state = 'applied' AND p.thread_told_at IS NULL"
+                " AND NOT EXISTS (SELECT 1 FROM channel_modes AS m"
+                " WHERE m.channel_id = p.channel_id AND m.mode = 'paused')"
+                " ORDER BY p.created_at, p.id LIMIT ?",
+                (limit,),
+            )
+            return [await self._proposal(row) for row in rows]
+
+    async def mark_thread_told(self, proposal_id: str) -> None:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE proposals SET thread_told_at = COALESCE(thread_told_at, ?) WHERE id = ?",
+                (to_text(self._clock()), proposal_id),
             )
             if cursor.rowcount == 0:
                 raise NotFoundError(f"no proposal {proposal_id}")
