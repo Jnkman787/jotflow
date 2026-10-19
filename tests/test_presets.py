@@ -422,3 +422,158 @@ def test_preset_env_cannot_replace_base_allowlisted_or_runner_names(tmp_path: Pa
     assert env["TMPDIR"] == str(tmp_path)
     assert env["JOTFLOW_RUN_ID"] == "run-1"
     assert env["XDG_CACHE_HOME"] == str(tmp_path / "cache")
+
+
+# Codex CLI (experimental)
+
+
+def codex_context(kind: RunKind, tmp_path: Path, model: str | None = None) -> RunContext:
+    return context(kind, tmp_path, model=model)
+
+
+def codex_config(kind: RunKind, tmp_path: Path, model: str | None = None) -> dict[str, Any]:
+    import tomllib
+
+    plan = presets.CODEX.plan(codex_context(kind, tmp_path, model))
+    return tomllib.loads(plan.files["codex/config.toml"])
+
+
+def test_codex_is_an_experimental_preset() -> None:
+    assert parse_preset("codex") is presets.CODEX
+    assert {"codex"} == presets.EXPERIMENTAL
+    assert "claude-code" not in presets.EXPERIMENTAL
+
+
+@pytest.mark.parametrize("kind", list(RunKind))
+def test_codex_argv_carries_no_run_data(kind: RunKind, tmp_path: Path) -> None:
+    plan = presets.CODEX.plan(codex_context(kind, tmp_path, "gpt-5.5-codex"))
+    assert plan.argv == (
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--ignore-rules",
+        "--color",
+        "never",
+        presets.CLAUDE_PROMPTS[kind],
+    )
+    joined = " ".join(plan.argv)
+    for value in (TOKEN, READ, WRITE, "gpt-5.5-codex", str(tmp_path), "run-1"):
+        assert value not in joined
+    assert plan.env == {"CODEX_HOME": str(tmp_path / "codex")}
+    assert plan.github_token_env is False
+    assert plan.config == {"mcpServers": {}}  # Codex reads only its own config
+
+
+@pytest.mark.parametrize("kind", list(RunKind))
+def test_codex_config_is_pinned(kind: RunKind, tmp_path: Path) -> None:
+    config = codex_config(kind, tmp_path, "gpt-5.5-codex")
+    assert config["model"] == "gpt-5.5-codex"
+    assert (config["approval_policy"], config["sandbox_mode"], config["web_search"]) == (
+        "never",
+        "read-only",
+        "disabled",
+    )
+    assert config["check_for_update_on_startup"] is False
+    assert config["history"] == {"persistence": "none"}
+    assert config["analytics"] == {"enabled": False} and config["feedback"] == {"enabled": False}
+    features = config["features"]
+    assert features.pop("mcp_2026_07_28") is True
+    assert features == dict.fromkeys(presets.CODEX_FEATURES_OFF, False)
+    assert {"shell_tool", "unified_exec"} <= set(presets.CODEX_FEATURES_OFF)
+    assert config["tools"] == {"experimental_request_user_input": {"enabled": False}}
+    servers = config["mcp_servers"]
+    assert set(servers) == {"jotflow", "github"}
+    jotflow, github = servers["jotflow"], servers["github"]
+    assert jotflow == {
+        "url": "http://jotflow:8765/mcp",
+        "http_headers": {"Authorization": f"Bearer {TOKEN}"},
+        "enabled_tools": list(JOTFLOW_TOOLS[kind]),
+        "default_tools_approval_mode": "approve",
+        "required": True,
+    }
+    assert github["command"] == "/usr/local/bin/github-mcp-server"
+    assert ("--read-only" in github["args"]) is (kind is not RunKind.EXECUTION)
+    assert github["enabled_tools"] == list(GITHUB_TOOLS[kind])
+    token = WRITE if kind is RunKind.EXECUTION else READ
+    assert github["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": token}
+
+
+def test_codex_without_a_model_uses_the_cli_default(tmp_path: Path) -> None:
+    assert "model" not in codex_config(RunKind.DRAFTING, tmp_path)
+
+
+def test_the_toml_writer_escapes_and_refuses_what_it_cannot_write() -> None:
+    import tomllib
+
+    text = presets.toml({"a": 'quote " and \\ back', "t": {"n": 3, "l": [1, "x"]}})
+    assert tomllib.loads(text) == {"a": 'quote " and \\ back', "t": {"n": 3, "l": [1, "x"]}}
+    with pytest.raises(TypeError):
+        presets.toml({"bad": 1.5})
+
+
+async def test_a_codex_run_writes_its_private_home(tmp_path: Path) -> None:
+    from jotflow.adapters.runner import write_private
+
+    plan = presets.CODEX.plan(codex_context(RunKind.DRAFTING, tmp_path))
+    [(relative, text)] = plan.files.items()
+    target = write_private(tmp_path, relative, text)
+    assert target == tmp_path / "codex" / "config.toml"
+    assert stat.S_IMODE((tmp_path / "codex").stat().st_mode) == 0o700
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    for bad in ("../escape", "/abs", "a/../b", ""):
+        with pytest.raises(ConfigError, match="inside the run directory"):
+            write_private(tmp_path, bad, "x")
+
+
+def test_the_startup_line_marks_an_experimental_preset() -> None:
+    config = preset_config(preset=presets.CODEX)
+    assert runner_command.startup_line(config) == (
+        "runner serving drafting, question with preset codex (experimental)"
+    )
+
+
+FAKE_CODEX = """#!{python}
+import json, os, stat, sys
+home = os.environ["CODEX_HOME"]
+config = os.path.join(home, "config.toml")
+record = {{
+    "argv": sys.argv[1:],
+    "env": dict(os.environ),
+    "config_mode": stat.S_IMODE(os.stat(config).st_mode),
+    "home_mode": stat.S_IMODE(os.stat(home).st_mode),
+    "config": open(config).read(),
+    "run_dir": os.path.dirname(home),
+}}
+with open(os.path.join(os.path.dirname(os.path.dirname(home)), "out.json"), "w") as handle:
+    json.dump(record, handle)
+"""
+
+
+async def test_a_codex_run_end_to_end(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codex = bin_dir / "codex"
+    codex.write_text(FAKE_CODEX.format(python=sys.executable), encoding="utf-8")
+    codex.chmod(0o755)
+    work = tmp_path / "work"
+    work.mkdir()
+    config = preset_config(preset=presets.CODEX, workdir=work, env_allow=("OPENAI_API_KEY",))
+    environ = {
+        "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
+        "HOME": "/home/agent",
+        "OPENAI_API_KEY": "k",
+    }
+    runner = Runner(config, environ=environ)
+    await runner.launch(LaunchRequest(run_id="run-1", kind=RunKind.DRAFTING, token=TOKEN))
+    view = await finished(runner, "run-1")
+    assert view["state"] == RunState.EXITED.value and view["exit_code"] == 0
+    record = json.loads((work / "out.json").read_text(encoding="utf-8"))
+    assert (record["home_mode"], record["config_mode"]) == (0o700, 0o600)
+    assert f"Bearer {TOKEN}" in record["config"] and READ in record["config"]
+    env = record["env"]
+    assert env["CODEX_HOME"] == str(Path(record["run_dir"]) / "codex")
+    assert env["OPENAI_API_KEY"] == "k"
+    for secret in (TOKEN, READ):
+        assert secret not in json.dumps(env) and secret not in " ".join(record["argv"])
+    assert not Path(record["run_dir"]).exists()  # the home, config, and logs go with the run

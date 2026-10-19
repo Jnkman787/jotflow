@@ -275,3 +275,14 @@ Pending those decisions:
 - add the tests that pin the generated config.toml and argv, and that no prompt carries run data
 - update docs/presets.md
 - run the real replay passes once an OpenAI key is approved
+
+### Decisions and what was built (2026-10-19)
+
+The lead decided on option (a). `features.mcp_2026_07_28` is on, pinned to Codex 0.163.0, and D13 is unchanged. The preset is **experimental** until a real model run confirms `tool_search`, approvals, and that `apply_patch` is refused. The login is an API key only. No OpenAI spend until the lead confirms.
+
+What was built:
+- **`CodexPreset` in `presets.py`.** It writes a per-run `CODEX_HOME` with a 0600 `config.toml`. `RunPlan.files` is new: extra private files, which the runner writes 0600 in 0700 directories inside the run directory, through `runner.write_private`, refusing any path outside it. There's also a small TOML writer, and `EXPERIMENTAL = {"codex"}`, which the runner's startup line reports.
+- **The prompt** is the same fixed per-kind text as claude-code, with no run data.
+- **Tests** pin the argv, the whole generated config per kind, the private file modes, refused paths, and an end-to-end runner run with a fake `codex` that checks the home is removed afterwards.
+- **A check against Codex 0.163.0** of the preset's own generated config, with a fake model API, found the same built-ins as the spike, no shell, JotFlow connected, and no token leaks.
+- **docs/presets.md** has a codex section.

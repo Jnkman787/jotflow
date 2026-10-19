@@ -19,7 +19,7 @@ import uvicorn
 from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from jotflow.adapters.presets import DEFAULT_GITHUB_MCP
+from jotflow.adapters.presets import DEFAULT_GITHUB_MCP, EXPERIMENTAL
 from jotflow.adapters.runner import (
     RUNNER_PORT,
     ConfigError,
@@ -128,7 +128,8 @@ def startup_line(config: RunnerConfig) -> str:
     """
     kinds = ", ".join(k.value for k in RunKind if k in config.kinds)
     if config.preset is not None:
-        return f"runner serving {kinds} with preset {config.preset.name}"
+        note = " (experimental)" if config.preset.name in EXPERIMENTAL else ""
+        return f"runner serving {kinds} with preset {config.preset.name}{note}"
     program = PurePosixPath(config.command[0]).name if config.command else "?"
     return f"runner serving {kinds} with command {program}"
 

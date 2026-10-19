@@ -11,6 +11,7 @@ The preset sets the CLI's flags, the MCP config, which tools each run kind may u
 | Preset | CLI | Verified with | GitHub MCP server |
 |---|---|---|---|
 | `claude-code` | Claude Code, `@anthropic-ai/claude-code` | 2.1.303, 2026-10-18 | github-mcp-server 2.0.2 |
+| `codex` (experimental) | Codex CLI, `@openai/codex` | 0.163.0, 2026-10-19, without a model call | github-mcp-server 2.0.2 |
 
 ## claude-code
 
@@ -98,3 +99,41 @@ Then plan a run with the preset and start it with `--output-format stream-json -
 - neither token appears in the output or under `HOME`
 
 Update the table above with the new versions and date.
+
+## codex (experimental)
+
+**Experimental.** It hasn't been confirmed by a real model run. Use claude-code for real channels until a real `jotflow replay --agent codex` pass (and `--execute`) is recorded here. The runner's startup line says "(experimental)".
+
+**Install it.** Build the agent image with `AGENT_NPM_PACKAGES="@openai/codex@0.163.0"`, the version this preset was checked against. Set `JOTFLOW_AGENT_PRESET=codex` in both agent env files, and `[agent] preset = "codex"` in `jotflow.toml`.
+
+**The model login is an API key only.** Put `CODEX_API_KEY` or `OPENAI_API_KEY` in each env file, and list it in `JOTFLOW_AGENT_ENV_ALLOW`. Each run gets its own `CODEX_HOME`, so a ChatGPT login saved by `codex login` in the home volume isn't seen. Set the model with `JOTFLOW_AGENT_MODEL`, or the per-kind names. Without one, Codex uses its default.
+
+**The command,** for a run of each kind:
+
+```
+codex exec --ephemeral --skip-git-repo-check --ignore-rules --color never <the kind's fixed prompt>
+```
+
+The command carries no run data. `CODEX_HOME` points at `<run dir>/codex` (0700), which holds `config.toml` (0600). That config holds the following:
+
+- **The JotFlow server,** with the run's token as an `Authorization` header, and **the pinned GitHub server,** with the GitHub token in its own environment. Each server is limited to the kind's tools with `enabled_tools`, set to `default_tools_approval_mode = "approve"`, and `required`. GitHub's server also has its own `--read-only` and `--tools` flags, as with claude-code.
+- **`approval_policy = "never"` and `sandbox_mode = "read-only"`,** so nothing prompts and no file can be written.
+- **Off:** `web_search`, update checks, history (`persistence = "none"`), analytics, feedback, and `request_user_input`.
+- **`[features]`:** the shell (`shell_tool`, `unified_exec`) and every other built-in that acts outside the run are off: apps, browser and computer use, image generation, multi-agent, plugins, skills, hooks, memories, goals, and the code-mode host.
+- **`mcp_2026_07_28 = true`.** JotFlow serves only MCP 2026-07-28, and Codex speaks it only with this flag, which Codex 0.163.0 marks "under development". Without the flag, Codex sees no JotFlow tools.
+
+Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so the runner removes them with the run. Neither token is in the command line or the environment.
+
+**What was checked, on 2026-10-19,** without a model call. Codex 0.163.0 ran this preset's own config against a local fake model API that records the request, with JotFlow's real MCP server and github-mcp-server 2.0.2:
+
+- **JotFlow:** Codex connected. JotFlow's audit shows `server/discover` and `tools/list` served.
+- **Built-in tools:** for drafting and execution runs, the request carried only `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `apply_patch`, and `tool_search`. There was no shell. Codex reaches MCP tools through `tool_search`.
+- **Tokens:** neither sentinel token appeared in the output or the request, and nothing was written to `HOME`. `CODEX_HOME` was 0700 and `config.toml` was 0600.
+
+**Not yet confirmed, which is why it's experimental.** These need a real model run:
+- that `tool_search` finds JotFlow's tools. Only GitHub, which sends server instructions, was listed as a search source.
+- that MCP calls run without an approval prompt
+- that the read-only sandbox refuses `apply_patch`
+
+**Codex's MCP resource tools** let a drafting run read repository contents through GitHub's server, which is within the read-only token's Contents read. The write token has Issues only.
+

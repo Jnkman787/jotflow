@@ -39,7 +39,7 @@ import tempfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -280,6 +280,34 @@ def child_env(
     return env
 
 
+def write_private(run_dir: Path, relative: str, text: str) -> Path:
+    """Write ``text`` to ``run_dir/relative``: the file 0600, any new directory 0700.
+
+    ``relative`` must stay inside the run directory, so a preset cannot write
+    anywhere else.
+    """
+    parts = PurePosixPath(relative).parts
+    if (
+        not parts
+        or PurePosixPath(relative).is_absolute()
+        or any(p in ("", ".", "..") for p in parts)
+    ):
+        raise ConfigError(
+            f"a preset file must be a plain path inside the run directory: {relative!r}"
+        )
+    target = run_dir.joinpath(*parts)
+    folder = run_dir
+    for part in parts[:-1]:
+        folder = folder / part
+        if not folder.exists():
+            folder.mkdir(mode=0o700)
+            folder.chmod(0o700)  # whatever the umask
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return target
+
+
 def time_limit(kind: RunKind) -> float:
     seconds = DEFAULT_RUN_TIMEOUTS[kind].total_seconds() + TIMEOUT_GRACE_SECONDS
     return float(min(seconds, MAX_TOKEN_TTL_SECONDS))
@@ -399,6 +427,8 @@ class Runner:
             fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(plan.config, handle)
+            for relative, text in plan.files.items():
+                write_private(run_dir, relative, text)
             env = child_env(
                 self._config,
                 run.kind,
