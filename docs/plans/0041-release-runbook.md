@@ -3,8 +3,8 @@
 ## Links and status
 
 - Issue: #41 (Refs). Also serves #87 and #39, whose last boxes need the first real release
-- Draft PR: to be opened
-- Status: draft
+- Draft PR: #197
+- Status: ready for review
 - Last verified: 2026-10-19, against main and release.yml
 - Next safe action: review; the maintainer follows it for v0.1.0
 
@@ -31,4 +31,5 @@ Done when:
 ## Validation
 
 - `make check` passes.
+- CodeRabbit skipped: the free allowance was rate limited on 2026-10-19.
 - The jobs, the environment name, the image names, and the version checks were read from release.yml.
