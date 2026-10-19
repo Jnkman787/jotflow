@@ -4,10 +4,10 @@
 
 - Issue: #40, the deployment guide only. Security's threat model is merged as `docs/threat-model.md` (#178), and the agent adapter guide is the architect's.
 - Also serves: #87 (the no-clone install), #39 (the images), #162 (the health signal), #126 (secrets and rotation), D2, D4, D6
-- Draft PR: to be opened
-- Status: planning
-- Last verified: plan written on 2026-10-19, no guide yet
-- Next safe action: write `docs/deployment.md` from the outline, checking each claim against the code
+- Draft PR: #183
+- Status: ready for review
+- Last verified: 2026-10-19. The backup and restore commands were run against a locally built JotFlow image
+- Next safe action: review
 
 ## Objective and done-when
 
@@ -15,9 +15,9 @@ The README's quickstart gets a team running on one machine. This guide is for wh
 
 Done when:
 
-- [ ] `docs/deployment.md` exists, and the README, the threat model, and architecture.md's Deployment section link to it
-- [ ] Every command in it was run, or checked against the code, and the guide says which ones need a published release
-- [ ] It covers:
+- [x] `docs/deployment.md` exists, and the README, the threat model, and architecture.md's Deployment section link to it
+- [x] Every command in it was run, or checked against the code, and the guide says which ones need a published release
+- [x] It covers:
   - the host
   - secrets and their rotation
   - the data volume, with backup and restore
@@ -25,8 +25,8 @@ Done when:
   - health and logs
   - running without Docker
   - what any other orchestrator must keep
-- [ ] It never repeats the threat model or architecture.md, and links to them instead
-- [ ] `make check` passes
+- [x] It never repeats the threat model or architecture.md, and links to them instead
+- [x] `make check` passes
 
 **Out of scope:** the agent adapter guide, which is the architect's, and `jotflow rebuild` (#38), which isn't built yet. The guide says restoring a backup is the only recovery for now.
 
@@ -53,18 +53,29 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective (the deployment guide part), testable done-when
-- [ ] Commit this plan and open the draft PR
-- [ ] Write `docs/deployment.md`
-- [ ] Run the backup and restore commands against a local image, and the systemd unit's command
-- [ ] Links from the README, the threat model, and architecture.md
-- [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] Write `docs/deployment.md`
+- [x] Run the backup and restore commands against a local image, and the systemd unit's command
+- [x] Links from the README, the threat model, and architecture.md
+- [x] CodeRabbit once: one finding, about this plan's stale status lines, fixed
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- The backup was run against a locally built JotFlow image, in a container holding the database open with a write still in the WAL. It used the online backup, then `cat` out, then `rm`. The copy passed `PRAGMA integrity_check` and held both rows.
+- The restore was run through the image's own user, with stdin from a 0600 backup. The restored file is owned by `jotflow`, mode 0600, and has the backed-up rows. A restore by bind mount would have needed the backup made world-readable, so the guide uses stdin.
+- Checked against the code:
+  - the image has Python and no `sqlite3` program
+  - `/data/jotflow.db`, WAL, and `secure_delete`
+  - a migration runs in one transaction, and a newer database is refused (`SchemaVersionError`)
+  - `jotflow health` and the 30 s heartbeat
+  - `--log-bodies` and `check --live` refused in the image
+  - `.env` and `jotflow.toml` read from the working folder
+  - the rotate flags, `COMPOSE_PROFILES`, the UIDs, `read_only`, `cap_drop`, and the tmpfs for runs
+- Not run: the `uvx` commands, which need the first release, as the guide says, and the systemd unit, which follows the command `jotflow run` already takes.
 
 ## Handoff notes
 
-None yet.
+- When the first release (#41) is tagged, run the guide's `uvx` install and upgrade steps once on a clean host, and fix anything they show.
+- When `jotflow rebuild` (#38) lands, add it to Data, backups, and restore as the recovery for a lost database.
