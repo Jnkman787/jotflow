@@ -125,6 +125,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "help_notices",
             "proposal_edits",
             "reaction_marks",
+            "operator_tokens",
         }
         for table in tables:
             (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
@@ -335,3 +336,44 @@ async def test_a_persons_skip_from_before_the_upgrade_survives_a_reaction_remova
         assert await store.reaction_marks("C0IDEAS01", "2.2") == []
     finally:
         await store.close()
+
+
+async def test_the_operator_tokens_upgrade_keeps_existing_rows(tmp_path: Path) -> None:
+    """11 to 12 (#58): the new table starts empty, and nothing already stored is touched."""
+    from datetime import UTC, datetime, timedelta
+
+    from jotflow.models import MessageRef
+    from jotflow.store import OperatorToken
+
+    path = tmp_path / "jotflow.db"
+    old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 12])
+    topic = await old.create_topic("C0IDEAS01", "Progress bar")
+    await old.link_message(MessageRef(channel_id="C0IDEAS01", ts="1.1"), topic.topic.id)
+    await old.close()
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA user_version").fetchone() == (11,)
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "operator_tokens" not in tables
+
+    store = await SqliteStore.open(path)
+    try:
+        kept = await store.get_topic(topic.topic.id)
+        assert kept is not None
+        assert kept.topic.title == "Progress bar"
+        assert [m.ts for m in kept.topic.messages] == ["1.1"]
+        assert await store.operator_tokens() == []
+        now = datetime(2026, 10, 19, 9, 0, tzinfo=UTC)
+        made = OperatorToken(
+            id="t1",
+            name="alex",
+            digest="d" * 64,
+            channels=("C0IDEAS01",),
+            created_at=now,
+            expires_at=now + timedelta(days=30),
+        )
+        await store.add_operator_token(made)
+        assert await store.operator_tokens() == [made]
+    finally:
+        await store.close()
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA user_version").fetchone() == (LATEST_VERSION,)

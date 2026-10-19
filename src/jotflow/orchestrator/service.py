@@ -70,8 +70,9 @@ from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.policy import Policy
 from jotflow.store import SqliteStore, Store
+from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
 from jotflow.whiteboard.read_tools import read_tools
-from jotflow.whiteboard.tokens import TokenRegistry
+from jotflow.whiteboard.tokens import TokenCheck, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
 from jotflow.whiteboard.write_tools import write_tools
 
@@ -85,7 +86,7 @@ class Server(Protocol):
     async def stop(self) -> None: ...
 
 
-ServerFactory = Callable[[Settings, TokenRegistry, Sequence[ToolSpec]], Server]
+ServerFactory = Callable[[Settings, TokenCheck, Sequence[ToolSpec]], Server]
 StoreOpener = Callable[[str], Awaitable[Store]]
 
 
@@ -261,6 +262,7 @@ class Orchestrator:
         self._debouncer: Debouncer | None = None
         self._supervisor: RunSupervisor | None = None
         self._stop = asyncio.Event()
+        self.operators: OperatorTokens | None = None
         self._tasks: list[asyncio.Task[None]] = []
 
     @property
@@ -358,7 +360,15 @@ class Orchestrator:
             ),
             *write_tools(self._store, self._policy, poster),
         )
-        self._server = self._make_server(self._settings, self.registry, tools)
+        # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
+        self.operators = OperatorTokens(self._store)
+        await self.operators.reload()
+        self._tasks.append(
+            asyncio.create_task(self.operators.run(self._stop), name="jotflow-operators")
+        )
+        self._server = self._make_server(
+            self._settings, GateTokens(self.registry, self.operators), tools
+        )
         await self._server.start()
         if self.kinds.on:
             self._runner = self._runner or RunnerClient.from_settings(self._settings)
@@ -518,9 +528,14 @@ class Orchestrator:
         revoked = self.registry.revoke_all()
         if revoked:
             log.info("revoked %d live run token(s) before stopping the MCP server", revoked)
+        if self.operators is not None:
+            self.operators.forget()  # no operator call lands while the server stops
         if self._server is not None:
             server, self._server = self._server, None
             await server.stop()
+        if self.operators is not None:
+            with contextlib.suppress(Exception):
+                await self.operators.flush()  # last-used for calls since the last reload
         if self._runner is not None:
             await self._runner.aclose()
         if self._store is not None:

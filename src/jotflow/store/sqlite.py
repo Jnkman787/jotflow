@@ -10,9 +10,11 @@ and a busy timeout absorbs short waits for the lock.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import secrets
-from collections.abc import AsyncIterator, Collection, Sequence
+import sqlite3
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,6 +49,7 @@ from jotflow.store.base import (
     MessageLink,
     NotFoundError,
     NoticeKind,
+    OperatorToken,
     PendingThread,
     ProposalEdit,
     ReactionKeyword,
@@ -703,6 +706,71 @@ class SqliteStore:
                 "DELETE FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
             )
             return cursor.rowcount > 0
+
+    # Operator tokens
+
+    @staticmethod
+    def _operator(row: aiosqlite.Row) -> OperatorToken:
+        return OperatorToken(
+            id=row["id"],
+            name=row["name"],
+            digest=row["digest"],
+            channels=tuple(json.loads(row["channels_json"])),
+            created_at=from_text(row["created_at"]),
+            expires_at=from_text(row["expires_at"]),
+            revoked_at=from_text(row["revoked_at"]) if row["revoked_at"] else None,
+            last_used_at=from_text(row["last_used_at"]) if row["last_used_at"] else None,
+        )
+
+    async def add_operator_token(self, token: OperatorToken) -> OperatorToken:
+        async with self._write():
+            try:
+                await self._db.execute(
+                    "INSERT INTO operator_tokens (id, name, digest, channels_json, created_at,"
+                    " expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        token.id,
+                        token.name,
+                        token.digest,
+                        json.dumps(list(token.channels)),
+                        to_text(token.created_at),
+                        to_text(token.expires_at),
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                raise ConflictError(
+                    f"an operator token named {token.name} already exists"
+                ) from None
+        return token
+
+    async def operator_tokens(self) -> list[OperatorToken]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM operator_tokens ORDER BY created_at DESC, id DESC"
+            )
+        return [self._operator(row) for row in rows]
+
+    async def revoke_operator_token(self, name: str) -> OperatorToken | None:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE operator_tokens SET revoked_at = ? WHERE name = ? AND revoked_at IS NULL",
+                (to_text(self._clock()), name),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = await self._one("SELECT * FROM operator_tokens WHERE name = ?", (name,))
+        return None if row is None else self._operator(row)
+
+    async def touch_operator_tokens(self, used: Mapping[str, datetime]) -> None:
+        if not used:
+            return
+        async with self._write():
+            for token_id, when in used.items():
+                await self._db.execute(
+                    "UPDATE operator_tokens SET last_used_at = ? WHERE id = ?"
+                    " AND (last_used_at IS NULL OR last_used_at < ?)",
+                    (to_text(when), token_id, to_text(when)),
+                )
 
     # Channel modes
 

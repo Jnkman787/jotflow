@@ -29,6 +29,7 @@ from jotflow.store import (
     DraftClearedError,
     MemoryStore,
     NotFoundError,
+    OperatorToken,
     SqliteStore,
     Store,
     ToolCallRecord,
@@ -1087,3 +1088,66 @@ async def test_unmarking_removes_only_a_persons_chatter_mark(store: Store) -> No
     linked = MessageRef(channel_id=CH, ts="4.4")
     await store.link_message(linked, topic.topic.id, by="person")
     assert not await store.unmark_chatter(linked)
+
+
+# Operator tokens (#58)
+
+
+def operator_token(name: str, now: datetime, **overrides: object) -> OperatorToken:
+    fields: dict[str, object] = {
+        "id": f"id-{name}",
+        "name": name,
+        "digest": f"digest-{name}",
+        "channels": (CH, OTHER),
+        "created_at": now,
+        "expires_at": now + timedelta(days=30),
+    }
+    fields.update(overrides)
+    return OperatorToken(**fields)  # type: ignore[arg-type]
+
+
+async def test_operator_tokens_are_listed_newest_first(store: Store, clock: Clock) -> None:
+    first = await store.add_operator_token(operator_token("alex", clock.now))
+    second = await store.add_operator_token(operator_token("sam", clock.tick(), channels=(CH,)))
+    assert await store.operator_tokens() == [second, first]
+
+
+async def test_an_operator_token_name_or_digest_is_unique(store: Store, clock: Clock) -> None:
+    await store.add_operator_token(operator_token("alex", clock.now))
+    with pytest.raises(ConflictError):
+        await store.add_operator_token(operator_token("alex", clock.now, id="other"))
+    with pytest.raises(ConflictError):
+        await store.add_operator_token(
+            operator_token("sam", clock.now, id="other", digest="digest-alex")
+        )
+    assert [t.name for t in await store.operator_tokens()] == ["alex"]
+
+
+async def test_revoking_an_operator_token_keeps_its_row(store: Store, clock: Clock) -> None:
+    await store.add_operator_token(operator_token("alex", clock.now))
+    assert await store.revoke_operator_token("nobody") is None
+    when = clock.tick()
+    revoked = await store.revoke_operator_token("alex")
+    assert revoked is not None
+    assert revoked.revoked_at == when
+    assert not revoked.usable(when)
+    clock.tick()
+    assert await store.revoke_operator_token("alex") is None
+    [kept] = await store.operator_tokens()
+    assert kept.revoked_at == when
+
+
+async def test_last_use_only_moves_forward(store: Store, clock: Clock) -> None:
+    made = await store.add_operator_token(operator_token("alex", clock.now))
+    later = clock.now + timedelta(hours=1)
+    await store.touch_operator_tokens({made.id: later})
+    await store.touch_operator_tokens({made.id: clock.now, "no-such-id": later})
+    await store.touch_operator_tokens({})
+    [kept] = await store.operator_tokens()
+    assert kept.last_used_at == later
+
+
+async def test_an_operator_token_is_usable_until_it_expires(clock: Clock) -> None:
+    made = operator_token("alex", clock.now)
+    assert made.usable(clock.now)
+    assert not made.usable(made.expires_at)
