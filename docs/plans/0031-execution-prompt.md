@@ -5,7 +5,7 @@
 - Issue: #31
 - Also serves: #55 (the maintainer's live execution run uses these instructions)
 - Draft PR: #156
-- Status: implementing; only the real Claude Code run is left, waiting on the lead's go-ahead
+- Status: ready for review
 - Last verified: plan written against main at 6503610, 2026-10-19
 - Next safe action: commit this plan and open the draft PR
 
@@ -21,7 +21,7 @@ Each one is a chance to drift from the approved content. In this work, JotFlow c
 
 From the issue, refined:
 
-- [ ] Each preset executes a fixture proposal. For Claude Code, CI uses the fake GitHub server from #144, now with write tools, and the maintainer's #55 run is the live check against a real repo. Other presets follow as they land.
+- [x] Each preset executes a fixture proposal. For Claude Code, CI uses the fake GitHub server from #144, now with write tools, and the maintainer's #55 run is the live check against a real repo. Other presets follow as they land.
 - [ ] The agent doesn't deviate from the approved content in tests. The fake server records every write, and the comparison requires each write to equal JotFlow's computed one exactly.
 - [ ] The body names the poster and the people looped in, by display name only, with the Slack permalinks unless `issue_links = "none"`.
 - [ ] Before writing, the run checks that every approved label exists. If any is missing, it calls `record_result` with an error naming them and writes nothing.
@@ -133,7 +133,7 @@ A fixture with a missing label checks the error path. CI does all of this with a
 - [x] `replay --execute` with the scripted stand-in, the second-run check, and a missing-label fixture
 - [x] Docs: architecture.md's execution runs and docs/presets.md's GitHub access
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
@@ -141,6 +141,12 @@ A fixture with a missing label checks the error path. CI does all of this with a
 - **The comparison catches deviation.** `tests/test_replay_execute.py` runs every fixture with the stand-in. It shows that a stand-in that changes a body fails with "the writes differ from the planned ones", and that one that skips the marker check fails with "wrote again after an interrupted attempt".
 - **The footer.** `tests/test_execution_attribution.py` covers the poster and the people looped in, the permalinks, a bot root, a failed lookup, a slow lookup, and `issue_links = "none"`. `tests/test_execution_writes.py` covers each proposal shape and the name cleaning.
 - **`make check`** is green at 96% coverage.
+
+- **The real-agent pass.** On 2026-10-19 the lead approved one pass of `make eval-execute YES=1` on the maintainer's Claude Code login, at the preset's haiku default for execution. It was Claude Code 2.1.303 through the claude-code preset, 20 execution runs: each of the 10 proposals cleanly, and again after a scripted interrupted attempt.
+  - **Every fixture matched in both scenarios, with no reruns.** That's bug-report, existing-topic (a comment), feature-request, keywords (3 proposals, including updates to #42), mention-without-ownership, mentions (with an assignee), missing-label (refused and wrote nothing), and same-topic-two-threads. The four fixtures with no proposal had nothing to execute.
+  - **No write differed from the planned one,** and there were no duplicate writes. Every proposal was applied with the expected issue URL.
+  - **Usage:** 105 turns, 178 input tokens, 14.6k output tokens, 73k cache-write and 709k cache-read tokens. The CLI reported $0.03.
+  - Only counts are kept, with no transcripts.
 
 **Implementation notes:**
 - `approval.py`'s author lookup moved to `SlackPeople.authors`, and one `SlackPeople` is now shared, so `auth.test` runs once per process.
