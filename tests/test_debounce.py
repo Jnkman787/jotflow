@@ -342,3 +342,14 @@ async def test_a_failed_save_leaves_nothing_waiting_in_memory(
     with pytest.raises(RuntimeError, match="disk full"):
         await debouncer.note(message(ROOT))
     assert debouncer.pending() == {}
+
+
+async def test_arm_starts_a_window_for_a_message_ingest_never_sees(
+    store: Store, debouncer: Debouncer, clock: Clock
+) -> None:
+    thread = await debouncer.arm(FAST, ROOT)
+    assert thread == Thread(FAST, ROOT)
+    (pending,) = await store.pending_threads()
+    assert pending.due_at == clock.now + timedelta(seconds=10)
+    clock.advance(11)
+    assert await debouncer.flush() == [thread]

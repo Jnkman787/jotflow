@@ -35,6 +35,7 @@ from jotflow.logs import (
     check_bodies_allowed,
     configure_logging,
 )
+from jotflow.orchestrator.approval import register_actions
 from jotflow.orchestrator.ingest import EventFilter
 from jotflow.orchestrator.service import Orchestrator
 from jotflow.orchestrator.slack import (
@@ -190,9 +191,16 @@ async def serve(settings: Settings, policy: Policy) -> int:
             type(exc).__name__,
         )
         return EXIT_STORE
-    register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
-    register_commands(app, policy, orchestrator.channel_mode)
-    await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
+    try:
+        register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
+        register_commands(app, policy, orchestrator.channel_mode)
+        if orchestrator.approval is not None:
+            register_actions(app, orchestrator.approval)
+        await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
+    except BaseException:
+        # Started is stopped, whatever fails after it.
+        await orchestrator.stop()
+        raise
     log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
 
     handler: Connection = AsyncSocketModeHandler(app, settings.slack_app_token.get_secret_value())

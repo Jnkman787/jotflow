@@ -84,6 +84,18 @@ class Debouncer:
             await self._join_parents_topic(ref)
         return thread
 
+    async def arm(self, channel_id: str, thread_ts: str) -> Thread:
+        """(Re)start a thread's quiet window for a message ingest never sees.
+
+        JotFlow posts a person's Request Changes text itself (#27), and ingest
+        drops JotFlow's own messages, so the gate arms the thread directly.
+        """
+        thread = Thread(channel_id, thread_ts)
+        due = self._clock() + timedelta(seconds=self._policy.debounce_for(channel_id))
+        await self._store.arm_thread(channel_id, thread_ts, due)
+        self._due[thread] = due
+        return thread
+
     async def _skipped(self, ref: MessageRef) -> bool:
         """A person said skip: for this message, or for the first message of its thread.
 
