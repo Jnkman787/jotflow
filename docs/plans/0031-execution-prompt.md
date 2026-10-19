@@ -157,9 +157,20 @@ A fixture with a missing label checks the error path. CI does all of this with a
 
 This is built on #144: `replay_agent.py`, `fake_github_mcp.py`, and the instructions directory. Rebase onto main once #144 merges.
 
+## Follow-up: keep the footer and markers on a replaced body (#167)
+
+The review of #156 found that an update replacing an issue's body wrote the new body without a footer. That dropped the "Raised in Slack" line, the permalinks, and the marker of the proposal that created the issue, which a retry or a rebuild (#38) relies on.
+
+- **The planned body.** A replaced body now always ends with the full footer: this update's attribution, its permalinks under the same `issue_links` rules, and its marker.
+- **Earlier markers.** The write carries `markers_from_current`. The agent reads the issue's current body and appends each whole line that is a JotFlow marker and that the new body lacks, in order. `writes.with_kept_markers` defines this, and the stand-in, the replay's expected body, and the instructions all follow it. The markers come from GitHub, not JotFlow's store, so they survive a rebuilt store.
+- **Tests.**
+  - Unit tests cover a body on an issue JotFlow created, which keeps every marker once and in order, and one it didn't. Inline marker-like text or other comments are not kept.
+  - The new `body-update` fixture's #42 carries a creating marker, and `replay --execute` checks the kept marker exactly, in both the clean and the interrupted scenario.
 
 ## Review fixes before merge (security, 2026-10-19)
 
 - **Entities.** `clean_name` also drops `&` and `;`, so an HTML entity such as `&#64;someone`, `&#x40;someone`, `&commat;someone`, `&#35;12`, or `&#58;` can't become a mention, an issue link, or a URL when GitHub renders it.
 - **Characters.** `clean_name` also removes control, format, and bidi characters, through `text.without_unsafe_chars`, the same rule as `unsafe_text_problem`. U+202E and U+200B are tested.
 - **Who is looped in.** "Looped in" names now come from the Slack-confirmed authors of the proposal's cited sources, through `SlackPeople.authors`, one source at a time. They no longer come from the agent-written `participants`. A participant who wrote no cited source never reaches the footer, and a source Slack can't find adds no one.
+
+**The #167 real-agent rerun.** On 2026-10-19 the lead approved a single-fixture rerun on the maintainer's login, at haiku: `jotflow replay body-update --agent claude-code --execute`. It made 2 execution runs, and both scenarios matched. In the clean run, the replaced body was written exactly, including the kept creating marker. After an interrupted attempt, the run found the marker and wrote nothing. It took 9 turns and about 1.5k output tokens, and the CLI reported $0.00 after rounding. Only counts are kept.

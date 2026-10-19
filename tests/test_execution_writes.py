@@ -157,8 +157,9 @@ def test_an_update_with_everything_edits_then_comments() -> None:
         "owner": "acme-co",
         "repo": "web",
         "issue_number": 42,
-        "body": "New body.",  # the comment carries the marker
+        "body": "New body.\n\n---\nTAIL",  # the footer stays on a replaced body (#167)
     }
+    assert edit.markers_from_current is True
     assert edit.labels_from_current is not None
     assert (edit.labels_from_current.add, edit.labels_from_current.remove) == (
         ["bug"],
@@ -179,7 +180,8 @@ def test_a_body_only_update_marks_the_body() -> None:
     )
     checks, [edit] = plan(record(proposal), "TAIL")
     assert checks.marker_in == "issue_body"
-    assert edit.arguments["body"] == f"Rewritten.\n\n---\n{marker('a1b2c3d4e5f60718')}"
+    assert edit.arguments["body"] == "Rewritten.\n\n---\nTAIL"
+    assert edit.markers_from_current is True
     assert edit.labels_from_current is None
 
 
@@ -194,4 +196,25 @@ def test_a_labels_only_update_has_nothing_to_mark(remove_only: bool) -> None:
     checks, [edit] = plan(record(proposal), "TAIL")
     assert checks.marker_in == "nowhere"
     assert "body" not in edit.arguments
+    assert edit.markers_from_current is False
     assert edit.labels_from_current is not None
+
+
+def test_a_replaced_body_keeps_every_marker_the_old_one_had() -> None:
+    from jotflow.execution.writes import with_kept_markers
+
+    created = marker("0123456789abcdef")
+    earlier = marker("fedcba9876543210")
+    planned = f"New body.\n\n---\nRaised in Slack.\n{marker('a1b2c3d4e5f60718')}"
+    old = f"Old body.\n\n---\nRaised in Slack by Sam.\n{created}\n{earlier}\n{created}"
+    assert with_kept_markers(planned, old) == f"{planned}\n{created}\n{earlier}"
+
+
+def test_an_issue_jotflow_did_not_create_gains_only_the_update_footer() -> None:
+    from jotflow.execution.writes import with_kept_markers
+
+    planned = f"New body.\n\n---\n{marker('a1b2c3d4e5f60718')}"
+    # Marker-like text inline, or a different comment, is not a marker line.
+    old = "Someone wrote this by hand. <!-- jotflow:proposal:x --> inline\n<!-- note -->"
+    assert with_kept_markers(planned, old) == planned
+    assert with_kept_markers(planned, planned) == planned

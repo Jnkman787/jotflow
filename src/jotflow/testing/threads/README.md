@@ -17,6 +17,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `mentions.json` | A bug report with `<!here>` and `<@U0BOB>`, and Bob's reply taking it: "assign it to me". The agent picks `acme-co/api` by its description and assigns `acme-bob`, Bob's linked GitHub login. Alice is mentioned in the reply but not assigned. |
 | `mention-without-ownership.json` | An idea that mentions Bob, and Bob's reply with an opinion, but nobody says who takes it. One topic and one `create_issue` proposal with no assignees, and one `ask_channel` question asking who should own it. |
 | `closed-duplicate.json` | An idea that matches a closed issue, `acme-co/web#55`, that no topic is linked to. One topic, no proposal, and one `ask_channel` question naming the issue, since the agent searches closed issues too. |
+| `body-update.json` | As `existing-topic.json`, but the agent proposes replacing #42's body. JotFlow created #42, so its body carries the creating proposal's hidden marker. Executing the update keeps that marker and adds JotFlow's footer. |
 | `missing-label.json` | As `feature-request.json`, but the repo has no `enhancement` label on GitHub. Drafting is the same. Executing the proposal must fail, naming the missing label, and write nothing. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
