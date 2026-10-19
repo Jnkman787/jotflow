@@ -2,7 +2,7 @@
 
 What JotFlow protects, from whom, how each defence is enforced, and what v1 deliberately accepts. It describes the code as it is. Where this page and the code disagree, the code wins and this page is wrong. Please report that, as a security issue if it matters (see [SECURITY.md](../SECURITY.md)).
 
-Decisions are cited as D1 to D13 from [roadmap.md](roadmap.md). Design detail lives in [architecture.md](architecture.md), and this page links to it rather than repeating it.
+Decisions are cited as D1 to D13 from [roadmap.md](roadmap.md). Design detail lives in [architecture.md](architecture.md), and this page links to it rather than repeating it. How to run JotFlow so these defences hold, including backups and other orchestrators, is in [deployment.md](deployment.md).
 
 ## What JotFlow is, in one paragraph
 
