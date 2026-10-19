@@ -109,7 +109,7 @@ Before writing, the agent looks for the marker where the checks say, and confirm
 
 ## Deployment
 
-JotFlow and the agent run in **two containers**, started together by one Compose file (D6).
+JotFlow and the agent run in **two containers**, started together by one Compose file (D6). Running it on a server, backups, upgrades, and what another orchestrator must keep are in [deployment.md](deployment.md).
 
 ```mermaid
 flowchart LR

@@ -368,6 +368,8 @@ The command refuses in CI, refuses without `--confirm`, and checks the repo and 
 
 ## Troubleshooting
 
+Running JotFlow on a server, with backups, upgrades, and rollback, is covered in [docs/deployment.md](docs/deployment.md).
+
 **Is JotFlow still connected?** `docker compose ps` shows `healthy` while JotFlow is connected to Slack, and `unhealthy` within about three minutes of losing it: 90 seconds for the heartbeat to go stale, then three failed checks 30 seconds apart. JotFlow rewrites a small heartbeat file every 30 seconds while connected, and `jotflow health` checks its age, without the network or any token. Its log shows `socket mode disconnected`, then `socket mode reconnecting (attempt N)` every 30 seconds, then `socket mode reconnected after Ns`. Slack's client reconnects by itself; the attempt count is JotFlow's own checks. To alert, watch for the container turning `unhealthy`: for example, `docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q jotflow)"` from cron, or your monitor's Docker health integration. Outside Docker, run `uvx jotflow health` on the same machine. It exits 0 when healthy and 1 otherwise, and `--max-age 120` changes how old the heartbeat may be.
 
 **Check a fresh install** with the live check. It posts one marked test message to a channel in `jotflow.toml`, checks that JotFlow receives it without logging its text, then deletes it.
