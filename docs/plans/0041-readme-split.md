@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #41 (Refs)
-- Draft PR: to be opened
+- Draft PR: #225
 - Status: plan only. The build waits for the architect's root reorganisation, which moves the Docker files to `docker/` and the example configs to `examples/`, so every link points at a final path
 - Last verified: 2026-10-19, against main
 - Next safe action: review this plan. Build once the reorganisation merges
@@ -54,7 +54,7 @@ Done when:
 ## Progress checklist
 
 - [x] Map the README's sections, the generated block, the tests that read it, and every inbound link
-- [ ] Commit this plan and open the draft PR
+- [x] Commit this plan and open the draft PR
 - [ ] Wait for the reorganisation to merge, then rebase
 - [ ] Move the blocks, rewrite the links, and shorten the Quickstart
 - [ ] Point the two tests and two docstrings at the new files
