@@ -32,6 +32,7 @@ import anyio
 from pydantic import BaseModel, Field, model_validator
 
 from jotflow.models import (
+    ChannelMode,
     ExecutionResult,
     IssueProposal,
     MessageRef,
@@ -234,6 +235,12 @@ class _RunLocks:
                 self._locks[run_id] = (lock, users - 1)
 
 
+PAUSED_REASON = "this channel is paused; JotFlow writes nothing there until it is unpaused"
+# record_result only records a GitHub write the agent already made, approved before
+# the pause; refusing it would strand the proposal, so it is allowed (#28).
+WRITES_WHILE_PAUSED = frozenset({"record_result"})
+
+
 class WriteTools:
     """The handlers, with what they need. Build the specs with :func:`write_tools`."""
 
@@ -267,6 +274,8 @@ class WriteTools:
             earlier = await self._store.find_tool_call(grant.run_id, tool, key)
             if earlier is not None:
                 return result_type.model_validate_json(earlier)
+            if tool not in WRITES_WHILE_PAUSED:
+                await self._check_not_paused(grant)
             with anyio.CancelScope(shield=True):
                 result = await act()
                 await self._store.record_tool_call(
@@ -281,6 +290,12 @@ class WriteTools:
                     )
                 )
             return result
+
+    async def _check_not_paused(self, grant: Grant) -> None:
+        """A paused channel writes nothing, even from a run that started before (#28)."""
+        setting = await self._store.get_channel_mode(grant.channel_id)
+        if setting is not None and setting.mode is ChannelMode.PAUSED:
+            raise ToolError(PAUSED_REASON)
 
     async def _check_running(self, grant: Grant) -> None:
         # The token is revoked when a run ends; this is the second guard, in

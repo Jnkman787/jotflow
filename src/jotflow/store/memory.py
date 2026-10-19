@@ -25,6 +25,7 @@ from jotflow.models import (
 )
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
+    AUTO_APPROVER,
     DEFAULT_RUN_TIMEOUTS,
     ChannelModeSetting,
     Clock,
@@ -51,6 +52,15 @@ from jotflow.store.base import (
     utc_now,
 )
 from jotflow.store.titles import clean_title
+
+_WRITING = frozenset({ProposalState.APPROVED, ProposalState.EXECUTING, ProposalState.RECONCILING})
+
+
+def _auto_writing(record: ProposalRecord) -> bool:
+    """Auto mode's card waits for its write (#28), so it is not due until then."""
+    return (
+        record.card_ts is None and record.approved_by == AUTO_APPROVER and record.state in _WRITING
+    )
 
 
 class MemoryStore:
@@ -252,7 +262,11 @@ class MemoryStore:
             return record.model_copy(deep=True)
 
     async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
-        due = [r for r in self._proposals.values() if r.card_due]
+        due = [
+            r
+            for r in self._proposals.values()
+            if r.card_due and not self._paused(r.channel_id) and not _auto_writing(r)
+        ]
         due.sort(key=lambda r: (r.created_at, r.id))
         return [r.model_copy(deep=True) for r in due[:limit]]
 
@@ -332,6 +346,11 @@ class MemoryStore:
             setting = ChannelModeSetting(channel_id, ChannelMode(mode), changed_by, self._clock())
             self._modes[channel_id] = setting
             return setting
+
+    def _paused(self, channel_id: str) -> bool:
+        """Nothing runs and no card is drawn in a paused channel (#28)."""
+        setting = self._modes.get(channel_id)
+        return setting is not None and setting.mode is ChannelMode.PAUSED
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         return self._modes.get(channel_id)
@@ -433,6 +452,8 @@ class MemoryStore:
             busy = {(r.channel_id, r.thread_ts) for r in running}
             for run in self._ordered_runs():
                 if kinds is not None and run.kind not in kinds:
+                    continue
+                if self._paused(run.channel_id):
                     continue
                 if run.status is RunStatus.QUEUED and (run.channel_id, run.thread_ts) not in busy:
                     now = self._clock()

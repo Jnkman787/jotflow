@@ -539,8 +539,14 @@ class SqliteStore:
     async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
         async with self._lock:
             rows = await self._all(
-                "SELECT * FROM proposals WHERE card_revision IS NULL OR card_revision < revision"
-                " ORDER BY created_at, id LIMIT ?",
+                "SELECT * FROM proposals AS p"
+                " WHERE (p.card_revision IS NULL OR p.card_revision < p.revision)"
+                " AND NOT EXISTS (SELECT 1 FROM channel_modes AS m"
+                " WHERE m.channel_id = p.channel_id AND m.mode = 'paused')"
+                # Auto mode's card waits for its write (#28), so it is not due until then.
+                " AND NOT (p.card_ts IS NULL AND p.approved_by = 'auto'"
+                " AND p.state IN ('approved', 'executing', 'reconciling'))"
+                " ORDER BY p.created_at, p.id LIMIT ?",
                 (limit,),
             )
             return [await self._proposal(row) for row in rows]
@@ -793,6 +799,9 @@ class SqliteStore:
                 WHERE r.status = 'queued' AND r.kind IN ({marks}) AND NOT EXISTS (
                     SELECT 1 FROM runs AS x WHERE x.status = 'running'
                     AND x.channel_id = r.channel_id AND x.thread_ts = r.thread_ts
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM channel_modes AS m
+                    WHERE m.channel_id = r.channel_id AND m.mode = 'paused'
                 )
                 ORDER BY r.created_at, r.rowid LIMIT 1
                 """,

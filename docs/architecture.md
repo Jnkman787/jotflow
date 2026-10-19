@@ -222,6 +222,11 @@ Each channel has a mode:
 
 The mode applies uniformly to creation, description edits, comments, assignment, and labels.
 
+`/jotflow mode` shows the channel's mode privately, and `/jotflow mode propose|auto|paused` sets it (#28). The mode is runtime state in the store (D2). Who may change it follows D7: any workspace member while approvers are off, only an approver while they are on, and never a guest or an external user. Every change is announced in the channel in plain text. Setting `auto` in a channel shared with another organisation, or with a guest among its first 1000 members, adds a warning to that announcement.
+
+- **Paused** is enforced in the store: no run starts in a paused channel, and no card is drawn there, until it is unpaused. The orchestrator ignores the channel's messages and reactions, so no keyword, no debouncing, and no help. The card's buttons and the approval reaction are refused. A run already running when the channel is paused cannot write either: its `ask_channel`, `link_message`, `propose_issue`, and `propose_update` calls are refused. Only `record_result` is allowed, because it records a GitHub write the agent already made. So pausing stops new work and every post JotFlow would make. An execution run approved before the pause may still finish its GitHub write and report it, since that write goes through the agent's own GitHub access.
+- **Auto** approves each new proposal as "auto" and queues its execution run, in the card loop. A proposal whose card was already shown when the channel switched is left for a person. The card is posted once the write has finished, applied or failed, and it records "approved by auto mode".
+
 **What approval guarantees, always** (D7):
 
 - The card shows the full issue body, the target repo, labels, assignees, size, and confidence. A public target repo shows a warning.

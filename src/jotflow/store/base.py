@@ -519,7 +519,7 @@ class Store(Protocol):
         """Proposals whose card is missing or behind, oldest first (#152).
 
         Every change a card shows raises a proposal's revision. Recording a
-        card's ts does not.
+        card's ts does not. Paused channels are left out until unpaused (#28).
         """
         ...
 
@@ -597,7 +597,9 @@ class Store(Protocol):
     ) -> Run | None:
         """Start the oldest queued run whose thread has no running run.
 
-        Atomic, and only while fewer than ``max_running`` runs are running.
+        Atomic, and only while fewer than ``max_running`` runs are running. A run
+        in a paused channel is never claimed; it waits until the channel is
+        unpaused (#28).
         The claimed run's deadline becomes its start plus its timeout. With
         ``kinds``, only runs of those kinds are claimed; the rest stay queued.
         """

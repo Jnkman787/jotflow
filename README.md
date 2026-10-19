@@ -401,6 +401,7 @@ This is how JotFlow works for the people in the channel once drafting and approv
 
 - **Just post.** Write your idea, bug, or request in the channel like you normally would. JotFlow waits for the conversation to settle, then posts a proposed issue for the team to approve.
 - **Steer it if you like.** Start a message with `idea:` or `bug:` to say what it is, `re:` to add to an existing issue (JotFlow's link replies tell you exactly what to type), or `skip:` if it isn't an idea at all. Reacting with :no_entry_sign: works like `skip:`. Most people never need these.
+- **Change how a channel works.** `/jotflow mode` shows the channel's mode: `propose`, the default, where nothing is written until someone approves; `auto`, where proposals are written straight away; or `paused`, where JotFlow reads and writes nothing. `/jotflow mode auto` sets it, and JotFlow announces the change in the channel. With approvers on, only they can change it.
 - **Forgot the words?** Type `/jotflow help`. Only you see the answer, and it lists this channel's repos and how approval works here.
 - **Help finds you.** JotFlow pins a short guide once in each channel. Your first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...` without the colon, gets a private suggestion once. JotFlow never acts on a near miss. Each of these can be turned off in `jotflow.toml`'s `[help]` table, for every channel or for one.
 

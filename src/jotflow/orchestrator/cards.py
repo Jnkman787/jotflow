@@ -312,6 +312,18 @@ def _sources_block(record: ProposalRecord) -> Block | None:
 
 
 def _state_block(record: ProposalRecord) -> Block | None:
+    block = _state_line(record)
+    if (
+        block is not None
+        and record.approved_by == AUTO_APPROVER
+        and record.state is not ProposalState.APPROVED
+    ):
+        # Auto mode's card is posted after the write, so it says who approved (#28).
+        block["elements"].append(_approved_block(record)["elements"][0])
+    return block
+
+
+def _state_line(record: ProposalRecord) -> Block | None:
     state = record.state
     if state is ProposalState.PENDING:
         return None
