@@ -10,6 +10,8 @@ import pytest
 from jotflow.models import IssueProposal, ProposalRecord, ProposalState, RunKind, RunStatus
 from jotflow.orchestrator.runs import (
     GRACE_SECONDS,
+    MAX_EXECUTION_ATTEMPTS,
+    RETRY_DELAYS,
     TOKEN_FAILURE,
     RunLifecycle,
     StartedRun,
@@ -493,3 +495,173 @@ async def test_a_drafting_run_ending_touches_no_proposal(
     await lifecycle.finish(started.run.id, RunStatus.FAILED)
     proposal = await store.get_proposal("p1")
     assert proposal is not None and proposal.state is ProposalState.EXECUTING
+
+
+# --- retries under a limit (#30) ----------------------------------------------
+
+
+class GaveUp:
+    def __init__(self, fail: bool = False) -> None:
+        self.records: list[ProposalRecord] = []
+        self.fail = fail
+
+    async def __call__(self, record: ProposalRecord) -> None:
+        self.records.append(record)
+        if self.fail:
+            raise RuntimeError("slack is down")
+
+
+def _retrying(store: Store, registry: TokenRegistry, clock: Clock, gave_up: GaveUp) -> RunLifecycle:
+    return RunLifecycle(store, registry, clock=clock, on_gave_up=gave_up)
+
+
+async def _fail_attempt(store: Store, lifecycle: RunLifecycle) -> None:
+    started = await lifecycle.start_next(max_running=2)
+    assert started is not None and started.run.kind is RunKind.EXECUTION
+    await lifecycle.finish(started.run.id, RunStatus.FAILED, error="agent exited 1")
+
+
+async def test_a_failed_attempt_is_retried_after_a_delay(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    gave_up = GaveUp()
+    lifecycle = _retrying(store, registry, clock, gave_up)
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    await _fail_attempt(store, lifecycle)
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.RECONCILING
+    assert lifecycle.pending_retries() == {"p1": clock.now + RETRY_DELAYS[0]}
+    assert await lifecycle.queue_due_retries() == []
+    clock.advance(RETRY_DELAYS[0].total_seconds())
+    (retry_id,) = await lifecycle.queue_due_retries()
+    retry = await store.get_run(retry_id)
+    assert retry is not None and retry.status is RunStatus.QUEUED and retry.proposal_id == "p1"
+    assert lifecycle.pending_retries() == {} and gave_up.records == []
+
+
+async def test_at_the_limit_the_proposal_fails_once_with_a_notice(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    gave_up = GaveUp()
+    lifecycle = _retrying(store, registry, clock, gave_up)
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    for delay in (*RETRY_DELAYS, None):
+        await _fail_attempt(store, lifecycle)
+        if delay is not None:
+            clock.advance(delay.total_seconds())
+            assert len(await lifecycle.queue_due_retries()) == 1
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.FAILED
+    assert [r.id for r in gave_up.records] == ["p1"]
+    assert gave_up.records[0].state is ProposalState.FAILED
+    executions = [r for r in await store.thread_runs(CH, THREAD) if r.kind is RunKind.EXECUTION]
+    assert len(executions) == MAX_EXECUTION_ATTEMPTS
+    assert lifecycle.pending_retries() == {}
+    clock.advance(3600)
+    assert await lifecycle.queue_due_retries() == []
+
+
+async def test_a_recorded_result_is_never_retried(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    lifecycle = _retrying(store, registry, clock, GaveUp())
+    await _approved(store)
+    started = await _start_execution(store, lifecycle)
+    assert started is not None
+    grant = registry.check(started.token)
+    assert grant is not None
+    tools = WriteTools(store, POLICY, _NoPoster(), clock=clock)
+    await tools.record_result(grant, RecordResultArgs(issue_url=ISSUE_URL))
+    await lifecycle.finish(started.run.id, RunStatus.SUCCEEDED)
+    assert lifecycle.pending_retries() == {}
+
+
+async def test_the_limit_holds_across_a_restart(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    gave_up = GaveUp()
+    lifecycle = _retrying(store, registry, clock, gave_up)
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    for delay in RETRY_DELAYS:
+        await _fail_attempt(store, lifecycle)
+        clock.advance(delay.total_seconds())
+        await lifecycle.queue_due_retries()
+    # The third attempt is running when JotFlow stops; recovery interrupts it
+    # and queues another, which must not start: three attempts have ended.
+    assert await lifecycle.start_next(max_running=2) is not None
+    restarted = _retrying(store, TokenRegistry(clock=clock.mono), clock, gave_up)
+    await restarted.recover()
+    assert await restarted.start_next(max_running=2) is None
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.FAILED
+    assert [r.id for r in gave_up.records] == ["p1"]
+
+
+async def test_a_retry_and_recovery_leave_one_live_run(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    lifecycle = _retrying(store, registry, clock, GaveUp())
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    await _fail_attempt(store, lifecycle)
+    await lifecycle.recover()  # queues one for the reconciling proposal
+    clock.advance(RETRY_DELAYS[0].total_seconds())
+    await lifecycle.queue_due_retries()  # coalesces with it
+    live = [
+        r
+        for r in await store.thread_runs(CH, THREAD)
+        if r.kind is RunKind.EXECUTION and r.status in (RunStatus.QUEUED, RunStatus.RUNNING)
+    ]
+    assert len(live) == 1
+
+
+async def test_a_failing_notice_is_logged_not_raised(
+    store: Store, registry: TokenRegistry, clock: Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    lifecycle = RunLifecycle(
+        store, registry, clock=clock, max_execution_attempts=1, on_gave_up=GaveUp(fail=True)
+    )
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    with caplog.at_level(logging.ERROR, logger="jotflow.runs"):
+        await _fail_attempt(store, lifecycle)
+    assert "could not post the give-up notice" in caplog.text
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.FAILED
+
+
+def test_the_attempt_limit_must_be_positive(store: Store, registry: TokenRegistry) -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        RunLifecycle(store, registry, max_execution_attempts=0)
+
+
+async def test_a_retry_is_dropped_if_the_proposal_moved_on(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    lifecycle = RunLifecycle(store, registry, clock=clock)  # no notice wired
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    await _fail_attempt(store, lifecycle)
+    await store.transition("p1", ProposalState.APPROVED)  # a person stepped in
+    clock.advance(RETRY_DELAYS[0].total_seconds())
+    assert await lifecycle.queue_due_retries() == []
+    # Giving up on a proposal no longer reconciling changes nothing.
+    record = await store.get_proposal("p1")
+    assert record is not None
+    await lifecycle._give_up(record)
+    again = await store.get_proposal("p1")
+    assert again is not None and again.state is ProposalState.APPROVED
+
+
+async def test_giving_up_without_a_notice_still_fails_the_proposal(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    lifecycle = RunLifecycle(store, registry, clock=clock, max_execution_attempts=1)
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    await _fail_attempt(store, lifecycle)
+    proposal = await store.get_proposal("p1")
+    assert proposal is not None and proposal.state is ProposalState.FAILED

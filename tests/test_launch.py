@@ -818,3 +818,29 @@ async def test_a_bad_info_reply_is_refused(body: Any) -> None:
         await recording_client(Recorder(200, body)).info(RunKind.DRAFTING)
     with pytest.raises(RunnerError, match="401"):
         await recording_client(Recorder(401)).info(RunKind.DRAFTING)
+
+
+async def test_a_refused_execution_is_retried_with_a_delay_then_fails_with_one_notice(
+    clock: Clock,
+) -> None:
+    from jotflow.orchestrator.notices import GAVE_UP_NOTICE, GiveUpNotice
+    from jotflow.orchestrator.runs import RETRY_DELAYS
+
+    rig = Rig(clock)
+    rig.lifecycle = RunLifecycle(
+        rig.store, rig.registry, clock=clock, on_gave_up=GiveUpNotice(rig.poster, POLICY)
+    )
+    rig.supervisor = RunSupervisor(rig.lifecycle, rig.store, rig.client, rig.poster, max_running=2)
+    rig.runner.launch_status = 429
+    await _execution(rig)
+    await rig.supervisor.tick()
+    await rig.supervisor.tick()  # no immediate retry
+    assert [c for c in rig.runner.calls if c[0] == "POST"] == [("POST", "/runs")]
+    for delay in RETRY_DELAYS:
+        rig.clock.advance(delay.total_seconds())
+        await rig.supervisor.tick()
+    assert len([c for c in rig.runner.calls if c[0] == "POST"]) == 3
+    assert await _proposal_state(rig) is ProposalState.FAILED
+    gave_up = [p for p in rig.poster.posts if p[2] == GAVE_UP_NOTICE.format(attempts=3)]
+    assert gave_up == [(CH, THREAD, GAVE_UP_NOTICE.format(attempts=3))]
+    await rig.client.aclose()
