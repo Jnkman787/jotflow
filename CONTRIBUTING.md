@@ -22,10 +22,16 @@ The README's quickstart installs JotFlow's published package and images, with no
 git clone https://github.com/Jnkman787/jotflow.git
 cd jotflow
 uv run jotflow init
-docker compose up -d
+make up
 ```
 
-In a checkout, setup leaves the checkout's own Compose files alone, and `docker compose up -d` builds both images from this source. Set `JOTFLOW_IMAGE_REF` and `JOTFLOW_AGENT_IMAGE_REF` in `.env` to run other images, such as a published `ghcr.io/jnkman787/jotflow:X.Y.Z` release. Pin an exact version rather than `latest`. A source build can also tag itself per commit through the same lines, which keeps older builds around for a quick rollback.
+In a checkout, setup leaves the checkout's own Compose files alone. They live in `docker/`, with the Dockerfiles, and `make up` builds both images from this source and starts them. It runs Compose from the checkout's root, where `.env`, the agent env files, and `jotflow.toml` are:
+
+```
+docker compose --project-directory . -f docker/docker-compose.yml -f docker/docker-compose.policy.yml up -d
+```
+
+Use `make compose ARGS="..."` for any other Compose command, such as `make compose ARGS="logs -f jotflow"`. `--project-directory .` matters: without it, Compose looks for those files in `docker/`. So setting `COMPOSE_FILE` alone isn't enough, and a checkout's `.env` doesn't get that line. Set `JOTFLOW_IMAGE_REF` and `JOTFLOW_AGENT_IMAGE_REF` in `.env` to run other images, such as a published `ghcr.io/jnkman787/jotflow:X.Y.Z` release. Pin an exact version rather than `latest`. A source build can also tag itself per commit through the same lines, which keeps older builds around for a quick rollback.
 
 If a build fails with `the --mount option requires BuildKit` or `unknown flag: --mount`, Docker is missing BuildKit. On Ubuntu with the `docker.io` package, run `sudo apt install docker-buildx`, then build again. Elsewhere, including Debian, install Docker's own packages or Docker Desktop, which include it. `make check` runs every check CI runs.
 

@@ -8,7 +8,7 @@ import pytest
 from jotflow.policy import Policy, load_policy, parse_policy
 from jotflow.policy_writer import render_policy, toml_string
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "jotflow.example.toml"
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "jotflow.example.toml"
 
 
 def _policy(**overrides: object) -> Policy:

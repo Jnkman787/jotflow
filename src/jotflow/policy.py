@@ -6,7 +6,7 @@ identity links, lives in the database instead.
 
 Every key is checked. An unknown or misspelt key is an error, and every error
 names the key it is about, for example ``channels.C0EXAMPLE1.repos[0].nickname``.
-See ``jotflow.example.toml`` for a complete file.
+See ``examples/jotflow.example.toml`` for a complete file.
 """
 
 from __future__ import annotations

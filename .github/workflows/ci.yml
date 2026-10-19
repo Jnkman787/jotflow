@@ -74,9 +74,9 @@ jobs:
       - name: Install
         run: uv sync --locked --all-groups
 
-      # From ci/codex's lockfile, so every package is pinned by integrity hash.
+      # From .github/ci/codex's lockfile, so every package is pinned by integrity hash.
       - name: Install the pinned Codex
-        working-directory: ci/codex
+        working-directory: .github/ci/codex
         run: |
           npm ci --no-fund --no-audit
           echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
@@ -144,14 +144,14 @@ jobs:
 
       # Plain docker CLI: nothing is pushed, so no registry login or
       # third-party build action is needed. The tag matches the image name in
-      # docker-compose.yml, so the Compose checks below reuse this build.
+      # docker/docker-compose.yml, so the Compose checks below reuse this build.
       - name: Validate Compose files
         run: |
-          docker compose config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.policy.yml config --quiet
+          docker compose --project-directory . -f docker/docker-compose.yml config --quiet
+          docker compose --project-directory . -f docker/docker-compose.yml -f docker/docker-compose.policy.yml config --quiet
 
       - name: Build
-        run: docker build --tag jotflow:local .
+        run: docker build --file docker/Dockerfile --tag jotflow:local .
 
       - name: Health check on the read-only image
         run: |
@@ -163,7 +163,7 @@ jobs:
           # A fresh heartbeat: healthy, with no tokens and no network.
           docker run --rm --read-only --tmpfs /tmp --network none jotflow:local sh -c \
             'python -c "import time; open(\"/tmp/jotflow-heartbeat\", \"w\").write(str(int(time.time())))" && jotflow health'
-          test "$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["jotflow"]["healthcheck"]["test"])')" = "['CMD', 'jotflow', 'health']"
+          test "$(docker compose --project-directory . -f docker/docker-compose.yml config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["jotflow"]["healthcheck"]["test"])')" = "['CMD', 'jotflow', 'health']"
 
       - name: Smoke test
         run: |
@@ -176,8 +176,8 @@ jobs:
 
       - name: Policy file mount
         run: |
-          install -m 0644 jotflow.example.toml jotflow.toml
-          compose=(docker compose -f docker-compose.yml -f docker-compose.policy.yml)
+          install -m 0644 examples/jotflow.example.toml jotflow.toml
+          compose=(docker compose --project-directory . -f docker/docker-compose.yml -f docker/docker-compose.policy.yml)
           "${compose[@]}" run --rm jotflow python -c \
             'import os; from jotflow.policy import load_policy; load_policy(os.environ["JOTFLOW_CONFIG"]); print("policy loaded")'
           # shellcheck disable=SC2016 # expanded inside the container, not here
@@ -190,7 +190,7 @@ jobs:
       # on the host. The offline check still works here. Dummy tokens only.
       - name: Live check refuses in the image
         run: |
-          compose=(docker compose -f docker-compose.yml -f docker-compose.policy.yml)
+          compose=(docker compose --project-directory . -f docker/docker-compose.yml -f docker/docker-compose.policy.yml)
           tokens=(-e JOTFLOW_SLACK_BOT_TOKEN=xoxb-ci -e JOTFLOW_SLACK_APP_TOKEN=xapp-ci)
           "${compose[@]}" run --rm "${tokens[@]}" jotflow jotflow check
           if "${compose[@]}" run --rm "${tokens[@]}" -e JOTFLOW_LIVE_CHECK=1 jotflow jotflow check --live > live.out 2>&1; then
@@ -219,10 +219,10 @@ jobs:
           printf 'JOTFLOW_SLACK_BOT_TOKEN=ci-sentinel-bot\n' > .env
           printf 'JOTFLOW_RUNNER_SECRET=ci-runner-secret\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' > agent.env
           printf 'JOTFLOW_RUNNER_SECRET=ci-exec-secret\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' > agent-exec.env
-          for files in "-f docker-compose.yml" "-f docker-compose.yml -f docker-compose.policy.yml"; do
+          for files in "-f docker/docker-compose.yml" "-f docker/docker-compose.yml -f docker/docker-compose.policy.yml"; do
             read -ra file_args <<< "$files"
             touch jotflow.toml
-            docker compose "${file_args[@]}" --profile agent config --format json > compose.json
+            docker compose --project-directory . "${file_args[@]}" --profile agent config --format json > compose.json
             python3 - <<'PY'
           import json
           services = json.load(open("compose.json"))["services"]
@@ -266,7 +266,7 @@ jobs:
           rm -f .env agent.env agent-exec.env jotflow.toml compose.json
 
       - name: Build
-        run: docker build --file Dockerfile.agent --tag jotflow-agent:local .
+        run: docker build --file docker/Dockerfile.agent --tag jotflow-agent:local .
 
       - name: Smoke test
         run: |
@@ -281,20 +281,20 @@ jobs:
           printf 'JOTFLOW_SLACK_BOT_TOKEN=ci-sentinel-bot\nJOTFLOW_SLACK_APP_TOKEN=ci-sentinel-app\n' > .env
           secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
           printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' "$secret" > agent.env
-          if docker compose run --rm --no-deps agent env | grep -q ci-sentinel; then
+          if docker compose --project-directory . -f docker/docker-compose.yml run --rm --no-deps agent env | grep -q ci-sentinel; then
             echo "::error::The agent container can see JotFlow's Slack tokens"
             exit 1
           fi
-          docker compose up -d --no-deps agent
+          docker compose --project-directory . -f docker/docker-compose.yml up -d --no-deps agent
           for _ in $(seq 1 30); do
-            if docker compose exec -T agent python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
+            if docker compose --project-directory . -f docker/docker-compose.yml exec -T agent python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
             sleep 1
           done
-          if docker compose exec -T agent sh -c 'tr "\0" "\n" < /proc/1/environ' | grep -q ci-sentinel; then
+          if docker compose --project-directory . -f docker/docker-compose.yml exec -T agent sh -c 'tr "\0" "\n" < /proc/1/environ' | grep -q ci-sentinel; then
             echo "::error::The runner process can see JotFlow's Slack tokens"
             exit 1
           fi
-          docker compose exec -T -e SECRET="$secret" agent python -c '
+          docker compose --project-directory . -f docker/docker-compose.yml exec -T -e SECRET="$secret" agent python -c '
           import os, urllib.error, urllib.request
           def status(auth):
               headers = {"Authorization": auth} if auth else {}
@@ -306,7 +306,7 @@ jobs:
           assert status(None) == 401, "the runner must refuse calls without its secret"
           assert status("Bearer " + os.environ["SECRET"]) == 404
           print("runner gate ok")'
-          docker compose --profile agent down
+          docker compose --project-directory . -f docker/docker-compose.yml --profile agent down
 
       # The execution runner holds only the write token, has its own secret, and
       # refuses drafting runs; started the same way, with its own env file.
@@ -316,16 +316,16 @@ jobs:
           secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
           drafting_secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
           printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' "$secret" > agent-exec.env
-          docker compose up -d --no-deps agent-exec
+          docker compose --project-directory . -f docker/docker-compose.yml up -d --no-deps agent-exec
           for _ in $(seq 1 30); do
-            if docker compose exec -T agent-exec python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
+            if docker compose --project-directory . -f docker/docker-compose.yml exec -T agent-exec python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
             sleep 1
           done
-          if docker compose exec -T agent-exec sh -c 'tr "\0" "\n" < /proc/1/environ' | grep -q ci-sentinel; then
+          if docker compose --project-directory . -f docker/docker-compose.yml exec -T agent-exec sh -c 'tr "\0" "\n" < /proc/1/environ' | grep -q ci-sentinel; then
             echo "::error::The execution runner can see JotFlow's Slack tokens"
             exit 1
           fi
-          docker compose exec -T -e SECRET="$secret" -e OTHER="$drafting_secret" agent-exec python -c '
+          docker compose --project-directory . -f docker/docker-compose.yml exec -T -e SECRET="$secret" -e OTHER="$drafting_secret" agent-exec python -c '
           import json, os, urllib.error, urllib.request
           def launch(secret, kind):
               body = json.dumps({"run_id": "run-1", "kind": kind, "token": "jfr_" + "x" * 43}).encode()
@@ -339,7 +339,7 @@ jobs:
           assert launch(os.environ["OTHER"], "execution") == 401
           assert launch(os.environ["SECRET"], "drafting") == 403
           print("execution runner refuses drafting ok")'
-          docker compose --profile agent down
+          docker compose --project-directory . -f docker/docker-compose.yml --profile agent down
 
       # Separate networks: the drafting agent cannot even open a connection to
       # agent-exec, while JotFlow, on both networks, can reach each runner.
@@ -347,14 +347,14 @@ jobs:
         run: |
           printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" > agent.env
           printf 'JOTFLOW_RUNNER_SECRET=%s\nJOTFLOW_AGENT_COMMAND=["true"]\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' "$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" > agent-exec.env
-          docker compose up -d --no-deps agent agent-exec
+          docker compose --project-directory . -f docker/docker-compose.yml up -d --no-deps agent agent-exec
           for service in agent agent-exec; do
             for _ in $(seq 1 30); do
-              if docker compose exec -T "$service" python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
+              if docker compose --project-directory . -f docker/docker-compose.yml exec -T "$service" python -c 'import socket; socket.create_connection(("127.0.0.1", 8766), 1)' 2>/dev/null; then break; fi
               sleep 1
             done
           done
-          docker compose exec -T agent python -c '
+          docker compose --project-directory . -f docker/docker-compose.yml exec -T agent python -c '
           import socket
           for host in ("agent-exec", "jotflow-agent-exec-1"):
               try:
@@ -366,13 +366,13 @@ jobs:
           # The check above is not vacuous: from the agents-exec network, where
           # JotFlow sits, agent-exec is reachable.
           # Compose prefixes network names with the project name; ask it.
-          exec_net="$(docker compose --profile agent config --format json \
+          exec_net="$(docker compose --project-directory . -f docker/docker-compose.yml --profile agent config --format json \
             | python3 -c 'import json, sys; print(json.load(sys.stdin)["networks"]["agents-exec"]["name"])')"
           docker run --rm --network "$exec_net" jotflow-agent:local python -c '
           import socket
           socket.create_connection(("agent-exec", 8766), 3).close()
           print("agents-exec reaches agent-exec ok")'
-          docker compose --profile agent down
+          docker compose --project-directory . -f docker/docker-compose.yml --profile agent down
           rm -f .env agent.env agent-exec.env
 
   # JotFlow launches a run in each agent container and the agent calls back
@@ -388,8 +388,8 @@ jobs:
 
       - name: Build
         run: |
-          docker build --tag jotflow:local .
-          docker build --file Dockerfile.agent --tag jotflow-agent:local .
+          docker build --file docker/Dockerfile --tag jotflow:local .
+          docker build --file docker/Dockerfile.agent --tag jotflow-agent:local .
 
       - name: JotFlow launches a run in each agent container
         run: tests/compose/reach_check.sh

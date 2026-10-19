@@ -1,9 +1,9 @@
 """The deployment files a team gets without cloning the repository (#87).
 
-The package carries copies of the repository's own ``docker-compose.yml``,
-``docker-compose.policy.yml``, and agent env examples under
-``jotflow/templates``. A test fails if a copy ever differs from the file at the
-repository's root; ``make templates`` copies them again. They live in the
+The package carries copies of the repository's own ``docker/docker-compose.yml``,
+``docker/docker-compose.policy.yml``, and ``examples/``'s agent env examples
+under ``jotflow/templates``. A test fails if a copy ever differs from the
+repository's file; ``make templates`` copies them again. They live in the
 package, not force-included at build time, because the image builds see only
 ``src/``. :func:`published_compose` turns the base Compose file into one
 that runs the published images: it drops each ``build:`` block and pins the

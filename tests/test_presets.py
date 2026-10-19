@@ -374,13 +374,16 @@ def test_codex_names_the_package_when_its_cli_is_missing() -> None:
 
 
 def test_the_published_image_pins_both_clis_at_their_presets_versions() -> None:
-    # release.yml builds the published agent image from docker-compose.yml's pin.
+    # release.yml builds the published agent image from docker/docker-compose.yml's pin.
     expected = (
         f"@anthropic-ai/claude-code@{presets.CLAUDE_CODE_VERSION} "
         f"@openai/codex@{presets.CODEX_VERSION}"
     )
     root = SRC.parent.parent
-    for compose in (root / "docker-compose.yml", SRC / "templates" / "docker-compose.yml"):
+    for compose in (
+        root / "docker" / "docker-compose.yml",
+        SRC / "templates" / "docker-compose.yml",
+    ):
         [pin] = re.findall(r'AGENT_NPM_PACKAGES: "([^"]+)"', compose.read_text(encoding="utf-8"))
         assert pin == expected, compose
 

@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #41
-- Draft PR: to be opened with this plan
-- Status: implementing
-- Last verified: origin/main f70e473, 2026-10-19
-- Next safe action: `git mv` the files, then fix each reference
+- Draft PR: #226
+- Status: ready for review
+- Last verified: `make check`, local image builds and Compose configs, 2026-10-19
+- Next safe action: review
 
 ## Objective and done-when
 
@@ -62,14 +62,22 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
-- [ ] `git mv` the files
-- [ ] Fix the compose build blocks, the Makefile, ci.yml and release.yml
-- [ ] Fix setup, deploy.py and the tests
-- [ ] Fix the doc links
-- [ ] `make check`, both image builds, `make up` config, and the stale-path grep
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] `git mv` the files
+- [x] Fix the compose build blocks, the Makefile, ci.yml and release.yml
+- [x] Fix setup, deploy.py and the tests
+- [x] Fix the doc links
+- [x] `make check`, both image builds, `make up` config, and the stale-path grep
+- [x] Mark the PR ready for review
 
 ## Validation
+
+- `make check` passes.
+- **Image builds:** both images build from the root context with `--file docker/Dockerfile` and `--file docker/Dockerfile.agent`, the second with both CLIs. `jotflow --version`, `claude --version` and `codex --version` run, and npm is purged.
+- **A checkout:** `make compose ARGS="--profile agent config"` resolves the build context to the root, the Dockerfiles to `docker/`, and `agent.env` and `jotflow.toml` to the root.
+- **A team's folder:** files from the package templates pass `docker compose --profile agent config`, with no `build:` and no `docker/` path.
+- **Stale paths:** a grep finds no moved name without its new folder, apart from references to a team's own folder and the template names.
+- **Also found:** Dependabot's docker updates scanned `/`, and now scan `/docker`.
+- **CI:** the release dry run runs on this PR, since it touches `docker/**`.
 
 ## Handoff notes

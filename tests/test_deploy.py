@@ -9,11 +9,17 @@ import pytest
 from jotflow import deploy
 
 ROOT = Path(__file__).resolve().parents[1]
+# Where each template lives in the checkout.
+CHECKOUT = {
+    deploy.COMPOSE: ROOT / "docker" / deploy.COMPOSE,
+    deploy.COMPOSE_POLICY: ROOT / "docker" / deploy.COMPOSE_POLICY,
+    **{name: ROOT / "examples" / name for name in deploy.AGENT_EXAMPLES},
+}
 
 
 def test_templates_are_the_checkouts_own_files() -> None:
     for name in deploy.TEMPLATES:
-        assert deploy.template(name) == (ROOT / name).read_text(encoding="utf-8")
+        assert deploy.template(name) == CHECKOUT[name].read_text(encoding="utf-8")
     with pytest.raises(ValueError):
         deploy.template("Dockerfile")
 
@@ -65,6 +71,6 @@ def test_a_release_version_is_pinned_as_is() -> None:
 def test_the_packaged_templates_match_the_checkout() -> None:
     for name in deploy.TEMPLATES:
         packaged = ROOT / "src" / "jotflow" / "templates" / name
-        assert packaged.read_text(encoding="utf-8") == (ROOT / name).read_text(encoding="utf-8"), (
+        assert packaged.read_text(encoding="utf-8") == CHECKOUT[name].read_text(encoding="utf-8"), (
             f"src/jotflow/templates/{name} is out of date; run `make templates`"
         )

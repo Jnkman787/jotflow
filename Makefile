@@ -1,5 +1,10 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format format-check typecheck test cov eol check run live-check eval-agent eval-execute manifest templates clean
+.PHONY: help install lint format format-check typecheck test cov eol check run up compose live-check eval-agent eval-execute manifest templates clean
+
+# Compose from a checkout's root. The Compose files live in docker/, so the
+# project directory is set back to the root, where .env, the agent env files,
+# and jotflow.toml are.
+COMPOSE = docker compose --project-directory . -f docker/docker-compose.yml -f docker/docker-compose.policy.yml
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -37,6 +42,12 @@ check: eol lint format-check typecheck cov ## Everything CI runs
 run: ## Run the jotflow CLI
 	uv run jotflow
 
+up: ## Build and start JotFlow from this checkout, with docker/'s Compose files
+	$(COMPOSE) up -d
+
+compose: ## Run any docker compose command against this checkout, such as make compose ARGS="logs -f"
+	$(COMPOSE) $(ARGS)
+
 live-check: ## Post and delete one test message in your workspace; needs JOTFLOW_LIVE_CHECK=1
 	uv run jotflow check --live
 
@@ -47,8 +58,8 @@ eval-execute: ## Claude Code executing every fixture's proposals; costs model to
 	uv run jotflow replay --all --agent claude-code --execute $(if $(YES),--yes,)
 
 templates: ## Copy the deployment files into the package, for jotflow init outside a checkout
-	cp docker-compose.yml docker-compose.policy.yml agent.env.example agent-exec.env.example \
-		src/jotflow/templates/
+	cp docker/docker-compose.yml docker/docker-compose.policy.yml \
+		examples/agent.env.example examples/agent-exec.env.example src/jotflow/templates/
 
 manifest: ## Regenerate manifests/slack-app.json from the renderer
 	uv run python -m jotflow.slack_manifest > manifests/slack-app.json.tmp \

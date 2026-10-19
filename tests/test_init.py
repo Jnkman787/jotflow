@@ -29,7 +29,7 @@ from jotflow.policy import load_policy
 from jotflow.slack_manifest import BOT_SCOPES, render_manifest
 from tests.fakes import GOOD_APP, GOOD_BOT, FakeSlackApi, auth_ok, unreachable
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "jotflow.example.toml"
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "jotflow.example.toml"
 
 
 class Script:
@@ -1034,7 +1034,7 @@ def test_the_escape_hatch_gets_a_secret_but_no_preset(options: InitOptions) -> N
 
 
 def test_new_agent_files_start_from_the_examples(options: InitOptions) -> None:
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[1] / "examples"
     for name in ("agent.env.example", "agent-exec.env.example"):
         (options.env_file.parent / name).write_text((root / name).read_text())
     _with_agent(options)
@@ -1186,13 +1186,28 @@ def test_an_unchanged_compose_file_is_not_asked_about(options: InitOptions) -> N
     assert "differs from JotFlow" not in again.text
 
 
-@pytest.mark.parametrize("marker", ["Dockerfile", "pyproject.toml"])
+@pytest.mark.parametrize("marker", ["docker/Dockerfile", "pyproject.toml"])
 def test_a_checkout_keeps_its_own_compose_files(options: InitOptions, marker: str) -> None:
     folder = options.env_file.parent
+    (folder / marker).parent.mkdir(exist_ok=True)
     (folder / marker).write_text('[project]\nname = "jotflow"\n')
     script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), _released(options)) == 0
     assert not (folder / "docker-compose.yml").exists()
+    # Its Compose files are in docker/, so .env names none, and make up starts it.
+    assert COMPOSE_FILE_KEY not in read_env(options.env_file)
+    assert "Setup also set COMPOSE_FILE" not in script.text
+    assert "3. Start JotFlow with: make up, from this checkout's root" in script.text
+
+
+def test_a_checkout_leaves_an_old_compose_file_line_alone(options: InitOptions) -> None:
+    folder = options.env_file.parent
+    (folder / "pyproject.toml").write_text('[project]\nname = "jotflow"\n')
+    options.env_file.write_text(f"{COMPOSE_FILE_KEY}=mine.yml\n")
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert read_env(options.env_file)[COMPOSE_FILE_KEY] == "mine.yml"
+    assert "Left your COMPOSE_FILE" not in script.text
 
 
 def test_a_development_build_pins_no_image(options: InitOptions) -> None:

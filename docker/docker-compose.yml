@@ -9,7 +9,11 @@ name: jotflow
 
 services:
   jotflow:
-    build: .
+    build:
+      # From a checkout's root with `make up`, which passes --project-directory .
+      # so these paths, and the env files below, resolve there.
+      context: .
+      dockerfile: docker/Dockerfile
     # Built from this checkout by default. Set JOTFLOW_IMAGE_REF in .env to run a
     # published release (ghcr.io/jnkman787/jotflow:X.Y.Z) or your own per-commit
     # tag. Not JOTFLOW_IMAGE, which marks JotFlow's own image inside it.
@@ -56,7 +60,7 @@ services:
     profiles: [agent]
     build:
       context: .
-      dockerfile: Dockerfile.agent
+      dockerfile: docker/Dockerfile.agent
       args:
         # Both agent CLIs, at the versions their presets were verified with
         # (docs/presets.md). Execution runs use claude-code under either preset.
