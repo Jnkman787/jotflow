@@ -185,3 +185,24 @@ Two new fixtures:
 ## Handoff notes
 
 None yet.
+
+
+## Follow-up: tentative ideas and requests for opinions (2026-10-19)
+
+A maintainer's check on real-world chatter found two gaps. It used five top-level posts, rebuilt in a fixture outside the repo: two greetings, two short tentative ideas, and "What do you guys think?". Claude Code ran 3 times on haiku and once on sonnet.
+
+- **The greetings** were always chatter, 8/8.
+- **The opinion request** asked a question once, so 3/4.
+- **The tentative ideas** were proposed only 2 times in 8. In the rest, the agent asked whether the idea was a real request or a joke, or asked for more detail.
+
+`drafting.md` now says three things:
+- A short, tentative, or playful idea is still an idea. Propose it with honest confidence, and don't first ask whether it's serious or for more detail.
+- A message asking for opinions or reacting to ideas is discussion. Link it to its topic when that's clear, otherwise mark it chatter. Discussion never needs a proposal or a question.
+- Ask only about the topic, the repo, a duplicate, or ownership, never about chatter or discussion.
+
+**Results with the change:**
+- The same 20 runs matched 20/20. Each greeting and the opinion request got no proposal and no question, and each idea got exactly one proposal.
+- Single sonnet reruns of the fixtures that must still ask all matched: ambiguous-repo, closed-duplicate, and mention-without-ownership.
+- Two new fictional fixtures, `small-talk` and `opinion-followup`, matched on haiku and on sonnet.
+
+The total spend was about $0.40. Only counts are kept.
