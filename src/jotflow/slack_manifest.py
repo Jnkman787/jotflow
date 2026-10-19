@@ -43,6 +43,7 @@ BOT_EVENTS: tuple[str, ...] = (
     "message.channels",
     "message.groups",
     "reaction_added",
+    "reaction_removed",  # taking a keyword's reaction back (#138)
 )
 
 SLASH_COMMAND = "/jotflow"

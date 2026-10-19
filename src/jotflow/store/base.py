@@ -265,6 +265,8 @@ NoticeKind = Literal["guide", "tip", "nudge"]
 # Keywords a reaction can stand for (#138, #139).
 ReactionKeyword = Literal["idea", "bug", "skip"]
 REACTION_KEYWORDS: tuple[ReactionKeyword, ...] = ("idea", "bug", "skip")
+# The mark a message's own ``skip:`` text leaves, so removing a reaction never undoes it.
+TEXT_MARK = "text"
 
 
 @dataclass(frozen=True)

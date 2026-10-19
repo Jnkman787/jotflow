@@ -26,7 +26,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import aiohttp
 from slack_sdk.errors import SlackApiError
@@ -382,6 +382,15 @@ class SlackWorkSource:
             self._bot.bot_id is not None and raw.get("bot_id") == self._bot.bot_id
         )
 
+    async def _reaction_hint(self, channel: str, ts: str) -> Literal["idea", "bug"] | None:
+        """The earliest idea or bug reaction on the message, if any (#139)."""
+        for mark in await self._store.reaction_marks(channel, ts):
+            if mark.keyword == "idea":
+                return "idea"
+            if mark.keyword == "bug":
+                return "bug"
+        return None
+
     async def _kept_by_person_as_chatter(self, channel: str, ts: str) -> tuple[bool, str | None]:
         link = await self._store.get_message(channel, ts)
         if link is None:
@@ -423,7 +432,13 @@ class SlackWorkSource:
             ids.extend(mentioned_ids(rest))
         names = await self._names.resolve(ids, budget)
 
-        messages = [self._message(m, rest, topic_id, names) for m, rest, topic_id in kept]
+        hints = {
+            str(m["ts"]): await self._reaction_hint(channel_id, str(m["ts"])) for m, _, _ in kept
+        }
+        messages = [
+            self._message(m, rest, topic_id, names, hints.get(str(m["ts"])))
+            for m, rest, topic_id in kept
+        ]
         trimmed, trimmed_out = _trim(messages)
         omitted = skipped_while_paging + trimmed_out
         log.info(
@@ -446,6 +461,7 @@ class SlackWorkSource:
         rest: str,
         topic_id: str | None,
         names: Mapping[str, str],
+        reaction_hint: Literal["idea", "bug"] | None = None,
     ) -> ThreadMessage:
         user_id = _author_id(raw)
         if user_id is not None:
@@ -461,7 +477,8 @@ class SlackWorkSource:
             user_id=user_id,
             author=UntrustedText(text=author),
             text=UntrustedText(text=_cut(readable(rest, names), MAX_MESSAGE_CHARS)),
-            hint=keyword if keyword in ("idea", "bug", "re") else None,
+            # A keyword in the text wins over a reaction on the message (#139).
+            hint=keyword if keyword in ("idea", "bug", "re") else reaction_hint,
             mentions=[
                 Mention(user_id=uid, display_name=UntrustedText(text=names.get(uid, uid)))
                 for uid in mentioned_ids(rest)
