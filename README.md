@@ -229,7 +229,7 @@ Connected to Slack as @idea_bot in Acme Co.
 Setup writes two files next to `docker-compose.yml`. Neither is committed to git.
 
 - **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that is not enforced: the folder's Windows permissions decide who can read it, and setup says so instead of "Only your user can read that file". Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
-- **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option.
+- **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option. Each repo can say whether it's public or private on GitHub. Setup fills that in from your own `gh` login if you have one, and asks otherwise. Cards for a public repo carry a warning.
 
 Running `uv run jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`, and it keeps the agent containers' secrets.
 
@@ -350,6 +350,8 @@ It prints the proposal id and the run id. Within a few seconds the log shows the
 The command refuses in CI, refuses without `--confirm`, and checks the repo and labels against `jotflow.toml` as a drafted proposal would be checked. It bypasses the approver list in `jotflow.toml`: `approved_by` is whatever user id the fixture names, and no one in Slack approves anything. It is an operator check that needs a shell in JotFlow's container, not a way around approvers, so keep that access to the people who run JotFlow.
 
 ## Troubleshooting
+
+**Is JotFlow still connected?** `docker compose ps` shows `healthy` while JotFlow is connected to Slack, and `unhealthy` within about three minutes of losing it: 90 seconds for the heartbeat to go stale, then three failed checks 30 seconds apart. JotFlow rewrites a small heartbeat file every 30 seconds while connected, and `jotflow health` checks its age, without the network or any token. Its log shows `socket mode disconnected`, then `socket mode reconnecting (attempt N)` every 30 seconds, then `socket mode reconnected after Ns`. Slack's client reconnects by itself; the attempt count is JotFlow's own checks. To alert, watch for the container turning `unhealthy`: for example, `docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q jotflow)"` from cron, or your monitor's Docker health integration. Outside Docker, run `uv run jotflow health` on the same machine. It exits 0 when healthy and 1 otherwise, and `--max-age 120` changes how old the heartbeat may be.
 
 **Check a fresh install** with the live check. It posts one marked test message to a channel in `jotflow.toml`, checks that JotFlow receives it without logging its text, then deletes it.
 

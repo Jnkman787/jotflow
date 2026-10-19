@@ -222,11 +222,13 @@ class ChannelModeSetting:
 def cleared_draft(
     proposal: IssueProposal | UpdateProposal,
 ) -> IssueProposal | UpdateProposal:
-    """The draft with its free text removed: title, body, and comment. All else stays."""
+    """The draft with its free text removed: title, body, comment, and the agent's reason
+    for overruling a hint, which can quote people too (#147). All else stays."""
     if isinstance(proposal, IssueProposal):
-        return proposal.model_copy(update={"title": CLEARED_TITLE, "body": ""}, deep=True)
+        update = {"title": CLEARED_TITLE, "body": "", "hint_overruled": None}
+        return proposal.model_copy(update=update, deep=True)
     changes = proposal.changes.model_copy(update={"body": None, "comment": None})
-    return proposal.model_copy(update={"changes": changes}, deep=True)
+    return proposal.model_copy(update={"changes": changes, "hint_overruled": None}, deep=True)
 
 
 def check_clearable(record: ProposalRecord) -> None:

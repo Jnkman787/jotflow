@@ -249,3 +249,14 @@ def test_hint_overruled_follows_the_label_character_rule(bad: str) -> None:
             confidence=0.5,
             hint_overruled=bad,
         )
+
+
+def test_the_agents_repo_visibility_is_outside_the_approval_hash() -> None:
+    from jotflow.models import IssueProposal
+    from jotflow.store.hashing import content_hash
+
+    plain = IssueProposal(repo="a/b", title="T", body="B", confidence=0.5)
+    reported = plain.model_copy(update={"repo_visibility": "public"})
+    assert content_hash(plain) == content_hash(reported)
+    with pytest.raises(ValueError):
+        IssueProposal(repo="a/b", title="T", body="B", confidence=0.5, repo_visibility="internal")

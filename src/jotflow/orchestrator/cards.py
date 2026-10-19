@@ -240,6 +240,16 @@ def _body(text: str, show: bool) -> list[Block]:
     return [_section(chunk) for chunk in _chunks(text)] if show else [_context(TOO_LONG)]
 
 
+def _hint_blocks(draft: IssueProposal | UpdateProposal) -> list[Block]:
+    """Why the agent overruled the author's ``idea:`` or ``bug:`` hint, if it did (#147, D10).
+
+    The reason is the agent's, so it is plain text, and the approval hash covers it.
+    """
+    if not draft.hint_overruled:
+        return []
+    return [_approved_context(f"Hint overruled: {draft.hint_overruled}")]
+
+
 def _draft_blocks(
     record: ProposalRecord,
     context: CardContext,
@@ -261,6 +271,7 @@ def _draft_blocks(
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
         blocks.append(_approved_context("   ".join(details)))
+        blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
         return blocks, header
     header = f"Proposed update to {_nickname(context.channel, draft.repo)}#{draft.issue_number}"
@@ -292,6 +303,7 @@ def _update_blocks(
     if changes.remove_assignees:
         blocks.append(_approved_context("Unassign: " + ", ".join(changes.remove_assignees)))
     blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
+    blocks += _hint_blocks(draft)
     blocks += _people_blocks(record, context, changes.add_assignees, pending, compact)
     return blocks
 

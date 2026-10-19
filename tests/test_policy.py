@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -450,3 +451,19 @@ def test_the_issue_reaction_must_differ_from_a_custom_approval_reaction() -> Non
     with pytest.raises(PolicyError, match="also the approval reaction"):
         parse_policy(text)
     assert parse_policy(_with_reaction('"+1"')).issue_reaction == "+1"
+
+
+def test_a_repo_visibility_is_public_or_private() -> None:
+    def repo(**extra: Any) -> dict[str, Any]:
+        entry = {"repo": "a/b", "nickname": "b", "description": "d", **extra}
+        return {"channels": {"C0TEST1": {"repos": [entry]}}}
+
+    assert Policy.model_validate(repo()).channels["C0TEST1"].repos[0].visibility is None
+    for value in ("public", "private"):
+        assert (
+            Policy.model_validate(repo(visibility=value)).channels["C0TEST1"].repos[0].visibility
+            == value
+        )
+    for bad in ("internal", "PUBLIC", ""):
+        with pytest.raises(ValueError):
+            Policy.model_validate(repo(visibility=bad))

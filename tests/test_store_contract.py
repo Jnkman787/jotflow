@@ -932,3 +932,29 @@ async def test_a_paused_channel_waits_to_tell_its_threads(store: Store) -> None:
 async def test_telling_an_unknown_proposal_fails(store: Store) -> None:
     with pytest.raises(NotFoundError):
         await store.mark_thread_told("nope")
+
+
+async def test_clearing_a_draft_removes_the_agents_hint_reason(store: Store) -> None:
+    hinted = draft(hint_overruled="Alice said it crashes, so this is a bug")
+    await store.add_proposal(record(proposal=hinted))
+    rejected = await store.transition("p1", S.REJECTED)
+    assert rejected.proposal.hint_overruled is None
+    stored = await store.get_proposal("p1")
+    assert stored is not None and stored.proposal.hint_overruled is None
+
+
+def test_clearing_an_update_removes_its_hint_reason_too() -> None:
+    from jotflow.models import IssueChanges
+    from jotflow.store.base import cleared_draft
+
+    update = UpdateProposal(
+        topic_id="t1",
+        repo="acme-co/web",
+        issue_number=42,
+        changes=IssueChanges(comment="Bob says keep the order"),
+        hint_overruled="Bob's idea is really a fix",
+        confidence=0.8,
+    )
+    cleared = cleared_draft(update)
+    assert isinstance(cleared, UpdateProposal)
+    assert cleared.hint_overruled is None and cleared.changes.comment is None

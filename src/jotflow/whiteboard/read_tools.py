@@ -417,7 +417,8 @@ def read_tools(
             run_id=grant.run_id,
             proposal_id=record.id,
             repo=record.proposal.repo,
-            proposal=record.proposal,
+            # Only the approved fields: the agent's visibility report is for the card.
+            proposal=record.proposal.model_copy(update={"repo_visibility": None}),
             checks=checks,
             writes=writes,
         )

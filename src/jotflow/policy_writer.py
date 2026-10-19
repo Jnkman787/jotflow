@@ -91,6 +91,8 @@ def render_policy(policy: Policy) -> str:
             # No labels line means any label that exists on the repo.
             if repo.labels is not None:
                 lines.append(f"labels = {_array(repo.labels)}")
+            if repo.visibility is not None:
+                lines.append(f"visibility = {toml_string(repo.visibility)}")
         own_help = channel.help.model_dump(exclude_none=True)
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]
