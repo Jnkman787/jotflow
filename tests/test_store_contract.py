@@ -876,3 +876,12 @@ def test_a_new_proposal_must_start_at_revision_one() -> None:
         check_new_proposal(record().model_copy(update={"revision": 2}))
     with pytest.raises(ValueError, match="no card yet"):
         check_new_proposal(record().model_copy(update={"card_revision": 1}))
+
+
+async def test_a_card_leads_back_to_its_proposal(store: Store) -> None:
+    await store.add_proposal(record("p1"))
+    assert await store.proposal_for_card(CH, "1760781900.000100") is None
+    await store.set_card_ts("p1", "1760781900.000100")
+    found = await store.proposal_for_card(CH, "1760781900.000100")
+    assert found is not None and found.id == "p1"
+    assert await store.proposal_for_card(OTHER, "1760781900.000100") is None

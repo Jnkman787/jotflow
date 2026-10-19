@@ -307,6 +307,11 @@ class AgentPolicy(_Strict):
     )
 
 
+_EMOJI = re.compile(r"[a-z0-9_+-]{1,64}")
+# Reactions that already mean a keyword (keywords.REACTIONS; a test keeps them in step).
+KEYWORD_REACTIONS = frozenset({"no_entry_sign"})
+
+
 class ApprovalPolicy(_Strict):
     """Who may approve (D7). Both options are off by default."""
 
@@ -315,10 +320,23 @@ class ApprovalPolicy(_Strict):
         description="Slack user ids; empty means anyone in the channel may approve",
     )
     reactions: bool = Field(default=False, description="Whether a reaction counts as approval")
+    reaction: str = Field(
+        default="white_check_mark",
+        description="The emoji name, without colons, that approves when reactions are on",
+    )
 
     @property
     def approvers_enabled(self) -> bool:
         return bool(self.approvers)
+
+    @field_validator("reaction")
+    @classmethod
+    def _emoji_name(cls, value: str) -> str:
+        if not _EMOJI.fullmatch(value):
+            raise ValueError("must be a Slack emoji name, such as white_check_mark, without colons")
+        if value in KEYWORD_REACTIONS:
+            raise ValueError(f"{value} already stands for a keyword; choose another emoji")
+        return value
 
     @model_validator(mode="after")
     def _unique_approvers(self) -> ApprovalPolicy:

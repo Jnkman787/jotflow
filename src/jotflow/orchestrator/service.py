@@ -44,10 +44,16 @@ from typing import Any, Protocol
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
-from jotflow.models import ChannelMode, RunKind
+from jotflow.models import ChannelMode, ProposalRecord, RunKind
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
-from jotflow.orchestrator.card_sync import SYNC_SECONDS, BoltPeople, CardSync, People
-from jotflow.orchestrator.cards import CardPoster, CardPublisher, SlackCardPoster
+from jotflow.orchestrator.card_sync import (
+    SYNC_SECONDS,
+    BoltPeople,
+    CardSync,
+    People,
+    card_context,
+)
+from jotflow.orchestrator.cards import CardContext, CardPoster, CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
 from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
@@ -267,12 +273,19 @@ class Orchestrator:
         )
         await lifecycle.recover()
         # One subscriber draws every card, outside any MCP write path (#152).
+        people = self._people or BoltPeople(self._client)
         self.cards = CardSync(
             self._store,
             self._policy,
             CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
-            self._people or BoltPeople(self._client),
+            people,
         )
+        store, policy = self._store, self._policy
+
+        async def drawn_with(record: ProposalRecord) -> CardContext:
+            # The context the card loop draws with, so length rules agree (#34).
+            return await card_context(policy, store, people, record)
+
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
         # an approved proposal's execution run waits in the queue until they are.
@@ -282,6 +295,7 @@ class Orchestrator:
             self._approval_slack or BoltApprovalSlack(self._client),
             refresh=self.cards.refresh,
             arm_thread=self._arm_thread,
+            context_for=drawn_with,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
@@ -361,6 +375,11 @@ class Orchestrator:
                     await self._keywords.on_reaction(event)
             except Exception:
                 log.exception("could not apply a keyword")
+            if decision.kind == "reaction" and self.approval is not None:
+                try:
+                    await self.approval.on_reaction(event)
+                except Exception:
+                    log.exception("could not handle a reaction on a card")
             if decision.kind == "message":
                 await self._offer_help(decision, event)
         if self._debouncer is None:

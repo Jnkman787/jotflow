@@ -409,6 +409,14 @@ class SqliteStore:
         async with self._lock:
             return await self._get_proposal(proposal_id)
 
+    async def proposal_for_card(self, channel_id: str, card_ts: str) -> ProposalRecord | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT * FROM proposals WHERE channel_id = ? AND card_ts = ?",
+                (channel_id, card_ts),
+            )
+            return None if row is None else await self._proposal(row)
+
     async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         async with self._lock:
             rows = await self._all(

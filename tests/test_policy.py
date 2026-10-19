@@ -377,3 +377,20 @@ def test_an_unknown_key_under_a_channels_help_is_refused() -> None:
             '[[channels.C0ONE1.repos]]\nrepo = "acme-co/web"\n'
             'nickname = "web"\ndescription = "Web"\n'
         )
+
+
+def test_the_approval_reaction_is_an_emoji_name_that_is_no_keyword() -> None:
+    from jotflow.orchestrator.keywords import REACTIONS
+    from jotflow.policy import KEYWORD_REACTIONS
+
+    assert set(REACTIONS) == set(KEYWORD_REACTIONS)
+    base = {
+        "channels": {"C0TEST1": {"repos": [{"repo": "a/b", "nickname": "b", "description": "d"}]}}
+    }
+    default = Policy.model_validate(base)
+    assert default.approval.reactions is False and default.approval.reaction == "white_check_mark"
+    on = Policy.model_validate({**base, "approval": {"reactions": True, "reaction": "+1"}})
+    assert on.approval.reaction == "+1"
+    for bad in (":white_check_mark:", "White Check", "", "no_entry_sign"):
+        with pytest.raises(ValueError):
+            Policy.model_validate({**base, "approval": {"reactions": True, "reaction": bad}})

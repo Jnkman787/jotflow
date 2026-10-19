@@ -12,6 +12,7 @@ from jotflow.orchestrator import approval as approval_module
 from jotflow.orchestrator.approval import (
     AUTHORS_UNKNOWN,
     CALLBACK_CHANGES,
+    CARD_UPDATING,
     CHANGES_BLOCK,
     CHANGES_EMPTY,
     CHANGES_INPUT,
@@ -21,6 +22,7 @@ from jotflow.orchestrator.approval import (
     NOT_THIS_CARD,
     OWN_PROPOSAL,
     STALE,
+    TOO_LONG_TO_REACT,
     ApprovalHandler,
     BoltApprovalSlack,
     register_actions,
@@ -41,17 +43,18 @@ from tests.test_runs import CH, THREAD, _proposal_record
 
 TEAM = "T0OURS"
 CARD_TS = "1760781700.000900"
-ALICE, BOB, CAROL = "U0ALICE", "U0BOB", "U0CAROL"
+ALICE, BOB, CAROL, DAVE = "U0ALICE", "U0BOB", "U0CAROL", "U0DAVE"
 
 
-def policy(approvers: list[str] | None = None) -> Policy:
+def policy(approvers: list[str] | None = None, *, reactions: bool = False) -> Policy:
     data: dict[str, Any] = {
         "channels": {
             CH: {"repos": [{"repo": "acme-co/web", "nickname": "web", "description": "Web"}]}
-        }
+        },
+        "approval": {"reactions": reactions},
     }
     if approvers is not None:
-        data["approval"] = {"approvers": approvers}
+        data["approval"]["approvers"] = approvers
     return Policy.model_validate(data)
 
 
@@ -105,12 +108,12 @@ class Cards:
 
 
 class Rig:
-    def __init__(self, approvers: list[str] | None = None) -> None:
+    def __init__(self, approvers: list[str] | None = None, *, reactions: bool = False) -> None:
         self.store = MemoryStore()
         self.slack = Slack()
         self.cards = Cards()
         self.armed: list[tuple[str, str]] = []
-        self._policy = policy(approvers)
+        self._policy = policy(approvers, reactions=reactions)
         self._publisher = CardPublisher(self.store, self.cards)
         self.handler = ApprovalHandler(
             self.store, self._policy, self.slack, refresh=self._refresh, arm_thread=self._arm
@@ -786,3 +789,171 @@ async def test_real_app_a_thread_rooted_in_a_bot_post_can_be_approved() -> None:
     await _press(_real_app(deleted), click(f"{pid}:{await deleted.hash(pid)}", user=CAROL))
     assert deleted.slack.ephemerals == [(CH, CAROL, AUTHORS_UNKNOWN)]
     assert await deleted.state(pid) is ProposalState.PENDING
+
+
+# Reaction approval (#34), through the real Bolt app and the real ingest filter
+
+
+def _reacting_app(rig: Rig) -> Any:
+    from slack_bolt.async_app import AsyncApp
+    from slack_sdk.web.async_client import AsyncWebClient
+
+    from jotflow.orchestrator.ingest import BotIdentity, EventFilter
+    from jotflow.orchestrator.slack import register_handlers
+
+    app = AsyncApp(
+        client=AsyncWebClient(token="xoxb-t"),
+        authorize=_authorize,
+        request_verification_enabled=False,
+        process_before_response=True,
+    )
+
+    async def sink(decision: Any, event: Mapping[str, Any]) -> None:
+        # What Orchestrator.note does for an accepted reaction.
+        if getattr(decision, "kind", None) == "reaction":
+            await rig.handler.on_reaction(event)
+
+    register_handlers(app, EventFilter([CH], BotIdentity("U0BOT", "B0BOT")), sink)
+    return app
+
+
+async def _react(
+    app: Any, user: str = CAROL, name: str = "white_check_mark", ts: str = CARD_TS, n: int = 1
+) -> None:
+    import json
+
+    from slack_bolt.request.async_request import AsyncBoltRequest
+
+    event = {
+        "type": "reaction_added",
+        "user": user,
+        "reaction": name,
+        "item_user": "U0BOT",
+        "item": {"type": "message", "channel": CH, "ts": ts},
+        "event_ts": "1760781701.000100",
+    }
+    body = {"type": "event_callback", "team_id": TEAM, "event_id": f"Ev{n}{user}", "event": event}
+    request = AsyncBoltRequest(
+        body=json.dumps(body), headers={"content-type": ["application/json"]}
+    )
+    response = await app.async_dispatch(request)
+    assert response.status == 200
+
+
+async def _shown(rig: Rig, pid: str) -> None:
+    record = await rig.store.get_proposal(pid)
+    assert record is not None
+    await rig.store.mark_card_shown(pid, record.revision)
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_the_reaction_approves_a_shown_card_like_the_button() -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    await _react(_reacting_app(rig))
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and record.state is ProposalState.APPROVED
+    assert record.approved_by == CAROL and record.content_hash == content_hash(record.proposal)
+    assert await rig.executions() == 1 and rig.slack.ephemerals == []
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_reactions_off_another_emoji_or_another_message_change_nothing() -> None:
+    off = Rig()
+    pid = await off.proposal()
+    await _shown(off, pid)
+    await _react(_reacting_app(off))
+    assert await off.state(pid) is ProposalState.PENDING and off.slack.ephemerals == []
+    on = Rig(reactions=True)
+    pid = await on.proposal()
+    await _shown(on, pid)
+    app = _reacting_app(on)
+    await _react(app, name="tada")
+    await _react(app, ts="1760781799.000100", n=2)  # not the card
+    assert await on.state(pid) is ProposalState.PENDING and on.slack.ephemerals == []
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_card_not_yet_redrawn_is_not_approved_by_reaction() -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()  # the card was never marked shown at this revision
+    await _react(_reacting_app(rig))
+    assert await rig.state(pid) is ProposalState.PENDING
+    assert rig.slack.ephemerals == [(CH, CAROL, CARD_UPDATING)]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_draft_too_long_for_the_card_is_not_approved_by_reaction() -> None:
+    from jotflow.orchestrator.cards import MAX_BLOCKS, MAX_SECTION_TEXT
+
+    rig = Rig(reactions=True)
+    record = _proposal_record("0123456789abcdef")
+    long = record.proposal.model_copy(update={"body": "y" * (MAX_SECTION_TEXT * MAX_BLOCKS)})
+    await rig.store.add_proposal(record.model_copy(update={"proposal": long}))
+    await rig.store.set_card_ts(record.id, CARD_TS)
+    await _shown(rig, record.id)
+    await _react(_reacting_app(rig))
+    assert await rig.state(record.id) is ProposalState.PENDING
+    assert rig.slack.ephemerals == [(CH, CAROL, TOO_LONG_TO_REACT)]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_the_reaction_runs_the_approver_author_and_guest_checks() -> None:
+    rig = Rig(approvers=[ALICE, CAROL], reactions=True)
+    rig.slack.people[DAVE] = Person(DAVE, external=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    app = _reacting_app(rig)
+    await _react(app, user=BOB, n=1)  # not listed
+    await _react(app, user=ALICE, n=2)  # wrote the first message
+    await _react(app, user=DAVE, n=3)  # external
+    assert [e[2] for e in rig.slack.ephemerals] == [NOT_AN_APPROVER, OWN_PROPOSAL, NOT_ALLOWED]
+    assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0
+    await _react(app, user=CAROL, n=4)
+    assert await rig.state(pid) is ProposalState.APPROVED
+    # The same reaction again is a redelivery to ingest (#8): dropped, no second run.
+    await _react(app, user=CAROL, n=5)
+    assert len(rig.slack.ephemerals) == 3 and await rig.executions() == 1
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_guest_reaction_never_approves() -> None:
+    rig = Rig(reactions=True)
+    rig.slack.people[BOB] = Person(BOB, guest=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    await _react(_reacting_app(rig), user=BOB)
+    assert await rig.state(pid) is ProposalState.PENDING
+    assert rig.slack.ephemerals == [(CH, BOB, NOT_ALLOWED)]
+
+
+async def test_a_malformed_reaction_or_a_settled_card_changes_nothing() -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    base = {"reaction": "white_check_mark", "user": CAROL}
+    assert await rig.handler.on_reaction({**base, "item": {"type": "file"}}) == "ignored"
+    assert await rig.handler.on_reaction({**base, "item": {"type": "message"}}) == "ignored"
+    await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}"))
+    event = {**base, "item": {"type": "message", "channel": CH, "ts": CARD_TS}}
+    assert await rig.handler.on_reaction(event) == "refused"
+    assert rig.slack.ephemerals[-1][2] == "This proposal is already approved, so nothing changed."
+
+
+async def test_without_its_own_team_no_one_approves(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+
+    async def unknown() -> None:
+        return None
+
+    monkeypatch.setattr(rig.slack, "own_team", unknown)
+    event = {
+        "reaction": "white_check_mark",
+        "user": CAROL,
+        "item": {"type": "message", "channel": CH, "ts": CARD_TS},
+    }
+    assert await rig.handler.on_reaction(event) == "refused"
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "refused"
+    assert [e[2] for e in rig.slack.ephemerals] == [NOT_ALLOWED, NOT_ALLOWED]

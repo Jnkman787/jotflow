@@ -969,3 +969,36 @@ async def test_the_approval_gate_is_built_and_arms_through_the_debouncer() -> No
         assert await off.store.pending_threads() == []
     finally:
         await off.orchestrator.stop()
+
+
+async def test_a_reaction_reaches_the_approval_gate_after_keywords(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        assert rig.orchestrator.approval is not None
+        seen: list[Any] = []
+
+        async def recorded(event: Any) -> str:
+            seen.append(event)
+            if len(seen) == 2:
+                raise RuntimeError("slack is down")
+            return "ignored"
+
+        monkeypatch.setattr(rig.orchestrator.approval, "on_reaction", recorded)
+        event = {
+            "type": "reaction_added",
+            "user": "U0ALEX",
+            "reaction": "white_check_mark",
+            "item": {"type": "message", "channel": CH, "ts": THREAD},
+        }
+        reaction = Accepted("reaction", MessageRef(channel_id=CH, ts=THREAD), reaction="x")
+        await rig.orchestrator.note(reaction, event)
+        with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+            await rig.orchestrator.note(reaction, event)
+        await rig.orchestrator.note(accepted(), {"type": "message", "channel": CH, "ts": THREAD})
+    finally:
+        await rig.orchestrator.stop()
+    assert seen == [event, event]
+    assert "could not handle a reaction on a card" in caplog.text
