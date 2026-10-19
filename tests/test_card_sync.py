@@ -90,11 +90,11 @@ def proposal(proposal_id: str = "p1", **fields: Any) -> ProposalRecord:
     return ProposalRecord(
         id=proposal_id,
         channel_id=fields.pop("channel", CH),
-        thread_ts=THREAD,
+        thread_ts=fields.pop("thread_ts", THREAD),
         run_id="draft-run",
         proposal=draft,
         participants=["U0ALICE"],
-        created_at=START,
+        created_at=fields.pop("created_at", START),
         **fields,
     )
 
@@ -345,3 +345,70 @@ async def test_people_survives_a_failed_lookup(caplog: pytest.LogCaptureFixture)
 
 def test_retry_waits_are_short_then_capped() -> None:
     assert FIRST_RETRY < LAST_RETRY <= timedelta(minutes=1)
+
+
+# --- review: final errors, crowding, and one draw at a time --------------------------
+
+
+class SlackError(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.response = {"ok": False, "error": code}
+
+
+@pytest.mark.parametrize("code", ["message_not_found", "channel_not_found", "is_archived"])
+async def test_a_card_slack_cannot_ever_draw_is_left_alone(
+    store: Store, code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    poster = FakeCardPoster()
+    cards = sync_for(store, poster)
+    await store.add_proposal(proposal())
+    await cards.sync()
+    await approve(store)
+
+    async def gone(channel_id: str, ts: str, card: Card) -> None:
+        raise SlackError(code)
+
+    poster.update = gone  # type: ignore[method-assign]
+    assert await cards.sync() == 0
+    assert await store.cards_due() == []
+    assert code in caplog.text
+
+
+async def test_proposals_waiting_to_retry_do_not_crowd_out_others(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jotflow.orchestrator import card_sync
+
+    monkeypatch.setattr(card_sync, "BATCH", 2)
+    poster = FakeCardPoster()
+    cards = sync_for(store, poster)
+    for n in (1, 2):
+        created = START + timedelta(minutes=n)
+        await store.add_proposal(
+            proposal(f"p{n}", thread_ts=f"17607816{n:02d}.000100", created_at=created)
+        )
+    poster.failures = 2
+    await cards.sync()  # both fail and wait
+    await store.add_proposal(
+        proposal("p3", thread_ts="1760781603.000100", created_at=START + timedelta(minutes=3))
+    )
+    assert await cards.sync() == 1
+    assert [p[1] for p in poster.posts] == ["1760781603.000100"]
+
+
+async def test_sync_and_refresh_never_post_the_same_card_twice(store: Store) -> None:
+    import asyncio
+
+    poster = FakeCardPoster()
+    cards = sync_for(store, poster)
+    await store.add_proposal(proposal())
+    real_post = poster.post
+
+    async def slow(channel_id: str, thread_ts: str, card: Card) -> str:
+        await asyncio.sleep(0.01)
+        return await real_post(channel_id, thread_ts, card)
+
+    poster.post = slow  # type: ignore[method-assign]
+    await asyncio.gather(cards.sync(), cards.refresh("p1"))
+    assert len(poster.posts) == 1

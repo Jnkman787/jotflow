@@ -258,7 +258,7 @@ def test_shipped_migrations_are_numbered_one_to_n() -> None:
     assert len(MIGRATIONS) == LATEST_VERSION
 
 
-async def test_cards_already_posted_are_not_posted_again_after_the_upgrade(tmp_path: Path) -> None:
+async def test_after_the_upgrade_only_waiting_proposals_get_a_card(tmp_path: Path) -> None:
     from jotflow.store.hashing import canonical_json
     from tests.test_store_contract import draft
 
@@ -266,14 +266,21 @@ async def test_cards_already_posted_are_not_posted_again_after_the_upgrade(tmp_p
     old = await SqliteStore.open(path, migrations=MIGRATIONS[:-1])
     await old.close()
     with sqlite3.connect(path) as db:
-        for proposal_id, card_ts in (("posted", "1760781900.000100"), ("waiting", None)):
+        rows = (
+            ("posted", "pending", "1760781900.000100"),
+            ("waiting", "pending", None),
+            ("applied", "applied", None),
+            ("superseded", "superseded", None),
+        )
+        for proposal_id, state, card_ts in rows:
+            approved = None if state in ("pending", "superseded") else "0" * 64
             db.execute(
                 "INSERT INTO proposals (id, channel_id, thread_ts, run_id, state, kind, repo,"
-                " draft_json, created_at, updated_at, card_ts)"
-                " VALUES (?, 'C0IDEAS01', '1760781600.000100', 'run-1', 'pending',"
+                " draft_json, created_at, updated_at, card_ts, content_hash)"
+                " VALUES (?, 'C0IDEAS01', '1760781600.000100', 'run-1', ?,"
                 " 'create_issue', 'acme-co/web', ?, '2026-10-18T09:00:00+00:00',"
-                " '2026-10-18T09:00:00+00:00', ?)",
-                (proposal_id, canonical_json(draft()), card_ts),
+                " '2026-10-18T09:00:00+00:00', ?, ?)",
+                (proposal_id, state, canonical_json(draft()), card_ts, approved),
             )
     store = await SqliteStore.open(path)
     try:

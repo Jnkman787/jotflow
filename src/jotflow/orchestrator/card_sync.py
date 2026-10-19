@@ -15,6 +15,7 @@ each later state edited in place.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
@@ -34,6 +35,27 @@ LAST_RETRY = timedelta(minutes=1)
 
 # A proposal that ended before anyone saw it needs no card.
 _NO_CARD_NEEDED = frozenset({ProposalState.SUPERSEDED, ProposalState.REJECTED})
+
+# Slack errors that retrying cannot fix: the card's message or its channel is gone.
+FINAL_SLACK_ERRORS = frozenset(
+    {
+        "message_not_found",
+        "channel_not_found",
+        "is_archived",
+        "not_in_channel",
+        "cant_update_message",
+    }
+)
+
+
+def _slack_error(exc: Exception) -> str | None:
+    """The error code of a Slack API error, such as ``message_not_found``."""
+    response = getattr(exc, "response", None)
+    try:
+        code = response.get("error") if response is not None else None
+    except Exception:
+        return None
+    return code if isinstance(code, str) else None
 
 
 class People(Protocol):
@@ -80,12 +102,15 @@ class CardSync:
         self._clock = clock
         # proposal id -> (when to try next, how long the last wait was)
         self._waiting: dict[str, tuple[datetime, timedelta]] = {}
+        # One draw at a time, so sync and refresh never both post the same new card.
+        self._lock = asyncio.Lock()
 
     async def sync(self) -> int:
         """Draw every due card that is not waiting to retry. Returns how many were drawn."""
         drawn = 0
         now = self._clock()
-        for record in await self._store.cards_due(BATCH):
+        # Ask for enough that proposals waiting to retry cannot crowd out the rest.
+        for record in await self._store.cards_due(BATCH + len(self._waiting)):
             wait = self._waiting.get(record.id)
             if wait is not None and wait[0] > now:
                 continue
@@ -96,11 +121,19 @@ class CardSync:
     async def refresh(self, proposal_id: str) -> bool:
         """Draw one proposal's card now, if it is due. For callers that just changed it."""
         record = await self._store.get_proposal(proposal_id)
-        if record is None or not record.card_due:
+        if record is None:
             return False
         return await self._draw(record)
 
-    async def _draw(self, record: ProposalRecord) -> bool:
+    async def _draw(self, seen: ProposalRecord) -> bool:
+        async with self._lock:
+            # Read it again under the lock: another draw may have just posted it.
+            record = await self._store.get_proposal(seen.id)
+            if record is None or not record.card_due:
+                return False
+            return await self._draw_now(record)
+
+    async def _draw_now(self, record: ProposalRecord) -> bool:
         try:
             if record.card_ts is None and record.state in _NO_CARD_NEEDED:
                 await self._store.mark_card_shown(record.id, record.revision)
@@ -114,6 +147,14 @@ class CardSync:
             await self._store.mark_card_shown(record.id, record.revision)
             return False
         except Exception as exc:
+            if (code := _slack_error(exc)) in FINAL_SLACK_ERRORS:
+                # Someone deleted the card, or the channel is gone: never post it again.
+                log.warning(
+                    "proposal %s: Slack said %s; the card is left as it is", record.id, code
+                )
+                self._waiting.pop(record.id, None)
+                await self._store.mark_card_shown(record.id, record.revision)
+                return False
             self._back_off(record.id)
             # The type only: an error's text could quote the card.
             log.warning("proposal %s: could not draw its card (%s)", record.id, type(exc).__name__)

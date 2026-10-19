@@ -5,9 +5,9 @@
 - Issue: #152
 - Also serves: #26 and #120 (the card), #27 (its buttons need a posted card), #28 (auto mode), #122 (the public-repo warning), D7
 - Draft PR: #153
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: add the store's card revision, now that #150 has merged
+- Next safe action: review; #27's handlers use `Orchestrator.cards`
 
 ## Objective and done-when
 
@@ -33,7 +33,7 @@ Done when:
   - `card_revision`, the revision the posted card shows, or null before the first post
   - `set_card_ts` changes neither, since it changes nothing on the card.
   - `ProposalRecord` gains both, read-only, outside the content hash.
-  - `Store.cards_due(limit)` returns the proposals whose card is behind: `card_revision` null or below `revision`, oldest first.
+  - `Store.cards_due(limit)` returns the proposals whose card is behind: `card_revision` null or below `revision`, oldest first. The loop asks for its batch plus the number waiting to retry, so those cannot crowd out the rest.
   - `Store.mark_card_shown(id, revision)` raises `card_revision` to that revision, never lowers it. So a transition that lands while a card is being edited leaves the card behind, and it is edited again on the next pass.
   - Both stores implement them, and a contract test covers both.
   - This is the "one subscriber on the store's transitions" the issue asks for. Nothing scattered calls Slack after a write. The store records that a card is stale, and one loop catches up. That holds across a restart too.
@@ -45,6 +45,7 @@ Done when:
       - one that was superseded or rejected before any card went up gets none, and is marked shown so it stops coming back
       - anything else gets its card edited in place
     - `refresh(proposal_id)` does the same for one proposal right away. #27's handlers can call it after a transition, though the loop would catch up within a second anyway.
+  - One draw runs at a time, under a lock, and re-reads the proposal first, so `sync` and `refresh` never both post the same new card. A Slack error retrying cannot fix, such as `message_not_found` after someone deleted the card, or `is_archived`, marks the card as shown and leaves it alone (CodeRabbit).
   - The orchestrator runs `sync()` in its own loop, about once a second, next to the debouncer's flush loop, and never in the MCP write path. A Slack error is logged, and the proposal stays due, so the next pass retries. There is no limit on retries, but the loop paces itself: a failed proposal waits 2 seconds, then twice as long each time, up to a minute, so a Slack outage does not flood the log. The log names the error's type only, never its text, which could quote the card.
 - **`GiveUpNotice`** (#30) keeps its thread reply for a proposal with no card. For one with a card, it only needs the transition, and `CardSync` re-renders it. That removes the second place that re-renders a card.
 - **Auto mode.** The proposal is approved at once, and the card is posted already approved, with the auto-approval state line that `cards.py` renders today.
@@ -53,7 +54,7 @@ Done when:
 
 - **Migration numbers.** #150 adds migration 7, so this is 8. Whichever lands later renumbers.
 - **#27 overlap.** Agreed with security: they own `cards.py` rendering, `Debouncer.arm`, and the shared guest and external check. I own `card_sync.py`, the store's card revision, and the orchestrator wiring for cards. Their handlers transition proposals and let `CardSync` edit the card, or call `refresh`.
-- **Existing databases** get `revision = 1` and `card_revision = 1` where `card_ts` is set, and null otherwise. A database with old pending proposals gets their cards posted once after the upgrade. Pending proposals had no card before, so that is wanted.
+- **Existing databases** get `revision = 1`, and `card_revision = 1` for every proposal that already has a card or is no longer pending. Only proposals still waiting for a person get a card after the upgrade. Nothing posted cards before #152, so without that rule every old proposal, applied ones included, would get a card (CodeRabbit).
 
 ## Progress checklist
 
@@ -64,9 +65,9 @@ Done when:
 - [x] Orchestrator: the sync loop; `GiveUpNotice` relies on it
 - [x] Tests: through the real orchestrator, a proposal posts one card, transitions edit it, supersede, auto mode, Slack failure and retry, plain text only
 - [x] Docs: architecture's card section, and the plan's handoff for #27
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: four findings, all fixed (upgrade backfill, a lock between draws, retries crowding the batch and final Slack errors, plan status)
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
