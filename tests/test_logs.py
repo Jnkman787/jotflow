@@ -35,6 +35,7 @@ SECRETS = {
     "slack app": _fake("xa" + "pp-", "1-A0EXAMPLE-1234567890-" + "ef" * 8),
     "slack refresh": _fake("xox" + "e-", "1-" + "gh" * 8),
     "jotflow run": _fake("jf" + "r_", "a" * 43),
+    "jotflow operator": _fake("jf" + "o_", "b-" * 21 + "c"),
     "github classic": _fake("gh" + "p_", "A1b2C3d4E5f6G7h8I9j0" * 2),
     "github fine-grained": _fake("github" + "_pat_", "11ABCDEFG0" + "x" * 50),
     "github app": _fake("gh" + "s_", "Z9" * 18),

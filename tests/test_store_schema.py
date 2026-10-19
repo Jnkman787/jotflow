@@ -125,6 +125,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "help_notices",
             "proposal_edits",
             "reaction_marks",
+            "operator_tokens",
         }
         for table in tables:
             (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()

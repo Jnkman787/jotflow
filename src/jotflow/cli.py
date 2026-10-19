@@ -17,6 +17,7 @@ from jotflow.commands import check as check_command
 from jotflow.commands import fixture as fixture_command
 from jotflow.commands import health as health_command
 from jotflow.commands import init as init_command
+from jotflow.commands import operator as operator_command
 from jotflow.commands import replay as replay_command
 from jotflow.commands import run as run_command
 from jotflow.commands import runner as runner_command
@@ -36,6 +37,10 @@ COMMANDS: dict[str, tuple[ModuleType, str]] = {
     "health": (
         health_command,
         "Exit 0 if JotFlow is connected to Slack, judged by its heartbeat; no network",
+    ),
+    "operator": (
+        operator_command,
+        "Read-only tokens for a terminal agent: create, list, revoke, and the connect bridge",
     ),
     "execute-fixture": (
         fixture_command,

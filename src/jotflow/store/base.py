@@ -20,8 +20,8 @@ Rules every implementation follows, checked by one contract test suite:
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
@@ -201,6 +201,26 @@ class TopicRecord:
     topic: Topic
     created_at: datetime
     last_activity_at: datetime
+
+
+@dataclass(frozen=True)
+class OperatorToken:
+    """An admin-issued, read-only token for a person's terminal agent (#58).
+
+    Only the digest is held; the token is shown once, when it is created.
+    """
+
+    id: str
+    name: str
+    digest: str = field(repr=False)
+    channels: tuple[str, ...]
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+    def usable(self, now: datetime) -> bool:
+        return self.revoked_at is None and now < self.expires_at
 
 
 @dataclass(frozen=True)
@@ -656,6 +676,24 @@ class Store(Protocol):
     async def get_identity(self, slack_user_id: str) -> IdentityLink | None: ...
 
     async def unlink_identity(self, slack_user_id: str) -> bool: ...
+
+    # Operator tokens (#58)
+
+    async def add_operator_token(self, token: OperatorToken) -> OperatorToken:
+        """Store a new operator token. Raises ConflictError if the name is taken."""
+        ...
+
+    async def operator_tokens(self) -> list[OperatorToken]:
+        """Every operator token, newest first, revoked and expired ones included."""
+        ...
+
+    async def revoke_operator_token(self, name: str) -> OperatorToken | None:
+        """Revoke the named token. Returns it, or None if there is no such live token."""
+        ...
+
+    async def touch_operator_tokens(self, used: Mapping[str, datetime]) -> None:
+        """Record when each token, by id, was last used."""
+        ...
 
     # Channel modes
     async def set_channel_mode(

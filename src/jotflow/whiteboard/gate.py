@@ -133,7 +133,7 @@ class Gate:
 
         grant: Grant | None = None
         try:
-            grant = self._admit(scope, headers)
+            grant = await self._admit(scope, headers)
         except _Rejection as rejected:
             await _send_json(
                 recording_send,
@@ -156,7 +156,7 @@ class Gate:
                 )
         self._audit(headers, grant, status[0] if status else 0, outcome, started)
 
-    def _admit(self, scope: Scope, headers: Headers) -> Grant:
+    async def _admit(self, scope: Scope, headers: Headers) -> Grant:
         if "origin" in headers:
             raise _Rejection(403, "origin", message="requests with an Origin header are refused")
         if headers.get("host", "").lower() not in self._hosts:
@@ -182,9 +182,9 @@ class Gate:
                 raise _Rejection(400, "length", message="Content-Length is not a number")
             if int(length) > self._max_body:
                 raise _Rejection(413, "size", message="request body is too large")
-        return self._authenticate(headers)
+        return await self._authenticate(headers)
 
-    def _authenticate(self, headers: Headers) -> Grant:
+    async def _authenticate(self, headers: Headers) -> Grant:
         value = headers.get("authorization")
         challenge = {"WWW-Authenticate": "Bearer"}
         if value is None:
@@ -200,6 +200,9 @@ class Gate:
         ):
             raise _Rejection(401, "bad token", message="malformed bearer token", headers=challenge)
         grant = self._tokens.check(token)
+        if grant is None and (retry := getattr(self._tokens, "check_on_miss", None)) is not None:
+            # A token created after the last reload (#58): one rate-limited reload.
+            grant = await retry(token)
         if grant is None:
             raise _Rejection(
                 401,
