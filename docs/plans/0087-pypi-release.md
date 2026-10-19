@@ -22,10 +22,10 @@ The package and the images are built from the same tag and version, and publishe
 
 Done when:
 
-- [ ] The `jotflow` package is published to PyPI on each `vX.Y.Z` tag through PyPI trusted publishing (OIDC). No API token is stored anywhere, and only the publish job gets `id-token: write`
-- [ ] The sdist and wheel are built from the tagged commit, with build provenance attestations
+- [x] The `jotflow` package is published to PyPI on each `vX.Y.Z` tag through PyPI trusted publishing (OIDC). No API token is stored anywhere, and only the publish job gets `id-token: write`
+- [x] The sdist and wheel are built from the tagged commit, with build provenance attestations
 - [x] Run outside a checkout, `jotflow init` also writes `docker-compose.yml` and `docker-compose.policy.yml`, pinned to `ghcr.io/jnkman787/jotflow:X.Y.Z` and `jotflow-agent:X.Y.Z`, and never overwrites an existing file without asking
-- [ ] From an empty folder on a clean machine, `uvx jotflow init` then `docker compose up -d` reaches the connected state with no clone
+- [ ] From an empty folder on a clean machine (open until the first tag proves it; the package job's smoke test covers the rest), `uvx jotflow init` then `docker compose up -d` reaches the connected state with no clone
 - [x] The README quickstart leads with the no-clone install, and the clone path moves to CONTRIBUTING.md
 - [x] The package version and the image tag cannot drift: the release job fails if they differ
 - [x] `make check` passes, including the coverage floor
