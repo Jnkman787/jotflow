@@ -4,10 +4,10 @@
 
 - Issue: #147
 - Also serves: #144 (adds `hint_overruled`), #23, D10, D7
-- Draft PR: to be opened
+- Draft PR: #149, based on `feat/drafting-prompt` until #144 merges
 - Status: implementing
 - Last verified: plan written on 2026-10-19; the branch is stacked on #144's `feat/drafting-prompt`
-- Next safe action: render the line in `src/jotflow/orchestrator/cards.py`; rebase onto main once #144 merges
+- Next safe action: once #144 merges, rebase onto main and mark #149 ready
 
 ## Objective and done-when
 
@@ -24,7 +24,7 @@ Done when:
 
 ## Design
 
-- In `cards.py`, `_hint_block(draft)` returns a context block with `Hint overruled: <reason>`, or nothing when the field is null. It goes just after the confidence line, for both `IssueProposal` and `UpdateProposal`. That is where people read how sure the agent is.
+- In `cards.py`, `_hint_blocks(draft)` returns a context block with `Hint overruled: <reason>`, or nothing when the field is null. It goes just after the confidence line, for both `IssueProposal` and `UpdateProposal`. That is where people read how sure the agent is.
 - It uses `_approved_context`, like the other approved lines. The approval hash covers `hint_overruled`, so if the line ever had to be shortened, the card could not be approved. At 200 characters, the field is far below Slack's context limit, so in practice it never is.
 - The line stays when a proposal's draft is cleared after approval or rejection. It is short, and it explains the outcome.
 - The reason is untrusted agent text. It goes through `plain()`, as every agent string does, and the existing "agent text only ever appears as plain text" test is extended to cover it.
@@ -41,7 +41,7 @@ Done when:
 - [x] Render the line for both proposal kinds
 - [x] Tests: with and without, both kinds, plain text only
 - [x] Docs: architecture's card description, if it lists the card's lines
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: skipped, the free CLI allowance was rate-limited
 - [x] `make check` passes
 - [ ] Rebase onto main after #144 merges, then mark the PR ready for review
 
