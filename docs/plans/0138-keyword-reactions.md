@@ -5,9 +5,9 @@
 - Issue: #138, and #139 in the same PR
 - Also serves: #56 (keywords and the skip reaction), D10, D7, #154 (`reactions.py` and the policy's collision check)
 - Draft PR: #170
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: CodeRabbit, then ready for review
+- Next safe action: review
 
 ## Objective and done-when
 
@@ -71,9 +71,9 @@ Both: `make check` passes, including the coverage floor.
 - [x] Packet: a reaction hint when the text has none
 - [x] Help, README block, install docs
 - [x] Tests through the real Bolt app and orchestrator
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: one finding, fixed. Migration 11 backfills a permanent mark for every person's skip made before the upgrade, so a reaction removed later cannot undo it
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
