@@ -245,7 +245,10 @@ Wrote docker-compose.yml.
 Wrote docker-compose.policy.yml.
 Connected to Slack as @idea_bot in Acme Co.
 
-Next: invite @idea_bot to each channel JotFlow should watch with /invite @idea_bot. It never joins channels by itself.
+Next:
+  1. Invite @idea_bot to each channel JotFlow should watch with /invite @idea_bot. It never joins channels by itself.
+  2. Check the setup with: jotflow check
+  3. Start JotFlow with: docker compose up -d
 ```
 
 With `none` as the preset, setup skips the model question and the agent files, and JotFlow connects to Slack but drafts nothing.
@@ -265,17 +268,7 @@ If Slack shows **Request to Install** instead of **Install to Workspace**, an ad
 2. Wait for the admin to approve the app. Slack usually notifies you when they do.
 3. Run `uvx jotflow init` again. When it asks `Have you already created a Slack app for JotFlow?`, answer `y`. It then skips the create link, so you don't make a second app. Open your existing app at <https://api.slack.com/apps>, under **Your Apps**, and continue from setup step 3. You can copy the app-level token again from **Basic Information**.
 
-### 4. Check the setup
-
-```
-uvx jotflow check
-```
-
-This reads `.env` and `jotflow.toml` exactly as JotFlow will, and prints one `ok` or `FAIL` line for each thing it checks, such as `ok    configuration: 1 channel(s) in jotflow.toml`. It posts nothing and needs no Docker. Fix any `FAIL` line, or run `uvx jotflow init` again, before starting JotFlow. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
-
-Optionally, after inviting the bot, the [live check](#troubleshooting) confirms that a real Slack channel reaches JotFlow. It posts one test message and deletes it, and runs while JotFlow is stopped.
-
-### 5. Invite the bot
+### 4. Invite the bot
 
 In Slack, in each channel you listed, type:
 
@@ -284,6 +277,31 @@ In Slack, in each channel you listed, type:
 ```
 
 Use the bot's handle, which setup printed after `Connected to Slack as`; Slack also suggests it as you type. If Slack asks whether to add the app to the channel, click **Add**. JotFlow never joins channels by itself. Joining a channel is always a person's choice.
+
+### 5. Check the setup
+
+```
+uvx jotflow check
+```
+
+This checks that `jotflow.toml` and `.env` load exactly as JotFlow will load them, and, with an agent preset, whether the agent containers' files are filled in. It posts nothing, doesn't contact Slack, and needs no Docker. When everything is ready:
+
+```
+ok    configuration: 1 channel(s) in jotflow.toml
+ok    agent: claude-code, both agent files filled in
+```
+
+A `warn` line says what's still missing, for example:
+
+```
+ok    configuration: 1 channel(s) in jotflow.toml
+warn  agent: JOTFLOW_GITHUB_READ_TOKEN is blank in agent.env
+warn  agent: COMPOSE_PROFILES in .env does not include agent, so docker compose up -d will not start the agent containers
+```
+
+JotFlow still starts with warnings, but drafts nothing until they're fixed. If check says `configuration problem` instead, fix what it names, or run `uvx jotflow init` again, before starting JotFlow. With no preset, check prints only the configuration line. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
+
+Optionally, the [live check](#troubleshooting), `check --live`, does a real round trip to Slack: it posts one test message in a channel the bot is in and deletes it. It runs while JotFlow is stopped, so do it before the next step or stop JotFlow first.
 
 ### 6. Start JotFlow
 
