@@ -366,3 +366,14 @@ def test_an_unknown_help_key_is_refused() -> None:
             "[help]\nbanner = true\n[channels.C0ONE1]\n[[channels.C0ONE1.repos]]\n"
             'repo = "acme-co/web"\nnickname = "web"\ndescription = "Web"\n'
         )
+
+
+def test_an_unknown_key_under_a_channels_help_is_refused() -> None:
+    from jotflow.policy import PolicyError, parse_policy
+
+    with pytest.raises(PolicyError, match="banner"):
+        parse_policy(
+            "[channels.C0ONE1]\n[channels.C0ONE1.help]\nbanner = true\n"
+            '[[channels.C0ONE1.repos]]\nrepo = "acme-co/web"\n'
+            'nickname = "web"\ndescription = "Web"\n'
+        )
