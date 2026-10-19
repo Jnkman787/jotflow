@@ -106,7 +106,11 @@ Update the table above with the new versions and date.
 
 **Install it.** Build the agent image with `AGENT_NPM_PACKAGES="@openai/codex@0.163.0"`, the version this preset was checked against. Set `JOTFLOW_AGENT_PRESET=codex` in both agent env files, and `[agent] preset = "codex"` in `jotflow.toml`.
 
-**The model login is an API key only.** Put `CODEX_API_KEY` or `OPENAI_API_KEY` in each env file, and list it in `JOTFLOW_AGENT_ENV_ALLOW`. Each run gets its own `CODEX_HOME`, so a ChatGPT login saved by `codex login` in the home volume isn't seen. Set the model with `JOTFLOW_AGENT_MODEL`, or the per-kind names. Without one, Codex uses its default.
+**The model login is an API key only.** Put `CODEX_API_KEY` or `OPENAI_API_KEY` in each env file, and list it in `JOTFLOW_AGENT_ENV_ALLOW`. Each run gets its own `CODEX_HOME`, so a ChatGPT login saved by `codex login` in the home volume isn't seen.
+
+**The model is pinned to `gpt-5.5`.** Codex 0.163.0 runs most current models (the gpt-6 family and gpt-5.6) in "code mode". That adds a JavaScript `exec` tool, with other tools nested inside it, and a sub-agent namespace (`spawn_agent`, `send_message`, and others), whatever the config says. Of the listed models in Codex's bundled catalog, only `gpt-5.5` keeps the flat tool set checked below. So the preset uses `gpt-5.5` by default, and the runner refuses to start if `JOTFLOW_AGENT_MODEL` or a per-kind model names anything else.
+
+**The runner fails closed.** At startup it checks that `codex --version` is exactly 0.163.0 and that `codex features list` still has `mcp_2026_07_28`. Otherwise it refuses to start, naming the problem.
 
 **The command,** for a run of each kind:
 
@@ -124,16 +128,26 @@ The command carries no run data. `CODEX_HOME` points at `<run dir>/codex` (0700)
 
 Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so the runner removes them with the run. Neither token is in the command line or the environment.
 
+**The security gate.** `tests/test_codex_gate.py` runs in CI's "Codex preset gate" job, with Codex 0.163.0 from `ci/codex`'s lockfile. Codex runs this preset's own config, and for every run kind it checks four things:
+- the model is offered exactly the five built-ins below, and no shell, `exec`, or `local_shell` tool
+- a scripted `apply_patch` call is refused ("writing is blocked by read-only sandbox; rejected by user approval settings"), no file is written, and no prompt holds the run
+- JotFlow's MCP server is reached
+- neither token reaches the model
+
+Codex talks only to `jotflow.testing.fake_responses_api` on 127.0.0.1, so it costs nothing. A further test shows a code-mode model would get `exec` and `spawn_agent`, which is why other models are refused.
+
 **What was checked, on 2026-10-19,** without a model call. Codex 0.163.0 ran this preset's own config against a local fake model API that records the request, with JotFlow's real MCP server and github-mcp-server 2.0.2:
 
 - **JotFlow:** Codex connected. JotFlow's audit shows `server/discover` and `tools/list` served.
 - **Built-in tools:** for drafting and execution runs, the request carried only `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `apply_patch`, and `tool_search`. There was no shell. Codex reaches MCP tools through `tool_search`.
 - **Tokens:** neither sentinel token appeared in the output or the request, and nothing was written to `HOME`. `CODEX_HOME` was 0700 and `config.toml` was 0600.
 
-**Not yet confirmed, which is why it's experimental.** These need a real model run:
+**Not yet confirmed, which is why it's still experimental.** These need a real model run:
 - that `tool_search` finds JotFlow's tools. Only GitHub, which sends server instructions, was listed as a search source.
 - that MCP calls run without an approval prompt
-- that the read-only sandbox refuses `apply_patch`
+- that the real model's metadata, which Codex may fetch from OpenAI, still gives `gpt-5.5` the flat tool set
 
-**Codex's MCP resource tools** let a drafting run read repository contents through GitHub's server, which is within the read-only token's Contents read. The write token has Issues only.
+The `apply_patch` refusal is already shown, by the gate.
+
+**Codex's MCP resource tools** let a drafting run read repository files through GitHub's server, which is within the read-only token's Contents read. The write token has Issues only. File contents read this way are untrusted text, like Slack messages. The drafting instructions treat every field and tool result outside JotFlow's own instructions as data, and drafts still need approval.
 

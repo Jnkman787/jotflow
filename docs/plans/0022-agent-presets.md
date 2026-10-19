@@ -286,3 +286,14 @@ What was built:
 - **Tests** pin the argv, the whole generated config per kind, the private file modes, refused paths, and an end-to-end runner run with a fake `codex` that checks the home is removed afterwards.
 - **A check against Codex 0.163.0** of the preset's own generated config, with a fake model API, found the same built-ins as the spike, no shell, JotFlow connected, and no token leaks.
 - **docs/presets.md** has a codex section.
+
+### Security's gating requirements (2026-10-19)
+
+1. **An apply_patch refusal for each kind.** `jotflow.testing.fake_responses_api` streams a scripted `apply_patch` call to Codex. The gate asserts Codex returned "rejected … read-only sandbox", no file was written, and the run ended by itself, so no prompt held it.
+2. **No shell or exec tool.** The gate asserts the offered tools are exactly the five known built-ins. This found that Codex 0.163.0 runs most current models in code mode, with a JavaScript `exec` tool and a sub-agent namespace that config can't turn off. So the preset pins the model to `gpt-5.5`, the only listed catalog model with flat tools, and `RunnerConfig` refuses other models through `verified_models`. A gate test shows the code-mode exec for a refused model.
+3. **Fail closed.** `CodexPreset.check_install()` runs at runner startup. It refuses unless `codex --version` is exactly 0.163.0 and `codex features list` has `mcp_2026_07_28`.
+4. **Docs.** Repository files read through GitHub's resource tools are untrusted text.
+
+CI has a new "Codex preset gate" job. It installs Codex from `ci/codex/package-lock.json` with `npm ci`, so the packages are pinned by integrity hash, and it runs the gate with `JOTFLOW_REQUIRE_CODEX=1`, so a missing Codex fails rather than skips.
+
+The preset stays experimental until a real model run confirms that `tool_search` finds JotFlow's tools, that calls aren't held for approval, and that the real model metadata keeps `gpt-5.5` flat.

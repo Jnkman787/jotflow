@@ -499,7 +499,15 @@ def test_codex_config_is_pinned(kind: RunKind, tmp_path: Path) -> None:
     assert github["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": token}
 
 
-def test_codex_without_a_model_uses_the_cli_default(tmp_path: Path) -> None:
+def test_codex_defaults_to_its_verified_model_and_refuses_others() -> None:
+    config = preset_config(preset=presets.CODEX)
+    assert {config.model(k) for k in RunKind} == {"gpt-5.5"}
+    assert preset_config(preset=presets.CODEX, models={RunKind.DRAFTING: "gpt-5.5"})
+    with pytest.raises(ConfigError, match="accepts only these models"):
+        preset_config(preset=presets.CODEX, models={RunKind.DRAFTING: "gpt-6.1-sol"})
+
+
+def test_codex_without_a_model_leaves_it_out(tmp_path: Path) -> None:
     assert "model" not in codex_config(RunKind.DRAFTING, tmp_path)
 
 

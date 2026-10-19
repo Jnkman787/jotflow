@@ -94,6 +94,9 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
     if (settings.agent_preset is None) == (settings.agent_command is None):
         raise ConfigError("set exactly one of JOTFLOW_AGENT_PRESET and JOTFLOW_AGENT_COMMAND")
     preset = None if settings.agent_preset is None else parse_preset(settings.agent_preset)
+    check_install = getattr(preset, "check_install", None)
+    if check_install is not None and (problem := check_install()) is not None:
+        raise ConfigError(problem)  # fail closed: a preset the installed CLI can't honour
     if preset is not None and preset.needs_github_mcp:
         path = settings.github_mcp_command
         if not (os.path.isfile(path) and os.access(path, os.X_OK)):

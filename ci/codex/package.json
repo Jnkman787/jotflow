@@ -1,0 +1,8 @@
+{
+  "name": "jotflow-codex-gate",
+  "private": true,
+  "description": "The Codex CLI release the codex preset is pinned to, for CI's codex preset gate.",
+  "dependencies": {
+    "@openai/codex": "0.163.0"
+  }
+}

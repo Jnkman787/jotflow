@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+import shutil
+import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -270,6 +272,11 @@ CLAUDE_CODE = ClaudeCodePreset()
 
 # Codex CLI (#22). Verified, without a model call, against this release.
 CODEX_VERSION = "0.163.0"
+# Models whose Codex tool set was checked to hold no shell or exec tool. Codex
+# 0.163.0 runs most current models in "code mode", which adds a JavaScript
+# ``exec`` tool and a sub-agent namespace whatever the config says, so only
+# these are accepted; any other is refused at startup.
+CODEX_VERIFIED_MODELS = ("gpt-5.5",)
 # Every built-in Codex feature that adds a tool or acts outside the run, off. The
 # shell goes with shell_tool and unified_exec. mcp_2026_07_28 is on: JotFlow serves
 # only that MCP version, and this release marks the flag "under development".
@@ -357,9 +364,44 @@ class CodexPreset:
     """
 
     name: str = "codex"
-    default_models: Mapping[RunKind, str] = field(default_factory=dict)
+    default_models: Mapping[RunKind, str] = field(
+        default_factory=lambda: dict.fromkeys(RunKind, CODEX_VERIFIED_MODELS[0])
+    )
+    verified_models: tuple[str, ...] = CODEX_VERIFIED_MODELS
     needs_github_mcp: bool = True
     github_token_in_config: bool = True
+
+    def check_install(
+        self,
+        *,
+        which: Callable[[str], str | None] = shutil.which,
+        run: Callable[..., Any] = subprocess.run,
+    ) -> str | None:
+        """Why the installed Codex can't run this preset, or None if it can.
+
+        Fails closed: only the pinned release, with the MCP 2026-07-28 flag
+        this preset turns on, is accepted, since JotFlow speaks only that
+        version and the flag is still marked "under development".
+        """
+        codex = which("codex")
+        if codex is None:
+            return (
+                "the codex CLI is not installed; set AGENT_NPM_PACKAGES to @openai/codex@"
+                + CODEX_VERSION
+            )
+        try:
+            version = run([codex, "--version"], capture_output=True, text=True, timeout=30)
+            features = run([codex, "features", "list"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"the codex CLI could not be run ({type(exc).__name__})"
+        found = str(version.stdout).strip().split()[-1:] if version.returncode == 0 else []
+        if found != [CODEX_VERSION]:
+            shown = found[0] if found else "unknown"
+            return f"the codex preset needs Codex {CODEX_VERSION}; this image has {shown}"
+        flags = {line.split()[0] for line in str(features.stdout).splitlines() if line.split()}
+        if features.returncode != 0 or "mcp_2026_07_28" not in flags:
+            return "this Codex has no mcp_2026_07_28 feature, which JotFlow's MCP version needs"
+        return None
 
     def plan(self, run: RunContext) -> RunPlan:
         home = run.run_dir / "codex"
