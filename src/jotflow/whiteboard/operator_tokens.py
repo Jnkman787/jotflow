@@ -93,13 +93,27 @@ class OperatorTokens:
     async def reload(self) -> None:
         """Take the store's current tokens, and save when each was last used."""
         async with self._lock:
-            used, self._used = self._used, {}
-            if used:
-                await self._store.touch_operator_tokens(used)
+            await self._flush()
             now = self._clock()
             tokens = await self._store.operator_tokens()
             if not self._closed:
                 self._by_digest = {t.digest: t for t in tokens if t.usable(now)}
+
+    async def flush(self) -> None:
+        """Save when each token was last used. Shutdown calls it before closing the store."""
+        async with self._lock:
+            await self._flush()
+
+    async def _flush(self) -> None:
+        used, self._used = self._used, {}
+        if not used:
+            return
+        try:
+            await self._store.touch_operator_tokens(used)
+        except BaseException:
+            # Keep them for the next try; a newer use wins.
+            self._used = {**used, **self._used}
+            raise
 
     def forget(self) -> None:
         """Accept no operator token from now on, for shutdown. Final: no reload refills it."""
@@ -115,9 +129,7 @@ class OperatorTokens:
                 log.exception("could not reload operator tokens")
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)
-        if self._used:
-            await self._store.touch_operator_tokens(self._used)
-            self._used = {}
+        await self.flush()
 
 
 class GateTokens:

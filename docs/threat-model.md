@@ -17,6 +17,7 @@ JotFlow reads chosen Slack channels, and after a quiet period hands a thread to 
 | GitHub write PAT | `agent-exec.env`, in the `agent-exec` service only | Create and edit issues in every repo it reaches |
 | Runner secrets, one per runner | `.env`, plus the matching agent env file | Start runs on that runner |
 | Per-run MCP tokens (`jfr_…`) | JotFlow's memory as SHA-256 digests; the run's 0600 MCP config | Act through JotFlow's tools as one run, within one channel and thread |
+| Operator tokens (`jfo_…`) | JotFlow's database as SHA-256 digests; the person's own environment | Read topic titles and message pointers in the token's channels, until it expires or is revoked |
 | Thread text | Slack only. JotFlow fetches it per run and never stores it | People's words, including private channels |
 | Drafts: title, body, comment | JotFlow's database, until the proposal is final | Derived from thread text, and what gets published |
 | The approval | The proposal's state and content hash, plus approver and time | The gate between untrusted text and a GitHub write |
@@ -34,6 +35,7 @@ JotFlow reads chosen Slack channels, and after a quiet period hands a thread to 
 2. **JotFlow to the agent containers.** These are internal Compose networks with no published ports. JotFlow calls each runner with that runner's own secret. The agent calls back to JotFlow's MCP server with a per-run token.
 3. **The agent to GitHub.** The agent uses the team's own tokens. JotFlow can't see or limit that traffic. It can only decide what the agent is asked to do and what it accepts back.
 4. **The installer's machine, during setup.** `jotflow init` writes the secrets, and may ask the installer's own `gh` for a repo's visibility.
+5. **A terminal agent, with an operator token.** It starts `jotflow operator connect` inside JotFlow's container with `docker compose exec`, on the host or over ssh. That bridge forwards MCP over stdio to the server on loopback, with the token. No port is published for it.
 
 ## Adversaries and defences
 
@@ -103,6 +105,19 @@ Issue bodies, comments, and with Contents read, repo files, all read by the agen
 | A tampered release | Release images carry signed build provenance. `gh attestation verify` checks it | [release.yml](../.github/workflows/release.yml), README |
 | Fork code with secrets | CI runs fork PRs with a read-only token and never uses `pull_request_target` | [ci.yml](../.github/workflows/ci.yml) |
 
+### A person with an operator token, or their terminal agent
+
+An admin issues the token with `jotflow operator create` for named channels. Whoever holds it, including a prompt-injected terminal agent, gets exactly what the token allows.
+
+| Threat | Defence | Enforced in |
+|---|---|---|
+| Propose, write, approve, record a result, or read a run's work | Only `list_topics` and `get_topic` declare the operator kind. `tools/list` shows nothing else, and any other call is refused as an unknown tool. A test walks every registered tool against an operator token | [read_tools.py](../src/jotflow/whiteboard/read_tools.py), [server.py](../src/jotflow/whiteboard/server.py), [test_operator.py](../tests/test_operator.py) |
+| Read another channel | Reads are limited to the token's channels. A topic elsewhere is reported exactly like a missing one | [read_tools.py](../src/jotflow/whiteboard/read_tools.py) `_channel_for` |
+| Keep using a leaked or unwanted token | `operator revoke` stops it within 2 seconds. Every token expires, after 30 days by default and 365 at most. `operator list` shows when each was last used | [operator_tokens.py](../src/jotflow/whiteboard/operator_tokens.py), [commands/operator.py](../src/jotflow/commands/operator.py) |
+| Load the database with guessed tokens | A token the server doesn't know triggers at most one reload a second. Run tokens never do | [operator_tokens.py](../src/jotflow/whiteboard/operator_tokens.py) `check_on_miss` |
+| Read without a trace | Each call is logged with the token id, tool, channel and time, never topic content | [read_tools.py](../src/jotflow/whiteboard/read_tools.py) `operator_audit` |
+| Reach the server from the network | No port is published. The bridge runs in JotFlow's container, so using it needs `docker compose exec` on the host. The token is passed in the environment, never on a command line | [commands/operator.py](../src/jotflow/commands/operator.py) |
+
 ### Someone on the host or the internal network
 
 | Threat | Defence | Enforced in |
@@ -121,6 +136,7 @@ Issue bodies, comments, and with Contents read, repo files, all read by the agen
 | Run records and tool-call ledger: ids, states, hashes | GitHub credentials, in JotFlow's own service |
 | Identity links: Slack id, GitHub login, time | Display names, beyond a process-lifetime cache |
 | Pending debounce times, and the heartbeat file's timestamp | |
+| Operator token names, channels, expiry, revocation and last use | |
 
 ## Accepted in v1
 
@@ -143,7 +159,7 @@ Each gap is deliberate, visible to the people it affects, and tracked.
 | The agent runs in its own container with an allowlist | A prompt-injected drafting agent: "Read Slack or JotFlow secrets" |
 | Proposals are validated, and a reported URL must match | A channel member: "Get a write outside the team's repos"; a misbehaving execution agent |
 | `ask_channel` posts only in-thread, strips broadcasts, and is rate-limited | A channel member: "Ping the whole channel" |
-| MCP tokens are scoped, and Host and Origin are validated | A prompt-injected drafting agent: "Act beyond its run"; someone on the host network |
+| MCP tokens are scoped, and Host and Origin are validated | A prompt-injected drafting agent: "Act beyond its run"; a person with an operator token; someone on the host network |
 | Issues are written under the agent's identity, naming the proposer | A misbehaving execution agent; the footer rules |
 | No secrets in the repo, and JotFlow holds no GitHub credentials | Assets; data JotFlow keeps |
 | CI runs forks read-only, never with `pull_request_target` | A compromised dependency or image |

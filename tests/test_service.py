@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ import pytest
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.adapters.runner import Runner, build_runner_app
+from jotflow.commands.operator import new_token
 from jotflow.commands.run import make_mcp_server
 from jotflow.config import Settings
 from jotflow.models import RUN_KINDS, MessageRef, ProposalState, RunKind, RunStatus
@@ -23,6 +25,7 @@ from jotflow.orchestrator.launch import RunnerClient, RunnerEndpoint
 from jotflow.orchestrator.service import Orchestrator, RunKinds, decide_run_kinds
 from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
+from jotflow.whiteboard.operator_tokens import GateTokens
 from jotflow.whiteboard.tokens import Grant, TokenCheck, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
 from tests.test_card_sync import FakeCardPoster, FakePeople
@@ -1143,3 +1146,20 @@ async def test_removing_a_skip_reaction_lets_the_thread_draft_again() -> None:
         assert rig.orchestrator._debouncer.pending()  # armed again: it will draft
     finally:
         await rig.orchestrator.stop()
+
+
+async def test_operator_tokens_reach_the_gate_and_stop_with_the_server() -> None:
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    assert rig.server is not None
+    token, made = new_token("alex", [CH], 30, policy(), datetime.now(UTC))
+    await rig.store.add_operator_token(made)
+    gate = rig.server.tokens
+    assert gate.check(token) is None  # not loaded yet: a miss reload lets it in
+    assert isinstance(gate, GateTokens)
+    grant = await gate.check_on_miss(token)
+    assert grant is not None and grant.kind is RunKind.OPERATOR
+    await rig.orchestrator.stop()
+    assert gate.check(token) is None
+    [saved] = await rig.store.operator_tokens()
+    assert saved.last_used_at is not None

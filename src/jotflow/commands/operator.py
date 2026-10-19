@@ -83,7 +83,7 @@ class Refusal(Exception):
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    sub = parser.add_subparsers(dest="action", metavar="<action>", required=True)
+    sub = parser.add_subparsers(dest="action", metavar="<action>")
     create = sub.add_parser("create", help="Issue a token and print it once")
     create.add_argument("--name", required=True, help="Who it is for: lowercase, unique")
     create.add_argument(
@@ -107,6 +107,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "connect",
         help=f"The stdio bridge for a terminal MCP client; reads the token from {TOKEN_ENV}",
     )
+    parser.set_defaults(operator_usage=parser.format_usage())
 
 
 # create, list, revoke
@@ -338,6 +339,12 @@ def _connect() -> int:
 
 
 def run(args: argparse.Namespace) -> int:
+    if getattr(args, "action", None) is None:
+        print(
+            getattr(args, "operator_usage", "") + "choose create, list, revoke or connect",
+            file=sys.stderr,
+        )
+        return EXIT_REFUSED
     try:
         if args.action == "connect":
             return _connect()

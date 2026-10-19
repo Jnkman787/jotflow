@@ -533,6 +533,9 @@ class Orchestrator:
         if self._server is not None:
             server, self._server = self._server, None
             await server.stop()
+        if self.operators is not None:
+            with contextlib.suppress(Exception):
+                await self.operators.flush()  # last-used for calls since the last reload
         if self._runner is not None:
             await self._runner.aclose()
         if self._store is not None:

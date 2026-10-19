@@ -50,11 +50,12 @@ Every call carries a token, and what a token may do depends on who holds it:
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
 | Question run (M5, D12) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `ask_channel` (answers in the source thread only) |
 | Operator token (M5, D12, #58) | One person, named channels, admin-issued and revocable | `list_topics`, `get_topic` only: no `get_work`, no write, approval or result tool |
-| Operator (M5, D12) | A person, created and revoked by an admin, named channels only | `list_topics`, `get_topic` |
 
 Tokens are short-lived for runs and revocable for operators. The server validates `Host` and `Origin` headers so a web page cannot reach it from a browser.
 
 **Run tokens.** The run lifecycle issues one token per run from an in-memory registry and revokes it when the run ends; a time limit, at most two hours, ends it otherwise. A token is `jfr_` followed by 32 random bytes, so secret scanners can recognise a leaked one. The registry keeps only its SHA-256 digest, looks tokens up by that digest so timing reveals nothing about stored tokens, does no I/O, and never logs or prints it. Tokens are not persisted: a restart ends every run, and re-queued runs get fresh tokens. A token's grant names its run, run kind, and channel, plus the thread for a drafting or question run and the one approved proposal for an execution run. A run for a top-level post uses the post's own timestamp as its thread, as Slack does for a thread's parent, so a drafting or question grant always names one thread and tools compare it exactly. Each tool declares the run kinds that may call it, matching the table above. A run lists only its kind's tools, and a call to another kind's tool gets the same error as a tool that does not exist.
+
+**Operator tokens.** An admin issues one with `jotflow operator create --name … --channel …`, for 30 days by default and 365 at most. It is `jfo_` followed by 32 random bytes, printed once; the database keeps only its SHA-256 digest, with its name, channels, expiry, revocation and last use (#58). The running server checks a copy in memory, so the gate still does no I/O. The copy is reloaded every 2 seconds, so `jotflow operator revoke` takes effect within that interval. A token the copy doesn't know triggers one reload, at most once a second, so a new token works at once and guessed tokens can't load the database. The grant names the token's channels. `list_topics` takes an optional `channel`, which an operator with more than one channel must give, and `get_topic` reads any of them. Each operator call is logged to `jotflow.operator.audit` with the token id, tool, channel and time, never topic content. No port is published for it: a terminal MCP client runs `docker compose exec -T -e JOTFLOW_OPERATOR_TOKEN jotflow jotflow operator connect`, on the host or over ssh. That stdio bridge forwards `tools/list` and `tools/call` to the server on loopback inside the container, and has no tools of its own.
 
 **Write tools.** The five write tools are the agent's only way to act, and each one is bounded by the run's grant:
 
@@ -435,7 +436,7 @@ The full picture, by adversary and with the accepted v1 gaps, is in [threat-mode
 - The agent runs in its own container with an environment allowlist and no access to JotFlow's secrets.
 - Proposals are validated against the configured repos, and against a repo's label list where one is set, before they can be approved, and a reported issue URL must point at the approved repo.
 - `ask_channel` posts only in the source thread, strips broadcast mentions such as `@channel`, and is rate-limited.
-- MCP tokens are scoped to their run kind and channel; the server validates `Host` and `Origin`.
+- MCP tokens are scoped to their run kind and channel, and an operator token to its channels and the two read tools; the server validates `Host` and `Origin`.
 - Issues and comments are created by the team's agent under whatever identity its GitHub credentials carry, with the proposing Slack user named in the body.
 - No secrets in the repository. Configuration is by environment variables. JotFlow's code never uses GitHub credentials.
 - Continuous integration runs on forked pull requests with a read-only token. The `pull_request_target` trigger is never used to check out fork code.

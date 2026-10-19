@@ -594,13 +594,15 @@ async def test_a_terminal_client_reads_topics_through_the_bridge(mode: str) -> N
     found = await store.create_topic(CH, TITLE)
     token, made = record(now=clock.now)
     await store.add_operator_token(made)
-    async with real_server(store, clock) as (port, _):
-        async with Client(stdio_client(bridge_params(port, token)), mode=mode) as client:
-            listed = {t.name for t in (await client.list_tools()).tools}
-            index = await client.call_tool("list_topics", {})
-            detail = await client.call_tool("get_topic", {"topic_id": found.topic.id})
-            with pytest.raises(MCPError, match="unknown tool 'propose_issue'"):
-                await client.call_tool("propose_issue", {})
+    async with (
+        real_server(store, clock) as (port, _),
+        Client(stdio_client(bridge_params(port, token)), mode=mode) as client,
+    ):
+        listed = {t.name for t in (await client.list_tools()).tools}
+        index = await client.call_tool("list_topics", {})
+        detail = await client.call_tool("get_topic", {"topic_id": found.topic.id})
+        with pytest.raises(MCPError, match="unknown tool 'propose_issue'"):
+            await client.call_tool("propose_issue", {})
     assert listed == READERS
     assert index.structured_content is not None
     assert [t["id"] for t in index.structured_content["topics"]] == [found.topic.id]
@@ -654,3 +656,121 @@ async def test_the_bridge_exits_clearly_when_jotflow_is_down() -> None:
     assert process.returncode == command.EXIT_BRIDGE
     assert out == b""
     assert b"could not reach JotFlow's MCP endpoint" in err
+
+
+class FlakyStore(MemoryStore):
+    """Fails the next ``fails`` reads or writes of operator tokens."""
+
+    def __init__(self, clock: Clock) -> None:
+        super().__init__(clock=clock)
+        self.fails = 0
+
+    def _maybe_fail(self) -> None:
+        if self.fails:
+            self.fails -= 1
+            raise OSError("disk went away")
+
+    async def operator_tokens(self) -> list[OperatorToken]:
+        self._maybe_fail()
+        return await super().operator_tokens()
+
+    async def touch_operator_tokens(self, used: Any) -> None:
+        self._maybe_fail()
+        await super().touch_operator_tokens(used)
+
+
+async def test_the_reload_loop_survives_a_store_error_and_flushes_at_stop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = Clock()
+    store = FlakyStore(clock)
+    token, made = record(now=clock.now)
+    await store.add_operator_token(made)
+    tokens = OperatorTokens(store, clock=clock)
+    await tokens.reload()
+    store.fails = 1
+    stop = asyncio.Event()
+    loop = asyncio.create_task(tokens.run(stop, interval=0.01))
+    await asyncio.sleep(0.05)
+    assert "could not reload operator tokens" in caplog.text
+    assert tokens.check(token) is not None
+    stop.set()
+    await loop
+    [after] = await store.operator_tokens()
+    assert after.last_used_at == clock.now
+
+
+async def test_a_failed_flush_keeps_last_use_for_the_next_one() -> None:
+    clock = Clock()
+    store = FlakyStore(clock)
+    token, made = record(now=clock.now)
+    await store.add_operator_token(made)
+    tokens = OperatorTokens(store, clock=clock)
+    await tokens.reload()
+    assert tokens.check(token) is not None
+    store.fails = 1
+    with pytest.raises(OSError):
+        await tokens.flush()
+    await tokens.flush()
+    [after] = await store.operator_tokens()
+    assert after.last_used_at == clock.now
+
+
+def test_operator_with_no_action_shows_its_usage(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["operator"]) == 2
+    err = capsys.readouterr().err
+    assert "usage: jotflow operator" in err
+    assert "choose create, list, revoke or connect" in err
+
+
+async def test_the_bridge_forwards_the_servers_own_answers_in_process() -> None:
+    clock = Clock()
+    store = MemoryStore(clock=clock)
+    found = await store.create_topic(CH, TITLE)
+    token, made = record(now=clock.now)
+    await store.add_operator_token(made)
+    async with (
+        real_server(store, clock) as (port, _),
+        command.upstream_client(f"http://127.0.0.1:{port}{PATH}", token) as upstream,
+        Client(command.build_bridge(upstream)) as client,
+    ):
+        listed = {t.name for t in (await client.list_tools()).tools}
+        detail = await client.call_tool("get_topic", {"topic_id": found.topic.id})
+        missing = await client.call_tool("get_topic", {"topic_id": "nope"})
+    assert listed == READERS
+    assert not detail.is_error
+    assert missing.is_error
+
+
+def test_connect_reports_a_down_server(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(command.TOKEN_ENV, OPERATOR_PREFIX + "x" * 43)
+    monkeypatch.setenv(command.PORT_ENV, str(_free_port()))
+    assert main(["operator", "connect"]) == command.EXIT_BRIDGE
+    assert "could not reach JotFlow's MCP endpoint" in capsys.readouterr().err
+
+
+def test_connect_reports_a_refusal_from_inside_a_task_group(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def refused(url: str, token: str) -> None:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(_raise(MCPError(-32001, "the bearer token is not valid")))
+
+    async def _raise(error: BaseException) -> None:
+        raise error
+
+    monkeypatch.setenv(command.TOKEN_ENV, OPERATOR_PREFIX + "x" * 43)
+    monkeypatch.setattr(command, "serve_bridge", refused)
+    assert main(["operator", "connect"]) == command.EXIT_BRIDGE
+    assert "refused: the bearer token is not valid" in capsys.readouterr().err
+
+
+def test_connect_exits_zero_when_the_client_hangs_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def done(url: str, token: str) -> None:
+        return None
+
+    monkeypatch.setenv(command.TOKEN_ENV, OPERATOR_PREFIX + "x" * 43)
+    monkeypatch.setattr(command, "serve_bridge", done)
+    assert main(["operator", "connect"]) == command.EXIT_OK
