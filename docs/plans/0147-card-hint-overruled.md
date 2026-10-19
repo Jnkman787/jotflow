@@ -4,10 +4,10 @@
 
 - Issue: #147
 - Also serves: #144 (adds `hint_overruled`), #23, D10, D7
-- Draft PR: #149, based on `feat/drafting-prompt` until #144 merges
-- Status: implementing
-- Last verified: plan written on 2026-10-19; the branch is stacked on #144's `feat/drafting-prompt`
-- Next safe action: once #144 merges, rebase onto main and mark #149 ready
+- Draft PR: #149
+- Status: ready for review
+- Last verified: 2026-10-19, `make check` passes, rebased onto main after #144 merged
+- Next safe action: review
 
 ## Objective and done-when
 
@@ -32,7 +32,7 @@ Done when:
 
 ## Risks and open questions
 
-- #144 is open. This branch builds on it and will be rebased onto main once #144 merges, so it must merge after #144.
+- #144 has merged, and this branch is rebased onto main.
 
 ## Progress checklist
 
@@ -43,7 +43,7 @@ Done when:
 - [x] Docs: architecture's card description, if it lists the card's lines
 - [x] CodeRabbit once: skipped, the free CLI allowance was rate-limited
 - [x] `make check` passes
-- [ ] Rebase onto main after #144 merges, then mark the PR ready for review
+- [x] Rebase onto main after #144 merges, then mark the PR ready for review
 
 ## Validation
 
