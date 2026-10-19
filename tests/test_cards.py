@@ -625,3 +625,11 @@ def test_the_overruled_hint_is_part_of_what_is_approved() -> None:
     assert content_hash(plain_issue) != content_hash(hinted)
     approve = actions(render_card(record(hinted), context()))[ACTION_APPROVE][0]
     assert approve["value"] == f"p1:{content_hash(hinted)}"
+
+
+def test_a_cleared_card_shows_no_hint_reason() -> None:
+    from jotflow.store.base import cleared_draft
+
+    cleared = cleared_draft(issue(hint_overruled=REASON))
+    card = _state(ProposalState.REJECTED, proposal=cleared, draft_cleared_at=NOW)
+    assert "Hint overruled" not in all_text(card) and REASON not in all_text(card)
