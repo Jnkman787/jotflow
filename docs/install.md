@@ -51,7 +51,7 @@ cd jotflow
 
 On a server, use `/srv/jotflow` instead, as [docs/deployment.md](deployment.md) describes.
 
-To run JotFlow from its source instead, for example to change it, see [Run from a checkout](../CONTRIBUTING.md#run-from-a-checkout) in CONTRIBUTING.md. In a checkout, start JotFlow with `make up`, which runs `docker compose --project-directory . -f docker/docker-compose.yml -f docker/docker-compose.policy.yml up -d`, and setup doesn't write `COMPOSE_FILE` there. If your checkout's `.env` still has `COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml` from an earlier setup, delete that line. Those files are no longer at the root, so plain `docker compose` fails while the line is there. `make up` works either way, because its `-f` flags override it.
+To run JotFlow from its source instead, for example to change it, see [Run from a checkout](../CONTRIBUTING.md#run-from-a-checkout) in CONTRIBUTING.md. A checkout starts JotFlow with `make up`, and its `.env` needs no `COMPOSE_FILE` line; that section explains both.
 
 ## 3. Run the guided setup
 

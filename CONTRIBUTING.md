@@ -13,7 +13,7 @@ The full working rules, for people and coding agents alike, are in [AGENTS.md](A
 
 ## Run from a checkout
 
-The [install guide](docs/install.md) installs JotFlow's published package and images, with no clone. To change JotFlow, or to run a commit that isn't released yet, work from a checkout instead.
+The README's quickstart installs JotFlow's published package and images, with no clone. To change JotFlow, or to run a commit that isn't released yet, work from a checkout instead.
 
 - **Git**, from <https://git-scm.com/downloads>, and **uv**, from [uv's installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 - **Docker with BuildKit**, which builds JotFlow's images from source. Docker Desktop and Docker's own packages include it. On Ubuntu with the `docker.io` package, also install `docker-buildx` and `docker-compose-v2` with `sudo apt install docker-buildx docker-compose-v2`. Check with `docker buildx version`.
