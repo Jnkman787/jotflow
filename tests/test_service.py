@@ -502,6 +502,23 @@ async def test_a_codex_policy_refuses_a_codex_execution_runner(
     await rig.orchestrator.stop()
 
 
+async def test_a_codex_policy_refuses_a_command_execution_runner(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig(preset="codex")
+    rig.info_preset = "codex"
+    rig.exec_preset = "command"
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert rig.orchestrator.kinds.on == RUN_KINDS - {RunKind.EXECUTION}
+    assert (
+        "execution runs are off: the runner at http://agent-exec:8766 starts preset command, "
+        "but jotflow.toml's [agent] preset codex does not serve execution runs; "
+        "that runner must start claude-code"
+    ) in caplog.text
+    await rig.orchestrator.stop()
+
+
 async def test_a_claude_code_policy_refuses_a_codex_execution_runner(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

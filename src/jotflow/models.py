@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -106,18 +108,18 @@ RUN_KINDS = frozenset({RunKind.DRAFTING, RunKind.EXECUTION, RunKind.QUESTION})
 # under claude-code on their own runner. It lives here so the orchestrator, which never
 # imports the adapters, can check the runners; presets.py takes its run_kinds from it.
 # Codex never serves execution (#172).
-PARTIAL_PRESET_KINDS: dict[str, frozenset[RunKind]] = {
-    "codex": frozenset({RunKind.DRAFTING, RunKind.QUESTION}),
-}
+PARTIAL_PRESET_KINDS: Mapping[str, frozenset[RunKind]] = MappingProxyType(
+    {"codex": frozenset({RunKind.DRAFTING, RunKind.QUESTION})}
+)
 
 
-def expected_runner_preset(preset: str, kinds: frozenset[RunKind]) -> str:
+def expected_runner_preset(kinds: frozenset[RunKind], preset: str) -> str:
     """The preset the runner serving ``kinds`` must start, under jotflow.toml's ``preset``.
 
     The one exception to an exact match: a built-in preset whose run kinds leave out
     execution, today codex, hands the execution runner to claude-code. An unknown
     preset, ``command``, or any other group of kinds keeps an exact match. Both the
-    orchestrator's startup check and ``jotflow check`` use this, so they can't drift.
+    orchestrator's startup check and ``check.agent_readiness`` use this, so they can't drift.
     """
     served = PARTIAL_PRESET_KINDS.get(preset)
     if served is not None and kinds == {RunKind.EXECUTION} and RunKind.EXECUTION not in served:
