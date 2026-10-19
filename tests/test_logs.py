@@ -68,8 +68,8 @@ def test_secrets_are_always_redacted(secret: str, bodies: bool) -> None:
     [
         "headers={'Authorization': 'Bearer some-opaque-token.value'}",
         "Authorization: Bearer abc.def-ghi",
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----",
-        "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----",  # gitleaks:allow  # noqa: E501
+        "-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----",  # gitleaks:allow
     ],
 )
 def test_bearer_values_and_private_keys_are_redacted(line: str) -> None:
