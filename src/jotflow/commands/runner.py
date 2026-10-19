@@ -19,7 +19,7 @@ import uvicorn
 from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from jotflow.adapters.presets import DEFAULT_GITHUB_MCP
+from jotflow.adapters.presets import DEFAULT_GITHUB_MCP, EXPERIMENTAL
 from jotflow.adapters.runner import (
     RUNNER_PORT,
     ConfigError,
@@ -94,6 +94,9 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
     if (settings.agent_preset is None) == (settings.agent_command is None):
         raise ConfigError("set exactly one of JOTFLOW_AGENT_PRESET and JOTFLOW_AGENT_COMMAND")
     preset = None if settings.agent_preset is None else parse_preset(settings.agent_preset)
+    check_install = getattr(preset, "check_install", None)
+    if check_install is not None and (problem := check_install()) is not None:
+        raise ConfigError(problem)  # fail closed: a preset the installed CLI can't honour
     if preset is not None and preset.needs_github_mcp:
         path = settings.github_mcp_command
         if not (os.path.isfile(path) and os.access(path, os.X_OK)):
@@ -128,7 +131,8 @@ def startup_line(config: RunnerConfig) -> str:
     """
     kinds = ", ".join(k.value for k in RunKind if k in config.kinds)
     if config.preset is not None:
-        return f"runner serving {kinds} with preset {config.preset.name}"
+        note = " (experimental)" if config.preset.name in EXPERIMENTAL else ""
+        return f"runner serving {kinds} with preset {config.preset.name}{note}"
     program = PurePosixPath(config.command[0]).name if config.command else "?"
     return f"runner serving {kinds} with command {program}"
 

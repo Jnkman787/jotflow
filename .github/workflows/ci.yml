@@ -54,6 +54,38 @@ jobs:
       - name: Coverage floor
         run: uv run coverage report --format=total
 
+  codex-gate:
+    # The codex preset's security gate (#22): with the pinned Codex and this
+    # preset's own config, no shell or exec tool is offered, apply_patch is
+    # refused, and JotFlow's MCP server is reached. Codex talks only to a
+    # scripted fake model API on 127.0.0.1, so nothing is spent.
+    name: Codex preset gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      - name: Install
+        run: uv sync --locked --all-groups
+
+      # From ci/codex's lockfile, so every package is pinned by integrity hash.
+      - name: Install the pinned Codex
+        working-directory: ci/codex
+        run: |
+          npm ci --no-fund --no-audit
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Gate
+        env:
+          JOTFLOW_REQUIRE_CODEX: "1"
+        run: uv run pytest -q -p no:cacheprovider tests/test_codex_gate.py
+
   workflows:
     name: Workflow lint
     runs-on: ubuntu-latest
