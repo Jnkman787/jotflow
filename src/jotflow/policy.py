@@ -318,6 +318,21 @@ class ApprovalPolicy(_Strict):
         return self
 
 
+class IdentityPolicy(_Strict):
+    """Who may remove someone else's GitHub link (#173), besides the approvers."""
+
+    admins: tuple[UserId, ...] = Field(
+        default=(),
+        description="Slack user ids that may unlink anyone; approvers always may",
+    )
+
+    @model_validator(mode="after")
+    def _unique_admins(self) -> IdentityPolicy:
+        if dupes := _duplicates(self.admins):
+            raise ValueError(f"admins listed more than once: {', '.join(dupes)}")
+        return self
+
+
 class Policy(_Strict):
     """The whole of ``jotflow.toml``."""
 
@@ -344,7 +359,12 @@ class Policy(_Strict):
     agent: AgentPolicy = Field(default_factory=AgentPolicy)
     approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
     help: HelpPolicy = Field(default_factory=HelpPolicy)
+    identity: IdentityPolicy = Field(default_factory=IdentityPolicy)
     channels: dict[ChannelId, ChannelPolicy] = Field(min_length=1)
+
+    def may_unlink_others(self, user_id: str) -> bool:
+        """An approver or an identity admin may remove someone else's link (#173)."""
+        return user_id in self.approval.approvers or user_id in self.identity.admins
 
     def channel(self, channel_id: str) -> ChannelPolicy:
         """Raise :class:`UnknownChannelError` for a channel the file does not list."""

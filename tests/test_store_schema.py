@@ -126,6 +126,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "proposal_edits",
             "reaction_marks",
             "operator_tokens",
+            "identity_unlinks",
         }
         for table in tables:
             (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
@@ -377,3 +378,19 @@ async def test_the_operator_tokens_upgrade_keeps_existing_rows(tmp_path: Path) -
         await store.close()
     with sqlite3.connect(path) as db:
         assert db.execute("PRAGMA user_version").fetchone() == (LATEST_VERSION,)
+
+
+async def test_the_identity_unlinks_upgrade_keeps_links(tmp_path: Path) -> None:
+    """12 to 13 (#173): links survive, and the removal record starts empty."""
+    path = tmp_path / "jotflow.db"
+    old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 13])
+    await old.link_identity("U0BOB", "octo-cat")
+    await old.close()
+    store = await SqliteStore.open(path)
+    try:
+        link = await store.get_identity("U0BOB")
+        assert link is not None and link.github_login == "octo-cat"
+        assert await store.identity_unlinks() == []
+        assert await store.remove_identity("U0BOB", removed_by="operator")
+    finally:
+        await store.close()

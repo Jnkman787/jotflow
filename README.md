@@ -426,6 +426,7 @@ This is how JotFlow works for the people in the channel.
 - **See where it went.** Once an issue is written, JotFlow replies in the thread with its link and adds a :ticket: reaction to the messages it came from. Set `issue_reaction` in `jotflow.toml` to use another emoji, or `""` for none.
 - **Change how a channel works.** `/jotflow mode` shows the channel's mode: `propose`, the default, where nothing is written until someone approves; `auto`, where proposals are written straight away; or `paused`, where JotFlow reads and writes nothing. `/jotflow mode auto` sets it, and JotFlow announces the change in the channel. With approvers on, only they can change it.
 - **React instead.** :no_entry_sign: skips a message, and :bulb: or :bug: says it is an idea or a bug. Remove your reaction to take it back. If your Slack app was created before this release, update it from the new manifest and reinstall it, as [manifests/README.md](manifests/README.md) explains, or removing a reaction does nothing.
+- **Link your GitHub login.** `/jotflow link your-github-login` lets proposals assign you, and `/jotflow unlink` removes it. Links are self-declared, so cards mark them "(unverified)". If someone linked a login that's yours, an approver, or an admin listed under `[identity]` in `jotflow.toml`, can remove it with `/jotflow unlink` and that person's Slack member ID. Copy it from their profile's ⋯ menu; names aren't accepted. The person is told privately. Whoever runs JotFlow can do the same on the host with `jotflow identity unlink <member-id>`.
 - **Forgot the words?** Type `/jotflow help`. Only you see the answer, and it lists this channel's repos and how approval works here.
 - **Help finds you.** JotFlow pins a short guide once in each channel. Your first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...` without the colon, gets a private suggestion once. JotFlow never acts on a near miss. Each of these can be turned off in `jotflow.toml`'s `[help]` table, for every channel or for one.
 
@@ -440,6 +441,7 @@ Start a message with a keyword to steer JotFlow. The colon is required.
   skip:       not an idea; on a top-level message it keeps the whole thread out
 Or react instead: :no_entry_sign: for skip:, :bulb: for idea:, or :bug: for bug:. Remove your reaction to take it back.
 /jotflow link your-github-login lets proposals assign you; /jotflow unlink undoes it.
+Approvers can remove someone else's link with /jotflow unlink and their Slack member ID.
 /jotflow repos lists the repos this channel feeds.
 Most people never need these: just post, and JotFlow works out the rest.
 ```

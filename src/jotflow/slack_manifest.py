@@ -81,11 +81,13 @@ def render_manifest(bot_name: str = DEFAULT_BOT_NAME) -> dict[str, Any]:
         },
         "features": {
             "bot_user": {"display_name": name, "always_online": True},
-            # No DM or Home tab: the app has no im scopes, so DMs would vanish unread.
+            # No Home tab. A read-only Messages tab, so JotFlow can tell a person
+            # privately that their GitHub link was removed (#173). It needs only
+            # chat:write; people can't write back, and JotFlow reads no DMs.
             "app_home": {
                 "home_tab_enabled": False,
-                "messages_tab_enabled": False,
-                "messages_tab_read_only_enabled": False,
+                "messages_tab_enabled": True,
+                "messages_tab_read_only_enabled": True,
             },
             "slash_commands": [
                 {

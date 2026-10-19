@@ -100,6 +100,16 @@ CREATE TABLE identity_links (
 )
 """
 
+# Someone else removed a person's link (#173). Never the login, never any text.
+_IDENTITY_UNLINKS = """
+CREATE TABLE identity_unlinks (
+    id TEXT PRIMARY KEY, -- random id
+    slack_user_id TEXT NOT NULL, -- Slack user id whose link was removed
+    removed_by TEXT NOT NULL, -- Slack user id of who removed it, or 'operator' for the host CLI
+    removed_at TEXT NOT NULL -- UTC, ISO 8601
+)
+"""
+
 _CHANNEL_MODES = """
 CREATE TABLE channel_modes (
     channel_id TEXT PRIMARY KEY, -- Slack channel id
@@ -320,6 +330,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         ),
     ),
     Migration(12, (_OPERATOR_TOKENS,)),
+    Migration(13, (_IDENTITY_UNLINKS,)),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

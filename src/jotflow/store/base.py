@@ -231,6 +231,20 @@ class IdentityLink:
     linked_at: datetime
 
 
+# ``removed_by`` for a removal made with the host CLI rather than in Slack (#173).
+OPERATOR_REMOVER = "operator"
+
+
+@dataclass(frozen=True)
+class IdentityUnlink:
+    """Someone removed another person's link (#173). Who, whom and when; no login or text."""
+
+    id: str
+    slack_user_id: str
+    removed_by: str
+    removed_at: datetime
+
+
 @dataclass(frozen=True)
 class ChannelModeSetting:
     channel_id: str
@@ -676,6 +690,17 @@ class Store(Protocol):
     async def get_identity(self, slack_user_id: str) -> IdentityLink | None: ...
 
     async def unlink_identity(self, slack_user_id: str) -> bool: ...
+
+    async def remove_identity(self, slack_user_id: str, *, removed_by: str) -> bool:
+        """Remove someone else's link and record who did it, in one step (#173).
+
+        Returns False, recording nothing, if they had no link.
+        """
+        ...
+
+    async def identity_unlinks(self) -> list[IdentityUnlink]:
+        """Every removal by someone else, newest first."""
+        ...
 
     # Operator tokens (#58)
 
