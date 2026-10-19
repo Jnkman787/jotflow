@@ -29,6 +29,9 @@ from typing import Literal, Protocol
 import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
+from jotflow.execution.attribution import Attribution, execution_footer
+from jotflow.execution.writes import PlannedChecks, PlannedWrite
+from jotflow.execution.writes import plan as plan_writes
 from jotflow.models import (
     MessageRef,
     Proposal,
@@ -65,6 +68,11 @@ SLACK_PHASE_SECONDS = 25.0
 # JotFlow's own text, never built from Slack or policy strings.
 DRAFTING_INSTRUCTIONS = (
     resources.files("jotflow.whiteboard").joinpath("instructions", "drafting.md").read_text("utf-8")
+)
+EXECUTION_INSTRUCTIONS = (
+    resources.files("jotflow.whiteboard")
+    .joinpath("instructions", "execution.md")
+    .read_text("utf-8")
 )
 # A thread's people, authors first, then the people they mention.
 MAX_PEOPLE = 50
@@ -199,12 +207,19 @@ class ConversationWork(BaseModel):
 
 class ExecutionWork(BaseModel):
     notice: str = Field(default=EXECUTION_NOTICE, description="How to treat the proposal")
+    instructions: str = Field(
+        default=EXECUTION_INSTRUCTIONS, description="How to do this run's work; JotFlow's own"
+    )
     run_id: str
     proposal_id: str = Field(
         description="The proposal id. It is also the hidden marker in the issue body"
     )
     repo: str = Field(description="owner/name of the repo to write to")
     proposal: Proposal = Field(description="The approved fields, exactly as approved")
+    checks: PlannedChecks = Field(description="What to read before writing anything")
+    writes: list[PlannedWrite] = Field(
+        description="The GitHub tool calls to make, in order, exactly as given"
+    )
 
 
 class Work(BaseModel):
@@ -254,6 +269,7 @@ def read_tools(
     source: WorkSource | None = None,
     *,
     clock: Clock = utc_now,
+    attribution: Attribution | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The three read tools, bound to their dependencies. Built once at startup."""
     work_source: WorkSource = source or NoWorkSource()
@@ -394,11 +410,16 @@ def read_tools(
         if record.content_hash != content_hash(record.proposal):
             # D7: the execution run gets exactly what was approved, or nothing.
             raise ToolError(f"proposal {record.id} no longer matches what was approved")
+        # JotFlow decides exactly what is written; the agent checks, then copies.
+        tail = await execution_footer(record, policy, attribution)
+        checks, writes = plan_writes(record, tail)
         return ExecutionWork(
             run_id=grant.run_id,
             proposal_id=record.id,
             repo=record.proposal.repo,
             proposal=record.proposal,
+            checks=checks,
+            writes=writes,
         )
 
     drafting_or_question = frozenset({RunKind.DRAFTING, RunKind.QUESTION})

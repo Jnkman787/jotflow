@@ -48,22 +48,6 @@ async def test_an_unusable_workspace_url_is_none(url: str | None) -> None:
     assert await people.own_team() == "T0GIVEN"  # a given team is kept
 
 
-async def test_display_names_prefer_the_display_name() -> None:
-    client = Client(
-        {},
-        {
-            "U1": {"profile": {"display_name": "Sam", "real_name": "Samantha Lee"}},
-            "U2": {"profile": {"display_name": " ", "real_name": "Alex Rivera"}},
-            "U3": {"profile": {}},
-        },
-    )
-    people = SlackPeople(client)
-    assert await people.display_name("U1") == "Sam"
-    assert await people.display_name("U2") == "Alex Rivera"
-    assert await people.display_name("U3") is None
-    assert await people.display_name("U9") is None
-
-
 async def test_authors_skip_bots_and_refuse_to_guess() -> None:
     client = Client({})
     client.messages = {

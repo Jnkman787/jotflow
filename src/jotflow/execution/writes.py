@@ -78,8 +78,17 @@ def footer(
 
 
 _PERMALINK = re.compile(
-    r"https://[a-z0-9-]+\.slack\.com/archives/[CG][A-Z0-9]+/p[0-9]{16}(\?[a-z0-9_=.&]*)?"
+    r"https://[a-z0-9-]+\.slack\.com/archives/[CG][A-Z0-9]+/p[0-9]{16}"
+    r"(\?thread_ts=[0-9]{10}\.[0-9]{6}&cid=[CG][A-Z0-9]+)?"
 )
+
+
+def permalink(workspace: str, channel_id: str, ts: str, thread_ts: str | None = None) -> str:
+    """A Slack message link, built the way Slack builds them, from the workspace URL."""
+    link = f"{workspace.rstrip('/')}/archives/{channel_id}/p{ts.replace('.', '')}"
+    if thread_ts and thread_ts != ts:
+        link += f"?thread_ts={thread_ts}&cid={channel_id}"
+    return link
 
 
 def _is_permalink(link: str) -> bool:

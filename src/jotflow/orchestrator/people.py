@@ -14,7 +14,7 @@ for approval (#151) and for an issue's "Raised in Slack by" line (#31).
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,16 +63,6 @@ class SlackPeople:
         await self._auth()
         return self._url
 
-    async def display_name(self, user_id: str) -> str | None:
-        """The person's display name, or real name; None if Slack does not say."""
-        response = await self._client.users_info(user=user_id)
-        profile = (response.get("user") or {}).get("profile") or {}
-        for key in ("display_name", "real_name"):
-            name = profile.get(key)
-            if isinstance(name, str) and name.strip():
-                return name
-        return None
-
     async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
         """The people who wrote these messages, from Slack. A bot's post adds no one.
 
@@ -114,3 +104,21 @@ class SlackPeople:
         own = await self.own_team()
         external = bool(user.get("is_stranger")) or (team is not None and team != own)
         return Person(user_id, guest=guest, external=external)
+
+
+class SlackAttribution:
+    """What an execution run's issue footer needs from Slack (#31): who wrote a
+    message, people's names, and the workspace URL, sharing one ``auth.test``."""
+
+    def __init__(self, people: SlackPeople, name: Callable[[str], Awaitable[str | None]]) -> None:
+        self._people = people
+        self._name = name
+
+    async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
+        return await self._people.authors(refs)
+
+    async def name(self, user_id: str) -> str | None:
+        return await self._name(user_id)
+
+    async def workspace_url(self) -> str | None:
+        return await self._people.workspace_url()

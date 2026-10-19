@@ -483,9 +483,11 @@ def changes_modal(proposal_id: str) -> dict[str, Any]:
 class BoltApprovalSlack:
     """:class:`ApprovalSlack` over slack-sdk's client."""
 
-    def __init__(self, client: Any, team_id: str | None = None) -> None:
+    def __init__(
+        self, client: Any, team_id: str | None = None, *, people: SlackPeople | None = None
+    ) -> None:
         self._client = client
-        self._people = SlackPeople(client, team_id)
+        self._people = people or SlackPeople(client, team_id)
 
     async def own_team(self) -> str | None:
         return await self._people.own_team()

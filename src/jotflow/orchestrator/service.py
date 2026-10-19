@@ -61,6 +61,7 @@ from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandle
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
 from jotflow.orchestrator.notices import GiveUpNotice
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
+from jotflow.orchestrator.people import SlackAttribution, SlackPeople
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.policy import Policy
@@ -274,6 +275,8 @@ class Orchestrator:
         await lifecycle.recover()
         # One subscriber draws every card, outside any MCP write path (#152).
         people = self._people or BoltPeople(self._client)
+        # One auth.test for the whole process: the team check and the workspace URL.
+        slack_people = SlackPeople(self._client)
         self.cards = CardSync(
             self._store,
             self._policy,
@@ -292,21 +295,28 @@ class Orchestrator:
         self.approval = ApprovalHandler(
             self._store,
             self._policy,
-            self._approval_slack or BoltApprovalSlack(self._client),
+            self._approval_slack or BoltApprovalSlack(self._client, people=slack_people),
             refresh=self.cards.refresh,
             arm_thread=self._arm_thread,
             context_for=drawn_with,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
-            self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
+            self._store,
+            self._policy,
+            self._keyword_slack or BoltKeywordSlack(self._client, people=slack_people),
         )
         self._help = HelpHandler(
             self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
         tools = (
-            *read_tools(self._store, self._policy, source),
+            *read_tools(
+                self._store,
+                self._policy,
+                source,
+                attribution=SlackAttribution(slack_people, people.name),
+            ),
             *write_tools(self._store, self._policy, poster),
         )
         self._server = self._make_server(self._settings, self.registry, tools)
