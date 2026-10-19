@@ -259,6 +259,19 @@ def check_github_login(login: str) -> str:
     return login
 
 
+NoticeKind = Literal["guide", "tip", "nudge"]
+
+
+def check_notice(channel_id: str, user_id: str, kind: str) -> None:
+    check_id(channel_id, "channel id")
+    if kind not in ("guide", "tip", "nudge"):
+        raise ValueError(f"unknown help notice {kind!r}")
+    if (kind == "guide") != (user_id == ""):
+        raise ValueError("the guide is for the channel; tips and nudges are for one person")
+    if user_id:
+        check_id(user_id, "Slack user id")
+
+
 def check_id(value: str, what: str) -> str:
     if not value or not value.strip() or len(value) > 200:
         raise ValueError(f"{what} must be a non-empty id of at most 200 characters")
@@ -525,6 +538,19 @@ class Store(Protocol):
     ) -> ChannelModeSetting: ...
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None: ...
+
+    # Help notices (#80)
+    async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
+        """Record that ``kind`` goes to ``user_id`` in the channel. True only the first time.
+
+        Claimed just before sending, so two quick messages never both get one.
+        The channel's guide uses ``user_id=""``.
+        """
+        ...
+
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        """Undo a claim whose notice could not be sent, so a later message tries again."""
+        ...
 
     # Runs (D8, #53)
     async def enqueue_run(

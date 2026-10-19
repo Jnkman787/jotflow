@@ -174,22 +174,6 @@ class KeywordHandler:
         return Outcome("skipped")
 
 
-def help_text() -> str:
-    """What ``/jotflow help`` shows, privately."""
-    return "\n".join(
-        [
-            "Start a message with a keyword to steer JotFlow. The colon is required.",
-            "  idea:  this is an idea; the agent takes it as a hint",
-            "  bug:   this is a bug; the agent takes it as a hint",
-            "  re: web#42  add this to an existing issue; re: 42 works when the channel "
-            "has one repo",
-            "  skip:  not an idea; on a top-level message it keeps the whole thread out",
-            "React with :no_entry_sign: to skip a message instead.",
-            "Most people never need these: just post, and JotFlow works out the rest.",
-        ]
-    )
-
-
 class BoltKeywordSlack:
     """:class:`KeywordSlack` over slack-sdk's client."""
 

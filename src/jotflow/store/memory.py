@@ -33,6 +33,7 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    NoticeKind,
     PendingThread,
     Recovery,
     ToolCallRecord,
@@ -42,6 +43,7 @@ from jotflow.store.base import (
     check_github_login,
     check_id,
     check_new_proposal,
+    check_notice,
     check_run_request,
     cleared_draft,
     plan_transition,
@@ -60,6 +62,7 @@ class MemoryStore:
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
+        self._notices: set[tuple[str, str, str]] = set()
         self._runs: dict[str, Run] = {}
         self._pending: dict[tuple[str, str], datetime] = {}
         self._calls: list[ToolCallRecord] = []
@@ -308,6 +311,20 @@ class MemoryStore:
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         return self._modes.get(channel_id)
+
+    async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
+        check_notice(channel_id, user_id, kind)
+        async with self._lock:
+            key = (channel_id, user_id, kind)
+            if key in self._notices:
+                return False
+            self._notices.add(key)
+            return True
+
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        check_notice(channel_id, user_id, kind)
+        async with self._lock:
+            self._notices.discard((channel_id, user_id, kind))
 
     # Runs (D8, #53): the same rules the SQLite indexes enforce, checked by hand.
 

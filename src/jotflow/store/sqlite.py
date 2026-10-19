@@ -45,6 +45,7 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    NoticeKind,
     PendingThread,
     Recovery,
     StoreError,
@@ -55,6 +56,7 @@ from jotflow.store.base import (
     check_github_login,
     check_id,
     check_new_proposal,
+    check_notice,
     check_run_request,
     cleared_draft,
     from_text,
@@ -617,6 +619,24 @@ class SqliteStore:
             )
             row = await self._one("SELECT * FROM channel_modes WHERE channel_id = ?", (channel_id,))
         return self._mode(_found(row))
+
+    async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
+        check_notice(channel_id, user_id, kind)
+        async with self._write():
+            cursor = await self._db.execute(
+                "INSERT OR IGNORE INTO help_notices (channel_id, user_id, kind, sent_at)"
+                " VALUES (?, ?, ?, ?)",
+                (channel_id, user_id, kind, to_text(self._clock())),
+            )
+            return cursor.rowcount == 1
+
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        check_notice(channel_id, user_id, kind)
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM help_notices WHERE channel_id = ? AND user_id = ? AND kind = ?",
+                (channel_id, user_id, kind),
+            )
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         async with self._lock:

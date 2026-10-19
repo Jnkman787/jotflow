@@ -170,7 +170,8 @@ async def serve(settings: Settings, policy: Policy) -> int:
     )
     try:
         identity, bot_name = await fetch_identity(app.client)
-        report_missing(await missing_channels(app.client, policy.channels), bot_name)
+        missing = await missing_channels(app.client, policy.channels)
+        report_missing(missing, bot_name)
     except SlackSetupError as exc:
         log.error("%s", exc)
         return EXIT_SLACK
@@ -190,7 +191,8 @@ async def serve(settings: Settings, policy: Policy) -> int:
         )
         return EXIT_STORE
     register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
-    register_commands(app)
+    register_commands(app, policy, orchestrator.channel_mode)
+    await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
     log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
 
     handler: Connection = AsyncSocketModeHandler(app, settings.slack_app_token.get_secret_value())

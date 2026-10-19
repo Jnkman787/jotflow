@@ -116,3 +116,20 @@ def test_run_cap_round_trips() -> None:
     text = render_policy(policy)
     assert "max_concurrent_runs = 7" in text
     assert parse_policy(text) == policy
+
+
+def test_help_settings_round_trip_and_only_the_overriding_channel_gets_a_table() -> None:
+    repo = {"repo": "acme-co/web", "nickname": "web", "description": "Web"}
+    policy = Policy.model_validate(
+        {
+            "help": {"near_miss_nudge": False},
+            "channels": {
+                "C0ONE1": {"repos": [repo]},
+                "C0TWO1": {"repos": [repo], "help": {"guide": False}},
+            },
+        }
+    )
+    text = render_policy(policy)
+    assert parse_policy(text) == policy
+    assert "near_miss_nudge = false" in text
+    assert "[channels.C0TWO1.help]" in text and "[channels.C0ONE1.help]" not in text
