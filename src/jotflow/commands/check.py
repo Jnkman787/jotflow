@@ -28,7 +28,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from jotflow import agent_setup
-from jotflow.adapters.presets import CLAUDE_CODE, PRESETS
+from jotflow.adapters.presets import PRESETS
+from jotflow.adapters.runner import CONVERSATION_KINDS, EXECUTION_KINDS
 from jotflow.commands.run import (
     SettingsError,
     load_settings,
@@ -37,6 +38,7 @@ from jotflow.config import Settings
 from jotflow.envfile import read_env
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
 from jotflow.logs import configure_logging
+from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
 
 EXIT_OK = 0
@@ -78,6 +80,13 @@ class Refusal(Exception):
     """The live check will not run. The message says why."""
 
 
+def _jotflow() -> str:
+    """The command to run jotflow again, as this run was started (#41)."""
+    from jotflow.commands.init import launch_command
+
+    return launch_command()
+
+
 def _truthy(value: str | None) -> bool:
     return value is not None and value.strip().lower() not in {"", "0", "false", "no"}
 
@@ -93,12 +102,12 @@ def check_opt_in(environ: Mapping[str, str], dotenv: Mapping[str, str]) -> None:
     if OPT_IN in dotenv:
         raise Refusal(
             f"remove the {OPT_IN} line from .env and set it only for this one run: "
-            f"{OPT_IN}=1 jotflow check --live"
+            f"{OPT_IN}=1 {_jotflow()} check --live"
         )
     if environ.get(OPT_IN) != "1":
         raise Refusal(
             f"the live check posts to Slack, so it runs only when you opt in for this run: "
-            f"{OPT_IN}=1 jotflow check --live"
+            f"{OPT_IN}=1 {_jotflow()} check --live"
         )
 
 
@@ -138,8 +147,8 @@ def confirm(
 
 
 AGENT_FILES = (
-    ("agent.env", agent_setup.READ_TOKEN_KEY),
-    ("agent-exec.env", agent_setup.WRITE_TOKEN_KEY),
+    ("agent.env", agent_setup.READ_TOKEN_KEY, CONVERSATION_KINDS),
+    ("agent-exec.env", agent_setup.WRITE_TOKEN_KEY, EXECUTION_KINDS),
 )
 ENV_ALLOW_KEY = "JOTFLOW_AGENT_ENV_ALLOW"
 
@@ -162,7 +171,7 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
         return []
     if not (folder / ".env").exists():
         # Inside JotFlow's container, say: the agent files are only in the JotFlow folder.
-        return ["not checked here: run jotflow check in your JotFlow folder, next to .env"]
+        return [f"not checked here: run {_jotflow()} check in your JotFlow folder, next to .env"]
     found: list[str] = []
     try:
         dotenv = read_env(folder / ".env")
@@ -170,17 +179,17 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
         return [".env can't be read by this user"]
     for key in (agent_setup.ENV_DRAFTING_KEY, agent_setup.ENV_EXECUTION_KEY):
         if not dotenv.get(key, "").strip():
-            found.append(f".env has no {key}; run jotflow init again to set it")
+            found.append(f".env has no {key}; run {_jotflow()} init again to set it")
     profiles = {p.strip() for p in dotenv.get(agent_setup.PROFILES_KEY, "").split(",")}
     if agent_setup.AGENT_PROFILE not in profiles:
         found.append(
             f"{agent_setup.PROFILES_KEY} in .env does not include {agent_setup.AGENT_PROFILE}, "
             "so docker compose up -d will not start the agent containers"
         )
-    for name, token_key in AGENT_FILES:
+    for name, token_key, kinds in AGENT_FILES:
         path = folder / name
         if not path.exists():
-            found.append(f"{name} is missing; run jotflow init again to write it")
+            found.append(f"{name} is missing; run {_jotflow()} init again to write it")
             continue
         try:
             env = read_env(path)
@@ -195,12 +204,13 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
                 found.append(f"{agent_setup.COMMAND_KEY} is blank in {name}")
         else:
             named = env.get(agent_setup.PRESET_KEY, "").strip()
-            if preset == "codex" and name == "agent-exec.env":
+            expected = expected_runner_preset(preset, kinds)
+            if expected != preset:
                 # Codex never serves execution (#172): the exec runner must run claude-code.
-                if named != CLAUDE_CODE.name:
+                if named != expected:
                     found.append(
-                        f"{name} names {_shown(named)}, but execution runs need claude-code: "
-                        "the codex preset does not serve them"
+                        f"{name} names {_shown(named)}, but execution runs need {expected}: "
+                        f"the {preset} preset does not serve them"
                     )
             elif named != preset:
                 found.append(

@@ -7,7 +7,11 @@ import pytest
 
 from jotflow.cli import main
 from jotflow.commands import check as check_command
+from jotflow.commands.init import launch_command
 from jotflow.policy import parse_policy
+
+# The commands check suggests, as this test run was started: uv run jotflow in a checkout.
+JOTFLOW = launch_command()
 
 ONE_CHANNEL = """
 [channels.C0TEST1]
@@ -87,7 +91,7 @@ def test_live_check_needs_explicit_opt_in(
     workspace: Path, no_slack: list[Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert check_command.run(live_args()) == 2
-    assert "JOTFLOW_LIVE_CHECK=1 jotflow check --live" in capsys.readouterr().err
+    assert f"JOTFLOW_LIVE_CHECK=1 {JOTFLOW} check --live" in capsys.readouterr().err
     assert no_slack == []
 
 
@@ -387,7 +391,7 @@ def test_missing_files_and_preset_mismatch_are_named(
     (workspace / "agent.env").unlink()
     assert main(["check"]) == 0
     out = capsys.readouterr().out
-    assert "warn  agent: agent.env is missing; run jotflow init again to write it" in out
+    assert f"warn  agent: agent.env is missing; run {JOTFLOW} init again to write it" in out
     assert "agent-exec.env names codex, but jotflow.toml's [agent] preset is claude-code" in out
 
 
@@ -418,7 +422,9 @@ def test_without_dotenv_the_agent_files_are_not_checked_here(
 ) -> None:
     _with_preset(workspace)
     assert main(["check"]) == 0
-    assert "not checked here: run jotflow check in your JotFlow folder" in capsys.readouterr().out
+    assert (
+        f"not checked here: run {JOTFLOW} check in your JotFlow folder" in capsys.readouterr().out
+    )
 
 
 def test_under_codex_agent_exec_must_run_claude_code(

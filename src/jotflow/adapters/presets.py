@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from jotflow.models import RunKind
+from jotflow.models import PARTIAL_PRESET_KINDS, RunKind
 
 # Where Dockerfile.agent installs the pinned GitHub MCP server.
 DEFAULT_GITHUB_MCP = "/usr/local/bin/github-mcp-server"
@@ -281,7 +281,7 @@ CODEX_VERIFIED_MODELS = ("gpt-5.5",)
 # repository text into the agent's context. That's acceptable for drafting, whose
 # input is untrusted anyway, but an execution run holds the write token and must see
 # only the approved fields. So Codex never runs execution (#172 review).
-CODEX_RUN_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+CODEX_RUN_KINDS = PARTIAL_PRESET_KINDS["codex"]
 # Every built-in Codex feature that adds a tool or acts outside the run, off. The
 # shell goes with shell_tool and unified_exec. mcp_2026_07_28 is on: JotFlow serves
 # only that MCP version, and this release marks the flag "under development".

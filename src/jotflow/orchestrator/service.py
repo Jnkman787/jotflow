@@ -44,7 +44,7 @@ from typing import Any, Protocol
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
-from jotflow.models import ChannelMode, ProposalRecord, RunKind
+from jotflow.models import ChannelMode, ProposalRecord, RunKind, expected_runner_preset
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
 from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
@@ -187,10 +187,17 @@ async def _runner_mismatch(
             if attempt + 1 < attempts:
                 await asyncio.sleep(delay)
             continue
-        if info.preset != preset:
+        expected = expected_runner_preset(preset, group)
+        if info.preset != expected:
+            if expected == preset:
+                return (
+                    f"the runner at {where} starts preset {info.preset}, "
+                    f"but jotflow.toml's [agent] preset is {preset}"
+                )
             return (
-                f"the runner at {where} starts preset {info.preset}, "
-                f"but jotflow.toml's [agent] preset is {preset}"
+                f"the runner at {where} starts preset {info.preset}, but jotflow.toml's "
+                f"[agent] preset {preset} does not serve {kind.value} runs; "
+                f"that runner must start {expected}"
             )
         if frozenset(info.kinds) != group:
             served = ", ".join(k.value for k in info.kinds) or "nothing"

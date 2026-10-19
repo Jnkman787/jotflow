@@ -1427,3 +1427,11 @@ def test_the_check_command_is_printed_the_way_jotflow_was_started(tmp_path: Path
         )
         == "jotflow"
     )
+
+
+def test_the_agent_profile_hint_names_the_command_as_launched(options: InitOptions) -> None:
+    """#41 pass 2: the hint to rerun setup isn't a bare jotflow a uvx user can't run."""
+    script = _with_agent(options)
+    assert f"Then run {init.launch_command()} init again, or add COMPOSE_PROFILES" in script.text
+    assert "Setup also set COMPOSE_FILE there" in script.text
+    assert "  Also set " not in script.text

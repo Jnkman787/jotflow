@@ -33,7 +33,7 @@ from jotflow.adapters.runner import (
     parse_preset,
 )
 from jotflow.commands import runner as runner_command
-from jotflow.models import RUN_KINDS, RunKind
+from jotflow.models import PARTIAL_PRESET_KINDS, RUN_KINDS, RunKind, expected_runner_preset
 from jotflow.store import MemoryStore
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.write_tools import write_tools
@@ -198,6 +198,25 @@ def test_the_orchestrator_and_whiteboard_never_import_presets() -> None:
     for package in ("orchestrator", "whiteboard"):
         for path in (SRC / package).rglob("*.py"):
             assert "jotflow.adapters" not in path.read_text(encoding="utf-8"), path
+
+
+def test_the_orchestrator_knows_each_presets_run_kinds() -> None:
+    # The orchestrator checks runners against PARTIAL_PRESET_KINDS, not the presets.
+    for name, preset in PRESETS.items():
+        kinds = getattr(preset, "run_kinds", RUN_KINDS)
+        assert PARTIAL_PRESET_KINDS.get(name, RUN_KINDS) == kinds, name
+    assert set(PARTIAL_PRESET_KINDS) <= set(PRESETS)
+
+
+def test_only_a_known_preset_without_execution_hands_it_to_claude_code() -> None:
+    execution = frozenset({RunKind.EXECUTION})
+    conversation = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+    assert expected_runner_preset("codex", execution) == "claude-code"
+    assert expected_runner_preset("codex", conversation) == "codex"
+    assert expected_runner_preset("codex", RUN_KINDS) == "codex"
+    for preset in ("claude-code", "command", "unknown"):
+        assert expected_runner_preset(preset, execution) == preset
+        assert expected_runner_preset(preset, conversation) == preset
 
 
 def preset_config(**overrides: Any) -> RunnerConfig:
