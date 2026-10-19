@@ -21,7 +21,7 @@
 **#34:**
 
 - [x] A non-approver who presses Approve gets an ephemeral refusal (#151).
-- [x] Reaction approval is off by default and configurable. `[approval] reactions = false` stays the switch, and a new `reaction = "white_check_mark"` names the emoji. The name is validated as a Slack emoji name, and it can't be a keyword reaction such as `no_entry_sign`.
+- [x] Reaction approval is off by default and configurable. `[approval] reactions = false` stays the switch, and a new `reaction = "heavy_check_mark"` names the emoji. Its default isn't `white_check_mark`, which JotFlow itself adds to confirm a keyword. The name is validated as a Slack emoji name, and it can't be a keyword reaction such as `no_entry_sign`.
 - [x] With reactions on, the configured reaction on a pending proposal's card counts as Approve. It runs every check #151 runs:
   - this workspace's team for the event, and the person's team through `users.info`
   - no guests or external users

@@ -38,7 +38,7 @@ approvers = []
 reactions = false
 # The emoji that approves, by name without colons. It may not be one that
 # already means a keyword, such as no_entry_sign for skip.
-reaction = "white_check_mark"
+reaction = "heavy_check_mark"
 
 [help]
 # How JotFlow helps people who forget the keywords. Everything it posts is

@@ -388,7 +388,7 @@ def test_the_approval_reaction_is_an_emoji_name_that_is_no_keyword() -> None:
         "channels": {"C0TEST1": {"repos": [{"repo": "a/b", "nickname": "b", "description": "d"}]}}
     }
     default = Policy.model_validate(base)
-    assert default.approval.reactions is False and default.approval.reaction == "white_check_mark"
+    assert default.approval.reactions is False and default.approval.reaction == "heavy_check_mark"
     on = Policy.model_validate({**base, "approval": {"reactions": True, "reaction": "+1"}})
     assert on.approval.reaction == "+1"
     for bad in (":white_check_mark:", "White Check", "", "no_entry_sign"):

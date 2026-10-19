@@ -818,7 +818,7 @@ def _reacting_app(rig: Rig) -> Any:
 
 
 async def _react(
-    app: Any, user: str = CAROL, name: str = "white_check_mark", ts: str = CARD_TS, n: int = 1
+    app: Any, user: str = CAROL, name: str = "heavy_check_mark", ts: str = CARD_TS, n: int = 1
 ) -> None:
     import json
 
@@ -931,7 +931,7 @@ async def test_a_guest_reaction_never_approves() -> None:
 async def test_a_malformed_reaction_or_a_settled_card_changes_nothing() -> None:
     rig = Rig(reactions=True)
     pid = await rig.proposal()
-    base = {"reaction": "white_check_mark", "user": CAROL}
+    base = {"reaction": "heavy_check_mark", "user": CAROL}
     assert await rig.handler.on_reaction({**base, "item": {"type": "file"}}) == "ignored"
     assert await rig.handler.on_reaction({**base, "item": {"type": "message"}}) == "ignored"
     await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}"))
@@ -950,7 +950,7 @@ async def test_without_its_own_team_no_one_approves(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(rig.slack, "own_team", unknown)
     event = {
-        "reaction": "white_check_mark",
+        "reaction": "heavy_check_mark",
         "user": CAROL,
         "item": {"type": "message", "channel": CH, "ts": CARD_TS},
     }
@@ -964,5 +964,14 @@ async def test_a_skin_tone_is_the_same_reaction() -> None:
     rig = Rig(reactions=True)
     pid = await rig.proposal()
     await _shown(rig, pid)
-    await _react(_reacting_app(rig), name="white_check_mark::skin-tone-3")
+    await _react(_reacting_app(rig), name="heavy_check_mark::skin-tone-3")
     assert await rig.state(pid) is ProposalState.APPROVED
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_the_keyword_confirmation_emoji_does_not_approve_by_default() -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    await _react(_reacting_app(rig), name="white_check_mark")
+    assert await rig.state(pid) is ProposalState.PENDING and rig.slack.ephemerals == []

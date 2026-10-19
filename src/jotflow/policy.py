@@ -321,7 +321,7 @@ class ApprovalPolicy(_Strict):
     )
     reactions: bool = Field(default=False, description="Whether a reaction counts as approval")
     reaction: str = Field(
-        default="white_check_mark",
+        default="heavy_check_mark",
         description="The emoji name, without colons, that approves when reactions are on",
     )
 
@@ -333,7 +333,7 @@ class ApprovalPolicy(_Strict):
     @classmethod
     def _emoji_name(cls, value: str) -> str:
         if not _EMOJI.fullmatch(value):
-            raise ValueError("must be a Slack emoji name, such as white_check_mark, without colons")
+            raise ValueError("must be a Slack emoji name, such as heavy_check_mark, without colons")
         if value in KEYWORD_REACTIONS:
             raise ValueError(f"{value} already stands for a keyword; choose another emoji")
         return value
