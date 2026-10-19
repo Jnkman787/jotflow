@@ -96,4 +96,4 @@ The image grows by about 164 MB of content, or 45%.
 
 ## Handoff notes
 
-Either of codex's limits is lifted only by the maintainer's decision. Each is enforced at runner startup, by the orchestrator's runner check, and by `jotflow check`.
+On 2026-10-19 the maintainer confirmed that codex stays refused for execution. The model limit is worded as a safety check, since newer models add a code-execution tool, and #220 plans a startup tool-set probe to replace the fixed list. Either limit is lifted only by the maintainer's decision. Each is enforced at runner startup, by the orchestrator's runner check, and by `jotflow check`.
