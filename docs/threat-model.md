@@ -49,7 +49,7 @@ Anyone who can post in a watched channel, which with approvers off includes the 
 | Approve their own proposal | With approvers on, only listed approvers may approve, and never someone Slack shows wrote the thread's first message or a cited source | [approval.py](../src/jotflow/orchestrator/approval.py) `_source_authors`, D7 |
 | Ping the whole channel, or GitHub users, through the bot | `ask_channel` strips broadcasts, escapes markup and never unfurls. Footer names lose `@`, entities and markup. Change requests are posted the same way | [write_tools.py](../src/jotflow/whiteboard/write_tools.py) `clean_question`, [execution/writes.py](../src/jotflow/execution/writes.py) `clean_name` |
 | Flood runs or tokens | One queued drafting run per thread, a concurrency cap, per-run tool caps, and a bounded token registry | [store](../src/jotflow/store/), [tokens.py](../src/jotflow/whiteboard/tokens.py), [write_tools.py](../src/jotflow/whiteboard/write_tools.py) |
-| Act in a paused channel, or change the mode | A paused channel reads nothing, writes nothing, and refuses every card action. With approvers on, only approvers change the mode, and guests and external users never do | [modes.py](../src/jotflow/orchestrator/modes.py), [approval.py](../src/jotflow/orchestrator/approval.py) |
+| Act in a paused channel, or change the mode | A paused channel starts nothing new, writes nothing, and refuses every card action. The one exception: an execution run approved before the pause may still finish its GitHub write and `record_result` (#155, [architecture.md](architecture.md) "Channels and repos"). With approvers on, only approvers change the mode, and guests and external users never do | [modes.py](../src/jotflow/orchestrator/modes.py), [approval.py](../src/jotflow/orchestrator/approval.py) |
 
 ### A guest or an external Slack Connect user
 
@@ -116,7 +116,7 @@ Issue bodies, comments, and with Contents read, repo files, all read by the agen
 | Kept | Never kept |
 |---|---|
 | Message pointers (channel, ts, thread ts), topic ids and titles, chatter marks | Message text, which is fetched live per run and discarded |
-| Drafts, until applied, rejected or superseded, then overwritten | Tokens, in any form other than a digest |
+| Drafts, until applied, rejected, superseded, or discarded after failing, then overwritten | Tokens, in any form other than a digest |
 | Approver, approval time, content hash, result URL | Agent output, which the runner discards |
 | Run records and tool-call ledger: ids, states, hashes | GitHub credentials, in JotFlow's own service |
 | Identity links: Slack id, GitHub login, time | Display names, beyond a process-lifetime cache |
