@@ -65,6 +65,22 @@ class FakeApp:
     def __init__(self) -> None:
         self.listeners: dict[str, Callable[..., Any]] = {}
         self.commands: dict[str, Callable[..., Any]] = {}
+        self.actions: dict[str, Callable[..., Any]] = {}
+        self.views: dict[str, Callable[..., Any]] = {}
+
+    def action(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+            self.actions[name] = fn
+            return fn
+
+        return register
+
+    def view(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def register(fn: Callable[..., Any]) -> Callable[..., Any]:
+            self.views[name] = fn
+            return fn
+
+        return register
 
     def command(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def register(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -483,4 +499,30 @@ async def test_serve_opens_the_store_and_closes_it_after_slack(
     assert (tmp_path / "jotflow.db").exists()
     [handler] = harness.handlers
     assert handler.calls == ["connect", "close"]
+    assert harness.mcp_calls == ["mcp start", "mcp stop"]
+
+
+async def test_serve_registers_the_card_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    harness = ServeHarness(monkeypatch, member_client())
+    assert await run_command.serve(*serve_inputs()) == 0
+    assert set(harness.app.actions) == {
+        "jotflow_approve",
+        "jotflow_retry",
+        "jotflow_discard",
+        "jotflow_request_changes",
+    }
+    assert set(harness.app.views) == {"jotflow_changes"}
+
+
+async def test_serve_stops_the_orchestrator_if_registration_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = ServeHarness(monkeypatch, member_client())
+
+    def broken(*_: Any) -> None:
+        raise RuntimeError("bolt refused")
+
+    monkeypatch.setattr(run_command, "register_actions", broken)
+    with pytest.raises(RuntimeError, match="bolt refused"):
+        await run_command.serve(*serve_inputs())
     assert harness.mcp_calls == ["mcp start", "mcp stop"]

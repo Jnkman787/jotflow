@@ -42,6 +42,8 @@ from jotflow.orchestrator.keywords import (
     parse_reference,
     split_keyword,
 )
+from jotflow.orchestrator.people import Person as Person  # re-exported: callers import it here
+from jotflow.orchestrator.people import SlackPeople
 from jotflow.policy import Policy
 from jotflow.store.base import Store
 
@@ -51,15 +53,6 @@ CONFIRM = "white_check_mark"
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 
 Action = Literal["confirmed", "skipped", "attached", "refused", "ignored"]
-
-
-@dataclass(frozen=True)
-class Person:
-    """What JotFlow needs to know about who reacted."""
-
-    user_id: str
-    guest: bool = False
-    external: bool = False
 
 
 @dataclass(frozen=True)
@@ -174,36 +167,16 @@ class KeywordHandler:
         return Outcome("skipped")
 
 
-def help_text() -> str:
-    """What ``/jotflow help`` shows, privately."""
-    return "\n".join(
-        [
-            "Start a message with a keyword to steer JotFlow. The colon is required.",
-            "  idea:  this is an idea; the agent takes it as a hint",
-            "  bug:   this is a bug; the agent takes it as a hint",
-            "  re: web#42  add this to an existing issue; re: 42 works when the channel "
-            "has one repo",
-            "  skip:  not an idea; on a top-level message it keeps the whole thread out",
-            "React with :no_entry_sign: to skip a message instead.",
-            "Most people never need these: just post, and JotFlow works out the rest.",
-        ]
-    )
-
-
 class BoltKeywordSlack:
     """:class:`KeywordSlack` over slack-sdk's client."""
 
     def __init__(self, client: Any, team_id: str | None = None) -> None:
         self._client = client
-        self._team_id = team_id
+        self._people = SlackPeople(client, team_id)
 
     async def _own_team(self) -> str | None:
         """This workspace's id, from ``auth.test`` once, unless it was given."""
-        if self._team_id is None:
-            response = await self._client.auth_test()
-            team = response.get("team_id")
-            self._team_id = team if isinstance(team, str) else None
-        return self._team_id
+        return await self._people.own_team()
 
     async def react(self, channel_id: str, ts: str, name: str) -> None:
         await self._client.reactions_add(channel=channel_id, timestamp=ts, name=name)
@@ -214,10 +187,4 @@ class BoltKeywordSlack:
         )
 
     async def person(self, user_id: str) -> Person:
-        response = await self._client.users_info(user=user_id)
-        user = response.get("user") or {}
-        guest = bool(user.get("is_restricted") or user.get("is_ultra_restricted"))
-        team = user.get("team_id")
-        own = await self._own_team()
-        external = bool(user.get("is_stranger")) or (team is not None and team != own)
-        return Person(user_id, guest=guest, external=external)
+        return await self._people.person(user_id)

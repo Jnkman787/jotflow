@@ -11,8 +11,10 @@ from slack_bolt.async_app import AsyncApp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
+from jotflow.models import ChannelMode
+from jotflow.orchestrator.help import channel_help, help_text
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
-from jotflow.orchestrator.keyword_handler import help_text
+from jotflow.policy import Policy
 from jotflow.slack_manifest import SLASH_COMMAND
 
 log = logging.getLogger("jotflow.slack")
@@ -108,13 +110,28 @@ def register_handlers(
     app.event("reaction_added")(on_event)
 
 
-def register_commands(app: AsyncApp) -> None:
-    """Answer ``/jotflow`` privately. Only ``help`` exists so far; it lists the keywords."""
+def register_commands(
+    app: AsyncApp,
+    policy: Policy | None = None,
+    mode_for: Callable[[str], Awaitable[ChannelMode]] | None = None,
+) -> None:
+    """Answer ``/jotflow`` privately. Only ``help`` exists so far.
+
+    With ``policy``, help knows the channel it was asked in: its repos and how
+    approval works there, or that the channel is not set up (#80).
+    """
 
     async def on_command(ack: Any, command: dict[str, Any]) -> None:
         text = str(command.get("text") or "").strip().lower()
         if text in ("", "help"):
-            await ack(help_text())
+            channel = str(command.get("channel_id") or "")
+            if policy is None:
+                await ack(help_text())
+                return
+            mode = ChannelMode.PROPOSE
+            if mode_for is not None and channel in policy.channels:
+                mode = await mode_for(channel)
+            await ack(channel_help(policy, channel, mode))
         else:
             await ack("Only /jotflow help exists so far. It lists the keywords.")
 

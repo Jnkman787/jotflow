@@ -268,7 +268,7 @@ This starts JotFlow. The agent containers, where your team's agent will draft is
 There are two agent containers, so the GitHub token that can write never sits where drafting happens. When you choose a preset, setup writes their files next to `.env`, from `agent.env.example` and `agent-exec.env.example`, readable only by you:
 
 - **`agent.env`** is for drafting and questions. Fill in a read-only GitHub token and the model login, as its comments describe.
-- **`agent-exec.env`** is for writing approved issues. Fill in a GitHub token that can write issues and the model login.
+- **`agent-exec.env`** is for writing approved issues. Fill in a GitHub token that can write issues and the model login. That token can create, edit, or close any issue in any repo it reaches, so make it a fine-grained token limited to exactly the repos your channels feed, with Issues read and write and nothing else. See [docs/presets.md](docs/presets.md).
 
 Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Once both GitHub tokens are filled in, run `uv run jotflow init` again: it keeps the secrets and adds `COMPOSE_PROFILES=agent` to `.env`, so `docker compose up -d` starts both agent containers too. Neither file holds Slack tokens, and neither agent sees `.env`.
 
@@ -401,7 +401,22 @@ This is how JotFlow works for the people in the channel once drafting and approv
 
 - **Just post.** Write your idea, bug, or request in the channel like you normally would. JotFlow waits for the conversation to settle, then posts a proposed issue for the team to approve.
 - **Steer it if you like.** Start a message with `idea:` or `bug:` to say what it is, `re:` to add to an existing issue (JotFlow's link replies tell you exactly what to type), or `skip:` if it isn't an idea at all. Reacting with :no_entry_sign: works like `skip:`. Most people never need these.
-- **Forgot the words?** Type `/jotflow help`.
+- **Forgot the words?** Type `/jotflow help`. Only you see the answer, and it lists this channel's repos and how approval works here.
+- **Help finds you.** JotFlow pins a short guide once in each channel. Your first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...` without the colon, gets a private suggestion once. JotFlow never acts on a near miss. Each of these can be turned off in `jotflow.toml`'s `[help]` table, for every channel or for one.
+
+The keywords, exactly as `/jotflow help` shows them:
+
+<!-- jotflow-help:start -->
+```
+Start a message with a keyword to steer JotFlow. The colon is required.
+  idea:       this is an idea; the agent takes it as a hint
+  bug:        this is a bug; the agent takes it as a hint
+  re: web#42  add this to an existing issue; re: 42 works when the channel has one repo
+  skip:       not an idea; on a top-level message it keeps the whole thread out
+React with :no_entry_sign: to skip a message instead.
+Most people never need these: just post, and JotFlow works out the rest.
+```
+<!-- jotflow-help:end -->
 
 Comments and closures on GitHub do not flow back into Slack yet; that is planned after v1.
 

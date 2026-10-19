@@ -158,6 +158,27 @@ CREATE TABLE packet_messages (
 )
 """
 
+# Threads waiting out their quiet window, so a restart forgets none (#130).
+# Pointers and a time only, never message text.
+_PENDING_THREADS = """
+CREATE TABLE pending_threads (
+    channel_id TEXT NOT NULL, -- Slack channel id
+    thread_ts TEXT NOT NULL, -- the thread's parent ts; a top-level post's own ts
+    due_at TEXT NOT NULL, -- UTC, ISO 8601: when the quiet window ends
+    PRIMARY KEY (channel_id, thread_ts)
+)
+"""
+
+_HELP_NOTICES = """
+CREATE TABLE help_notices (
+    channel_id TEXT NOT NULL, -- Slack channel id
+    user_id TEXT NOT NULL, -- Slack user id the notice was for; '' for the channel's guide
+    kind TEXT NOT NULL CHECK (kind IN ('guide', 'tip', 'nudge')), -- which notice (#80)
+    sent_at TEXT NOT NULL, -- UTC, ISO 8601: when it was claimed, just before sending
+    PRIMARY KEY (channel_id, user_id, kind)
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -211,6 +232,27 @@ MIGRATIONS: tuple[Migration, ...] = (
         (
             "ALTER TABLE proposals ADD COLUMN card_ts TEXT"
             " /* Slack ts of the proposal's card message, so later states edit it (#26) */",
+        ),
+    ),
+    Migration(
+        6, (_PENDING_THREADS, "CREATE INDEX pending_threads_due ON pending_threads (due_at)")
+    ),
+    # Help notices are sent once per person or channel, across restarts (#80).
+    Migration(7, (_HELP_NOTICES,)),
+    # The store is the card's outbox: a card is due while it shows an older revision (#152).
+    Migration(
+        8,
+        (
+            "ALTER TABLE proposals ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+            " /* rises with every change a proposal's card shows (#152) */",
+            "ALTER TABLE proposals ADD COLUMN card_revision INTEGER"
+            " /* the revision the posted card shows; null before it is posted */",
+            # A card already posted shows what is stored now. Before #152 nothing posted
+            # cards, so only a proposal still waiting for a person gets one after the upgrade.
+            "UPDATE proposals SET card_revision = revision"
+            " WHERE card_ts IS NOT NULL OR state != 'pending'",
+            "CREATE INDEX proposals_card_due ON proposals (created_at)"
+            " WHERE card_revision IS NULL OR card_revision < revision",
         ),
     ),
 )

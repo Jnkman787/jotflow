@@ -45,6 +45,8 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    NoticeKind,
+    PendingThread,
     Recovery,
     StoreError,
     ToolCallRecord,
@@ -54,6 +56,7 @@ from jotflow.store.base import (
     check_github_login,
     check_id,
     check_new_proposal,
+    check_notice,
     check_run_request,
     cleared_draft,
     from_text,
@@ -348,6 +351,8 @@ class SqliteStore:
             else ExecutionResult.model_validate_json(row["result_json"]),
             participants=[u["slack_user_id"] for u in users],
             card_ts=row["card_ts"],
+            revision=row["revision"],
+            card_revision=row["card_revision"],
             draft_cleared_at=None
             if row["draft_cleared_at"] is None
             else from_text(row["draft_cleared_at"]),
@@ -440,7 +445,7 @@ class SqliteStore:
             cursor = await self._db.execute(
                 """
                 UPDATE proposals SET state = ?, content_hash = ?, approved_by = ?,
-                    approved_at = ?, result_json = ?, updated_at = ?
+                    approved_at = ?, result_json = ?, updated_at = ?, revision = revision + 1
                 WHERE id = ? AND state = ?
                 """,
                 (
@@ -475,7 +480,8 @@ class SqliteStore:
             now = to_text(self._clock())
             for row in rows:
                 await self._db.execute(
-                    "UPDATE proposals SET state = 'superseded', updated_at = ?"
+                    "UPDATE proposals SET state = 'superseded', updated_at = ?,"
+                    " revision = revision + 1"
                     " WHERE id = ? AND state = 'pending'",
                     (now, row["id"]),
                 )
@@ -489,7 +495,8 @@ class SqliteStore:
     ) -> None:
         """Replace the stored draft with its cleared form, inside the caller's transaction."""
         await self._db.execute(
-            "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?"
+            "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?,"
+            " revision = revision + 1"
             " WHERE id = ? AND draft_cleared_at IS NULL",
             (canonical_json(cleared_draft(draft)), now, now, proposal_id),
         )
@@ -520,6 +527,26 @@ class SqliteStore:
                 raise NotFoundError(f"no proposal {proposal_id}")
             updated = await self._get_proposal(proposal_id)
         return _found(updated)
+
+    async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM proposals WHERE card_revision IS NULL OR card_revision < revision"
+                " ORDER BY created_at, id LIMIT ?",
+                (limit,),
+            )
+            return [await self._proposal(row) for row in rows]
+
+    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE proposals"
+                " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision))"
+                " WHERE id = ?",
+                (revision, proposal_id),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(f"no proposal {proposal_id}")
 
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._write():
@@ -616,6 +643,24 @@ class SqliteStore:
             )
             row = await self._one("SELECT * FROM channel_modes WHERE channel_id = ?", (channel_id,))
         return self._mode(_found(row))
+
+    async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
+        check_notice(channel_id, user_id, kind)
+        async with self._write():
+            cursor = await self._db.execute(
+                "INSERT OR IGNORE INTO help_notices (channel_id, user_id, kind, sent_at)"
+                " VALUES (?, ?, ?, ?)",
+                (channel_id, user_id, kind, to_text(self._clock())),
+            )
+            return cursor.rowcount == 1
+
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        check_notice(channel_id, user_id, kind)
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM help_notices WHERE channel_id = ? AND user_id = ? AND kind = ?",
+                (channel_id, user_id, kind),
+            )
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         async with self._lock:
@@ -782,6 +827,60 @@ class SqliteStore:
         async with self._lock:
             return await self._get_run(run_id)
 
+    async def arm_thread(self, channel_id: str, thread_ts: str, due_at: datetime) -> None:
+        check_id(channel_id, "channel id")
+        check_id(thread_ts, "thread ts")
+        if due_at.tzinfo is None:
+            raise ValueError("due_at must be timezone-aware")
+        async with self._write():
+            await self._db.execute(
+                "INSERT INTO pending_threads (channel_id, thread_ts, due_at) VALUES (?, ?, ?)"
+                " ON CONFLICT (channel_id, thread_ts) DO UPDATE SET due_at = excluded.due_at",
+                (channel_id, thread_ts, to_text(due_at)),
+            )
+
+    async def pending_threads(self) -> list[PendingThread]:
+        rows = await self._all(
+            "SELECT channel_id, thread_ts, due_at FROM pending_threads"
+            " ORDER BY due_at, channel_id, thread_ts"
+        )
+        return [
+            PendingThread(row["channel_id"], row["thread_ts"], from_text(row["due_at"]))
+            for row in rows
+        ]
+
+    async def queue_pending(self, channel_id: str, thread_ts: str) -> Run | None:
+        seconds = check_run_request(
+            RunKind.DRAFTING, channel_id, thread_ts, None, DEFAULT_RUN_TIMEOUTS[RunKind.DRAFTING]
+        )
+        async with self._write():
+            cursor = await self._db.execute(
+                "DELETE FROM pending_threads WHERE channel_id = ? AND thread_ts = ?",
+                (channel_id, thread_ts),
+            )
+            if cursor.rowcount == 0:
+                return None
+            skipped = await self._one(
+                "SELECT 1 FROM message_refs WHERE channel_id = ? AND ts = ?"
+                " AND chatter = 1 AND linked_by = 'person'",
+                (channel_id, thread_ts),
+            )
+            if skipped is not None:
+                return None
+            existing = await self._active_run_for(RunKind.DRAFTING, channel_id, thread_ts, None)
+            if existing is not None:
+                return existing
+            run_id = await self._insert_run(RunKind.DRAFTING, channel_id, thread_ts, None, seconds)
+            run = await self._get_run(run_id)
+        return _found(run)
+
+    async def drop_pending(self, channel_id: str, thread_ts: str) -> None:
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM pending_threads WHERE channel_id = ? AND thread_ts = ?",
+                (channel_id, thread_ts),
+            )
+
     async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
         async with self._lock:
             rows = await self._all(
@@ -846,7 +945,7 @@ class SqliteStore:
                         now=now,
                     )
                     await self._db.execute(
-                        "UPDATE proposals SET state = ?, updated_at = ?"
+                        "UPDATE proposals SET state = ?, updated_at = ?, revision = revision + 1"
                         " WHERE id = ? AND state = 'executing'",
                         (changes.state.value, to_text(now), record.id),
                     )

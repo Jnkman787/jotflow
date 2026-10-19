@@ -25,6 +25,8 @@ from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
+from tests.test_card_sync import FakeCardPoster, FakePeople
+from tests.test_help import FakeHelpSlack
 from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
 from tests.test_runner import ENVIRON, SECRET, _free_port, config
@@ -91,6 +93,8 @@ class Rig:
         self.info_preset = "claude-code"
         self.info_status = 200
         self.slack = FakeSlack()
+        self.help = FakeHelpSlack()
+        self.cards = FakeCardPoster()
         self.runner = RunnerClient(
             conversation=RunnerEndpoint("http://agent:8766", SECRET),
             execution=RunnerEndpoint("http://agent-exec:8766", EXEC_SECRET),
@@ -105,6 +109,10 @@ class Rig:
             open_store=self._open,
             runner=self.runner,
             keyword_slack=self.slack,
+            help_slack=self.help,
+            card_poster=self.cards,
+            people=FakePeople(),
+            card_seconds=0.01,
             flush_seconds=0.01,
             tick_seconds=0.01,
             info_attempts=2,
@@ -244,7 +252,7 @@ async def test_a_debouncer_error_is_logged_not_raised(
     # Arm a thread while the store works, so the flush below has one to queue.
     await rig.orchestrator.note(accepted("1760781900.000100"))
     monkeypatch.setattr(rig.store, "get_message", broken)
-    monkeypatch.setattr(rig.store, "enqueue_run", broken)
+    monkeypatch.setattr(rig.store, "queue_pending", broken)
     with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
         reply = Accepted(kind="message", ref=MessageRef(channel_id=CH, ts="2.0", thread_ts="1.0"))
         await rig.orchestrator.note(reply)
@@ -705,3 +713,259 @@ async def test_an_re_reply_joins_the_named_issues_topic_through_the_app() -> Non
     assert link.topic_id == export.topic.id != parent.topic.id
     assert agent_links == []  # the debouncer never joined it to the parent's topic
     assert rig.slack.reactions == [(CH, REPLY, "white_check_mark")]
+
+
+async def test_a_thread_waiting_at_shutdown_is_drafted_after_a_restart() -> None:
+    from jotflow.store.base import utc_now
+
+    rig = Rig()
+    await rig.store.arm_thread(CH, THREAD, utc_now())
+    await rig.store.arm_thread(CH, "1760781700.000100", utc_now())
+    await rig.store.mark_chatter(MessageRef(channel_id=CH, ts="1760781700.000100"), by="person")
+    await rig.orchestrator.start()
+
+    async def launched() -> bool:
+        return ("POST", "agent", "/runs") in rig.calls
+
+    await until(launched)
+    (run,) = await rig.store.thread_runs(CH, THREAD)
+    assert run.kind is RunKind.DRAFTING
+    assert await rig.store.thread_runs(CH, "1760781700.000100") == []
+    assert await rig.store.pending_threads() == []
+    await rig.orchestrator.stop()
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_reaction_inside_the_window_means_no_drafting_run() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        post = {"type": "message", "channel": CH, "ts": THREAD, "text": "maybe a dark mode?"}
+        await rig.orchestrator.note(accepted(), post)
+        assert await rig.store.pending_threads()
+        reaction = {
+            "type": "reaction_added",
+            "user": "U0ALEX",
+            "item_user": "U0ALEX",
+            "reaction": "no_entry_sign",
+            "item": {"type": "message", "channel": CH, "ts": THREAD},
+        }
+        await _deliver(app, reaction, "Ev9")
+        await asyncio.sleep(1.3)  # past the 1 s window, with the flush loop running
+    finally:
+        await rig.orchestrator.stop()
+    assert await rig.store.thread_runs(CH, THREAD) == []
+    assert await rig.store.pending_threads() == []
+    assert not [c for c in rig.calls if c[0] == "POST"]
+
+
+# Help in the channel, after keywords (#80)
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_first_message_through_the_app_gets_the_guide_and_a_tip() -> None:
+    from jotflow.orchestrator.help import TIP, guide_text, nudge
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        root = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX"}
+        await _deliver(app, {**root, "text": "Dark mode would be nice"}, "Ev8")
+        await _deliver(app, _reply(REPLY, "skip"), "Ev9")
+    finally:
+        await rig.orchestrator.stop()
+    assert rig.help.guides == [(CH, guide_text())]
+    # One notice per message: the tip first, then the near miss gets its one nudge, in-thread.
+    assert rig.help.whispers == [
+        (CH, "U0ALEX", None, TIP),
+        (CH, "U0ALEX", THREAD, nudge("skip")),
+    ]
+
+
+async def test_a_paused_channel_gets_no_help() -> None:
+    from jotflow.models import ChannelMode
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+        event = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX", "text": "hi"}
+        await rig.orchestrator.note(accepted(), event)
+        await rig.orchestrator.ensure_guides([CH])
+    finally:
+        await rig.orchestrator.stop()
+    assert rig.help.whispers == rig.help.guides == []
+
+
+async def test_guides_are_pinned_at_startup_once() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.orchestrator.ensure_guides([CH])
+        await rig.orchestrator.ensure_guides([CH])
+        assert await rig.orchestrator.channel_mode(CH) is not None
+    finally:
+        await rig.orchestrator.stop()
+    assert len(rig.help.guides) == 1
+
+
+async def test_a_help_failure_is_logged_and_the_debouncer_still_runs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig()
+
+    async def broken(*_: Any, **__: Any) -> None:
+        raise RuntimeError("slack is down")
+
+    rig.help.whisper = broken  # type: ignore[method-assign]
+    rig.help.post_guide = broken  # type: ignore[method-assign]
+    await rig.orchestrator.start()
+    try:
+        event = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX", "text": "hi"}
+        with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+            await rig.orchestrator.note(accepted(), event)
+            await rig.orchestrator.ensure_guides(["C0OTHER01"])
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending()
+    finally:
+        await rig.orchestrator.stop()
+    assert "could not offer help" in caplog.text
+
+
+# The live card (#152)
+
+
+async def test_a_proposal_gets_its_card_from_the_running_service() -> None:
+    from tests.test_card_sync import approve, proposal
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.store.add_proposal(proposal())
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+        await approve(rig.store)
+
+        async def edited() -> bool:
+            return len(rig.cards.updates) == 1
+
+        await until(edited)
+    finally:
+        await rig.orchestrator.stop()
+    record = await rig.store.get_proposal("p1")
+    assert record is not None and record.card_ts == "1760782000.000001"
+    assert rig.cards.updates[0][1] == record.card_ts
+    assert len(rig.cards.posts) == 1
+
+
+async def test_cards_are_drawn_even_while_agent_runs_are_off() -> None:
+    from tests.test_card_sync import proposal
+
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        await rig.store.add_proposal(proposal())
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+        assert rig.orchestrator.cards is not None
+        assert not await rig.orchestrator.cards.refresh("p1")
+    finally:
+        await rig.orchestrator.stop()
+
+
+async def test_a_card_sync_error_is_logged_and_the_loop_goes_on(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = Rig()
+    calls = 0
+
+    async def broken(*_: Any, **__: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("store is down")
+
+    monkeypatch.setattr(rig.store, "cards_due", broken)
+    with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+
+        async def twice() -> bool:
+            return calls >= 2
+
+        await until(twice)
+        await rig.orchestrator.stop()
+    assert "card sync failed" in caplog.text
+
+
+async def test_a_drafting_runs_propose_issue_yields_one_card() -> None:
+    # Runs off, so no supervisor takes the run: this test plays the drafting agent.
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        assert rig.server is not None
+        specs = {spec.name: spec for spec in rig.server.tools}
+        await rig.store.enqueue_run(RunKind.DRAFTING, CH, THREAD)
+        run = await rig.store.claim_next_run(max_running=1)
+        assert run is not None
+        grant = Grant(run_id=run.id, kind=RunKind.DRAFTING, channel_id=CH, thread_ts=THREAD)
+        packet = [MessageRef(channel_id=CH, ts=THREAD, thread_ts=THREAD)]
+        await rig.store.record_packet(run.id, packet)
+
+        async def call(tool: str, arguments: dict[str, Any]) -> Any:
+            spec = specs[tool]
+            return await spec.handler(grant, spec.input_model.model_validate(arguments))
+
+        linked = await call(
+            "link_message",
+            {"ts": THREAD, "decision": "new_topic", "title": "Dark mode", "confidence": 0.9},
+        )
+        await call(
+            "propose_issue",
+            {
+                "topic_id": linked.topic_id,
+                "repo": "acme-co/web",
+                "title": "Add a dark mode",
+                "body": "People asked for a dark theme.",
+                "sources": [{"channel_id": CH, "ts": THREAD}],
+                "confidence": 0.8,
+            },
+        )
+        assert rig.cards.posts == []  # the tool write itself never calls Slack
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+    finally:
+        await rig.orchestrator.stop()
+    ((channel, thread, card),) = rig.cards.posts
+    assert (channel, thread) == (CH, THREAD)
+    assert "Add a dark mode" in json.dumps(card.blocks)
+    (stored,) = await rig.store.thread_proposals(CH, THREAD)
+    assert stored.card_ts is not None and not stored.card_due
+
+
+async def test_the_approval_gate_is_built_and_arms_through_the_debouncer() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        assert rig.orchestrator.approval is not None
+        await rig.orchestrator._arm_thread(CH, "1760781800.000100")
+        assert [p.thread_ts for p in await rig.store.pending_threads()] == ["1760781800.000100"]
+    finally:
+        await rig.orchestrator.stop()
+    off = Rig(runs=False)
+    await off.orchestrator.start()
+    try:
+        assert off.orchestrator.approval is not None
+        await off.orchestrator._arm_thread(CH, "1760781800.000100")  # no debouncer: no-op
+        assert await off.store.pending_threads() == []
+    finally:
+        await off.orchestrator.stop()

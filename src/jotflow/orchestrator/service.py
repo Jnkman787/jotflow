@@ -10,7 +10,8 @@ feeds accepted messages to the debouncer, and drives runs through
 1. Open the store.
 2. Recover interrupted runs, before anything else touches runs.
 3. Build the tools and start the MCP server.
-4. Start the supervisor and the debouncer's flush loop.
+4. Re-arm threads still waiting out their quiet window (#130).
+5. Start the supervisor and the debouncer's flush loop.
 
 **Stop order is the reverse:**
 
@@ -43,9 +44,12 @@ from typing import Any, Protocol
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
-from jotflow.models import RunKind
-from jotflow.orchestrator.cards import CardPublisher, SlackCardPoster
+from jotflow.models import ChannelMode, RunKind
+from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
+from jotflow.orchestrator.card_sync import SYNC_SECONDS, BoltPeople, CardSync, People
+from jotflow.orchestrator.cards import CardPoster, CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
+from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
@@ -197,6 +201,11 @@ class Orchestrator:
         open_store: StoreOpener = open_sqlite,
         runner: RunnerClient | None = None,
         keyword_slack: KeywordSlack | None = None,
+        help_slack: HelpSlack | None = None,
+        card_poster: CardPoster | None = None,
+        people: People | None = None,
+        card_seconds: float = SYNC_SECONDS,
+        approval_slack: ApprovalSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -212,6 +221,14 @@ class Orchestrator:
         self._open_store = open_store
         self._runner = runner
         self._keyword_slack = keyword_slack
+        self._help_slack = help_slack
+        self._help: HelpHandler | None = None
+        self._card_poster = card_poster
+        self._people = people
+        self._card_seconds = card_seconds
+        self.cards: CardSync | None = None
+        self._approval_slack = approval_slack
+        self.approval: ApprovalHandler | None = None
         self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
         self._tick_seconds = tick_seconds
@@ -245,16 +262,33 @@ class Orchestrator:
     async def _start(self) -> None:
         self._store = await self._open_store(self._settings.database_path)
         poster = SlackThreadPoster(self._client)
-        cards = CardPublisher(self._store, SlackCardPoster(self._client))
         lifecycle = RunLifecycle(
-            self._store,
-            self.registry,
-            on_gave_up=GiveUpNotice(poster, self._policy, cards=cards),
+            self._store, self.registry, on_gave_up=GiveUpNotice(poster, self._policy)
         )
         await lifecycle.recover()
+        # One subscriber draws every card, outside any MCP write path (#152).
+        self.cards = CardSync(
+            self._store,
+            self._policy,
+            CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
+            self._people or BoltPeople(self._client),
+        )
+        self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
+        # The approval gate answers the card's buttons whether or not runs are on;
+        # an approved proposal's execution run waits in the queue until they are.
+        self.approval = ApprovalHandler(
+            self._store,
+            self._policy,
+            self._approval_slack or BoltApprovalSlack(self._client),
+            refresh=self.cards.refresh,
+            arm_thread=self._arm_thread,
+        )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
             self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
+        )
+        self._help = HelpHandler(
+            self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
         tools = (
@@ -289,12 +323,17 @@ class Orchestrator:
         # Only drafting runs come from the debouncer; with them off, queue none.
         if RunKind.DRAFTING in self.kinds.on:
             self._debouncer = Debouncer(self._store, self._policy)
+            # After recovery, before the first flush: threads that were waiting
+            # out their quiet window when JotFlow stopped (#130).
+            restored = await self._debouncer.restore()
+            if restored:
+                log.info("%d thread(s) still waiting out their quiet window", restored)
         supervise = (
             self._supervisor.run(self._stop)
             if self._tick_seconds is None
             else self._supervisor.run(self._stop, interval=self._tick_seconds)
         )
-        self._tasks = [asyncio.create_task(supervise, name="jotflow-supervisor")]
+        self._tasks.append(asyncio.create_task(supervise, name="jotflow-supervisor"))
         if self._debouncer is not None:
             self._tasks.append(
                 asyncio.create_task(self._flush_loop(self._debouncer), name="jotflow-debouncer")
@@ -322,12 +361,55 @@ class Orchestrator:
                     await self._keywords.on_reaction(event)
             except Exception:
                 log.exception("could not apply a keyword")
+            if decision.kind == "message":
+                await self._offer_help(decision, event)
         if self._debouncer is None:
             return
         try:
             await self._debouncer.note(decision)
         except Exception:
             log.exception("could not note a message for the debouncer")
+
+    async def _offer_help(self, decision: Accepted, event: Mapping[str, Any]) -> None:
+        """The guide, tip, or nudge, never in a paused channel (#80). Errors are only logged."""
+        if self._help is None:
+            return
+        try:
+            if await self.channel_mode(decision.ref.channel_id) is ChannelMode.PAUSED:
+                return
+            await self._help.on_message(event)
+        except Exception:
+            log.exception("could not offer help")
+
+    async def channel_mode(self, channel_id: str) -> ChannelMode:
+        """The channel's mode, from the store, or propose when nobody set one."""
+        setting = await self.store.get_channel_mode(channel_id)
+        return ChannelMode.PROPOSE if setting is None else setting.mode
+
+    async def ensure_guides(self, channel_ids: Sequence[str]) -> None:
+        """Pin the help guide in each channel that has none yet, at startup (#80)."""
+        if self._help is None:
+            return
+        for channel_id in channel_ids:
+            try:
+                if await self.channel_mode(channel_id) is not ChannelMode.PAUSED:
+                    await self._help.ensure_guide(channel_id)
+            except Exception:
+                log.exception("could not pin the help guide in %s", channel_id)
+
+    async def _card_loop(self, cards: CardSync) -> None:
+        while not self._stop.is_set():
+            try:
+                await cards.sync()
+            except Exception:
+                log.exception("card sync failed")
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=self._card_seconds)
+
+    async def _arm_thread(self, channel_id: str, thread_ts: str) -> None:
+        """Start a thread's quiet window for a message JotFlow posted for a person."""
+        if self._debouncer is not None:
+            await self._debouncer.arm(channel_id, thread_ts)
 
     async def _flush_loop(self, debouncer: Debouncer) -> None:
         while not self._stop.is_set():

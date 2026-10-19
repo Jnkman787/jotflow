@@ -43,6 +43,10 @@ The preset also sets these variables:
 - **`CLAUDE_CODE_DISABLE_AUTO_MEMORY`** keeps the CLI from writing memory files that a later run could load.
 - **`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`** keep the CLI from sending telemetry or error reports, and from updating itself.
 
+**What the write token can reach.** An execution run's `issue_write` and `add_issue_comment` can create, edit, close, relabel, or comment on any issue in any repo the write token reaches. JotFlow checks only the issue URL the agent reports to `record_result`, after the write. So the write token is the real limit. Make it a fine-grained token limited to exactly the repos your channels feed, with Issues read and write and no other permission. Make the read-only token the same way, with Issues read and Contents read.
+
+**Public GitHub is read too.** A drafting run's `search_issues` searches all of public GitHub, not only the token's repos, so its results are another source of untrusted text. Drafts still need approval before anything is written.
+
 **Where the tokens are.** The runner writes the run's MCP config to `/tmp/jotflow-run-<random>/mcp.json`. The file is mode 0600, in a 0700 directory, and is removed when the run ends. It holds two servers:
 
 - `jotflow`, over HTTP, with the run's JotFlow token as an `Authorization` header

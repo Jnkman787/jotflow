@@ -178,6 +178,18 @@ def test_argv_fills_only_its_two_placeholders() -> None:
 
 
 @pytest.mark.parametrize(
+    "token",
+    ["jfr_${HOME}", "jfr_abc$def", "jfr_a{b}", 'jfr_a"b', "jfr_a/b", "jfr_a+b", "jfr_a b"],
+)
+def test_a_run_token_holds_only_url_safe_characters(token: str) -> None:
+    with pytest.raises(ValueError, match="not a JotFlow run token"):
+        LaunchRequest(run_id="run-1", kind=RunKind.DRAFTING, token=token)
+    assert LaunchRequest(run_id="run-1", kind=RunKind.DRAFTING, token=TOKEN).token == TOKEN
+    ok = "jfr_" + "Az09_-" * 7
+    assert LaunchRequest(run_id="run-1", kind=RunKind.DRAFTING, token=ok).token == ok
+
+
+@pytest.mark.parametrize(
     ("body", "ok"),
     [
         ({"run_id": "run-1", "kind": "drafting", "token": TOKEN}, True),

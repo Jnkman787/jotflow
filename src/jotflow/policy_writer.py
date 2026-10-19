@@ -67,6 +67,11 @@ def render_policy(policy: Policy) -> str:
         "[approval]",
         f"approvers = {_array(policy.approval.approvers)}",
         f"reactions = {_bool(policy.approval.reactions)}",
+        "",
+        "[help]",
+        f"guide = {_bool(policy.help.guide)}",
+        f"newcomer_tip = {_bool(policy.help.newcomer_tip)}",
+        f"near_miss_nudge = {_bool(policy.help.near_miss_nudge)}",
     ]
     for channel_id, channel in policy.channels.items():
         # Channel ids are validated to [CG][A-Z0-9]+, so they are bare keys.
@@ -84,6 +89,10 @@ def render_policy(policy: Policy) -> str:
             # No labels line means any label that exists on the repo.
             if repo.labels is not None:
                 lines.append(f"labels = {_array(repo.labels)}")
+        own_help = channel.help.model_dump(exclude_none=True)
+        if own_help:
+            lines += ["", f"[channels.{channel_id}.help]"]
+            lines += [f"{key} = {_bool(value)}" for key, value in own_help.items()]
     text = "\n".join(lines) + "\n"
     if parse_policy(text) != policy:
         raise RuntimeError("rendered jotflow.toml does not load back to the same policy")

@@ -241,12 +241,35 @@ class RepoPolicy(_Strict):
         return canonical
 
 
+class HelpPolicy(_Strict):
+    """How JotFlow helps people in a channel (#80). Each one is on by default."""
+
+    guide: bool = Field(default=True, description="Post and pin a short guide once per channel")
+    newcomer_tip: bool = Field(
+        default=True, description="A one-time private tip on a person's first message"
+    )
+    near_miss_nudge: bool = Field(
+        default=True, description="A private nudge, once per person, for a mistyped keyword"
+    )
+
+
+class ChannelHelp(_Strict):
+    """A channel's own help settings. Each one left out follows the top-level ``[help]``."""
+
+    guide: bool | None = None
+    newcomer_tip: bool | None = None
+    near_miss_nudge: bool | None = None
+
+
 class ChannelPolicy(_Strict):
     """A Slack channel JotFlow watches and the repos it may feed."""
 
     repos: tuple[RepoPolicy, ...] = Field(min_length=1)
     debounce_seconds: int | None = Field(
         default=None, ge=1, le=86_400, description="Overrides the top-level debounce window"
+    )
+    help: ChannelHelp = Field(
+        default_factory=ChannelHelp, description="Overrides the top-level [help] settings"
     )
 
     @model_validator(mode="after")
@@ -322,6 +345,7 @@ class Policy(_Strict):
     )
     agent: AgentPolicy = Field(default_factory=AgentPolicy)
     approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
+    help: HelpPolicy = Field(default_factory=HelpPolicy)
     channels: dict[ChannelId, ChannelPolicy] = Field(min_length=1)
 
     def channel(self, channel_id: str) -> ChannelPolicy:
@@ -338,6 +362,11 @@ class Policy(_Strict):
     def debounce_for(self, channel_id: str) -> int:
         override = self.channel(channel_id).debounce_seconds
         return self.debounce_seconds if override is None else override
+
+    def help_for(self, channel_id: str) -> HelpPolicy:
+        """The channel's help settings, each one its own or the top-level default."""
+        own = self.channel(channel_id).help.model_dump(exclude_none=True)
+        return self.help.model_copy(update=own)
 
 
 class PolicyError(Exception):

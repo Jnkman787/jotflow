@@ -665,3 +665,33 @@ async def test_giving_up_without_a_notice_still_fails_the_proposal(
     await _fail_attempt(store, lifecycle)
     proposal = await store.get_proposal("p1")
     assert proposal is not None and proposal.state is ProposalState.FAILED
+
+
+async def test_a_new_approval_starts_a_fresh_attempt_count(
+    store: Store, registry: TokenRegistry, clock: Clock
+) -> None:
+    gave_up = GaveUp()
+    lifecycle = _retrying(store, registry, clock, gave_up)
+    await _approved(store)
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    for delay in (*RETRY_DELAYS, None):
+        await _fail_attempt(store, lifecycle)
+        if delay is not None:
+            clock.advance(delay.total_seconds())
+            await lifecycle.queue_due_retries()
+    failed = await store.get_proposal("p1")
+    assert failed is not None and failed.state is ProposalState.FAILED
+    # A person approves it again from the card (#27).
+    clock.advance(60)
+    await store.transition(
+        "p1",
+        ProposalState.APPROVED,
+        approved_by="U0CAROL",
+        expected_hash=content_hash(failed.proposal),
+    )
+    await store.enqueue_run(RunKind.EXECUTION, CH, THREAD, proposal_id="p1")
+    await _fail_attempt(store, lifecycle)
+    again = await store.get_proposal("p1")
+    assert again is not None and again.state is ProposalState.RECONCILING
+    assert "p1" in lifecycle.pending_retries()
+    assert len(gave_up.records) == 1

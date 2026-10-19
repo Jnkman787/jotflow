@@ -205,7 +205,7 @@ Rules:
 - No keyword can skip approval or change the channel mode.
 - Acting on someone else's message: with approvers off, anyone may, and JotFlow posts a visible note in the thread that the author can undo. With approvers on, only the author or an approver may.
 - Editing a message after its card is posted never changes what is approved.
-- `/jotflow help` shows the set privately, JotFlow pins a short help message when it joins a channel, and a newcomer's first card carries a one-line keyword tip.
+- Help comes from one text (#80). `/jotflow help` shows the set privately, with the channel's repos and how approval works there. JotFlow pins a short guide once in each channel, a person's first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...`, gets one private suggestion. JotFlow never acts on a near miss. Each is recorded in the store before it is sent, so none repeats after a restart, and each can be turned off per channel in `[help]`. Nothing is posted in a paused channel.
 - When JotFlow replies with an issue link, it includes the exact handle to use, for example "reply `re: web#42` to add to this", so nobody needs to know issue numbers.
 
 ## Channels and repos
@@ -234,6 +234,7 @@ The mode applies uniformly to creation, description edits, comments, assignment,
   - assignees, with unverified identities marked, and the people involved, with one-click assign and remove
   - size, confidence, links to the source messages, and a state line
   Agent-written text is always `plain_text`, so nothing in it can ping or link. The Approve button carries the content hash of the draft it shows. The card's message ts is stored, so later states edit the same message.
+- **Keeping the card live** (`src/jotflow/orchestrator/card_sync.py`, #152). The store is the card's outbox. Every change a card shows raises the proposal's revision, and the card records the revision it shows. One loop in the orchestrator, about once a second, posts each missing card and edits each one that is behind. So `propose_issue` and the other tool writes never call Slack, and a Slack failure cannot fail them. A card that could not be drawn stays due and is retried, waiting longer each time up to a minute, across restarts too. A proposal superseded or rejected before its card went up gets none.
 - Guests and external Slack Connect users can never approve.
 
 **Who may approve, configurable** (D7):
@@ -245,7 +246,17 @@ The mode applies uniformly to creation, description edits, comments, assignment,
 
 Every mode change is announced in the channel. Approval by reaction is off by default and can be turned on.
 
-**Request Changes** opens a dialog whose text JotFlow posts as a thread reply attributed to the person, so the next drafting run treats it like any other message (D9).
+**Request Changes** opens a dialog whose text JotFlow posts as a thread reply attributed to the person, so the next drafting run treats it like any other message (D9). The reply reads `Change request from @person:` followed by the text, cleaned as `ask_channel` text is, with broadcast mentions removed, Slack markup escaped, and nothing unfurled. Ingest never sees JotFlow's own messages, so JotFlow starts the thread's quiet window itself.
+
+**How a click is checked** (`src/jotflow/orchestrator/approval.py`, #27). JotFlow runs in Socket Mode, so there is no request signature to verify: Bolt receives interactions over the websocket it opened with the app-level token, and only Slack can send on it. On top of that, every Approve, Retry, Discard, or Request Changes click is checked in this order, and any refusal is a fixed reply only the person sees, writing nothing:
+
+1. The payload's team, and the person's own team, are this workspace.
+2. The person is not a guest and not an external Slack Connect user.
+3. The proposal exists in the card's channel, and the clicked message is its stored card.
+4. With approvers on, the person is a listed approver. For Approve or Retry, they must also not have written the thread's first message or any message the proposal cites, as Slack reports them at the moment of the click. Someone who was only mentioned may approve. If Slack can't confirm an author, the approval is refused.
+5. Approve and Retry lock the content hash the button carries. A stale card approves nothing and is redrawn.
+
+An approval records who and when, queues one execution run, and redraws the card. A failed card offers **Retry**, which approves again and starts a fresh count of execution attempts (#30), and **Discard**, which clears the draft, after which Retry is refused.
 
 **What the gate is and is not.** JotFlow enforces the gate in its own flow: it never hands the agent a proposal to execute until the mode or a person allows it, and it validates proposals against the configured repos, and against a repo's label list where one is set, before posting a card. It is not a credential boundary: the agent holds the team's GitHub access, so a misbehaving agent could still write on its own. D6 narrows this: drafting runs, the ones exposed to raw Slack text, get read-only GitHub access. Teams should still scope the agent's write token to the repositories JotFlow is meant to touch.
 
@@ -257,7 +268,7 @@ Defaults that need no syntax (D9):
 
 - A loose top-level message starts a candidate topic. The agent may attach it to an existing one.
 - A reply in a thread whose topic has expired revives that topic: the reply joins its top-level message's topic, which refreshes the topic's activity, unless someone already placed it.
-- A thread is drafted only after it has been quiet for its channel's `debounce_seconds` (120 by default, overridable per channel), so the first draft reflects a whole burst. Each loose top-level post is its own thread with its own timer and run; posts are never grouped by time or author. Only accepted messages re-arm a timer, so the bot's own messages never do (`src/jotflow/orchestrator/debounce.py`).
+- A thread is drafted only after it has been quiet for its channel's `debounce_seconds` (120 by default, overridable per channel), so the first draft reflects a whole burst. Each loose top-level post is its own thread with its own timer and run; posts are never grouped by time or author. Only accepted messages re-arm a timer, so the bot's own messages never do (`src/jotflow/orchestrator/debounce.py`). Each waiting thread's due time is also kept in the store's `pending_threads` table, holding only the channel id, the thread ts, and the time. So a restart forgets no thread: startup re-arms them after recovery, and a window that ended while JotFlow was down flushes at once. A thread whose top-level message a person marked as chatter is dropped instead. Queuing the drafting run and forgetting the thread happen in one transaction, so a thread is never queued twice (#130).
 - Expiry only removes a topic from the active index handed to the agent. Its record, a few ids linking messages to an issue, is kept indefinitely so ideas revisited months later still find their issue.
 - A follow-up reply in a thread with an issue produces an update proposal, gated like any other.
 - The agent sees the thread in question plus short excerpts of likely-related threads, so it can correlate on content rather than titles alone.

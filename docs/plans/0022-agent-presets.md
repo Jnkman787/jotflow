@@ -218,3 +218,14 @@ That run turned up an empty `~/.claude/projects/<run dir>/memory` directory for 
 ## Handoff notes
 
 None yet.
+
+## Follow-up after #137 merged (Refs #22)
+
+These come from security's second look and the review:
+
+- **Write token's reach.** docs/presets.md, the README's agent setup, and `agent-exec.env.example` now say plainly that an execution run can create, edit, close, relabel, or comment on any issue the write token reaches. JotFlow checks only the reported URL afterwards. So the write token must be fine-grained and limited to exactly the configured repos, with Issues read and write and nothing else.
+- **Public search.** docs/presets.md notes that drafting's `search_issues` reads all of public GitHub, which is another source of untrusted text.
+- **Run token characters.** `LaunchRequest` accepts only `jfr_` followed by URL-safe characters, `[A-Za-z0-9_-]`, so nothing `${VAR}` expansion could act on reaches an MCP config.
+- **Preset env.** A preset's extra env can no longer set a base name, an allowlisted name, `HOME`, `TMPDIR`, or any JotFlow, Slack, or GitHub name. The runner's own values always win, and a test covers each.
+- **Prompts.** A test pins that the prompt is the same for every run of a kind and never carries a run id, token, URL, path, or model.
+- **The preset in two places.** This was already handled by #136. The README explains that `[agent] preset` in `jotflow.toml` switches runs on and must match the runners, and the runner's startup line names its preset.

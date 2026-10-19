@@ -186,6 +186,15 @@ class MessageLink:
 
 
 @dataclass(frozen=True)
+class PendingThread:
+    """A thread waiting out its quiet window (#130). Pointers and a time only."""
+
+    channel_id: str
+    thread_ts: str
+    due_at: datetime
+
+
+@dataclass(frozen=True)
 class TopicRecord:
     """A topic with its activity times. ``topic.messages`` holds the linked pointers."""
 
@@ -250,6 +259,19 @@ def check_github_login(login: str) -> str:
     return login
 
 
+NoticeKind = Literal["guide", "tip", "nudge"]
+
+
+def check_notice(channel_id: str, user_id: str, kind: str) -> None:
+    check_id(channel_id, "channel id")
+    if kind not in ("guide", "tip", "nudge"):
+        raise ValueError(f"unknown help notice {kind!r}")
+    if (kind == "guide") != (user_id == ""):
+        raise ValueError("the guide is for the channel; tips and nudges are for one person")
+    if user_id:
+        check_id(user_id, "Slack user id")
+
+
 def check_id(value: str, what: str) -> str:
     if not value or not value.strip() or len(value) > 200:
         raise ValueError(f"{what} must be a non-empty id of at most 200 characters")
@@ -266,8 +288,10 @@ def check_new_proposal(record: ProposalRecord) -> None:
     check_id(record.thread_ts, "thread ts")
     if record.state is not ProposalState.PENDING:
         raise ValueError("a new proposal must be pending")
-    if record.card_ts is not None:
+    if record.card_ts is not None or record.card_revision is not None:
         raise ValueError("a new proposal has no card yet")
+    if record.revision != 1:
+        raise ValueError("a new proposal starts at revision 1")
     if record.content_hash or record.approved_by or record.approved_at or record.result:
         raise ValueError("a new proposal cannot be approved or carry a result yet")
     for user in record.participants:
@@ -487,6 +511,19 @@ class Store(Protocol):
         """Record the Slack ts of the proposal's card message, so later states edit it."""
         ...
 
+    async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
+        """Proposals whose card is missing or behind, oldest first (#152).
+
+        Every change a card shows raises a proposal's revision. Recording a
+        card's ts does not.
+        """
+        ...
+
+    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+        """Record that the card now shows ``revision``. Never moves backwards, so a
+        change that landed while the card was being drawn keeps it due."""
+        ...
+
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         """Remove a failed or final proposal's drafted text; a no-op if already cleared.
 
@@ -516,6 +553,19 @@ class Store(Protocol):
     ) -> ChannelModeSetting: ...
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None: ...
+
+    # Help notices (#80)
+    async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
+        """Record that ``kind`` goes to ``user_id`` in the channel. True only the first time.
+
+        Claimed just before sending, so two quick messages never both get one.
+        The channel's guide uses ``user_id=""``.
+        """
+        ...
+
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        """Undo a claim whose notice could not be sent, so a later message tries again."""
+        ...
 
     # Runs (D8, #53)
     async def enqueue_run(
@@ -559,6 +609,30 @@ class Store(Protocol):
 
     async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
         """Runs for one thread, oldest first."""
+        ...
+
+    # Threads waiting out their quiet window (#130)
+
+    async def arm_thread(self, channel_id: str, thread_ts: str, due_at: datetime) -> None:
+        """Record when the thread falls due, replacing any earlier due time."""
+        ...
+
+    async def pending_threads(self) -> list[PendingThread]:
+        """Every waiting thread, soonest due first."""
+        ...
+
+    async def queue_pending(self, channel_id: str, thread_ts: str) -> Run | None:
+        """Queue the waiting thread's drafting run and forget the thread, atomically.
+
+        The run coalesces with a queued one, as :meth:`enqueue_run` does.
+        Returns None, queuing nothing, if the thread was not waiting, or if a
+        person has since marked its first message as chatter: a later skip
+        cancels the wait, and the thread is forgotten (#56).
+        """
+        ...
+
+    async def drop_pending(self, channel_id: str, thread_ts: str) -> None:
+        """Forget a waiting thread without queuing anything."""
         ...
 
     async def overdue_runs(self) -> list[Run]:

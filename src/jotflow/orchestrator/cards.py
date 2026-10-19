@@ -47,6 +47,8 @@ ACTION_REQUEST_CHANGES = "jotflow_request_changes"
 ACTION_REPO = "jotflow_repo"
 ACTION_ASSIGN = "jotflow_assign"
 ACTION_UNASSIGN = "jotflow_unassign"
+ACTION_RETRY = "jotflow_retry"
+ACTION_DISCARD = "jotflow_discard"
 
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 _PERMALINK = re.compile(
@@ -367,9 +369,11 @@ _LAYOUTS = ((True, False), (True, True), (False, True))
 def render_card(record: ProposalRecord, context: CardContext) -> Card:
     """The card for ``record`` in its current state."""
     pending = record.state is ProposalState.PENDING
+    # A failed proposal can be retried, or discarded, while its draft is kept (#27).
+    retryable = record.state is ProposalState.FAILED and record.draft_cleared_at is None
     for show_body, compact in _LAYOUTS[:-1]:
         blocks, header, shortened = _assemble(record, context, show_body, compact)
-        if len(blocks) + (2 if pending else 0) <= MAX_BLOCKS:
+        if len(blocks) + (2 if pending or retryable else 0) <= MAX_BLOCKS:
             break
     else:
         show_body, compact = _LAYOUTS[-1]
@@ -387,6 +391,13 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
                 style="primary",
             )
             actions.insert(0, approve)
+        blocks.append({"type": "actions", "elements": actions})
+    elif retryable:
+        actions = [_button("Discard", ACTION_DISCARD, record.id, style="danger")]
+        if approvable:
+            # The same lock as Approve: a retry writes exactly what this card shows.
+            retry = _button("Retry", ACTION_RETRY, f"{record.id}:{content_hash(record.proposal)}")
+            actions.insert(0, retry)
         blocks.append({"type": "actions", "elements": actions})
     return Card(blocks=blocks[:MAX_BLOCKS], text=f"{header} for {record.proposal.repo}")
 

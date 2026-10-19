@@ -279,11 +279,26 @@ class ProposalRecord(BaseModel):
     participants: list[str] = Field(
         default_factory=list,
         description=(
-            "Slack user ids whose messages the proposal was drawn from; with approvers on, "
-            "none of them may approve it (D7)"
+            "Slack user ids the agent named: the poster and anyone mentioned. Informational; "
+            "self-approval is checked against the source messages' authors from Slack (D7)"
         ),
     )
     created_at: AwareDatetime
+    revision: int = Field(
+        default=1,
+        ge=1,
+        description="Rises with every change a card shows; the store sets it, not the caller",
+    )
+    card_revision: int | None = Field(
+        default=None,
+        ge=1,
+        description="The revision the posted card shows; behind revision means it needs an edit",
+    )
+
+    @property
+    def card_due(self) -> bool:
+        """Whether the proposal's card is missing or behind what the store holds (#152)."""
+        return self.card_revision is None or self.card_revision < self.revision
 
 
 class Run(BaseModel):

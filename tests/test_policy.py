@@ -325,3 +325,55 @@ def test_run_cap_is_bounded(value: int) -> None:
 def test_run_cap_is_read() -> None:
     policy = parse_policy("[agent]\nmax_concurrent_runs = 5\n" + MINIMAL)
     assert policy.agent.max_concurrent_runs == 5
+
+
+# Help settings (#80)
+
+
+def test_help_is_on_by_default_and_a_channel_can_override_it() -> None:
+    from jotflow.policy import parse_policy
+
+    policy = parse_policy(
+        """
+[help]
+near_miss_nudge = false
+
+[channels.C0ONE1]
+[[channels.C0ONE1.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "Web"
+
+[channels.C0TWO1.help]
+guide = false
+near_miss_nudge = true
+[[channels.C0TWO1.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "Web"
+"""
+    )
+    one, two = policy.help_for("C0ONE1"), policy.help_for("C0TWO1")
+    assert (one.guide, one.newcomer_tip, one.near_miss_nudge) == (True, True, False)
+    assert (two.guide, two.newcomer_tip, two.near_miss_nudge) == (False, True, True)
+
+
+def test_an_unknown_help_key_is_refused() -> None:
+    from jotflow.policy import PolicyError, parse_policy
+
+    with pytest.raises(PolicyError, match="banner"):
+        parse_policy(
+            "[help]\nbanner = true\n[channels.C0ONE1]\n[[channels.C0ONE1.repos]]\n"
+            'repo = "acme-co/web"\nnickname = "web"\ndescription = "Web"\n'
+        )
+
+
+def test_an_unknown_key_under_a_channels_help_is_refused() -> None:
+    from jotflow.policy import PolicyError, parse_policy
+
+    with pytest.raises(PolicyError, match="banner"):
+        parse_policy(
+            "[channels.C0ONE1]\n[channels.C0ONE1.help]\nbanner = true\n"
+            '[[channels.C0ONE1.repos]]\nrepo = "acme-co/web"\n'
+            'nickname = "web"\ndescription = "Web"\n'
+        )

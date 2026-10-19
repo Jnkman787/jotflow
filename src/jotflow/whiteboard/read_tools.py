@@ -119,7 +119,11 @@ class ThreadMessage(BaseModel):
         default=None, description="The topic this message is already linked to, if any"
     )
     from_jotflow: bool = Field(
-        default=False, description="True for JotFlow's own messages, such as its questions"
+        default=False,
+        description=(
+            "True for JotFlow's own messages, such as its questions, and the change "
+            "requests it posts for a person, who is named at the start of the text"
+        ),
     )
 
 

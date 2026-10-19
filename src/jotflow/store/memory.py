@@ -33,6 +33,8 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    NoticeKind,
+    PendingThread,
     Recovery,
     ToolCallRecord,
     TopicRecord,
@@ -41,6 +43,7 @@ from jotflow.store.base import (
     check_github_login,
     check_id,
     check_new_proposal,
+    check_notice,
     check_run_request,
     cleared_draft,
     plan_transition,
@@ -59,7 +62,9 @@ class MemoryStore:
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
+        self._notices: set[tuple[str, str, str]] = set()
         self._runs: dict[str, Run] = {}
+        self._pending: dict[tuple[str, str], datetime] = {}
         self._calls: list[ToolCallRecord] = []
         self._packets: dict[tuple[str, str, str], MessageRef] = {}
 
@@ -214,6 +219,7 @@ class MemoryStore:
                 now=self._clock(),
             )
             update: dict[str, object] = {
+                "revision": record.revision + 1,
                 "state": changes.state,
                 "content_hash": changes.content_hash,
                 "approved_by": changes.approved_by,
@@ -239,6 +245,19 @@ class MemoryStore:
             self._proposals[proposal_id] = record
             return record.model_copy(deep=True)
 
+    async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
+        due = [r for r in self._proposals.values() if r.card_due]
+        due.sort(key=lambda r: (r.created_at, r.id))
+        return [r.model_copy(deep=True) for r in due[:limit]]
+
+    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            shown = max(record.card_revision or 0, min(revision, record.revision))
+            self._proposals[proposal_id] = record.model_copy(update={"card_revision": shown})
+
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._lock:
             record = self._proposals.get(proposal_id)
@@ -246,7 +265,8 @@ class MemoryStore:
                 raise NotFoundError(f"no proposal {proposal_id}")
             check_clearable(record)
             if record.draft_cleared_at is None:
-                record = record.model_copy(update=self._cleared(record), deep=True)
+                update = {**self._cleared(record), "revision": record.revision + 1}
+                record = record.model_copy(update=update, deep=True)
                 self._proposals[proposal_id] = record
             return record.model_copy(deep=True)
 
@@ -264,9 +284,12 @@ class MemoryStore:
             )
             for proposal_id in ids:
                 record = self._proposals[proposal_id]
-                self._proposals[proposal_id] = record.model_copy(
-                    update={"state": ProposalState.SUPERSEDED, **self._cleared(record)}, deep=True
-                )
+                update = {
+                    "state": ProposalState.SUPERSEDED,
+                    "revision": record.revision + 1,
+                    **self._cleared(record),
+                }
+                self._proposals[proposal_id] = record.model_copy(update=update, deep=True)
             return ids
 
     # Identity links
@@ -306,6 +329,20 @@ class MemoryStore:
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         return self._modes.get(channel_id)
+
+    async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
+        check_notice(channel_id, user_id, kind)
+        async with self._lock:
+            key = (channel_id, user_id, kind)
+            if key in self._notices:
+                return False
+            self._notices.add(key)
+            return True
+
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        check_notice(channel_id, user_id, kind)
+        async with self._lock:
+            self._notices.discard((channel_id, user_id, kind))
 
     # Runs (D8, #53): the same rules the SQLite indexes enforce, checked by hand.
 
@@ -424,6 +461,43 @@ class MemoryStore:
         run = self._runs.get(run_id)
         return None if run is None else run.model_copy()
 
+    async def arm_thread(self, channel_id: str, thread_ts: str, due_at: datetime) -> None:
+        check_id(channel_id, "channel id")
+        check_id(thread_ts, "thread ts")
+        if due_at.tzinfo is None:
+            raise ValueError("due_at must be timezone-aware")
+        async with self._lock:
+            self._pending[(channel_id, thread_ts)] = due_at
+
+    async def pending_threads(self) -> list[PendingThread]:
+        return [
+            PendingThread(channel_id, thread_ts, due)
+            for (channel_id, thread_ts), due in sorted(
+                self._pending.items(), key=lambda item: (item[1], item[0])
+            )
+        ]
+
+    async def queue_pending(self, channel_id: str, thread_ts: str) -> Run | None:
+        seconds = check_run_request(
+            RunKind.DRAFTING, channel_id, thread_ts, None, DEFAULT_RUN_TIMEOUTS[RunKind.DRAFTING]
+        )
+        async with self._lock:
+            if self._pending.pop((channel_id, thread_ts), None) is None:
+                return None
+            root = self._messages.get((channel_id, thread_ts))
+            if root is not None and root.chatter and root.linked_by == "person":
+                return None
+            existing = self._active_run_for(RunKind.DRAFTING, channel_id, thread_ts, None)
+            if existing is not None:
+                return existing.model_copy()
+            return self._insert_run(
+                RunKind.DRAFTING, channel_id, thread_ts, None, seconds
+            ).model_copy()
+
+    async def drop_pending(self, channel_id: str, thread_ts: str) -> None:
+        async with self._lock:
+            self._pending.pop((channel_id, thread_ts), None)
+
     async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
         return [
             r.model_copy()
@@ -480,7 +554,8 @@ class MemoryStore:
                         now=now,
                     )
                     self._proposals[record.id] = record.model_copy(
-                        update={"state": changes.state}, deep=True
+                        update={"state": changes.state, "revision": record.revision + 1},
+                        deep=True,
                     )
                     reconciling.append(record.id)
                 seconds = timeouts.get(
