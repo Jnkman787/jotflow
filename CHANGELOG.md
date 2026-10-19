@@ -29,7 +29,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 - **Channel modes.** `/jotflow mode` shows or sets `propose`, `auto`, or `paused`. Every change is announced, and `auto` warns in a channel with guests or external members.
 - **After the write,** JotFlow replies in the thread with the issue's link and reacts on the messages it came from.
 - **Help where people are.** `/jotflow help` explains everything for that channel, privately. JotFlow pins a short guide once per channel, gives a person's first message a one-time tip, and privately suggests the right form for a mistyped keyword. Each of these can be turned off in `[help]`.
-- **Linking accounts.** `/jotflow link your-github-login` lets proposals assign you, and `/jotflow repos` lists the repos a channel feeds.
+- **Linking accounts.** `/jotflow link your-github-login` lets proposals assign you, and `/jotflow repos` lists the repos a channel feeds. An approver or identity admin can remove someone else's link with `/jotflow unlink <member-id>`, and the person is told privately.
 
 ### The agent
 
@@ -41,6 +41,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 ### Running it
 
 - **Health.** `docker compose ps` shows `healthy` while JotFlow is connected to Slack, and logs say when the connection drops and comes back.
+- **Removing a link from the host.** `jotflow identity unlink <member-id>` removes someone's GitHub link and tells them.
 - **Operator tokens.** `jotflow operator create` issues an admin's read-only token for chosen channels, and `jotflow operator connect` bridges it to an MCP client over stdio. No port is published.
 - **Replay.** `jotflow replay` runs a saved thread through the real pipeline with no Slack or network, to see what JotFlow would do. `jotflow check --live` confirms a real Slack app hears its channel.
 - **Docs.** The [deployment guide](docs/deployment.md) covers servers, backups, upgrades, and rollback. The [threat model](docs/threat-model.md) says what JotFlow protects and what it accepts.

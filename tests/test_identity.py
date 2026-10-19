@@ -10,14 +10,19 @@ import pytest
 
 from jotflow.orchestrator.identity import (
     NOT_A_LOGIN,
+    NOT_A_MEMBER_ID,
     NOT_ALLOWED,
+    NOT_AN_ADMIN,
     NOTHING_LINKED,
     TAKEN,
     LinkCommand,
+    SlackNote,
     clean_login,
+    removal_note,
 )
 from jotflow.orchestrator.people import Person
 from jotflow.orchestrator.slack import register_commands
+from jotflow.policy import parse_policy
 from jotflow.slack_manifest import SLASH_COMMAND
 from jotflow.store import MemoryStore
 
@@ -174,3 +179,210 @@ async def test_without_links_the_command_falls_back_to_the_hint() -> None:
 
     await app.commands[SLASH_COMMAND](ack=ack, command={"text": "link octo-cat"})
     assert "/jotflow link your-github-login" in answers[0]
+
+
+# Removing someone else's link (#173)
+
+APPROVER, ADMIN, MALLORY = "U0APPROVE", "U0ADMIN", "U0MALLORY"
+POLICY = parse_policy(
+    f"""
+[approval]
+approvers = ["{APPROVER}"]
+
+[identity]
+admins = ["{ADMIN}"]
+
+[channels.C0IDEAS01]
+
+[[channels.C0IDEAS01.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+"""
+)
+
+
+class Names:
+    def __init__(self, names: dict[str, str] | None = None) -> None:
+        self.names = names or {APPROVER: "Avery", ADMIN: "Ada", BOB: "Bob"}
+
+    async def name(self, user_id: str) -> str | None:
+        return self.names.get(user_id)
+
+
+class Notes:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+        self.broken = False
+
+    async def tell(self, user_id: str, text: str) -> None:
+        if self.broken:
+            raise RuntimeError("messages tab off")
+        self.sent.append((user_id, text))
+
+
+def admin_command(
+    policy: Any = POLICY, names: Names | None = None
+) -> tuple[LinkCommand, MemoryStore, People, Notes]:
+    store, people, notes = MemoryStore(), People(), Notes()
+    links = LinkCommand(store, people, policy=policy, names=names or Names(), notifier=notes)
+    return links, store, people, notes
+
+
+@pytest.mark.parametrize("actor", [APPROVER, ADMIN])
+async def test_an_approver_or_admin_unlinks_someone_and_they_are_told(
+    actor: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    links, store, _, notes = admin_command()
+    await store.link_identity(BOB, "octo-cat")
+    with caplog.at_level(logging.INFO, logger="jotflow.identity"):
+        reply = await links.handle(actor, "unlink", f"  {BOB} ")
+    assert reply.text.startswith(f"Unlinked the GitHub login of Bob ({BOB}).")
+    assert "told them privately" in reply.text
+    assert await store.get_identity(BOB) is None
+    [(told, note)] = notes.sent
+    assert told == BOB
+    assert note.startswith(("Avery", "Ada"))
+    assert "/jotflow link" in note
+    [record] = await store.identity_unlinks()
+    assert (record.slack_user_id, record.removed_by) == (BOB, actor)
+    assert "octo-cat" not in caplog.text
+    assert "octo-cat" not in note
+
+
+@pytest.mark.parametrize("typed", [f"<@{BOB}>", f"<@{BOB}|bob>", f"  {BOB}"])
+async def test_the_target_may_be_an_id_or_a_mention(typed: str) -> None:
+    links, store, _, _ = admin_command()
+    await store.link_identity(BOB, "octo-cat")
+    assert (await links.handle(APPROVER, "unlink", typed)).text.startswith("Unlinked")
+    assert await store.get_identity(BOB) is None
+
+
+@pytest.mark.parametrize(
+    "typed", ["@bob", "bob", "uma", "u0bob", "Bob Smith", "<@bob>", "C0IDEAS01", f"<@{BOB}"]
+)
+async def test_a_name_is_never_resolved(typed: str) -> None:
+    links, store, _, notes = admin_command()
+    await store.link_identity(BOB, "octo-cat")
+    assert (await links.handle(APPROVER, "unlink", typed)).text == NOT_A_MEMBER_ID
+    assert await store.get_identity(BOB) is not None
+    assert notes.sent == []
+
+
+async def test_anyone_else_is_refused() -> None:
+    links, store, _, notes = admin_command()
+    await store.link_identity(BOB, "octo-cat")
+    assert (await links.handle(MALLORY, "unlink", BOB)).text == NOT_AN_ADMIN
+    assert await store.get_identity(BOB) is not None
+    assert notes.sent == [] and await store.identity_unlinks() == []
+
+
+async def test_with_no_approvers_or_admins_only_the_host_can_unlink_others() -> None:
+    open_policy = parse_policy(
+        """
+[channels.C0IDEAS01]
+
+[[channels.C0IDEAS01.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+"""
+    )
+    links, store, _, _ = admin_command(open_policy)
+    await store.link_identity(BOB, "octo-cat")
+    assert (await links.handle(ALICE, "unlink", BOB)).text == NOT_AN_ADMIN
+
+
+@pytest.mark.parametrize("person", [Person(APPROVER, guest=True), Person(APPROVER, external=True)])
+async def test_a_guest_or_external_approver_id_is_refused(person: Person) -> None:
+    links, store, people, _ = admin_command()
+    people.people[APPROVER] = person
+    await store.link_identity(BOB, "octo-cat")
+    assert (await links.handle(APPROVER, "unlink", BOB)).text == NOT_ALLOWED
+    assert await store.get_identity(BOB) is not None
+
+
+async def test_a_failed_lookup_of_the_actor_refuses() -> None:
+    links, store, people, _ = admin_command()
+    people.broken = True
+    await store.link_identity(BOB, "octo-cat")
+    assert (await links.handle(APPROVER, "unlink", BOB)).text == NOT_ALLOWED
+
+
+async def test_a_mistyped_id_is_obvious_from_the_reply() -> None:
+    links, _, _, notes = admin_command()
+    reply = await links.handle(APPROVER, "unlink", "U0NOBODY")
+    assert reply.text == "an unknown user (U0NOBODY) has no linked GitHub login."
+    assert notes.sent == []
+
+
+async def test_a_name_with_markup_is_shown_plainly() -> None:
+    names = Names({BOB: "<!channel> Bob & <@U0X>", APPROVER: "<b>Avery</b>"})
+    links, store, _, notes = admin_command(names=names)
+    await store.link_identity(BOB, "octo-cat")
+    reply = await links.handle(APPROVER, "unlink", BOB)
+    assert "<" not in reply.text and "&" not in reply.text
+    [(_, note)] = notes.sent
+    assert "<" not in note
+
+
+async def test_if_the_note_fails_the_actor_is_asked_to_tell_them() -> None:
+    links, store, _, notes = admin_command()
+    notes.broken = True
+    await store.link_identity(BOB, "octo-cat")
+    reply = await links.handle(APPROVER, "unlink", BOB)
+    assert "couldn't message them" in reply.text
+    assert await store.get_identity(BOB) is None
+    assert len(await store.identity_unlinks()) == 1
+
+
+async def test_naming_yourself_is_a_plain_self_unlink_and_is_not_recorded() -> None:
+    links, store, _, notes = admin_command()
+    await store.link_identity(MALLORY, "octo-cat")
+    reply = await links.handle(MALLORY, "unlink", MALLORY)
+    assert reply.text.startswith("Unlinked GitHub login octo-cat")
+    assert notes.sent == [] and await store.identity_unlinks() == []
+
+
+async def test_without_a_notifier_unlinking_others_is_off() -> None:
+    store, people = MemoryStore(), People()
+    links = LinkCommand(store, people, policy=POLICY)
+    await store.link_identity(BOB, "octo-cat")
+    assert (await links.handle(APPROVER, "unlink", BOB)).text == NOT_AN_ADMIN
+
+
+async def test_the_slack_note_is_plain_text_without_unfurls() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.posts: list[dict[str, Any]] = []
+
+        async def chat_postMessage(self, **kwargs: Any) -> dict[str, Any]:
+            self.posts.append(kwargs)
+            return {"ok": True}
+
+    client = Client()
+    await SlackNote(client).tell(BOB, removal_note(None))
+    [post] = client.posts
+    assert post["channel"] == BOB
+    assert post["blocks"][0]["text"]["type"] == "plain_text"
+    assert post["unfurl_links"] is False and post["unfurl_media"] is False
+    assert post["text"].startswith("Whoever runs JotFlow removed")
+
+
+async def test_the_command_passes_the_member_id_unchanged() -> None:
+    links, store, _, notes = admin_command()
+    await store.link_identity(BOB, "octo-cat")
+    app = App()
+    register_commands(cast(Any, app), links=links)
+    said: list[str] = []
+
+    async def ack(*args: Any) -> None:
+        return None
+
+    async def respond(text: str) -> None:
+        said.append(text)
+
+    sent = {"user_id": APPROVER, "channel_id": "C0ANY", "text": f"Unlink {BOB}"}
+    await app.commands[SLASH_COMMAND](ack=ack, command=sent, respond=respond)
+    assert said[0].startswith(f"Unlinked the GitHub login of Bob ({BOB})")
+    assert [user for user, _ in notes.sent] == [BOB]

@@ -34,6 +34,7 @@ from jotflow.store.base import (
     ConflictError,
     EditField,
     IdentityLink,
+    IdentityUnlink,
     LinkSource,
     MessageLink,
     NotFoundError,
@@ -81,6 +82,7 @@ class MemoryStore:
         self._topics: dict[str, TopicRecord] = {}
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
+        self._unlinks: list[IdentityUnlink] = []
         self._operators: dict[str, OperatorToken] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
         self._notices: set[tuple[str, str, str]] = set()
@@ -396,6 +398,20 @@ class MemoryStore:
     async def unlink_identity(self, slack_user_id: str) -> bool:
         async with self._lock:
             return self._identities.pop(slack_user_id, None) is not None
+
+    async def remove_identity(self, slack_user_id: str, *, removed_by: str) -> bool:
+        check_id(slack_user_id, "Slack user id")
+        check_id(removed_by, "remover")
+        async with self._lock:
+            if self._identities.pop(slack_user_id, None) is None:
+                return False
+            self._unlinks.append(
+                IdentityUnlink(secrets.token_hex(8), slack_user_id, removed_by, self._clock())
+            )
+            return True
+
+    async def identity_unlinks(self) -> list[IdentityUnlink]:
+        return sorted(self._unlinks, key=lambda u: u.removed_at, reverse=True)
 
     # Operator tokens
 

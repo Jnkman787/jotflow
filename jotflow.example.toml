@@ -58,6 +58,13 @@ newcomer_tip = true
 # such as "skip" or "Idea - ..." without the colon. JotFlow never acts on it.
 near_miss_nudge = true
 
+[identity]
+# Slack user ids that may remove someone else's GitHub link with
+# /jotflow unlink <member-id>, as approvers always may. For a login someone
+# claimed that isn't theirs. Empty, the default, leaves only approvers, or
+# `jotflow identity unlink` on the host.
+admins = []
+
 # One table per Slack channel, keyed by channel id.
 [channels.C0EXAMPLE1]
 debounce_seconds = 60

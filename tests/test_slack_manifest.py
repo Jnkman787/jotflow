@@ -48,13 +48,19 @@ def test_bot_cannot_join_channels_by_itself() -> None:
     assert "channels:join" not in render_manifest()["oauth_config"]["scopes"]["bot"]
 
 
-def test_app_home_tabs_are_off() -> None:
-    app_home = render_manifest()["features"]["app_home"]
-    assert app_home == {
+def test_only_a_read_only_messages_tab_is_on() -> None:
+    """For the private note when someone's link is removed (#173). No Home tab, and
+    people can't write to the app, which reads no DMs: no im scopes or events."""
+    manifest = render_manifest()
+    assert manifest["features"]["app_home"] == {
         "home_tab_enabled": False,
-        "messages_tab_enabled": False,
-        "messages_tab_read_only_enabled": False,
+        "messages_tab_enabled": True,
+        "messages_tab_read_only_enabled": True,
     }
+    assert not [s for s in manifest["oauth_config"]["scopes"]["bot"] if s.startswith("im:")]
+    assert not [
+        e for e in manifest["settings"]["event_subscriptions"]["bot_events"] if "im" in e.split(".")
+    ]
 
 
 def test_event_subscriptions() -> None:

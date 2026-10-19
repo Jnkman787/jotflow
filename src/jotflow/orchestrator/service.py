@@ -57,7 +57,7 @@ from jotflow.orchestrator.card_sync import (
 from jotflow.orchestrator.cards import CardContext, CardPoster, CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
 from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
-from jotflow.orchestrator.identity import LinkCommand, PeopleLookup
+from jotflow.orchestrator.identity import LinkCommand, Notifier, PeopleLookup, SlackNote
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
@@ -219,6 +219,7 @@ class Orchestrator:
         card_seconds: float = SYNC_SECONDS,
         approval_slack: ApprovalSlack | None = None,
         link_people: PeopleLookup | None = None,
+        link_notifier: Notifier | None = None,
         mode_slack: ModeSlack | None = None,
         thread_slack: ThreadSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
@@ -244,6 +245,7 @@ class Orchestrator:
         self.cards: CardSync | None = None
         self._approval_slack = approval_slack
         self._link_people = link_people
+        self._link_notifier = link_notifier
         self.approval: ApprovalHandler | None = None
         self.edits: CardEdits | None = None
         self._mode_slack = mode_slack
@@ -306,8 +308,15 @@ class Orchestrator:
         self.threads = ThreadNotice(
             self._store, self._policy, self._thread_slack or BoltThreadSlack(self._client)
         )
-        # Each person links only their own GitHub login (#35).
-        self.links = LinkCommand(self._store, self._link_people or slack_people)
+        # Each person links only their own GitHub login (#35); approvers and
+        # identity admins can remove someone else's (#173).
+        self.links = LinkCommand(
+            self._store,
+            self._link_people or slack_people,
+            policy=self._policy,
+            names=people,
+            notifier=self._link_notifier or SlackNote(self._client),
+        )
         self.modes = ModeCommand(
             self._store,
             self._policy,
