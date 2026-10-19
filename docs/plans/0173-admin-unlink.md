@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #173
-- Draft PR: pending
+- Draft PR: #194
 - Status: planning
 - Next safe action: the lead confirms the decisions below, then implement
 
