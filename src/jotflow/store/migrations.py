@@ -188,6 +188,17 @@ CREATE TABLE proposal_edits (
 )
 """
 
+_REACTION_MARKS = """
+CREATE TABLE reaction_marks (
+    channel_id TEXT NOT NULL, -- Slack channel id
+    ts TEXT NOT NULL, -- Slack timestamp of the message reacted to
+    user_id TEXT NOT NULL, -- Slack user id of who reacted
+    keyword TEXT NOT NULL CHECK (keyword IN ('idea', 'bug', 'skip')), -- what it stands for
+    marked_at TEXT NOT NULL, -- UTC, ISO 8601
+    PRIMARY KEY (channel_id, ts, user_id, keyword)
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -280,6 +291,18 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         10,
         (_PROPOSAL_EDITS, "CREATE INDEX proposal_edits_proposal ON proposal_edits (proposal_id)"),
+    ),
+    # Who reacted with a keyword's reaction, so removing it can take the keyword back (#138).
+    Migration(
+        11,
+        (
+            _REACTION_MARKS,
+            # A person's skip from before marks were kept stays: no reaction removed
+            # later can undo it, as for a skip: in the text (CodeRabbit).
+            "INSERT INTO reaction_marks (channel_id, ts, user_id, keyword, marked_at)"
+            " SELECT channel_id, ts, 'text', 'skip', linked_at FROM message_refs"
+            " WHERE chatter = 1 AND linked_by = 'person'",
+        ),
     ),
 )
 

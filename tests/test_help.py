@@ -89,7 +89,7 @@ def test_help_lists_every_keyword_and_reaction() -> None:
     for keyword in KEYWORDS:
         assert re.search(rf"^  {keyword}:", text, re.MULTILINE), keyword
     for reaction, keyword in REACTIONS.items():
-        assert f":{reaction}: to {keyword}" in text
+        assert f":{reaction}: for {keyword}:" in text
 
 
 def test_the_guide_names_every_keyword_and_the_help_command() -> None:

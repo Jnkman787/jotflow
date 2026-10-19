@@ -110,6 +110,7 @@ def register_handlers(
 
     app.event("message")(on_event)
     app.event("reaction_added")(on_event)
+    app.event("reaction_removed")(on_event)
 
 
 def register_commands(

@@ -59,7 +59,12 @@ def test_app_home_tabs_are_off() -> None:
 
 def test_event_subscriptions() -> None:
     events = render_manifest()["settings"]["event_subscriptions"]["bot_events"]
-    assert sorted(events) == ["message.channels", "message.groups", "reaction_added"]
+    assert sorted(events) == [
+        "message.channels",
+        "message.groups",
+        "reaction_added",
+        "reaction_removed",
+    ]
 
 
 def test_socket_mode_needs_no_public_urls() -> None:
