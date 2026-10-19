@@ -36,6 +36,7 @@ from jotflow.models import (
     RunKind,
     RunStatus,
     TopicIndex,
+    TopicSummary,
     UntrustedText,
 )
 from jotflow.orchestrator.topics import list_topics as build_topic_list
@@ -67,6 +68,16 @@ DRAFTING_INSTRUCTIONS = (
 )
 # A thread's people, authors first, then the people they mention.
 MAX_PEOPLE = 50
+
+# A proposal still on its way to GitHub: waiting for a person, or being written.
+LIVE_PROPOSAL_STATES = frozenset(
+    {
+        ProposalState.PENDING,
+        ProposalState.APPROVED,
+        ProposalState.EXECUTING,
+        ProposalState.RECONCILING,
+    }
+)
 
 EXECUTABLE_STATES = frozenset(
     {ProposalState.APPROVED, ProposalState.EXECUTING, ProposalState.RECONCILING}
@@ -245,9 +256,27 @@ def read_tools(
 
     async def topics(grant: Grant, _: NoArguments) -> TopicIndex:
         try:
-            return await build_topic_list(store, policy, grant.channel_id, now=clock())
+            index = await build_topic_list(store, policy, grant.channel_id, now=clock())
         except UnknownChannelError:
             raise ToolError(f"channel {grant.channel_id} is not configured") from None
+        marked = [await _mark_proposed(grant.channel_id, t) for t in index.topics]
+        return index.model_copy(update={"topics": marked})
+
+    async def _mark_proposed(channel_id: str, summary: TopicSummary) -> TopicSummary:
+        """Flag a topic whose new issue is already proposed, so a second thread
+        joining it does not propose the same issue again (#23)."""
+        if summary.issue_number is not None:
+            return summary
+        for thread_ts in summary.threads:
+            for record in await store.thread_proposals(channel_id, thread_ts):
+                draft = record.proposal
+                if (
+                    draft.kind == "create_issue"
+                    and draft.topic_id == summary.id
+                    and record.state in LIVE_PROPOSAL_STATES
+                ):
+                    return summary.model_copy(update={"issue_proposed": True})
+        return summary
 
     async def topic(grant: Grant, arguments: GetTopicInput) -> TopicDetail:
         record = await store.get_topic(arguments.topic_id)

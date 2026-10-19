@@ -58,6 +58,10 @@ propose a second issue for an idea that already has one.
 
 ## 6. Propose
 
+If a topic in `topics` has `issue_proposed`, its issue is already proposed
+and waiting for approval: link the message to that topic and do not propose
+again.
+
 For each new topic that is real work, call `propose_issue` once:
 
 - `title`: under 80 characters, plain, specific.
@@ -98,7 +102,8 @@ Use `ask_channel` for one short, neutral question in the thread:
   for example people were mentioned but nobody took it: propose, then ask once
   who should own it.
 
-Ask at most once per topic per run. Do not ask again what a `from_jotflow`
+Do not ask who owns work when nobody was mentioned or volunteered: an issue
+with no assignee is normal. Ask at most once per topic per run. Do not ask again what a `from_jotflow`
 message already asked; read the replies to it instead.
 
 ## 9. Stop

@@ -378,6 +378,13 @@ class TopicSummary(BaseModel):
         description="Up to five Slack thread timestamps, most recent first",
     )
     last_active: AwareDatetime
+    issue_proposed: Literal[True] | None = Field(
+        default=None,
+        description=(
+            "True when a proposal for a new issue on this topic is waiting for approval or "
+            "being written. Do not propose another; link messages to the topic instead"
+        ),
+    )
 
 
 class TopicIndex(BaseModel):

@@ -28,6 +28,7 @@ def test_the_instructions_are_plain_bounded_ascii() -> None:
         "chatter",
         "Chatter never yields",
         "hint_overruled",
+        "issue_proposed",
         "channel.repos",
         "description",
         "search_issues",
@@ -71,6 +72,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "hint_overruled",
         "issue_links",
         "github_login",
+        "issue_proposed",
     }
     named = set(re.findall(r"`([a-z]+(?:_[a-z]+)+)`", DRAFTING_INSTRUCTIONS)) - fields
     assert named <= jotflow | github, named - jotflow - github

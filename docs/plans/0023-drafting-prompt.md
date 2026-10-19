@@ -141,15 +141,30 @@ Two new fixtures:
 - [x] `hint_overruled` on proposals, with tests
 - [x] The fixture `github` block, `fake_github_mcp`, and the two new fixtures
 - [x] `jotflow replay --agent`, the local launcher, the stub preset in CI, `--repeat`, and the two invariants
-- [ ] Run Claude Code against every fixture with N=3, record the results, and tune the instructions
-- [ ] Docs: architecture.md's agent output contract and the packet, the fixtures README, and docs/presets.md
+- [x] Run Claude Code against every fixture with N=3, record the results, and tune the instructions
+- [x] Docs: architecture.md's agent output contract and the packet, the fixtures README, and docs/presets.md
 - [ ] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
 - **The scripted harness.** `jotflow replay --all --agent scripted --repeat 2` matched every fixture 2 of 2 times, through the real runner, MCP server, and tokens, with the stub agent in a subprocess. `tests/test_replay_agent.py` runs every fixture this way.
-- **The claude-code plumbing.** With an invalid API key and a scratch HOME, `jotflow replay feature-request --agent claude-code` launched Claude Code 2.1.303 through the preset, and it exited 1 on the key, as expected. No real run yet: that waits on the lead's answer about model spend.
+- **The real-agent pass.** On 2026-10-19, the maintainer approved one full pass on their Claude Code login, using the claude-code preset's default sonnet. It ran `make eval-agent YES=1`, which is 10 fixtures 3 times each, 42 agent runs:
+
+  | Fixture | Matched |
+  |---|---|
+  | ambiguous-repo, chatter, closed-duplicate, existing-topic, feature-request, keywords, mention-without-ownership, mentions | 3/3 each |
+  | bug-report | 2/3. One run asked an unneeded question. |
+  | same-topic-two-threads | 0/3. The second thread joined the right topic, then proposed a second issue for it. |
+
+  There were no invariant failures: no proposal drew on chatter, and every assignee was linked. In total, the pass took 285 turns, about 45k output tokens, 178k cache-write and 1.69M cache-read tokens, and reported $1.33.
+
+  The pass led to two fixes:
+  - The topic index now marks a topic whose new issue is already proposed, as `issue_proposed`, and the instructions say not to propose again.
+  - The instructions now say not to ask about ownership when nobody was mentioned or volunteered.
+
+  Single reruns afterwards matched: same-topic-two-threads 3/3, bug-report 5/5 with no question asked, and mention-without-ownership 1/1. Those reruns cost about $0.50 together. No transcripts or fixture text were kept, only the counts.
+- **The claude-code plumbing.** With an invalid API key and a scratch HOME, `jotflow replay feature-request --agent claude-code` launched Claude Code 2.1.303 through the preset, and it exited 1 on the key, as expected. Real runs followed, as below.
 - **The approval hash.** Proposals without `hint_overruled` hash exactly as they did on main. A test pins the two hashes.
 - **The GitHub stand-in.** It serves the tool names, descriptions, and input schemas captured from github-mcp-server 2.0.2's `tools/list` with `--read-only`.
 

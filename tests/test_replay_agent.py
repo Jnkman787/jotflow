@@ -217,3 +217,34 @@ def test_usage_is_rendered_after_a_real_run() -> None:
     }
     line = replay_command._render_usage(totals)
     assert line.startswith("Agent runs: 2, turns: 8") and line.endswith("cost: $0.50")
+
+
+async def test_a_topic_whose_issue_is_proposed_says_so() -> None:
+    from jotflow.replay import replay
+    from jotflow.store import MemoryStore
+    from jotflow.whiteboard.read_tools import NoArguments, read_tools
+    from jotflow.whiteboard.tokens import Grant
+
+    thread = builtin_thread("same-topic-two-threads")
+    store = MemoryStore()
+    assert (await replay(thread, store=store)).ok
+    channel = next(iter(thread.policy.channels))
+    run = await store.enqueue_run(RunKind.DRAFTING, channel, "1792314000.000100")
+    await store.claim_next_run(max_running=8)
+    spec = next(s for s in read_tools(store, thread.policy) if s.name == "list_topics")
+    grant = Grant(run.id, RunKind.DRAFTING, channel, thread_ts="1792314000.000100")
+    [topic] = (await spec.handler(grant, NoArguments())).topics
+    assert topic.issue_proposed is True
+    assert '"issue_proposed":true' in (await spec.handler(grant, NoArguments())).to_prompt()
+
+    other = builtin_thread("existing-topic")  # its topic already has issue #42
+    store = MemoryStore()
+    assert (await replay(other, store=store)).ok
+    channel = next(iter(other.policy.channels))
+    run = await store.enqueue_run(RunKind.DRAFTING, channel, "1792314600.000100")
+    await store.claim_next_run(max_running=8)
+    spec = next(s for s in read_tools(store, other.policy) if s.name == "list_topics")
+    grant = Grant(run.id, RunKind.DRAFTING, channel, thread_ts="1792314600.000100")
+    topics = (await spec.handler(grant, NoArguments())).topics
+    assert all(t.issue_proposed is None for t in topics)
+    assert "issue_proposed" not in (await spec.handler(grant, NoArguments())).to_prompt()
