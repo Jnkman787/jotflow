@@ -55,14 +55,14 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 
 ### Known limitations
 
-The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists each deliberate gap, why it's accepted, and its follow-up. In short:
+The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists each deliberate gap, why it's accepted, and its follow-up. In short, with the [After v0.1.0](docs/roadmap.md#milestone-6-after-v010-todo) milestone holding the planned follow-ups:
 
-- GitHub logins linked with `/jotflow link` are self-declared until verification exists. Cards mark them "(unverified)".
+- GitHub logins linked with `/jotflow link` are self-declared. Cards mark them "(unverified)", and verifying them is planned after 0.1.0 (#195).
 - Approval is open to anyone in the channel by default, including the poster. Turn approvers on for wide or external membership.
 - With `issue_links = "none"`, names typed into a message can't be detected mechanically. A person reads the full body before approving.
 - The Codex preset is experimental and not a default.
-- Runs of the same kind can read each other's environment. They already hold the same token.
+- Runs of the same kind can read each other's environment. They already hold the same token, and per-run isolation is planned after 0.1.0 (#181).
 - A custom agent command's tools are the team's responsibility.
-- Rebuilding the database from Slack isn't built yet, so keep backups.
+- Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
 [0.1.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.0
