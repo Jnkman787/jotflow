@@ -132,6 +132,14 @@ def _safe_hint(value: str | None) -> str | None:
     return value
 
 
+# A repo's visibility on GitHub, as the policy or the drafting agent states it (#122).
+RepoVisibility = Literal["public", "private"]
+REPO_VISIBILITY_DESCRIPTION = (
+    "The target repo's visibility on GitHub, as your read-only access shows it. A public "
+    "repo puts a warning on the card; private never removes one the policy sets"
+)
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -159,6 +167,9 @@ class IssueProposal(BaseModel):
     )
 
     _hint_overruled = field_validator("hint_overruled")(_safe_hint)
+    repo_visibility: RepoVisibility | None = Field(
+        default=None, description=REPO_VISIBILITY_DESCRIPTION
+    )
 
 
 class IssueChanges(BaseModel):
@@ -190,6 +201,9 @@ class UpdateProposal(BaseModel):
     )
 
     _hint_overruled = field_validator("hint_overruled")(_safe_hint)
+    repo_visibility: RepoVisibility | None = Field(
+        default=None, description=REPO_VISIBILITY_DESCRIPTION
+    )
 
 
 Proposal = Annotated[IssueProposal | UpdateProposal, Field(discriminator="kind")]

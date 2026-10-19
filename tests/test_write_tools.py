@@ -906,3 +906,12 @@ async def test_a_paused_refusal_reaches_the_agent_as_a_tool_error() -> None:
     with pytest.raises(Refusal) as refused:
         await tools.ask_channel(DRAFT, AskChannelArgs(text="Which repo?"))
     assert refused.value.reason.startswith("this channel is paused")
+
+
+async def test_the_agents_visibility_report_is_kept_with_the_proposal(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(DRAFT, issue(topic_id, repo_visibility="public"))
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.repo_visibility == "public"

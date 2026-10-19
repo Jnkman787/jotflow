@@ -139,6 +139,26 @@ def test_a_custom_approval_reaction_round_trips() -> None:
     policy = _policy(approval={"reactions": True, "reaction": "+1"})
     text = render_policy(policy)
     assert 'reaction = "+1"' in text
+
+
+def test_repo_visibility_round_trips() -> None:
+    policy = _policy(
+        channels={
+            "G0PRIV": {
+                "repos": [
+                    {
+                        "repo": "acme/api",
+                        "nickname": "api",
+                        "description": "API",
+                        "visibility": "public",
+                    },
+                    {"repo": "acme/web", "nickname": "web", "description": "Web"},
+                ]
+            }
+        }
+    )
+    text = render_policy(policy)
+    assert text.count("visibility = ") == 1 and 'visibility = "public"' in text
     assert parse_policy(text) == policy
 
 

@@ -68,11 +68,17 @@ debounce_seconds = 60
 # check that rule itself; the agent's instructions carry it. A list narrows
 # the choice to only the labels listed, and JotFlow enforces it. An empty
 # list (labels = []) is an error: leave the line out to allow any label.
+# visibility is optional too: "public" or "private", as on GitHub. A public
+# repo puts a warning on every card, because approving makes the issue
+# visible to anyone. JotFlow has no GitHub access, so this line is the source:
+# the agent may add the warning when it sees a public repo, but never remove
+# one. Without the line, cards say visibility was not checked.
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"
 description = "The customer-facing web app: pages, sign-up, onboarding"
 labels = ["bug", "enhancement", "size:s", "size:m", "size:l"]
+visibility = "private"
 
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/api"

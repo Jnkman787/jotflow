@@ -430,3 +430,58 @@ async def test_sync_and_refresh_never_post_the_same_card_twice(store: Store) -> 
     poster.post = slow  # type: ignore[method-assign]
     await asyncio.gather(cards.sync(), cards.refresh("p1"))
     assert len(poster.posts) == 1
+
+
+# Repo visibility (#122): the policy decides, the agent may only add a warning
+
+WARNING = "is public, so this issue will be visible to anyone"
+NOT_CHECKED = "Repo visibility was not checked"
+
+
+@pytest.mark.parametrize(
+    ("policy_says", "agent_says", "expected"),
+    [
+        (None, None, "unknown"),
+        ("public", None, "public"),
+        ("private", None, "private"),
+        (None, "public", "public"),
+        ("private", "public", "public"),
+        ("public", "private", "public"),  # an agent's private never silences the policy
+        (None, "private", "unknown"),  # nor stands in for it
+    ],
+)
+def test_effective_visibility(policy_says: Any, agent_says: Any, expected: str) -> None:
+    from jotflow.orchestrator.card_sync import effective_visibility
+
+    assert effective_visibility(policy_says, agent_says) == expected
+
+
+@pytest.mark.parametrize(
+    ("policy_says", "agent_says", "shown"),
+    [
+        ("public", "private", WARNING),
+        (None, "public", WARNING),
+        (None, None, NOT_CHECKED),
+        (None, "private", NOT_CHECKED),
+        ("private", None, None),
+    ],
+)
+async def test_the_card_shows_what_the_rule_says(
+    store: Store, policy_says: Any, agent_says: Any, shown: str | None
+) -> None:
+    repo: dict[str, Any] = {"repo": "acme-co/web", "nickname": "web", "description": "W"}
+    if policy_says is not None:
+        repo["visibility"] = policy_says
+    policy = Policy.model_validate({"channels": {CH: {"repos": [repo]}}})
+    record = proposal()
+    record = record.model_copy(
+        update={"proposal": record.proposal.model_copy(update={"repo_visibility": agent_says})}
+    )
+    await store.add_proposal(record)
+    poster = FakeCardPoster()
+    sync = CardSync(store, policy, CardPublisher(store, poster), FakePeople(), clock=Clock())
+    await sync.sync()
+    ((_, _, card),) = poster.posts
+    text = text_of(card)
+    for line in (WARNING, NOT_CHECKED):
+        assert (line in text) is (line == shown)

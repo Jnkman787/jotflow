@@ -229,7 +229,7 @@ The mode applies uniformly to creation, description edits, comments, assignment,
 
 **What approval guarantees, always** (D7):
 
-- The card shows the full issue body, the target repo, labels, assignees, size, and confidence. A public target repo shows a warning.
+- The card shows the full issue body, the target repo, labels, assignees, size, and confidence. A public target repo shows a warning. JotFlow has no GitHub access, so visibility comes from the repo's `visibility` line in `jotflow.toml`, which `jotflow init` fills from the installer's own `gh` login when it can, and asks for otherwise. The drafting agent may report `repo_visibility`: its `public` adds the warning, but its `private` never removes one, since agent output is untrusted. With neither source, the card says visibility was not checked (#122). The agent's report is outside the approval hash and never reaches the execution run.
 - Approving locks that exact content by hash. The execution run receives only those approved fields.
 - The card records who approved and when.
 - **The card itself** (`src/jotflow/orchestrator/cards.py`, #26). It shows:

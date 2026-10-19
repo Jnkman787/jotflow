@@ -229,7 +229,7 @@ Connected to Slack as @idea_bot in Acme Co.
 Setup writes two files next to `docker-compose.yml`. Neither is committed to git.
 
 - **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that is not enforced: the folder's Windows permissions decide who can read it, and setup says so instead of "Only your user can read that file". Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
-- **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option.
+- **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option. Each repo can say whether it's public or private on GitHub. Setup fills that in from your own `gh` login if you have one, and asks otherwise. Cards for a public repo carry a warning.
 
 Running `uv run jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`, and it keeps the agent containers' secrets.
 
