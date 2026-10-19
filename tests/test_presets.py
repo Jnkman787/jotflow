@@ -33,7 +33,7 @@ from jotflow.adapters.runner import (
     parse_preset,
 )
 from jotflow.commands import runner as runner_command
-from jotflow.models import RunKind
+from jotflow.models import RUN_KINDS, RunKind
 from jotflow.store import MemoryStore
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.write_tools import write_tools
@@ -104,7 +104,7 @@ def test_no_model_leaves_the_cli_default(tmp_path: Path) -> None:
     assert "--model" not in plan.argv
 
 
-@pytest.mark.parametrize("kind", list(RunKind))
+@pytest.mark.parametrize("kind", sorted(RUN_KINDS))
 def test_claude_code_allows_exactly_the_kinds_tools(kind: RunKind, tmp_path: Path) -> None:
     plan = CLAUDE_CODE.plan(context(kind, tmp_path))
     allowed = plan.argv[plan.argv.index("--allowedTools") + 1].split(",")
@@ -118,7 +118,7 @@ def test_claude_code_allows_exactly_the_kinds_tools(kind: RunKind, tmp_path: Pat
     assert plan.argv[2] == presets.CLAUDE_PROMPTS[kind]
 
 
-@pytest.mark.parametrize("kind", list(RunKind))
+@pytest.mark.parametrize("kind", sorted(RUN_KINDS))
 def test_claude_code_loads_only_jotflow_and_the_pinned_github_server(
     kind: RunKind, tmp_path: Path
 ) -> None:
@@ -154,12 +154,12 @@ def test_only_execution_can_write_to_github() -> None:
 def test_the_jotflow_tool_table_matches_the_whiteboard() -> None:
     store = MemoryStore()
     specs = (*read_tools(store, POLICY), *write_tools(store, POLICY, Poster()))
-    for kind in RunKind:
+    for kind in sorted(RUN_KINDS):
         declared = {spec.name for spec in specs if kind in spec.kinds}
         assert set(JOTFLOW_TOOLS[kind]) == declared, kind
 
 
-@pytest.mark.parametrize("kind", list(RunKind))
+@pytest.mark.parametrize("kind", sorted(RUN_KINDS))
 def test_claude_code_keeps_its_logs_in_the_run_directory(kind: RunKind, tmp_path: Path) -> None:
     env = CLAUDE_CODE.plan(context(kind, tmp_path)).env
     assert env["XDG_CACHE_HOME"] == str(tmp_path / "cache")
@@ -170,14 +170,14 @@ def test_claude_code_keeps_its_logs_in_the_run_directory(kind: RunKind, tmp_path
 
 
 def test_every_kind_has_a_turn_limit(tmp_path: Path) -> None:
-    for kind in RunKind:
+    for kind in sorted(RUN_KINDS):
         argv = CLAUDE_CODE.plan(context(kind, tmp_path)).argv
         assert int(argv[argv.index("--max-turns") + 1]) == presets.CLAUDE_MAX_TURNS[kind] > 0
 
 
 @pytest.mark.parametrize("name", sorted(PRESETS))
 def test_preset_env_never_touches_the_runners_names(name: str, tmp_path: Path) -> None:
-    for kind in RunKind:
+    for kind in sorted(RUN_KINDS):
         for key in PRESETS[name].plan(context(kind, tmp_path)).env:
             assert not _FORBIDDEN_ENV.search(key)
             assert key not in {"HOME", "TMPDIR", "PATH"}
@@ -375,7 +375,7 @@ def test_runner_preset_settings_problems_exit_2(
 
 def test_no_prompt_carries_run_data(tmp_path: Path) -> None:
     """D1: the prompt is fixed per kind. Run ids, tokens, paths, and models never reach it."""
-    for kind in RunKind:
+    for kind in sorted(RUN_KINDS):
         run = context(kind, tmp_path, model="claude-sonnet-5-5")
         plan = CLAUDE_CODE.plan(run)
         prompt = plan.argv[plan.argv.index("-p") + 1]

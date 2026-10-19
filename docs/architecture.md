@@ -49,6 +49,7 @@ Every call carries a token, and what a token may do depends on who holds it:
 | Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel` |
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
 | Question run (M5, D12) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `ask_channel` (answers in the source thread only) |
+| Operator token (M5, D12, #58) | One person, named channels, admin-issued and revocable | `list_topics`, `get_topic` only: no `get_work`, no write, approval or result tool |
 | Operator (M5, D12) | A person, created and revoked by an admin, named channels only | `list_topics`, `get_topic` |
 
 Tokens are short-lived for runs and revocable for operators. The server validates `Host` and `Origin` headers so a web page cannot reach it from a browser.

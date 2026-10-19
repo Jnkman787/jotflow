@@ -17,13 +17,13 @@ from slack_sdk.web.async_client import AsyncWebClient
 from jotflow.adapters.runner import Runner, build_runner_app
 from jotflow.commands.run import make_mcp_server
 from jotflow.config import Settings
-from jotflow.models import MessageRef, ProposalState, RunKind, RunStatus
+from jotflow.models import RUN_KINDS, MessageRef, ProposalState, RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Ignored
 from jotflow.orchestrator.launch import RunnerClient, RunnerEndpoint
 from jotflow.orchestrator.service import Orchestrator, RunKinds, decide_run_kinds
 from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
-from jotflow.whiteboard.tokens import Grant, TokenRegistry
+from jotflow.whiteboard.tokens import Grant, TokenCheck, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
 from tests.test_card_sync import FakeCardPoster, FakePeople
 from tests.test_help import FakeHelpSlack
@@ -66,10 +66,15 @@ class FakeServer:
     """Records the order of events, and how many tokens are live as it stops."""
 
     def __init__(
-        self, events: list[str], registry: TokenRegistry, tools: Sequence[ToolSpec]
+        self,
+        events: list[str],
+        registry: TokenRegistry,
+        tokens: TokenCheck,
+        tools: Sequence[ToolSpec],
     ) -> None:
         self.events = events
         self.registry = registry
+        self.tokens = tokens
         self.tools = tools
         self.live_at_stop: int | None = None
         self.fail = False
@@ -138,10 +143,8 @@ class Rig:
         state = "killed" if request.method == "DELETE" else "running"
         return httpx2.Response(200, json={"run_id": run_id, "state": state})
 
-    def _server(
-        self, _: Settings, registry: TokenRegistry, tools: Sequence[ToolSpec]
-    ) -> FakeServer:
-        self.server = FakeServer(self.events, registry, tools)
+    def _server(self, _: Settings, tokens: TokenCheck, tools: Sequence[ToolSpec]) -> FakeServer:
+        self.server = FakeServer(self.events, self.orchestrator.registry, tokens, tools)
         self.server.fail = self.fail_server
         return self.server
 
@@ -170,7 +173,7 @@ async def until(condition: Any, *, tries: int = 500) -> None:
 
 
 def test_each_run_kind_needs_a_preset_and_its_own_runner_secret() -> None:
-    assert decide_run_kinds(settings(), policy()) == RunKinds(frozenset(RunKind), ())
+    assert decide_run_kinds(settings(), policy()) == RunKinds(RUN_KINDS, ())
     none = decide_run_kinds(settings(), policy(preset=None))
     assert none.on == frozenset() and "preset is not set" in none.off[0]
     no_exec = decide_run_kinds(settings(runner_exec_secret=None), policy())
@@ -433,7 +436,7 @@ async def test_without_the_drafting_secret_nothing_is_queued_but_execution_runs(
 async def test_runners_that_match_jotflow_toml_turn_their_kinds_on() -> None:
     rig = Rig()
     await rig.orchestrator.start()
-    assert rig.orchestrator.kinds.on == frozenset(RunKind)
+    assert rig.orchestrator.kinds.on == RUN_KINDS
     assert ("GET", "agent", "/info") in rig.calls and ("GET", "agent-exec", "/info") in rig.calls
     await rig.orchestrator.stop()
 
