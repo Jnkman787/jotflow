@@ -42,6 +42,7 @@ from jotflow.orchestrator.slack import (
     SlackSetupError,
     fetch_identity,
     missing_channels,
+    register_commands,
     register_handlers,
     report_missing,
 )
@@ -189,6 +190,7 @@ async def serve(settings: Settings, policy: Policy) -> int:
         )
         return EXIT_STORE
     register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
+    register_commands(app)
     log.info("watching %d configured channel(s) as @%s", len(policy.channels), bot_name)
 
     handler: Connection = AsyncSocketModeHandler(app, settings.slack_app_token.get_secret_value())

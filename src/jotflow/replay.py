@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from jotflow.models import RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
+from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.packet import SlackWorkSource
 from jotflow.orchestrator.runs import RunLifecycle
@@ -51,10 +52,10 @@ class ReplayError(Exception):
 
 @dataclass(frozen=True)
 class Check:
-    """One comparison with ``expected``. ``ok`` is None for a check not run yet."""
+    """One comparison with ``expected``."""
 
     name: str
-    ok: bool | None
+    ok: bool
     detail: str
 
 
@@ -66,10 +67,10 @@ class ReplayReport:
 
     @property
     def ok(self) -> bool:
-        return all(check.ok is not False for check in self.checks)
+        return all(check.ok for check in self.checks)
 
     def render(self) -> str:
-        marks = {True: "ok  ", False: "FAIL", None: "--  "}
+        marks = {True: "ok  ", False: "FAIL"}
         lines = [f"Replaying {self.thread}: {self.description}", ""]
         lines += [f"  {marks[c.ok]}  {c.name}: {c.detail}" for c in self.checks]
         lines += [
@@ -125,6 +126,30 @@ class _FixtureReader:
         found = self._thread.users.get(user_id)
         name = found.name if found else user_id
         return {"ok": True, "user": {"id": user_id, "profile": {"display_name": name}}}
+
+
+class _FixtureSlack:
+    """The Slack calls keyword handling makes, answered from the fixture.
+
+    Reactions and replies are recorded, never sent.
+    """
+
+    def __init__(self, thread: SavedThread) -> None:
+        self._thread = thread
+        self.reactions: list[tuple[str, str]] = []
+        self.replies: list[str] = []
+
+    async def react(self, channel_id: str, ts: str, name: str) -> None:
+        self.reactions.append((ts, name))
+
+    async def reply(self, channel_id: str, thread_ts: str, text: str) -> None:
+        self.replies.append(thread_ts)
+
+    async def person(self, user_id: str) -> Person:
+        found = self._thread.users.get(user_id)
+        if found is None:
+            return Person(user_id)
+        return Person(user_id, guest=found.guest, external=found.external)
 
 
 def _slack_message(message: MessageEvent) -> dict[str, Any]:
@@ -206,6 +231,18 @@ async def _seed(replay: _Replay) -> None:
         replay.topics[topic.id] = record.topic.id
 
 
+async def _apply_keywords(replay: _Replay, accepted: Sequence[str]) -> None:
+    """Apply re: and skip: with the live keyword handler, before any run (#56)."""
+    handler = KeywordHandler(replay.store, replay.thread.policy, _FixtureSlack(replay.thread))
+    wanted = set(accepted)
+    for event in replay.thread.events:
+        if isinstance(event, ReactionEvent):
+            if f"{event.item.ts}:{event.reaction}" in wanted:
+                await handler.on_reaction(event.model_dump(exclude_none=True))
+        elif event.ts in wanted:
+            await handler.on_message(event.model_dump(exclude_none=True))
+
+
 def _participants(thread: SavedThread, accepted: Sequence[MessageEvent], root: str) -> list[str]:
     bot = thread.workspace.bot.user_id
     seen: list[str] = []
@@ -273,10 +310,6 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
         _equal("ingest accepted", accepted, list(expected.accepted)),
         _equal("ingest ignored", ignored, dict(expected.ignored)),
     ]
-    # Attaching a re: message to its topic is #56's; until then those messages are
-    # set aside here. The keywords check below still checks that they say re:.
-    attached_by_keyword = {ts for ts, word in expected.keywords.items() if word == "re"}
-
     topic_problems: list[str] = []
     for want in expected.topics:
         topic_id = replay.topics.get(want.topic)
@@ -287,8 +320,8 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
         # Only this thread's messages: an existing topic already holds older ones.
         in_thread = replay.thread.messages
         got = {m.ts for m in record.topic.messages if m.ts in in_thread}
-        wanted = set(want.messages) - attached_by_keyword
-        if got - attached_by_keyword != wanted:
+        wanted = set(want.messages)
+        if got != wanted:
             topic_problems.append(f"{want.topic} has {sorted(got)}, expected {sorted(wanted)}")
     checks.append(
         Check(
@@ -374,6 +407,7 @@ async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayRe
     lifecycle = RunLifecycle(active, registry, clock=clock)
     report = ReplayReport(thread.name, thread.description)
     await _seed(state)
+    await _apply_keywords(state, accepted)
     try:
         await _run_script(state, lifecycle, registry, messages)
     except ReplayError as exc:

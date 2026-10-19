@@ -25,6 +25,7 @@ from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
+from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
 from tests.test_runner import ENVIRON, SECRET, _free_port, config
 from tests.test_runs import CH, ISSUE_URL, THREAD, _approved
@@ -89,6 +90,7 @@ class Rig:
         self.fail_server = fail_server
         self.info_preset = "claude-code"
         self.info_status = 200
+        self.slack = FakeSlack()
         self.runner = RunnerClient(
             conversation=RunnerEndpoint("http://agent:8766", SECRET),
             execution=RunnerEndpoint("http://agent-exec:8766", EXEC_SECRET),
@@ -102,6 +104,7 @@ class Rig:
             make_server=self._server,
             open_store=self._open,
             runner=self.runner,
+            keyword_slack=self.slack,
             flush_seconds=0.01,
             tick_seconds=0.01,
             info_attempts=2,
@@ -238,6 +241,8 @@ async def test_a_debouncer_error_is_logged_not_raised(
     async def broken(*_: Any, **__: Any) -> None:
         raise RuntimeError("store is down")
 
+    # Arm a thread while the store works, so the flush below has one to queue.
+    await rig.orchestrator.note(accepted("1760781900.000100"))
     monkeypatch.setattr(rig.store, "get_message", broken)
     monkeypatch.setattr(rig.store, "enqueue_run", broken)
     with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
@@ -491,3 +496,212 @@ async def test_a_runner_serving_other_kinds_turns_them_off() -> None:
     assert checked.off == (
         "drafting and question runs are off: the runner at http://agent:8766 serves drafting",
     )
+
+
+# Keywords before the debouncer, through the real Bolt app (#56)
+
+REPLY = "1760781660.000100"
+
+
+async def _authorize(**_: Any) -> Any:
+    from slack_bolt.authorization import AuthorizeResult
+
+    return AuthorizeResult(
+        enterprise_id=None,
+        team_id="T0ACME",
+        bot_user_id=IDENTITY.user_id,
+        bot_id=IDENTITY.bot_id,
+        bot_token="xoxb-test",
+    )
+
+
+async def _bolt_app(rig: Rig) -> Any:
+    from slack_bolt.async_app import AsyncApp
+
+    from jotflow.orchestrator.ingest import EventFilter
+    from jotflow.orchestrator.slack import register_handlers
+
+    app = AsyncApp(
+        client=AsyncWebClient(token="xoxb-test"),
+        authorize=_authorize,
+        request_verification_enabled=False,
+        process_before_response=True,
+    )
+    register_handlers(app, EventFilter(policy().channels, IDENTITY), rig.orchestrator.note)
+    return app
+
+
+async def _deliver(app: Any, event: dict[str, Any], event_id: str) -> None:
+    from slack_bolt.request.async_request import AsyncBoltRequest
+
+    body = {"type": "event_callback", "team_id": "T0ACME", "event_id": event_id, "event": event}
+    request = AsyncBoltRequest(
+        body=json.dumps(body), headers={"content-type": ["application/json"]}
+    )
+    response = await app.async_dispatch(request)
+    assert response.status == 200
+
+
+def _reply(ts: str, text: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "channel": CH,
+        "ts": ts,
+        "thread_ts": THREAD,
+        "user": "U0ALEX",
+        "text": text,
+    }
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_reply_never_reaches_the_debouncers_topic_join() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        topic = await rig.store.create_topic(CH, "Dark mode")
+        await rig.store.link_message(MessageRef(channel_id=CH, ts=THREAD), topic.topic.id)
+        agent_links: list[str] = []
+        original = rig.store.link_message
+
+        async def recording(ref: MessageRef, topic_id: str, *, by: Any = "agent") -> Any:
+            if by == "agent":
+                agent_links.append(ref.ts)
+            return await original(ref, topic_id, by=by)
+
+        rig.store.link_message = recording  # type: ignore[method-assign]
+        app = await _bolt_app(rig)
+        await _deliver(app, _reply(REPLY, "skip: just a joke"), "Ev1")
+        await _deliver(app, _reply("1760781720.000100", "and dark icons too"), "Ev2")
+    finally:
+        await rig.orchestrator.stop()
+    skipped = await rig.store.get_message(CH, REPLY)
+    assert skipped is not None and skipped.chatter and skipped.topic_id is None
+    assert skipped.linked_by == "person"
+    # The control: an ordinary reply in the same thread is joined, by the agent.
+    joined = await rig.store.get_message(CH, "1760781720.000100")
+    assert joined is not None and joined.topic_id == topic.topic.id and joined.linked_by == "agent"
+    assert rig.slack.reactions == [(CH, REPLY, "white_check_mark")]
+    # Never joined at all, not joined and then overridden.
+    assert agent_links == ["1760781720.000100"]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_reaction_reaches_the_handler_through_the_app() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        reaction = {
+            "type": "reaction_added",
+            "user": "U0ALEX",
+            "item_user": "U0ALEX",
+            "reaction": "no_entry_sign",
+            "item": {"type": "message", "channel": CH, "ts": THREAD},
+        }
+        await _deliver(app, reaction, "Ev3")
+    finally:
+        await rig.orchestrator.stop()
+    link = await rig.store.get_message(CH, THREAD)
+    assert link is not None and link.chatter and link.linked_by == "person"
+
+
+async def test_keywords_apply_even_with_runs_off() -> None:
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        event = {"type": "message", "channel": CH, "ts": THREAD, "text": "skip: testing"}
+        await rig.orchestrator.note(accepted(), event)
+    finally:
+        await rig.orchestrator.stop()
+    link = await rig.store.get_message(CH, THREAD)
+    assert link is not None and link.chatter
+
+
+async def test_a_keyword_error_is_logged_and_the_debouncer_still_runs(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+
+        async def broken(*_: Any, **__: Any) -> Any:
+            raise RuntimeError("store is down")
+
+        monkeypatch.setattr(rig.store, "mark_chatter", broken)
+        event = {"type": "message", "channel": CH, "ts": THREAD, "text": "skip: testing"}
+        with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+            await rig.orchestrator.note(accepted(), event)
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending()
+    finally:
+        await rig.orchestrator.stop()
+    assert "could not apply a keyword" in caplog.text
+
+
+async def _until_flushed(rig: Rig) -> None:
+    await asyncio.sleep(1.3)  # past the one-second debounce, with flushes every 10 ms
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_message_queues_no_drafting_run() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        root = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX"}
+        await _deliver(app, {**root, "text": "skip: just testing the bot"}, "Ev4")
+        await _deliver(app, _reply(REPLY, "it did not react, nice"), "Ev7")
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+        await _until_flushed(rig)
+        runs = await rig.store.thread_runs(CH, THREAD)
+    finally:
+        await rig.orchestrator.stop()
+    link = await rig.store.get_message(CH, THREAD)
+    assert link is not None and link.chatter and link.linked_by == "person"
+    assert runs == []
+    assert not [call for call in rig.calls if call[0] == "POST"]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_reply_leaves_the_threads_wait_alone() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        await _deliver(app, _reply(REPLY, "skip: off topic"), "Ev5")
+        assert rig.orchestrator._debouncer is not None
+        assert not rig.orchestrator._debouncer.pending()
+    finally:
+        await rig.orchestrator.stop()
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_an_re_reply_joins_the_named_issues_topic_through_the_app() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        parent = await rig.store.create_topic(CH, "Dark mode")
+        await rig.store.link_message(MessageRef(channel_id=CH, ts=THREAD), parent.topic.id)
+        export = await rig.store.create_topic(CH, "Export as CSV")
+        await rig.store.set_topic_issue(export.topic.id, "acme-co/web", 42)
+        agent_links: list[str] = []
+        original = rig.store.link_message
+
+        async def recording(ref: MessageRef, topic_id: str, *, by: Any = "agent") -> Any:
+            if by == "agent":
+                agent_links.append(ref.ts)
+            return await original(ref, topic_id, by=by)
+
+        rig.store.link_message = recording  # type: ignore[method-assign]
+        app = await _bolt_app(rig)
+        await _deliver(app, _reply(REPLY, "re: web#42 same thing"), "Ev6")
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending()  # the thread still drafts, now with #42
+    finally:
+        await rig.orchestrator.stop()
+    link = await rig.store.get_message(CH, REPLY)
+    assert link is not None and link.linked_by == "person"
+    assert link.topic_id == export.topic.id != parent.topic.id
+    assert agent_links == []  # the debouncer never joined it to the parent's topic
+    assert rig.slack.reactions == [(CH, REPLY, "white_check_mark")]

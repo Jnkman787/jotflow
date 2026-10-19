@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 import aiohttp
@@ -12,6 +12,8 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
+from jotflow.orchestrator.keyword_handler import help_text
+from jotflow.slack_manifest import SLASH_COMMAND
 
 log = logging.getLogger("jotflow.slack")
 
@@ -88,19 +90,35 @@ def report_missing(missing: list[str], bot_name: str) -> None:
 def register_handlers(
     app: AsyncApp,
     events: EventFilter,
-    sink: Callable[[Decision], Awaitable[None]] | None = None,
+    sink: Callable[[Decision, Mapping[str, Any]], Awaitable[None]] | None = None,
 ) -> None:
-    """Route message and reaction events through the filter to the log, then ``sink``."""
+    """Route message and reaction events through the filter to the log, then ``sink``.
+
+    ``sink`` gets the raw event too, for the keyword handler to read its text.
+    """
 
     async def on_event(event: dict[str, Any], body: dict[str, Any]) -> None:
         event_id = body.get("event_id")
         decision = events.classify(event, event_id if isinstance(event_id, str) else None)
         log_decision(decision)
         if sink is not None:
-            await sink(decision)
+            await sink(decision, event)
 
     app.event("message")(on_event)
     app.event("reaction_added")(on_event)
+
+
+def register_commands(app: AsyncApp) -> None:
+    """Answer ``/jotflow`` privately. Only ``help`` exists so far; it lists the keywords."""
+
+    async def on_command(ack: Any, command: dict[str, Any]) -> None:
+        text = str(command.get("text") or "").strip().lower()
+        if text in ("", "help"):
+            await ack(help_text())
+        else:
+            await ack("Only /jotflow help exists so far. It lists the keywords.")
+
+    app.command(SLASH_COMMAND)(on_command)
 
 
 class SlackThreadPoster:

@@ -400,7 +400,7 @@ Every error names what to fix. The common ones are below. Wherever it says `uv r
 This is how JotFlow works for the people in the channel once drafting and approval cards land, in later releases (milestones 3 and 4).
 
 - **Just post.** Write your idea, bug, or request in the channel like you normally would. JotFlow waits for the conversation to settle, then posts a proposed issue for the team to approve.
-- **Steer it if you like.** Start a message with `idea:` or `bug:` to say what it is, `re:` to add to an existing issue (JotFlow's link replies tell you exactly what to type), or `skip:` if it isn't an idea at all. Most people never need these.
+- **Steer it if you like.** Start a message with `idea:` or `bug:` to say what it is, `re:` to add to an existing issue (JotFlow's link replies tell you exactly what to type), or `skip:` if it isn't an idea at all. Reacting with :no_entry_sign: works like `skip:`. Most people never need these.
 - **Forgot the words?** Type `/jotflow help`.
 
 Comments and closures on GitHub do not flow back into Slack yet; that is planned after v1.
