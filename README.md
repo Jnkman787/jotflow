@@ -187,7 +187,18 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
    - **a nickname**, a short word people type to point at the repo. Later, starting a Slack message with `re: web#42` points it at issue 42 in that repo.
    - **what it covers**, in one sentence, for example `The customer-facing website`. When a channel feeds several repos, the agent uses these sentences to choose one.
    - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo. A comma-separated list, for example `bug, enhancement`, narrows it to just those; list only labels that already exist on the repo.
-6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Setup accepts `claude-code`; `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent; or `none` to leave the agent off, which is the default for now. Any other name is refused for now. The experimental `codex` preset, for drafting and question runs only, isn't offered by setup and isn't in the published agent image: it needs a custom agent image built with both CLIs, an OpenAI API key (`CODEX_API_KEY` or `OPENAI_API_KEY`) in `agent.env` while `agent-exec.env` keeps the Anthropic login, and hand edits, `[agent] preset = "codex"` in `jotflow.toml` and `JOTFLOW_AGENT_PRESET=codex` in `agent.env`, with `agent-exec.env` kept on `claude-code`. [docs/presets.md](docs/presets.md) has every step. When your agent files already set a command, the default is `command`. If you choose `claude-code`, setup then asks which model the agent should use. Press Enter for the preset's defaults. A name you type applies to both drafting and execution; for a different model per run kind, set `JOTFLOW_AGENT_MODEL_DRAFTING`, `JOTFLOW_AGENT_MODEL_QUESTION`, or `JOTFLOW_AGENT_MODEL_EXECUTION` in the agent env files by hand, and setup keeps them. It also sets up the agent containers' files; see [the agent containers](#the-agent-containers) below.
+6. **The agent preset.** Your team supplies and controls the agent; JotFlow only needs to know which program it is so it can start it correctly. Type `claude-code`, then press Enter at the model question for the preset's defaults. Setup also sets up the agent containers' files; see [the agent containers](#the-agent-containers) below. Or press Enter at the preset for `none`, the default for now, to leave the agent off and turn it on later.
+
+**Other agents and models.** Most teams can skip this.
+
+- **Your own agent.** Setup also accepts `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent. When your agent files already set a command, the default is `command`. Any other name is refused for now.
+- **The model.** A model name you type at the model question applies to both drafting and execution. For a different model per run kind, set `JOTFLOW_AGENT_MODEL_DRAFTING`, `JOTFLOW_AGENT_MODEL_QUESTION`, or `JOTFLOW_AGENT_MODEL_EXECUTION` in the agent env files by hand, and setup keeps them.
+- **Codex.** The experimental `codex` preset, for drafting and question runs only, isn't offered by setup and isn't in the published agent image. It needs:
+  - a custom agent image built with both CLIs
+  - an OpenAI API key, `CODEX_API_KEY` or `OPENAI_API_KEY`, in `agent.env`, while `agent-exec.env` keeps the Anthropic login
+  - hand edits: `[agent] preset = "codex"` in `jotflow.toml`, and `JOTFLOW_AGENT_PRESET=codex` in `agent.env`, with `agent-exec.env` kept on `claude-code`
+
+  [docs/presets.md](docs/presets.md) has every step.
 
 A session looks like this, shortened. Your answers are on the right of each prompt; a hidden token shows nothing.
 
