@@ -204,7 +204,7 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
                 found.append(f"{agent_setup.COMMAND_KEY} is blank in {name}")
         else:
             named = env.get(agent_setup.PRESET_KEY, "").strip()
-            expected = expected_runner_preset(preset, kinds)
+            expected = expected_runner_preset(kinds, preset)
             if expected != preset:
                 # Codex never serves execution (#172): the exec runner must run claude-code.
                 if named != expected:
