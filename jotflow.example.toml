@@ -27,9 +27,14 @@ topic_window_days = 14
 issue_reaction = "ticket"
 
 [agent]
-# Which agent program drafts issues. Agent runs arrive in milestone 3; until
-# then leave this out, as setup does, and JotFlow connects to Slack without
-# starting the agent. The first preset will be "claude-code".
+# Which agent program drafts and writes issues. It must name the same preset
+# as JOTFLOW_AGENT_PRESET in agent.env and agent-exec.env. Setup writes all of
+# them when you choose one. Leave it out and JotFlow connects to Slack but
+# starts no agent runs.
+#   claude-code  supported, for every run kind
+#   codex        experimental, for drafting and question runs only; its
+#                agent-exec.env still uses claude-code (docs/presets.md)
+#   command      your own JOTFLOW_AGENT_COMMAND in the agent files
 # preset = "claude-code"
 # How many agent runs may run at once, across all channels. One thread never
 # has two at once, whatever this says. From 1 to 32; the default is 2.

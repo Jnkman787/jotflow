@@ -50,5 +50,5 @@ Finding 9, an offline dry run of setup, is out of scope.
 
 **Wording that product's README fixes can quote:**
 - The keep prompt is now "Keep its channels and repos?". Before it, setup says "Keep it to change only the agent preset next. Answer n to go through the channels again; each one's repos can be kept."
-- The closing is "Next:", then the steps "1. Invite @bot…", "2. Check the setup with: jotflow check", and "3. Start JotFlow with: docker compose up -d".
+- The closing is "Next:", then the steps "1. Invite @bot…", "2. Check the setup with: <command> check"; since #206 the command is the way setup was started, such as `uvx jotflow` or `uv run jotflow`, and "3. Start JotFlow with: docker compose up -d".
 - Check's new lines are "ok    agent: <preset>, both agent files filled in" or "warn  agent: …".

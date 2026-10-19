@@ -19,7 +19,7 @@ import sys
 import tempfile
 import tomllib
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -1177,9 +1177,42 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
         f"  1. Invite {bot} to each channel JotFlow should watch with /invite {bot}. "
         "It never joins channels by itself."
     )
-    console.say("  2. Check the setup with: jotflow check")
+    console.say(f"  2. Check the setup with: {launch_command()} check")
     console.say("  3. Start JotFlow with: docker compose up -d")
     return 0
+
+
+def launch_command(
+    *,
+    environ: Mapping[str, str] | None = None,
+    prefix: str | None = None,
+    module_file: str | None = None,
+    argv0: str | None = None,
+) -> str:
+    """How to run jotflow again, the way this run was started (#41).
+
+    ``uv run jotflow`` from a checkout, ``uvx jotflow`` from uv's cache, and
+    otherwise the program as it was typed, such as ``.venv/bin/jotflow``.
+    """
+    env = os.environ if environ is None else environ
+    here = Path(module_file or __file__).resolve()
+    package = here.parent.parent  # .../jotflow/commands/init.py -> .../jotflow
+    if package.parent.name == "src" and (package.parent.parent / "pyproject.toml").exists():
+        return "uv run jotflow"
+    if env.get("UV") and "archive-v" in str(prefix if prefix is not None else sys.prefix):
+        return "uvx jotflow"
+    program = Path(argv0 if argv0 is not None else sys.argv[0])
+    if program.is_absolute():
+        # Windows launchers pass an absolute path, such as ...\.venv\Scripts\jotflow.exe:
+        # under this folder, say it relative to it, so it works without activating the venv.
+        try:
+            program = program.relative_to(Path.cwd())
+        except ValueError:
+            return "jotflow"
+    # A relative path, such as .venv/bin/jotflow, works again as typed.
+    if program.name.startswith("jotflow") and len(program.parts) > 1:
+        return str(program)
+    return "jotflow"
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:

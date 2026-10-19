@@ -252,7 +252,7 @@ Connected to Slack as @idea_bot in Acme Co.
 
 Next:
   1. Invite @idea_bot to each channel JotFlow should watch with /invite @idea_bot. It never joins channels by itself.
-  2. Check the setup with: jotflow check
+  2. Check the setup with: uvx jotflow check
   3. Start JotFlow with: docker compose up -d
 ```
 

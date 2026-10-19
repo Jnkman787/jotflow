@@ -1394,5 +1394,36 @@ def test_setup_ends_with_the_next_three_steps(options: InitOptions) -> None:
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     tail = script.text[script.text.index("Next:") :].splitlines()
     assert tail[1].startswith("  1. Invite @") and "/invite @" in tail[1]
-    assert tail[2] == "  2. Check the setup with: jotflow check"
+    assert tail[2] == f"  2. Check the setup with: {init.launch_command()} check"
     assert tail[3] == "  3. Start JotFlow with: docker compose up -d"
+
+
+def test_the_check_command_is_printed_the_way_jotflow_was_started(tmp_path: Path) -> None:
+    """#41: a uvx user must not be told to run a bare jotflow, which isn't installed."""
+    # From this checkout: src/jotflow/... next to pyproject.toml.
+    assert init.launch_command() == "uv run jotflow"
+    installed = tmp_path / "lib" / "site-packages" / "jotflow" / "commands" / "init.py"
+    cache = str(tmp_path / ".cache" / "uv" / "archive-v0" / "abc")
+    assert (
+        init.launch_command(environ={"UV": "/usr/bin/uv"}, prefix=cache, module_file=str(installed))
+        == "uvx jotflow"
+    )
+    venv = str(tmp_path / ".venv")
+    for argv0, expected in (
+        (".venv/bin/jotflow", ".venv/bin/jotflow"),
+        ("/usr/local/bin/jotflow", "jotflow"),
+        ("jotflow", "jotflow"),
+    ):
+        got = init.launch_command(environ={}, prefix=venv, module_file=str(installed), argv0=argv0)
+        assert got == expected, argv0
+    # An absolute launcher path under the current folder, as Windows passes, is made relative.
+    under = str(Path.cwd() / ".venv" / "Scripts" / "jotflow.exe")
+    got = init.launch_command(environ={}, prefix=venv, module_file=str(installed), argv0=under)
+    assert got == str(Path(".venv") / "Scripts" / "jotflow.exe")
+    # uv's variable alone, outside its cache, as in a uv-managed venv, is not uvx.
+    assert (
+        init.launch_command(
+            environ={"UV": "/usr/bin/uv"}, prefix=venv, module_file=str(installed), argv0="jotflow"
+        )
+        == "jotflow"
+    )
