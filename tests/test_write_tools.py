@@ -1032,3 +1032,26 @@ async def test_over_the_wire_the_refusal_is_a_tool_result_the_agent_can_act_on(
         )
     result = reply.json()["result"]
     assert result["isError"] is True and result["content"][0]["text"] == wt.NO_SLACK_LINKS
+
+
+async def test_an_expired_topic_is_revived_by_linking_to_it(
+    tools: WriteTools, store: MemoryStore, clock: Clock
+) -> None:
+    """#37: expiry only hides a topic from the index; linking a message brings it back."""
+    from jotflow.orchestrator.topics import list_topics
+    from jotflow.whiteboard.read_tools import GetTopicInput, read_tools
+
+    topic_id = await new_topic(tools)
+    clock.tick((POLICY.topic_window_days + 1) * 86_400)
+    assert (await list_topics(store, POLICY, CH, now=clock())).topics == []
+    # The agent can still read an expired topic by its id, as from a related excerpt.
+    get_topic = next(s for s in read_tools(store, POLICY, clock=clock) if s.name == "get_topic")
+    detail: Any = await get_topic.handler(DRAFT_2, GetTopicInput(topic_id=topic_id))
+    assert detail.id == topic_id
+    # A new message linked to it puts it back in the active index.
+    joined: Any = await tools.link_message(
+        DRAFT_2, link(REPLY, decision="existing_topic", topic_id=topic_id, title=None)
+    )
+    assert joined.topic_id == topic_id
+    [active] = (await list_topics(store, POLICY, CH, now=clock())).topics
+    assert active.id == topic_id and active.last_active == clock()

@@ -16,14 +16,17 @@ user. Every change is announced in the channel.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Protocol
 
 from jotflow.models import ChannelMode, ProposalState, RunKind
 from jotflow.orchestrator.card_sync import AUTO
-from jotflow.orchestrator.people import Person
+from jotflow.orchestrator.packet import Budget, Sleep, with_backoff
+from jotflow.orchestrator.people import Person, classify
 from jotflow.policy import Policy
 from jotflow.store.base import Store, TransitionError
 from jotflow.store.hashing import content_hash
@@ -34,6 +37,10 @@ ModeFor = Callable[[str], Awaitable[ChannelMode]]
 
 # The most members checked for guests before warning anyway.
 MAX_MEMBERS_CHECKED = 1000
+# The guest scan reads the workspace's directory with users.list (#161): one
+# pass, stopping once every member is found, at most this many pages.
+USERS_PAGE_SIZE = 500
+MAX_USER_PAGES = 40
 
 MEANING = {
     ChannelMode.PROPOSE: (
@@ -178,10 +185,13 @@ def _plain_blocks(text: str) -> list[dict[str, Any]]:
 class BoltModeSlack:
     """:class:`ModeSlack` over slack-sdk's client, with the shared people helper."""
 
-    def __init__(self, client: Any, people: Any, names: Any) -> None:
+    def __init__(
+        self, client: Any, people: Any, names: Any, *, sleep: Sleep = asyncio.sleep
+    ) -> None:
         self._client = client
         self._people = people
         self._names = names
+        self._sleep = sleep
 
     async def person(self, user_id: str) -> Person:
         result: Person = await self._people.person(user_id)
@@ -201,25 +211,50 @@ class BoltModeSlack:
         )
 
     async def outsiders(self, channel_id: str) -> str | None:
-        info = await self._client.conversations_info(channel=channel_id)
+        """What a channel holds besides workspace members, or None. Fails closed.
+
+        Reads the channel's members, then pages ``users.list`` once (#161),
+        instead of ``users.info`` per member. A member the directory doesn't
+        list, such as someone from another organisation, counts as a guest.
+        Rate limits are retried within one budget. A listing that still fails
+        raises, and the caller warns.
+        """
+        budget = Budget()
+
+        async def call(what: str, method: Callable[[], Awaitable[Any]]) -> Any:
+            return await with_backoff(method, what=what, sleep=self._sleep, budget=budget)
+
+        info = await call(
+            "the channel's details", lambda: self._client.conversations_info(channel=channel_id)
+        )
         channel: Mapping[str, Any] = info.get("channel") or {}
         shared = bool(channel.get("is_ext_shared") or channel.get("is_shared"))
-        guests, checked, complete = 0, 0, True
+        members, complete = await self._members(channel_id, call)
+        unknown = set(members)
+        guests = 0
+        own = await self._own_team()
         cursor: str | None = None
-        while True:
-            page = await self._client.conversations_members(
-                channel=channel_id, limit=200, cursor=cursor
-            )
-            for member in page.get("members") or []:
-                if checked >= MAX_MEMBERS_CHECKED:
-                    complete = False
-                    break
-                checked += 1
-                person = await self._people.person(member)
-                guests += person.guest or person.external
-            cursor = (page.get("response_metadata") or {}).get("next_cursor") or None
-            if not complete or not cursor:
+        for _ in range(MAX_USER_PAGES):
+            if not unknown:
                 break
+            page = await call(
+                "the workspace's people",
+                partial(self._client.users_list, limit=USERS_PAGE_SIZE, cursor=cursor),
+            )
+            for user in page.get("members") or []:
+                user_id = user.get("id") if isinstance(user, Mapping) else None
+                if user_id in unknown:
+                    unknown.discard(user_id)
+                    person = classify(user_id, user, own)
+                    guests += person.guest or person.external
+            cursor = (page.get("response_metadata") or {}).get("next_cursor") or None
+            if not cursor:
+                break
+        else:
+            if unknown and cursor:
+                complete = False  # the directory is larger than one scan reads
+        if complete:
+            guests += len(unknown)  # not in this workspace's directory: fail closed
         parts = []
         if shared:
             parts.append("members from another organisation")
@@ -228,3 +263,32 @@ class BoltModeSlack:
         if not complete:
             parts.append("more members than JotFlow could check")
         return " and ".join(parts) if parts else None
+
+    async def _members(
+        self, channel_id: str, call: Callable[[str, Callable[[], Awaitable[Any]]], Awaitable[Any]]
+    ) -> tuple[list[str], bool]:
+        """Up to :data:`MAX_MEMBERS_CHECKED` member ids, and whether that was all."""
+        members: list[str] = []
+        cursor: str | None = None
+        while True:
+            page = await call(
+                "the channel's members",
+                partial(
+                    self._client.conversations_members, channel=channel_id, limit=200, cursor=cursor
+                ),
+            )
+            for member in page.get("members") or []:
+                if len(members) >= MAX_MEMBERS_CHECKED:
+                    return members, False
+                if isinstance(member, str):
+                    members.append(member)
+            cursor = (page.get("response_metadata") or {}).get("next_cursor") or None
+            if not cursor:
+                return members, True
+
+    async def _own_team(self) -> str | None:
+        own_team = getattr(self._people, "own_team", None)
+        if own_team is None:
+            return None
+        team: str | None = await own_team()
+        return team

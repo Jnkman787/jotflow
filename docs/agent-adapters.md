@@ -73,7 +73,7 @@ Then add it to `PRESETS`, and to `EXPERIMENTAL` until a real run has confirmed i
 - **`config`**, the JSON written to `config_path`
 - **`env`**, extras on top of the allowlist
 - **`github_token_env`**, which says whether `GITHUB_TOKEN` and `GH_TOKEN` are set. Keep it false when the token is in the config.
-- **`files`**, more private files by path inside the run directory, such as a CLI's own config file. See the Codex preset's `codex/config.toml`.
+- **`files`**, more private files by path inside the run directory, such as a CLI's own config file. See the Codex preset's `codex/config.toml`. Codex is a drafting and question preset only, and it's refused for execution.
 
 Three optional members, which the runner looks for:
 - **`check_install()`** returns why the installed CLI can't honour the preset, or None. The runner calls it at startup and refuses to start on a problem: a different version, a missing feature flag, or a missing binary.
@@ -85,6 +85,7 @@ Rules for the code:
 - **Exactly two MCP servers:** JotFlow and the pinned GitHub server (`github_server(run)`). Load no others, and turn off the CLI's own MCP discovery (Claude Code's `--strict-mcp-config`, for example).
 - **Tools per run kind.** Limit each server to `JOTFLOW_TOOLS[kind]` and `GITHUB_TOOLS[kind]`, in the CLI's own allowlist as well as on the server. Drafting and question runs start the GitHub server with `--read-only`, which wins over its tool list.
 - **No built-in tools** that run code, touch files, or reach the network: no shell, exec, code interpreter, file write, web fetch, browser, sub-agents, or plugins. Turn each one off. If the CLI can't turn one off, the preset must make it harmless, as a read-only sandbox does for a patch tool, and prove that.
+- **No resource or file-read tools on execution runs.** An execution run holds the write token and must see only the approved fields. Tools such as `read_mcp_resource` or `list_mcp_resource_templates` would let it read repository contents and bring untrusted text into a write run. If the CLI can't drop them, set `run_kinds` to drafting and question only. The runner then refuses the preset for an execution runner, as it does for codex.
 - **Nothing kept outside the run.** Point the CLI's home, cache, logs, session transcripts, and memory into the run directory, so they're removed with it, or turn them off. Turn off telemetry and self-updates where the CLI allows.
 - **Nothing prompts.** A headless run has nobody to answer. Configure the CLI so anything not allowed is denied, never asked about.
 - **Pin the CLI** to an exact version in `AGENT_NPM_PACKAGES`, or a checksum for a binary. Check that version in `check_install()`.
@@ -93,11 +94,11 @@ Rules for the code:
 
 | Guarantee | Why | How it's proven |
 |---|---|---|
-| The model is offered exactly the expected tools for each run kind, and no shell or exec | Slack text is untrusted, and a shell could read `/proc/1/environ`, which holds the runner secret and the container's GitHub token (threat model: prompt injection) | The tool-set gate, below, asserts the exact offered set from the recorded request |
+| The model is offered exactly the expected tools for each run kind, and no shell or exec | Slack text is untrusted, and a shell could read `/proc/1/environ`, which holds the runner secret and the container's GitHub token ([threat model: a prompt-injected drafting agent](threat-model.md#a-prompt-injected-drafting-agent)) | The tool-set gate, below, asserts the exact offered set from the recorded request |
 | A tool that writes files, if the CLI insists on one, is refused | The run directory holds the private config | The gate scripts a call to it and asserts it's refused and wrote nothing |
 | Only JotFlow and the pinned GitHub server are loaded, each limited to the kind's tools | Tool shadowing and rug pulls come from other servers | Unit tests pin the config. The gate shows the servers the CLI connected to. |
 | Drafting has read-only GitHub, and only execution can write | D6, and the split tokens | Unit tests on `--read-only` and the tool lists, plus the container split |
-| No resource-read tools on execution: an execution run sees only the approved fields, and can't pull repository text into its context | It holds the write token, and arbitrary repo text, such as an attacker's README, could steer it (threat model: execution) | The gate's exact tool set for execution. If the CLI can't drop such tools, set `run_kinds` so the preset never serves execution, as codex does |
+| No resource-read tools on execution: an execution run sees only the approved fields, and can't pull repository text into its context | It holds the write token, and arbitrary repo text, such as an attacker's README, could steer it ([threat model: a prompt-injected drafting agent](threat-model.md#a-prompt-injected-drafting-agent)) | The gate's exact tool set for execution. If the CLI can't drop such tools, set `run_kinds` so the preset never serves execution, as codex does: the runner refuses the preset for `kinds={execution}`, proven by `test_an_execution_runner_set_to_codex_refuses_to_start` |
 | No token in `argv` or the CLI's environment | `ps`, logs, and transcripts | Unit tests on `argv` and `env`, plus the runner's end-to-end test with a fake CLI binary |
 | No run data in the prompt | The prompt is the same for everyone. Run data comes through `get_work`. | A test like `test_no_prompt_carries_run_data` |
 | The CLI's state stays in the run directory, or is off | Nothing outlives the run | An end-to-end test that the run directory, and so the state, is gone afterwards |
@@ -113,7 +114,7 @@ Rules for the code:
 - a scripted call to any write-capable built-in is refused, and no file appears
 - the CLI exits by itself, and JotFlow's audit log shows it reached the MCP server
 
-`tests/test_codex_gate.py` is the worked example. Run it in CI with the CLI installed from a lockfile, and with an environment flag, such as `JOTFLOW_REQUIRE_CODEX=1`, that makes a missing CLI fail rather than skip (see the "Codex preset gate" job).
+`tests/test_codex_gate.py` is the worked example. It covers drafting and question only, because the codex preset's `run_kinds` excludes execution, and `test_an_execution_runner_set_to_codex_refuses_to_start` shows the refusal. Run it in CI with the CLI installed from a lockfile, and with an environment flag, such as `JOTFLOW_REQUIRE_CODEX=1`, that makes a missing CLI fail rather than skip (see the "Codex preset gate" job).
 
 **3. The whole path, without a model:**
 
@@ -140,7 +141,7 @@ Both print the run count and the model before they start, and refuse without `--
 - [ ] The preset is in `PRESETS` and `EXPERIMENTAL`, and the CLI is pinned to an exact version
 - [ ] `argv` and the config are pinned per run kind in tests, and no run data is in the prompt or `argv`
 - [ ] Only JotFlow and the GitHub server are loaded, each limited to the kind's tools, with GitHub `--read-only` for conversation runs
-- [ ] Execution runs have no resource-read or other context-pulling tools, or the preset's `run_kinds` excludes execution
+- [ ] Execution runs have no resource-read or other context-pulling tools, or the preset's `run_kinds` excludes execution, with a test that an execution runner set to it refuses to start (as for codex, which is drafting and question only)
 - [ ] No token is in `argv` or the CLI's environment
 - [ ] The CLI's home, cache, logs, and transcripts are in the run directory, or off, and an end-to-end test shows them removed
 - [ ] The gate runs in CI: the exact tool set, no shell or exec, write tools refused, and no prompt
