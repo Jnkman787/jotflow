@@ -424,6 +424,13 @@ class SqliteStore:
             )
             return None if row is None else await self._proposal(row)
 
+    async def run_proposals(self, run_id: str) -> list[ProposalRecord]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM proposals WHERE run_id = ? ORDER BY created_at, id", (run_id,)
+            )
+            return [await self._proposal(row) for row in rows]
+
     async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         async with self._lock:
             rows = await self._all(

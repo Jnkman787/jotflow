@@ -174,7 +174,11 @@ class RunLifecycle:
         self._registry.revoke(run_id)
         ended = await self._store.finish_run(run_id, status, error=error)
         if ended is not None:
-            log.info("run %s ended (%s)", run_id, status.value)
+            if ended.kind is RunKind.DRAFTING:
+                drafted = len(await self._store.run_proposals(run_id))
+                log.info("run %s ended (%s) with %d proposal(s)", run_id, status.value, drafted)
+            else:
+                log.info("run %s ended (%s)", run_id, status.value)
             if ended.kind is RunKind.EXECUTION and ended.proposal_id:
                 await self._settle_proposal(ended.proposal_id, run_id)
                 await self._retry_or_give_up(ended)

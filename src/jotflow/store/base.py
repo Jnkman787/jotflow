@@ -538,6 +538,11 @@ class Store(Protocol):
         """The proposal whose card is the message ``card_ts`` in ``channel_id``, if any."""
         ...
 
+    async def run_proposals(self, run_id: str) -> list[ProposalRecord]:
+        """The proposals ``run_id`` produced, oldest first. Empty for a run that
+        drafted nothing, so a finished drafting run with none is recorded as such (#24)."""
+        ...
+
     async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         """Proposals from one thread, oldest first."""
         ...
