@@ -88,7 +88,7 @@ sequenceDiagram
     U->>S: proposal card in the thread
     T->>S: Approve
     S->>U: approval click
-    Note over U: Gate checks: the person is from this workspace and no guest or external user,<br/>the click is on this card in its own channel,<br/>the channel isn't paused,<br/>if approvers are on, the person is one and wrote none of the source messages,<br/>the content hash matches what the card showed
+    Note over U: Gate checks: the person is from this workspace and no guest or external user,<br/>the click is on this card in its own channel, the channel isn't paused,<br/>if approvers are on, the person is one and wrote none of the source messages,<br/>and the content hash matches what the card showed
     U->>E: run id for the approved proposal
     E->>U: get_work → the exact writes JotFlow planned
     E->>G: look for the proposal's hidden marker in recent issues
