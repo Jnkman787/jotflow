@@ -4,9 +4,9 @@
 
 - Issue: #39
 - Also serves: #87 (PyPI, same tag), #60 (pinned actions, next)
-- Draft PR: pending
+- Draft PR: #174
 - Status: implementing
-- Last verified: plan only
+- Last verified: actionlint 1.7.12 with shellcheck clean on release.yml, and the Compose overrides checked with `docker compose config`, on 2026-10-19
 - Next safe action: product agrees the tag and version contract, then the reviewer reviews
 
 ## Objective and done-when
@@ -47,11 +47,14 @@ Actions are pinned to commit SHAs, with the version in a comment, ahead of #60.
 ## Progress checklist
 
 - [ ] Agree the tag and version contract with product
-- [ ] `release.yml`, with the dry-run build on pull requests
-- [ ] Compose overrides, with `.env` and README notes
-- [ ] Docs: README install from a release, and verifying an attestation
-- [ ] actionlint passes locally
+- [x] `release.yml`, with the dry-run build on pull requests
+- [x] Compose overrides, with `.env` and README notes
+- [x] Docs: README install from a release, and verifying an attestation
+- [x] actionlint passes locally
 
 ## Validation
 
-Pending.
+- actionlint 1.7.12, with shellcheck 0.11.0, reports nothing on `release.yml`. The findings it reports in `ci.yml` are #60's.
+- `docker compose config` shows `jotflow:local` and `jotflow-agent:local` by default, and the `ghcr.io/...:X.Y.Z` references once `JOTFLOW_IMAGE_REF` and `JOTFLOW_AGENT_IMAGE_REF` are set.
+- On this PR, the release workflow's dry run builds all four image and architecture pairs and pushes nothing. The publish job is skipped, which shows the tag-only path is gated.
+- The first real tag is the maintainer's to push, and the attestation is verified then with `gh attestation verify`.

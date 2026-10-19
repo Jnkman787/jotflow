@@ -10,7 +10,10 @@ name: jotflow
 services:
   jotflow:
     build: .
-    image: jotflow:local
+    # Built from this checkout by default. Set JOTFLOW_IMAGE_REF in .env to run a
+    # published release (ghcr.io/jnkman787/jotflow:X.Y.Z) or your own per-commit
+    # tag. Not JOTFLOW_IMAGE, which marks JotFlow's own image inside it.
+    image: ${JOTFLOW_IMAGE_REF:-jotflow:local}
     restart: unless-stopped
     env_file:
       - path: .env
@@ -57,7 +60,7 @@ services:
       args:
         # The CLI version the claude-code preset was verified with (docs/presets.md).
         AGENT_NPM_PACKAGES: "@anthropic-ai/claude-code@2.1.303"
-    image: jotflow-agent:local
+    image: ${JOTFLOW_AGENT_IMAGE_REF:-jotflow-agent:local}
     restart: unless-stopped
     # Drafting and question runs: the read-only GitHub token and the model
     # login. Never .env, and never the write token.
@@ -84,7 +87,7 @@ services:
 
   agent-exec:
     profiles: [agent]
-    image: jotflow-agent:local
+    image: ${JOTFLOW_AGENT_IMAGE_REF:-jotflow-agent:local}
     restart: unless-stopped
     # Execution runs only, one at a time: the write GitHub token and the model
     # login. Never .env, and never the read token.
