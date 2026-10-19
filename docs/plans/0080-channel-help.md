@@ -5,9 +5,9 @@
 - Issue: #80
 - Also serves: #56 (`help_text()`), D10, D7
 - Draft PR: #150
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: the architect confirms the `help` policy key under Risks; then CodeRabbit and ready for review
+- Next safe action: review; the architect confirms the `help` policy key under Risks; renumber the migration if #145 lands first
 
 ## Objective and done-when
 
@@ -73,9 +73,9 @@ Done when:
 - [x] `HelpHandler`: guide, tip, nudge, wired after the keyword handler
 - [x] `/jotflow help` per channel
 - [x] README block and the drift test
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: skipped, the free CLI allowance was rate-limited
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
