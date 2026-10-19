@@ -7,7 +7,7 @@
 - Draft PR: to be opened
 - Status: planning
 - Last verified: plan written on 2026-10-19, no code yet
-- Next safe action: add the store's card revision, after #150's migration 7 merges
+- Next safe action: add the store's card revision, now that #150 has merged
 
 ## Objective and done-when
 
