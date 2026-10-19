@@ -36,8 +36,9 @@ approvers = []
 # the reaction runs every check the Approve button does, and approves only a
 # card that shows the current draft in full.
 reactions = false
-# The emoji that approves, by name without colons. It may not be one that
-# already means a keyword, such as no_entry_sign for skip.
+# The emoji that approves, by name without colons, ignored while reactions is
+# false. It may not be one that already means a keyword, such as no_entry_sign
+# for skip, or white_check_mark, which JotFlow adds itself to confirm one.
 reaction = "heavy_check_mark"
 
 [help]

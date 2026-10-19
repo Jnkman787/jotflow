@@ -29,6 +29,7 @@ from pydantic import (
 )
 
 from jotflow.models import RepoName, shown
+from jotflow.reactions import DEFAULT_APPROVAL, KEYWORD_REACTIONS, reserved
 
 _CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{2,}")
 _USER_ID = re.compile(r"[UW][A-Z0-9]{2,}")
@@ -308,8 +309,6 @@ class AgentPolicy(_Strict):
 
 
 _EMOJI = re.compile(r"[a-z0-9_+-]{1,64}")
-# Reactions that already mean a keyword (keywords.REACTIONS; a test keeps them in step).
-KEYWORD_REACTIONS = frozenset({"no_entry_sign"})
 
 
 class ApprovalPolicy(_Strict):
@@ -321,8 +320,11 @@ class ApprovalPolicy(_Strict):
     )
     reactions: bool = Field(default=False, description="Whether a reaction counts as approval")
     reaction: str = Field(
-        default="heavy_check_mark",
-        description="The emoji name, without colons, that approves when reactions are on",
+        default=DEFAULT_APPROVAL,
+        description=(
+            "The emoji name, without colons, that approves when reactions are on; "
+            "ignored while they are off"
+        ),
     )
 
     @property
@@ -336,6 +338,10 @@ class ApprovalPolicy(_Strict):
             raise ValueError("must be a Slack emoji name, such as heavy_check_mark, without colons")
         if value in KEYWORD_REACTIONS:
             raise ValueError(f"{value} already stands for a keyword; choose another emoji")
+        if value in reserved():
+            raise ValueError(
+                f"JotFlow adds {value} itself to confirm keywords; choose another emoji"
+            )
         return value
 
     @model_validator(mode="after")

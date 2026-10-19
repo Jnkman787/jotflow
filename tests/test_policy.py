@@ -380,10 +380,13 @@ def test_an_unknown_key_under_a_channels_help_is_refused() -> None:
 
 
 def test_the_approval_reaction_is_an_emoji_name_that_is_no_keyword() -> None:
+    from jotflow.orchestrator.keyword_handler import CONFIRM
     from jotflow.orchestrator.keywords import REACTIONS
-    from jotflow.policy import KEYWORD_REACTIONS
+    from jotflow.reactions import JOTFLOW_REACTIONS, KEYWORD_REACTIONS, reserved
 
-    assert set(REACTIONS) == set(KEYWORD_REACTIONS)
+    # One source for both: a keyword reaction added later is refused too.
+    assert REACTIONS is KEYWORD_REACTIONS and CONFIRM in JOTFLOW_REACTIONS
+    assert reserved() == set(REACTIONS) | {CONFIRM}
     base = {
         "channels": {"C0TEST1": {"repos": [{"repo": "a/b", "nickname": "b", "description": "d"}]}}
     }
@@ -391,6 +394,6 @@ def test_the_approval_reaction_is_an_emoji_name_that_is_no_keyword() -> None:
     assert default.approval.reactions is False and default.approval.reaction == "heavy_check_mark"
     on = Policy.model_validate({**base, "approval": {"reactions": True, "reaction": "+1"}})
     assert on.approval.reaction == "+1"
-    for bad in (":white_check_mark:", "White Check", "", "no_entry_sign"):
+    for bad in (":heavy_check_mark:", "White Check", "", "no_entry_sign", "white_check_mark"):
         with pytest.raises(ValueError):
             Policy.model_validate({**base, "approval": {"reactions": True, "reaction": bad}})

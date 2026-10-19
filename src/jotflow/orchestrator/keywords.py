@@ -25,14 +25,15 @@ from dataclasses import dataclass
 from typing import Literal
 
 from jotflow.policy import ChannelPolicy, RepoPolicy
+from jotflow.reactions import KEYWORD_REACTIONS
 
 Keyword = Literal["idea", "bug", "re", "skip"]
 KEYWORDS: tuple[Keyword, ...] = ("idea", "bug", "re", "skip")
 # Keywords long enough to tolerate a typo (D10).
 TYPO_TOLERANT: tuple[Keyword, ...] = ("idea", "skip")
 
-# Reactions that act like a keyword. re: has none: it needs an issue number.
-REACTIONS: dict[str, Keyword] = {"no_entry_sign": "skip"}
+# Reactions that act like a keyword, kept in jotflow.reactions so policy can see them.
+REACTIONS: dict[str, Keyword] = KEYWORD_REACTIONS
 
 # Leading spaces, one word, a colon, then optional spaces. The colon is required.
 _PREFIX = re.compile(r"\s*([A-Za-z]+):[ \t]*")
