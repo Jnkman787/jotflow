@@ -7,7 +7,7 @@
 - Draft PR: #185
 - Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: review; the architect confirms part 2
+- Next safe action: review
 
 ## Objective and done-when
 
@@ -19,7 +19,7 @@ Done when:
 - [x] Without `gh`, or when it can't list, the typed flow is exactly today's
 - [x] JotFlow calls only `gh repo list` and `gh api user`, which both only read. It stores no GitHub credential and prints nothing `gh` says beyond the listing
 - [x] No wildcard repo entry is accepted anywhere: setup, the policy loader, and any Slack command
-- [x] `/jotflow repos` from Slack, as the default (a) under Risks: it lists privately, and `add` and `remove` say how, with no write. Pending the architect's confirmation
+- [x] `/jotflow repos` from Slack, as the default (a) under Risks: it lists privately, and `add` and `remove` say how, with no write. Decided on 2026-10-19 by the lead and the architect
 - [x] Tests use fakes for `gh` and Slack, with no network
 - [x] `make check` passes
 
@@ -33,22 +33,23 @@ Done when:
   - For each pick, the existing prompts run with defaults filled in: the nickname from the name, "what it covers" from the description if it passes the 200-character rule, otherwise blank, and the labels. Visibility comes from the listing, so there's no separate visibility question.
   - Repos already in the channel are left out of the list. A list longer than 200 says so, and offers typing for the rest.
 - **No wildcards.** `RepoName` already allows only `owner/name`. A test pins that `org/*` and `*` are refused by the policy loader and by setup's repo question.
-- **Repos from Slack, part 2.** This is pending the architect, asked on 2026-10-19, because it clashes with today's design:
+- **Repos from Slack, part 2.** Option (a) was decided on 2026-10-19, because the other options clash with today's design:
   - `jotflow.toml` is mounted read-only into the container.
   - D2 makes the policy deploy-time configuration, not runtime state.
   - A new repo also needs the agents' GitHub tokens widened, which only GitHub can do.
-  - Default, option (a): `/jotflow repos` lists the channel's repos, privately. `/jotflow repos add` and `remove` reply that the repos live in `jotflow.toml`, to edit it on the host and run `docker compose restart jotflow`, since a bind-mounted file's change alone doesn't make `docker compose up -d` recreate the container. The reply also reminds the person to widen the tokens. Nothing is written, so D7 needs no new rule.
-  - If the architect chooses a runtime overlay in the store instead, that becomes a separate PR with its own security review.
+  - Option (a): `/jotflow repos` lists the channel's repos, privately. `/jotflow repos add` and `remove` reply that the repos live in `jotflow.toml`, to edit it on the host and run `docker compose restart jotflow`, since a bind-mounted file's change alone doesn't make `docker compose up -d` recreate the container. The reply also reminds the person to widen the tokens. Nothing is written, so D7 needs no new rule.
+  - The listing shows only this channel's repos, so a guest can't learn the full repo map. Every reply is private and plain text.
+  - A runtime repo overlay is out of scope for v1. A host-side `jotflow repos add` that edits jotflow.toml could come later, with no D2 change.
+- **A picked repo** goes through the same check as a typed one. A listing that isn't a usable `owner/name` is never echoed, and setup asks for that repo to be typed.
 
 ## Risks and open questions
 
-- **Part 2's design**, as above.
 - `gh repo list` caps at 200 here. A bigger organisation types the rest, and setup says so.
 - A repo description is someone else's text. It's only a default, checked by the same 200-character rule, and the person sees it before it's saved.
 
 ## Progress checklist
 
-- [x] Confirm the issue is ready: part 1 bounded and testable; part 2 pending the architect
+- [x] Confirm the issue is ready: part 1 bounded and testable; part 2 decided as option (a)
 - [x] Commit this plan and open the draft PR
 - [x] `github_cli.gh_repos` and `gh_login`, with fakes
 - [x] The picker in setup, with the typed fallback unchanged
@@ -73,6 +74,7 @@ Done when:
   - Enter at the list going back to typing, with the same answers as before
   - a bad selection asked again, and an owner `gh` can't list falling back to typing
   - wildcards refused by setup and by the policy loader
+  - a picked repo that isn't a usable owner/name, typed instead, with the listing not echoed
 - `tests/test_help.py` covers `/jotflow repos` listing, an unconfigured channel, `add` and `remove` changing nothing and saying how, and the slash-command routing.
 
 ## Handoff notes
