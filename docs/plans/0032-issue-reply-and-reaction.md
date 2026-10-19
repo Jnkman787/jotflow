@@ -4,10 +4,10 @@
 
 - Issue: #32
 - Also serves: #38 (`jotflow rebuild` reads the URL in the thread), #6 (`issue_links`), #152 (the outbox pattern), D4
-- Draft PR: #157, stacked on #155 (`feat/channel-modes`) for its paused-channel rule
+- Draft PR: #157
 - Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: review; rebase onto main once #155 merges
+- Next safe action: review; #155 has merged and this is rebased onto main
 
 ## Objective and done-when
 
@@ -79,4 +79,4 @@ Done when:
 
 ## Handoff notes
 
-None yet.
+- `ThreadNotice.tell()` runs in the card loop, after `CardSync.sync`. A loop of its own is a possible follow-up, if a slow Slack reply ever holds back card edits (lead: fine for now).
