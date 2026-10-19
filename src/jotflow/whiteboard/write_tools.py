@@ -189,6 +189,16 @@ def args_hash(tool: str, arguments: BaseModel) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+# A Slack workspace or message link, in any form an agent might write one: a URL
+# on any slack.com host (workspaces, app., files., enterprise grids), Slack's own
+# <https://...|label> markup (caught by the URL), or a slack:// app link.
+_SLACK_LINK = re.compile(r"(?i)\b(?:[a-z0-9-]+\.)*slack\.com\b|\bslack://")
+NO_SLACK_LINKS = (
+    "This channel keeps Slack out of GitHub (issue_links = none): remove every Slack link "
+    "from the title, body and comment, and don't name people from the thread."
+)
+
+
 def clean_question(text: str) -> str:
     """``text`` made safe to post: no broadcasts, no Slack markup, no control characters."""
     cleaned = _SPECIAL_MENTION.sub("", text)
@@ -351,6 +361,14 @@ class WriteTools:
                     "assign only someone who said they will take it"
                 )
 
+    def _check_no_slack_links(self, *texts: str | None) -> None:
+        """With ``issue_links = "none"``, nothing Slack-shaped goes to GitHub (#168, #32)."""
+        if self._policy.issue_links != "none":
+            return
+        for text in texts:
+            if text and _SLACK_LINK.search(text):
+                raise ToolError(NO_SLACK_LINKS)
+
     def _repo_and_labels(self, grant: Grant, repo: str, labels: list[str]) -> tuple[str, list[str]]:
         try:
             policy = self._policy.repo(grant.channel_id, repo)
@@ -401,6 +419,7 @@ class WriteTools:
                     "use propose_update"
                 )
             repo, labels = self._repo_and_labels(grant, args.repo, args.labels)
+            self._check_no_slack_links(args.title, args.body)
             await self._check_assignees(args.assignees, args.participants)
             draft = IssueProposal.model_validate(
                 {
@@ -420,6 +439,7 @@ class WriteTools:
         async def act() -> ProposeResult:
             repo_of_topic, issue_of_topic = await self._channel_topic_issue(grant, args.topic_id)
             repo, labels = self._repo_and_labels(grant, args.repo, args.changes.add_labels)
+            self._check_no_slack_links(args.changes.body, args.changes.comment)
             if (
                 repo_of_topic is None
                 or repo_of_topic.casefold() != repo.casefold()
