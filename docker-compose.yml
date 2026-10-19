@@ -33,6 +33,15 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Healthy while JotFlow is connected to Slack: jotflow run rewrites a
+    # heartbeat in /tmp every 30 s while connected, and jotflow health checks
+    # its age with no network and no tokens (#133). Alert on "unhealthy".
+    healthcheck:
+      test: ["CMD", "jotflow", "health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
   # Two agent services, so the write GitHub token never exists in a container a
   # drafting run can reach: runs share one uid, and a same-uid process can read
