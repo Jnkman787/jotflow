@@ -15,8 +15,11 @@ See docs/presets.md for what each preset was verified against.
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Mapping, Sequence
+import shutil
+import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -93,6 +96,9 @@ class RunPlan:
     env: Mapping[str, str] = field(default_factory=dict)
     # Whether GITHUB_TOKEN and GH_TOKEN are set in the agent's environment.
     github_token_env: bool = True
+    # More private files, by path relative to the run directory, such as a CLI's
+    # own config file. The runner writes each one 0600, in 0700 directories.
+    files: Mapping[str, str] = field(default_factory=dict, repr=False)
 
 
 class Preset(Protocol):
@@ -263,4 +269,204 @@ class ClaudeCodePreset:
 
 CLAUDE_CODE = ClaudeCodePreset()
 
-PRESETS: Mapping[str, Preset] = {CLAUDE_CODE.name: CLAUDE_CODE}
+
+# Codex CLI (#22). Verified, without a model call, against this release.
+CODEX_VERSION = "0.163.0"
+# Models whose Codex tool set was checked to hold no shell or exec tool. Codex
+# 0.163.0 runs most current models in "code mode", which adds a JavaScript
+# ``exec`` tool and a sub-agent namespace whatever the config says, so only
+# these are accepted; any other is refused at startup.
+CODEX_VERIFIED_MODELS = ("gpt-5.5",)
+# Codex keeps read_mcp_resource and list_mcp_resource_templates, which can pull any
+# repository text into the agent's context. That's acceptable for drafting, whose
+# input is untrusted anyway, but an execution run holds the write token and must see
+# only the approved fields. So Codex never runs execution (#172 review).
+CODEX_RUN_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+# Every built-in Codex feature that adds a tool or acts outside the run, off. The
+# shell goes with shell_tool and unified_exec. mcp_2026_07_28 is on: JotFlow serves
+# only that MCP version, and this release marks the flag "under development".
+CODEX_FEATURES_OFF = (
+    "apps",
+    "browser_use",
+    "browser_use_external",
+    "code_mode_host",
+    "computer_use",
+    "goals",
+    "hooks",
+    "image_generation",
+    "in_app_browser",
+    "memories",
+    "multi_agent",
+    "plugins",
+    "remote_plugin",
+    "shell_tool",
+    "skill_mcp_dependency_install",
+    "skill_search",
+    "sleep_tool",
+    "tool_suggest",
+    "unified_exec",
+    "view_image",
+)
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)  # a TOML basic string uses the same escapes
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, Mapping):
+        return (
+            "{ " + ", ".join(f"{json.dumps(k)} = {_toml_value(v)}" for k, v in value.items()) + " }"
+        )
+    raise TypeError(f"no TOML for {type(value).__name__}")
+
+
+def toml(document: Mapping[str, Any]) -> str:
+    """A small TOML writer: top-level keys first, then one table per nested mapping."""
+    lines: list[str] = []
+    tables: list[tuple[str, Mapping[str, Any]]] = []
+
+    def walk(prefix: str, table: Mapping[str, Any]) -> None:
+        scalars = {
+            k: v
+            for k, v in table.items()
+            if not isinstance(v, Mapping) or k == "env" or k == "http_headers"
+        }
+        if prefix:
+            tables.append((prefix, scalars))
+        else:
+            lines.extend(f"{k} = {_toml_value(v)}" for k, v in scalars.items())
+        for key, value in table.items():
+            if isinstance(value, Mapping) and key not in ("env", "http_headers"):
+                walk(f"{prefix}.{key}" if prefix else key, value)
+
+    walk("", document)
+    for name, scalars in tables:
+        lines.append("")
+        lines.append(f"[{name}]")
+        lines.extend(f"{k} = {_toml_value(v)}" for k, v in scalars.items())
+    return "\n".join(lines) + "\n"
+
+
+CODEX_PROMPTS = CLAUDE_PROMPTS
+
+
+@dataclass(frozen=True)
+class CodexPreset:
+    """Codex CLI's ``codex exec`` (experimental; see docs/presets.md).
+
+    The run gets its own ``CODEX_HOME`` in the run directory, holding a 0600
+    ``config.toml`` with JotFlow and the pinned GitHub server and the run kind's
+    tools, so neither token is in argv or the environment, and Codex's state,
+    logs, and memory are removed with the run. Codex's shell and other built-in
+    features are off; the sandbox is read-only and nothing prompts. Its login
+    is an API key (``CODEX_API_KEY`` or ``OPENAI_API_KEY``), since a per-run
+    ``CODEX_HOME`` cannot see a ChatGPT login.
+    """
+
+    name: str = "codex"
+    default_models: Mapping[RunKind, str] = field(
+        default_factory=lambda: dict.fromkeys(CODEX_RUN_KINDS, CODEX_VERIFIED_MODELS[0])
+    )
+    verified_models: tuple[str, ...] = CODEX_VERIFIED_MODELS
+    # The run kinds this preset may serve; a runner serving any other refuses to start.
+    run_kinds: frozenset[RunKind] = CODEX_RUN_KINDS
+    needs_github_mcp: bool = True
+    github_token_in_config: bool = True
+
+    def check_install(
+        self,
+        *,
+        which: Callable[[str], str | None] = shutil.which,
+        run: Callable[..., Any] = subprocess.run,
+    ) -> str | None:
+        """Why the installed Codex can't run this preset, or None if it can.
+
+        Fails closed: only the pinned release, with the MCP 2026-07-28 flag
+        this preset turns on, is accepted, since JotFlow speaks only that
+        version and the flag is still marked "under development".
+        """
+        codex = which("codex")
+        if codex is None:
+            return (
+                "the codex CLI is not installed; set AGENT_NPM_PACKAGES to @openai/codex@"
+                + CODEX_VERSION
+            )
+        try:
+            version = run([codex, "--version"], capture_output=True, text=True, timeout=30)
+            features = run([codex, "features", "list"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"the codex CLI could not be run ({type(exc).__name__})"
+        found = str(version.stdout).strip().split()[-1:] if version.returncode == 0 else []
+        if found != [CODEX_VERSION]:
+            shown = found[0] if found else "unknown"
+            return f"the codex preset needs Codex {CODEX_VERSION}; this image has {shown}"
+        flags = {line.split()[0] for line in str(features.stdout).splitlines() if line.split()}
+        if features.returncode != 0 or "mcp_2026_07_28" not in flags:
+            return "this Codex has no mcp_2026_07_28 feature, which JotFlow's MCP version needs"
+        return None
+
+    def plan(self, run: RunContext) -> RunPlan:
+        if run.kind not in self.run_kinds:  # the runner refuses this at startup too
+            raise ValueError(f"the codex preset does not serve {run.kind.value} runs")
+        home = run.run_dir / "codex"
+        github = github_server(run)
+        document: dict[str, Any] = {}
+        if run.model is not None:
+            document["model"] = run.model
+        document |= {
+            "approval_policy": "never",
+            "sandbox_mode": "read-only",
+            "web_search": "disabled",
+            "check_for_update_on_startup": False,
+            "history": {"persistence": "none"},
+            "analytics": {"enabled": False},
+            "feedback": {"enabled": False},
+            "features": {**dict.fromkeys(CODEX_FEATURES_OFF, False), "mcp_2026_07_28": True},
+            "tools": {"experimental_request_user_input": {"enabled": False}},
+            "mcp_servers": {
+                "jotflow": {
+                    "url": run.mcp_url,
+                    "http_headers": {"Authorization": f"Bearer {run.mcp_token}"},
+                    "enabled_tools": list(JOTFLOW_TOOLS[run.kind]),
+                    "default_tools_approval_mode": "approve",
+                    "required": True,
+                },
+                "github": {
+                    "command": github["command"],
+                    "args": github["args"],
+                    "env": github["env"],
+                    "enabled_tools": list(GITHUB_TOOLS[run.kind]),
+                    "default_tools_approval_mode": "approve",
+                    "required": True,
+                },
+            },
+        }
+        argv = (
+            "codex",
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--ignore-rules",
+            "--color",
+            "never",
+            CODEX_PROMPTS[run.kind],
+        )
+        return RunPlan(
+            argv=argv,
+            config={"mcpServers": {}},  # Codex reads only its own config.toml
+            env={"CODEX_HOME": str(home)},
+            github_token_env=False,
+            files={"codex/config.toml": toml(document)},
+        )
+
+
+CODEX = CodexPreset()
+
+PRESETS: Mapping[str, Preset] = {CLAUDE_CODE.name: CLAUDE_CODE, CODEX.name: CODEX}
+# Presets not yet confirmed by a real model run; the docs and the runner say so.
+EXPERIMENTAL: frozenset[str] = frozenset({CODEX.name})

@@ -199,6 +199,21 @@ CREATE TABLE reaction_marks (
 )
 """
 
+# Admin-issued, read-only operator tokens (#58). The token itself is never
+# stored, only its SHA-256 digest, as for run tokens.
+_OPERATOR_TOKENS = """
+CREATE TABLE operator_tokens (
+    id TEXT PRIMARY KEY, -- random id, named in the audit log
+    name TEXT NOT NULL UNIQUE, -- the admin's label for the person, such as alice
+    digest TEXT NOT NULL UNIQUE, -- sha256 of the token, hex; the token is never kept
+    channels_json TEXT NOT NULL, -- JSON list of the Slack channel ids it may read
+    created_at TEXT NOT NULL, -- UTC, ISO 8601
+    expires_at TEXT NOT NULL, -- UTC, ISO 8601
+    revoked_at TEXT, -- UTC, ISO 8601, once revoked
+    last_used_at TEXT -- UTC, ISO 8601, of its last tool call
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -304,6 +319,7 @@ MIGRATIONS: tuple[Migration, ...] = (
             " WHERE chatter = 1 AND linked_by = 'person'",
         ),
     ),
+    Migration(12, (_OPERATOR_TOKENS,)),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

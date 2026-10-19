@@ -52,7 +52,7 @@ from jotflow.orchestrator.slack import (
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.store import StoreError
 from jotflow.whiteboard.server import McpServer, McpStartError, build_app
-from jotflow.whiteboard.tokens import TokenRegistry
+from jotflow.whiteboard.tokens import TokenCheck
 from jotflow.whiteboard.tools import ToolSpec
 
 log = logging.getLogger("jotflow.run")
@@ -182,7 +182,7 @@ async def run_until_stopped(connection: Connection, stop: asyncio.Event) -> None
 
 
 def make_mcp_server(
-    settings: Settings, tokens: TokenRegistry, tools: Sequence[ToolSpec] = ()
+    settings: Settings, tokens: TokenCheck, tools: Sequence[ToolSpec] = ()
 ) -> McpServer:
     """The whiteboard MCP server, serving ``tools`` to tokens ``tokens`` issued.
 

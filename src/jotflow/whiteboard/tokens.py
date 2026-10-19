@@ -51,10 +51,17 @@ class Grant:
     channel_id: str
     thread_ts: str | None = None
     proposal_id: str | None = None
+    # An operator grant's channels; channel_id is the first. Empty for runs.
+    channels: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.run_id or not self.channel_id:
             raise ValueError("a grant needs a run id and a channel id")
+        if self.kind is RunKind.OPERATOR:
+            if self.channel_id not in self.channels or self.thread_ts or self.proposal_id:
+                raise ValueError("an operator grant names its channels and nothing else")
+        elif self.channels:
+            raise ValueError("only an operator grant names several channels")
         if self.kind is RunKind.EXECUTION and not self.proposal_id:
             raise ValueError("an execution grant must name its proposal")
         if self.kind is not RunKind.EXECUTION and self.proposal_id is not None:

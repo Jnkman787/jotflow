@@ -147,5 +147,6 @@ Install it as that user with `uv tool install jotflow`. If `uv tool dir --bin` p
 - [ ] The images are pinned to a version, and you know which one is running
 - [ ] There's a backup from before the last upgrade, and you've done a restore once
 - [ ] `docker compose ps` is monitored for `unhealthy`
+- [ ] `docker compose exec jotflow jotflow operator list` shows no token you don't expect; revoke any that's unused
 - [ ] With guests, Slack Connect, or wide membership in a channel, approvers are on, and the channel isn't left in `auto` (see the threat model)
 - [ ] You've read the threat model's [Accepted in v1](threat-model.md#accepted-in-v1) section

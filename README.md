@@ -445,6 +445,41 @@ Most people never need these: just post, and JotFlow works out the rest.
 
 Comments and closures on GitHub do not flow back into Slack yet; that is planned after v1.
 
+### Ask from a terminal (admins)
+
+An admin can give someone a read-only token, so their own terminal agent can look up a channel's topics. It can call only `list_topics` and `get_topic`, on the channels you name, and it can't propose, write or approve anything.
+
+```sh
+docker compose exec jotflow jotflow operator create --name alex --channel C0123ABCD
+docker compose exec jotflow jotflow operator list
+docker compose exec jotflow jotflow operator revoke alex
+```
+
+`create` prints the token once, so pass it on privately. It lasts 30 days unless you add `--days`, up to 365. Repeat `--channel` for more channels. `list` shows each token's channels, expiry and last use, never the token. A revoked token stops working within 2 seconds.
+
+No port is opened for this. The person's MCP client starts JotFlow's bridge inside the container as its server command, with the token in its environment:
+
+```json
+{
+  "mcpServers": {
+    "jotflow": {
+      "command": "docker",
+      "args": ["compose", "--project-directory", "/path/to/jotflow", "exec", "-T",
+               "-e", "JOTFLOW_OPERATOR_TOKEN", "jotflow", "jotflow", "operator", "connect"],
+      "env": { "JOTFLOW_OPERATOR_TOKEN": "jfo_..." }
+    }
+  }
+}
+```
+
+`-e JOTFLOW_OPERATOR_TOKEN` with no value copies the token from the environment, so it never appears in a command line. Keep a config file that holds the token private. From another machine, run the same command over ssh, reading the token from a private file on the host:
+
+```sh
+ssh jotflow-host 'cd /path/to/jotflow && JOTFLOW_OPERATOR_TOKEN=$(cat ~/.jotflow-operator-token) docker compose exec -T -e JOTFLOW_OPERATOR_TOKEN jotflow jotflow operator connect'
+```
+
+Anyone who can run `docker compose exec` on the host can already read JotFlow's database and Slack tokens, so only give host access to people you would trust with those. JotFlow logs each call with the token's id, the tool, the channel and the time.
+
 ## Principles
 
 - **Bring your own agent.** JotFlow never calls an LLM itself. You supply the agent and its credentials.

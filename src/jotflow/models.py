@@ -94,6 +94,13 @@ class RunKind(StrEnum):
     DRAFTING = "drafting"  # reads a thread, proposes; read-only GitHub access
     EXECUTION = "execution"  # performs one approved write
     QUESTION = "question"  # answers a read-only question in the thread (M5, D12)
+    # Not a run: an admin-issued, read-only token for a person's terminal agent (#58, D12).
+    # It may call only list_topics and get_topic, on its named channels.
+    OPERATOR = "operator"
+
+
+# The kinds that are agent runs. OPERATOR is a token kind only, never queued or launched.
+RUN_KINDS = frozenset({RunKind.DRAFTING, RunKind.EXECUTION, RunKind.QUESTION})
 
 
 # The longest a run may run, and so the longest its MCP token lives: a run must
