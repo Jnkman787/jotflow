@@ -597,3 +597,23 @@ async def test_an_auto_write_under_way_is_not_due_for_a_card(store: Store) -> No
     assert await store.cards_due() == []
     await store.transition("p1", ProposalState.FAILED)
     assert [p.id for p in await store.cards_due()] == ["p1"]
+
+
+# A drafting run's outcome (#24)
+
+
+async def test_a_finished_drafting_run_records_how_many_proposals_it_made(store: Store) -> None:
+    empty = await store.enqueue_run(D, CH, T1)
+    claimed = await store.claim_next_run(max_running=4)
+    assert claimed is not None and claimed.id == empty.id
+    await store.finish_run(empty.id, RunStatus.SUCCEEDED)
+    ended = await store.get_run(empty.id)
+    assert ended is not None and ended.status is RunStatus.SUCCEEDED
+    assert await store.run_proposals(empty.id) == []  # it drafted nothing
+    busy = await store.enqueue_run(D, CH, T2)
+    first = record("p1", thread=T2).model_copy(update={"run_id": busy.id})
+    second = record("p2", thread=T2).model_copy(update={"run_id": busy.id})
+    await store.add_proposal(first)
+    await store.add_proposal(second)
+    await store.add_proposal(record("p3", thread=T3))  # another run's
+    assert [p.id for p in await store.run_proposals(busy.id)] == ["p1", "p2"]

@@ -202,8 +202,10 @@ def test_slack_size_limits_hold() -> None:
 def test_the_repo_dropdown_lists_the_channels_repos() -> None:
     card = render_card(record(), context())
     (select,) = actions(card)[ACTION_REPO]
-    assert select["initial_option"]["value"] == "acme-co/web"
-    assert [o["value"] for o in select["options"]] == ["acme-co/web", "acme-co/api"]
+    # "<proposal id>:<nickname>", so a click names its proposal (#160).
+    assert select["initial_option"]["value"] == "p1:web"
+    assert [o["value"] for o in select["options"]] == ["p1:web", "p1:api"]
+    assert all(len(o["value"]) <= 150 for o in select["options"])
 
 
 def test_one_repo_needs_no_dropdown() -> None:

@@ -1007,3 +1007,58 @@ async def test_a_reaction_in_a_paused_channel_approves_nothing() -> None:
     await _react(_reacting_app(rig))
     assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0
     assert rig.slack.ephemerals == [(CH, CAROL, PAUSED)]
+
+
+# The public entry point other card actions use (#160)
+
+
+async def test_guarded_runs_an_action_only_after_every_shared_check() -> None:
+    rig = Rig()
+    pid = await rig.proposal()
+    ran: list[tuple[str, str]] = []
+
+    async def edit(click: Any, record: Any) -> str:
+        ran.append((click.user_id, record.id))
+        return "edited"
+
+    assert await rig.handler.guarded(click(f"{pid}:web"), edit) == "edited"
+    assert ran == [(BOB, pid)]
+    rig.slack.people[CAROL] = Person(CAROL, guest=True)
+    assert await rig.handler.guarded(click(f"{pid}:web", user=CAROL), edit) == "refused"
+    assert await rig.handler.guarded(click(f"{pid}:web", ts="1760781799.000100"), edit) == (
+        "refused"
+    )
+    assert await rig.handler.guarded(click(f"{pid}:web", user_team="T0OTHER"), edit) == "refused"
+    assert ran == [(BOB, pid)]
+    assert [e[2] for e in rig.slack.ephemerals] == [NOT_ALLOWED, NOT_THIS_CARD, NOT_ALLOWED]
+
+
+async def test_a_refusal_raised_by_the_action_reaches_only_the_person() -> None:
+    from jotflow.orchestrator.approval import Refused
+
+    rig = Rig()
+    pid = await rig.proposal()
+
+    async def edit(click: Any, record: Any) -> str:
+        raise Refused("That repo isn't one this channel feeds.")
+
+    assert await rig.handler.guarded(click(f"{pid}:nope"), edit) == "refused"
+    assert rig.slack.ephemerals == [(CH, BOB, "That repo isn't one this channel feeds.")]
+
+
+async def test_a_select_menus_chosen_value_is_read() -> None:
+    rig = Rig()
+    pid = await rig.proposal()
+    seen: list[str] = []
+
+    async def edit(click: Any, record: Any) -> str:
+        seen.append(click.value)
+        return "edited"
+
+    body = click("unused")
+    del body["actions"][0]["value"]
+    body["actions"][0]["selected_option"] = {"value": f"{pid}:api"}
+    assert await rig.handler.guarded(body, edit) == "edited"
+    assert seen == [f"{pid}:api"]
+    body["actions"][0]["selected_option"] = {"value": "x" * 129}
+    assert await rig.handler.guarded(body, edit) == "ignored"

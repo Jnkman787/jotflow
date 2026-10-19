@@ -13,6 +13,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.models import ChannelMode
 from jotflow.orchestrator.help import channel_help, help_text
+from jotflow.orchestrator.identity import LinkCommand
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
 from jotflow.orchestrator.modes import ModeCommand
 from jotflow.policy import Policy
@@ -116,17 +117,27 @@ def register_commands(
     policy: Policy | None = None,
     mode_for: Callable[[str], Awaitable[ChannelMode]] | None = None,
     modes: ModeCommand | None = None,
+    links: LinkCommand | None = None,
 ) -> None:
-    """Answer ``/jotflow`` privately: ``help`` and ``mode``.
+    """Answer ``/jotflow`` privately: ``help``, ``mode``, and ``link`` and ``unlink``.
 
     With ``policy``, help knows the channel it was asked in: its repos and how
     approval works there, or that the channel is not set up (#80). With
-    ``modes``, ``/jotflow mode`` shows or sets the channel's mode (#28).
+    ``modes``, ``/jotflow mode`` shows or sets the channel's mode (#28). With
+    ``links``, ``/jotflow link`` links the caller's own GitHub login (#35).
     """
 
     async def on_command(ack: Any, command: dict[str, Any], respond: Any = None) -> None:
-        text = str(command.get("text") or "").strip().lower()
+        raw = str(command.get("text") or "").strip()
+        text = raw.lower()
         word, _, rest = text.partition(" ")
+        if word in ("link", "unlink") and links is not None:
+            # users.info decides who may link; answer privately after acking.
+            await ack()
+            user = str(command.get("user_id") or "")
+            linked = await links.handle(user, word, raw.partition(" ")[2])
+            await respond(linked.text)
+            return
         if word == "mode" and modes is not None:
             # Setting auto can scan the channel's members, which takes longer than
             # Slack's three seconds: acknowledge first, then answer privately.
@@ -147,7 +158,8 @@ def register_commands(
             await ack(channel_help(policy, channel, mode))
         else:
             await ack(
-                "Try /jotflow help for the keywords, or /jotflow mode for this channel's mode."
+                "Try /jotflow help for the keywords, /jotflow mode for this channel's mode, "
+                "or /jotflow link your-github-login so proposals can assign you."
             )
 
     app.command(SLASH_COMMAND)(on_command)

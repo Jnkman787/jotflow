@@ -695,3 +695,12 @@ async def test_a_new_approval_starts_a_fresh_attempt_count(
     assert again is not None and again.state is ProposalState.RECONCILING
     assert "p1" in lifecycle.pending_retries()
     assert len(gave_up.records) == 1
+
+
+async def test_a_drafting_runs_end_logs_how_many_proposals_it_made(
+    store: Store, lifecycle: RunLifecycle, caplog: pytest.LogCaptureFixture
+) -> None:
+    started = await _started(store, lifecycle)
+    with caplog.at_level(logging.INFO, logger="jotflow.runs"):
+        await lifecycle.finish(started.run.id, RunStatus.SUCCEEDED)
+    assert f"run {started.run.id} ended (succeeded) with 0 proposal(s)" in caplog.text

@@ -46,6 +46,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from jotflow.config import Settings
 from jotflow.models import ChannelMode, ProposalRecord, RunKind
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
+from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
     SYNC_SECONDS,
     BoltPeople,
@@ -56,6 +57,7 @@ from jotflow.orchestrator.card_sync import (
 from jotflow.orchestrator.cards import CardContext, CardPoster, CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
 from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
+from jotflow.orchestrator.identity import LinkCommand, PeopleLookup
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
@@ -215,6 +217,7 @@ class Orchestrator:
         people: People | None = None,
         card_seconds: float = SYNC_SECONDS,
         approval_slack: ApprovalSlack | None = None,
+        link_people: PeopleLookup | None = None,
         mode_slack: ModeSlack | None = None,
         thread_slack: ThreadSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
@@ -239,11 +242,14 @@ class Orchestrator:
         self._card_seconds = card_seconds
         self.cards: CardSync | None = None
         self._approval_slack = approval_slack
+        self._link_people = link_people
         self.approval: ApprovalHandler | None = None
+        self.edits: CardEdits | None = None
         self._mode_slack = mode_slack
         self._thread_slack = thread_slack
         self.threads: ThreadNotice | None = None
         self.modes: ModeCommand | None = None
+        self.links: LinkCommand | None = None
         self.auto: AutoApprover | None = None
         self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
@@ -298,6 +304,8 @@ class Orchestrator:
         self.threads = ThreadNotice(
             self._store, self._policy, self._thread_slack or BoltThreadSlack(self._client)
         )
+        # Each person links only their own GitHub login (#35).
+        self.links = LinkCommand(self._store, self._link_people or slack_people)
         self.modes = ModeCommand(
             self._store,
             self._policy,
@@ -312,13 +320,24 @@ class Orchestrator:
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
         # an approved proposal's execution run waits in the queue until they are.
+        approval_slack = self._approval_slack or BoltApprovalSlack(
+            self._client, people=slack_people
+        )
         self.approval = ApprovalHandler(
             self._store,
             self._policy,
-            self._approval_slack or BoltApprovalSlack(self._client, people=slack_people),
+            approval_slack,
             refresh=self.cards.refresh,
             arm_thread=self._arm_thread,
             context_for=drawn_with,
+        )
+        # The card's repo dropdown and assign buttons pass the same gate (#160).
+        self.edits = CardEdits(
+            self._store,
+            self._policy,
+            self.approval.guarded,
+            approval_slack,
+            refresh=self.cards.refresh,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(

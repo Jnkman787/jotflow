@@ -41,17 +41,20 @@ from jotflow.store.base import (
     ChannelModeSetting,
     Clock,
     ConflictError,
+    EditField,
     IdentityLink,
     LinkSource,
     MessageLink,
     NotFoundError,
     NoticeKind,
     PendingThread,
+    ProposalEdit,
     Recovery,
     StoreError,
     ToolCallRecord,
     TopicRecord,
     check_clearable,
+    check_edit,
     check_finish,
     check_github_login,
     check_id,
@@ -59,6 +62,7 @@ from jotflow.store.base import (
     check_notice,
     check_run_request,
     cleared_draft,
+    edited_draft,
     from_text,
     plan_transition,
     to_text,
@@ -420,6 +424,13 @@ class SqliteStore:
             )
             return None if row is None else await self._proposal(row)
 
+    async def run_proposals(self, run_id: str) -> list[ProposalRecord]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM proposals WHERE run_id = ? ORDER BY created_at, id", (run_id,)
+            )
+            return [await self._proposal(row) for row in rows]
+
     async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         async with self._lock:
             rows = await self._all(
@@ -526,6 +537,45 @@ class SqliteStore:
             return
         async with self._lock:
             await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    async def edit_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        by: str,
+        field: EditField,
+    ) -> ProposalRecord:
+        async with self._write():
+            record = await self._get_proposal(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            check_edit(record, draft, by, field)
+            draft = edited_draft(record, draft)
+            now = to_text(self._clock())
+            await self._db.execute(
+                "UPDATE proposals SET draft_json = ?, repo = ?, updated_at = ?,"
+                " revision = revision + 1 WHERE id = ? AND state = ?",
+                (canonical_json(draft), draft.repo, now, proposal_id, record.state.value),
+            )
+            await self._db.execute(
+                "INSERT INTO proposal_edits (proposal_id, edited_by, field, edited_at)"
+                " VALUES (?, ?, ?, ?)",
+                (proposal_id, by, field, now),
+            )
+            updated = await self._get_proposal(proposal_id)
+        return _found(updated)
+
+    async def proposal_edits(self, proposal_id: str) -> list[ProposalEdit]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM proposal_edits WHERE proposal_id = ? ORDER BY edited_at, rowid",
+                (proposal_id,),
+            )
+        return [
+            ProposalEdit(r["proposal_id"], r["edited_by"], r["field"], from_text(r["edited_at"]))
+            for r in rows
+        ]
 
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
         check_id(ts, "card ts")

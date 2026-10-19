@@ -36,6 +36,7 @@ from jotflow.logs import (
     configure_logging,
 )
 from jotflow.orchestrator.approval import register_actions
+from jotflow.orchestrator.card_edits import register_edits
 from jotflow.orchestrator.health import ConnectionWatch, Heartbeat, Watched, heartbeat_path
 from jotflow.orchestrator.ingest import EventFilter
 from jotflow.orchestrator.service import Orchestrator
@@ -160,6 +161,11 @@ async def run_until_stopped(connection: Connection, stop: asyncio.Event) -> None
         if watched is not None
         else None
     )
+    if watch is None:
+        log.warning(
+            "the Slack connection does not report whether it is connected, so there is no "
+            "heartbeat and jotflow health will say unhealthy"
+        )
     try:
         await stop.wait()
         log.info("shutting down")
@@ -221,9 +227,13 @@ async def serve(settings: Settings, policy: Policy) -> int:
         return EXIT_STORE
     try:
         register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
-        register_commands(app, policy, orchestrator.channel_mode, orchestrator.modes)
+        register_commands(
+            app, policy, orchestrator.channel_mode, orchestrator.modes, orchestrator.links
+        )
         if orchestrator.approval is not None:
             register_actions(app, orchestrator.approval)
+        if orchestrator.edits is not None:
+            register_edits(app, orchestrator.edits)
         await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
     except BaseException:
         # Started is stopped, whatever fails after it.

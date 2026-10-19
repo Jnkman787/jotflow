@@ -258,5 +258,10 @@ def test_the_agents_repo_visibility_is_outside_the_approval_hash() -> None:
     plain = IssueProposal(repo="a/b", title="T", body="B", confidence=0.5)
     reported = plain.model_copy(update={"repo_visibility": "public"})
     assert content_hash(plain) == content_hash(reported)
+    # Pinned, so the test fails by itself if repo_visibility ever enters the hash.
+    assert (
+        content_hash(reported)
+        == "sha256:d990bd680652e708b10d3187f9811208d7770ed6f5f802f79138879287431d60"
+    )
     with pytest.raises(ValueError):
         IssueProposal(repo="a/b", title="T", body="B", confidence=0.5, repo_visibility="internal")

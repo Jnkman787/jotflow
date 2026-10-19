@@ -179,6 +179,15 @@ CREATE TABLE help_notices (
 )
 """
 
+_PROPOSAL_EDITS = """
+CREATE TABLE proposal_edits (
+    proposal_id TEXT NOT NULL REFERENCES proposals (id) ON DELETE CASCADE, -- the proposal
+    edited_by TEXT NOT NULL, -- Slack user id of who changed it from the card
+    field TEXT NOT NULL CHECK (field IN ('repo', 'assign', 'unassign')), -- what, never the value
+    edited_at TEXT NOT NULL -- UTC, ISO 8601
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -266,6 +275,11 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX proposals_thread_due ON proposals (created_at)"
             " WHERE state = 'applied' AND thread_told_at IS NULL",
         ),
+    ),
+    # Edits made from the card: who, when, and which field (#160).
+    Migration(
+        10,
+        (_PROPOSAL_EDITS, "CREATE INDEX proposal_edits_proposal ON proposal_edits (proposal_id)"),
     ),
 )
 

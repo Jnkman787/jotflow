@@ -251,6 +251,7 @@ The mode applies uniformly to creation, description edits, comments, assignment,
   - when the agent overruled the author's `idea:` or `bug:` hint, "Hint overruled:" with the agent's one-line reason (#147)
   Agent-written text is always `plain_text`, so nothing in it can ping or link. The Approve button carries the content hash of the draft it shows. The card's message ts is stored, so later states edit the same message.
 - **Keeping the card live** (`src/jotflow/orchestrator/card_sync.py`, #152). The store is the card's outbox. Every change a card shows raises the proposal's revision, and the card records the revision it shows. One loop in the orchestrator, about once a second, posts each missing card and edits each one that is behind. So `propose_issue` and the other tool writes never call Slack, and a Slack failure cannot fail them. A card that could not be drawn stays due and is retried, waiting longer each time up to a minute, across restarts too. A proposal superseded or rejected before its card went up gets none.
+- **Editing from the card** (`src/jotflow/orchestrator/card_edits.py`, #160). The repo dropdown moves a new-issue proposal to another of the channel's repos, dropping labels the new repo does not allow and the agent's visibility report for the old repo. Make assignee adds a participant's linked GitHub login, and Remove takes a login off the assignees, never off the participants. Who may click is Approve's rule, checked by the approval gate itself, and with approvers on only an approver may edit, a source author included. Only a pending or failed proposal can be edited. An edit changes the content hash, so the card is redrawn and an Approve from before it is refused as out of date. Each edit is recorded with who, when, and which field, never the value.
 - Guests and external Slack Connect users can never approve.
 
 **Who may approve, configurable** (D7):
@@ -415,7 +416,7 @@ Setup is a first-class feature: `jotflow init` asks a few questions, checks the 
 
 ## Identity
 
-Assignment requires a Slack user to GitHub handle mapping. A self-service slash command lets each person link their own account. Links are self-declared in v1, and cards mark them as unverified.
+Assignment requires a Slack user to GitHub handle mapping. A self-service slash command lets each person link their own account. Links are self-declared in v1, and cards mark them as unverified. `/jotflow link <login>` links the caller only, since it takes no user argument. The login must match GitHub's rule, and `@login` or a pasted profile link also works. `/jotflow link` shows the caller's link, and `/jotflow unlink` removes it. Guests and external Slack Connect users can't link, and a login someone else holds is refused without naming them. The store keeps only the Slack id, the login and the time, and the log keeps the Slack id and the action (#35). An assignee must be the linked login of one of the proposal's participants (#15). Because links are self-declared, someone can claim another person's login first. The card's "(unverified)" shows that, and verification, or an admin path to remove someone else's link, is later work.
 
 ## Security posture
 
