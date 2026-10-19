@@ -29,7 +29,7 @@ from jotflow.models import PARTIAL_PRESET_KINDS, RunKind
 # Where Dockerfile.agent installs the pinned GitHub MCP server.
 DEFAULT_GITHUB_MCP = "/usr/local/bin/github-mcp-server"
 
-# A model name or alias as the CLIs take it, such as "sonnet" or
+# A model id or alias as the CLIs take it, such as "claude-sonnet-5-5" or
 # "claude-sonnet-5-5[1m]". Nothing that a shell or a config parser could act on.
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}")
 # Classic and fine-grained GitHub tokens. Claude Code expands ${VAR} in MCP
@@ -219,9 +219,10 @@ class ClaudeCodePreset:
     name: str = "claude-code"
     default_models: Mapping[RunKind, str] = field(
         default_factory=lambda: {
-            RunKind.DRAFTING: "sonnet",
-            RunKind.QUESTION: "sonnet",
-            RunKind.EXECUTION: "haiku",
+            # Full ids, not aliases: the pinned CLI resolves "haiku" to an older model.
+            RunKind.DRAFTING: "claude-sonnet-5-5",
+            RunKind.QUESTION: "claude-sonnet-5-5",
+            RunKind.EXECUTION: "claude-haiku-5-5",
         }
     )
     needs_github_mcp: bool = True

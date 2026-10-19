@@ -234,13 +234,19 @@ def preset_config(**overrides: Any) -> RunnerConfig:
 
 def test_models_default_per_kind_and_can_be_overridden() -> None:
     config = preset_config()
-    assert config.model(RunKind.DRAFTING) == "sonnet"
-    assert config.model(RunKind.QUESTION) == "sonnet"
+    assert config.model(RunKind.DRAFTING) == "claude-sonnet-5-5"
+    assert config.model(RunKind.QUESTION) == "claude-sonnet-5-5"
     config = preset_config(models={RunKind.DRAFTING: "claude-sonnet-5-5[1m]"})
     assert config.model(RunKind.DRAFTING) == "claude-sonnet-5-5[1m]"
-    assert config.model(RunKind.QUESTION) == "sonnet"
+    assert config.model(RunKind.QUESTION) == "claude-sonnet-5-5"
     execution = preset_config(kinds=EXECUTION_KINDS, read_token=None, write_token=WRITE)
-    assert execution.model(RunKind.EXECUTION) == "haiku"
+    assert execution.model(RunKind.EXECUTION) == "claude-haiku-5-5"
+
+
+def test_claude_code_defaults_are_full_model_ids_not_aliases() -> None:
+    # An alias resolves per CLI version: at 2.1.303, "haiku" picks Haiku 4.5.
+    for model in CLAUDE_CODE.default_models.values():
+        assert model.startswith("claude-"), model
 
 
 @pytest.mark.parametrize(

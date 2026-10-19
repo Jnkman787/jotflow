@@ -100,7 +100,7 @@ The agent uses your own model login, and each run costs model tokens. Only `ANTH
 
 ```
 jotflow replay feature-request --agent claude-code
-jotflow replay --all --agent claude-code --repeat 3 --model sonnet
+jotflow replay --all --agent claude-code --repeat 3 --model claude-sonnet-5-5
 jotflow replay --all --agent scripted
 ```
 

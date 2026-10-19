@@ -59,7 +59,9 @@ The preset also sets these variables:
 
 Neither token is in the command line or in the CLI's environment. The runner refuses a GitHub token with characters a GitHub token never has, because Claude Code expands `${...}` in MCP configs. GitHub's server starts with `--read-only` for drafting and question runs, and with `--tools` set to the kind's GitHub tools for every kind.
 
-**The model.** By default, drafting and question runs use `sonnet` and execution runs use `haiku`. Set `JOTFLOW_AGENT_MODEL` for every kind a service serves, or `JOTFLOW_AGENT_MODEL_DRAFTING`, `_QUESTION`, or `_EXECUTION` for one kind. The value is an alias or a full model id, such as `claude-sonnet-5-5`.
+**The model.** By default, drafting and question runs use `claude-sonnet-5-5` and execution runs use `claude-haiku-5-5`. Set `JOTFLOW_AGENT_MODEL` for every kind a service serves, or `JOTFLOW_AGENT_MODEL_DRAFTING`, `_QUESTION`, or `_EXECUTION` for one kind. The value is a full model id, such as `claude-sonnet-5-5`, or an alias.
+
+**Use full model ids.** Each Claude Code release resolves an alias such as `sonnet` or `haiku` itself, so the model depends on the CLI version. At the pinned 2.1.303, `haiku` picks Haiku 4.5, not Haiku 5.5. A full id names one model on every version. Both default ids were checked against 2.1.303 on 2026-10-19 with one minimal call each, and the CLI reported the same id back.
 
 **The model login.** Use either of these:
 
