@@ -14,7 +14,7 @@ JotFlow is a self-hosted, agent-agnostic bridge between a shared Slack channel a
 
 ## How it works
 
-JotFlow is one program you run yourself, with two jobs. It is a Slack app that listens to your channel, and it is the place your own AI agent connects to, to read the work and propose issues. That connection uses MCP, a standard way for agents to use tools. Your agent brings its own GitHub access and does the actual writing. JotFlow never touches GitHub.
+JotFlow runs on your own machine as one Docker Compose project, with no port published. JotFlow's own container is a Slack app that listens to your channels, and the place your team's AI agent connects to, to read the work and propose issues. That connection uses MCP, a standard way for agents to use tools. The agent runs in two containers of its own: one drafts with a read-only GitHub token, and one writes only what a person approved. JotFlow holds no GitHub token.
 
 ```mermaid
 flowchart LR
@@ -22,26 +22,49 @@ flowchart LR
         ch["#ideas channel<br/>anyone on the team"]
     end
 
-    subgraph jotflow["JotFlow &nbsp;·&nbsp; self-hosted, one process"]
-        direction TB
-        app["Slack app<br/>listens for messages,<br/>posts cards and replies"]
-        core["Orchestrator<br/>waits for threads to settle,<br/>tracks topics, holds proposals"]
-        mcp["MCP server<br/>where your agent connects:<br/>get_work · propose_issue ·<br/>link_message · record_result"]
-        db[("Pointers only<br/>no message bodies")]
-        app --> core --> mcp
-        core --- db
+    subgraph host["Your machine &nbsp;·&nbsp; one Docker Compose project, no published port"]
+        subgraph jf["JotFlow container &nbsp;·&nbsp; holds no GitHub token"]
+            direction TB
+            app["Slack app<br/>listens for messages,<br/>posts cards and replies"]
+            core["Orchestrator<br/>waits for threads to settle,<br/>tracks topics, starts runs"]
+            gate["Approval gate<br/>propose · auto · paused"]
+            mcp["MCP server<br/>JotFlow's tools for each run"]
+            db[("Store<br/>message pointers, and drafts<br/>until final; no message text")]
+            app --> core --> gate
+            core --- db
+            core --- mcp
+        end
+
+        subgraph drafting["Drafting agent container"]
+            direction TB
+            r1["Runner"] --> cli1["Agent CLI<br/>claude-code · codex · your own command"]
+            ro["GitHub MCP server, read-only<br/>read token: Issues read only"]
+            cli1 --> ro
+        end
+
+        subgraph execution["Execution agent container"]
+            direction TB
+            r2["Runner"] --> cli2["Agent CLI<br/>claude-code · your own command"]
+            rw["GitHub MCP server<br/>write token: approved cards only"]
+            cli2 --> rw
+        end
     end
 
-    subgraph yours["Your side"]
-        agent["Your agent<br/>Claude Code · Codex · your own command"]
-        gh["Your GitHub repos"]
+    subgraph outside["Outside"]
+        gh["GitHub API<br/>your repos"]
+        model["Model API<br/>such as Anthropic's"]
     end
 
     ch -- "messages, replies, reactions" --> app
     app -- "proposal cards, issue links" --> ch
-    core -- "starts a run" --> agent
-    agent <-- "MCP tools" --> mcp
-    agent -- "your agent's own GitHub access" --> gh
+    core -- "internal network: drafting and question runs" --> r1
+    gate -- "internal network: approved proposals only" --> r2
+    cli1 <-- "MCP tools" --> mcp
+    cli2 <-- "MCP tools" --> mcp
+    ro --> gh
+    rw --> gh
+    cli1 --> model
+    cli2 --> model
 ```
 
 One idea, start to finish:
@@ -51,25 +74,32 @@ sequenceDiagram
     actor T as Teammate
     participant S as Slack
     participant U as JotFlow
-    participant A as Your agent
+    participant D as Drafting run
+    participant E as Execution run
     participant G as GitHub
 
     T->>S: "Onboarding needs a progress bar" + a few replies
     S->>U: message events
     Note over U: thread goes quiet → start a drafting run
-    U->>A: run id + "call get_work, then act"
-    A->>U: get_work → thread text + active topics
-    A->>G: search for duplicates (your access)
-    A->>U: propose_issue(repo, title, body, labels, assignees)
+    U->>D: run id + a token for this run only
+    D->>U: get_work → thread text + active topics
+    D->>G: search for duplicates (read token)
+    D->>U: propose_issue(repo, title, body, labels, assignees)
     U->>S: proposal card in the thread
     T->>S: Approve
-    S->>U: approved
-    Note over U: start an execution run
-    U->>A: run id for the approved proposal
-    A->>U: get_work → the approved proposal
-    A->>G: create the issue (your access)
-    A->>U: record_result(issue URL)
-    U->>S: reply with the issue link
+    S->>U: approval click
+    Note over U: Gate checks: the click is on this card in its own channel,<br/>the content hash matches what the card showed,<br/>the person is no guest or external user, and if approvers are on,<br/>is an approver who wrote none of the source messages, and the channel isn't paused
+    U->>E: run id for the approved proposal
+    E->>U: get_work → the exact writes JotFlow planned
+    E->>G: look for the proposal's hidden marker in recent issues
+    alt marker found: an earlier attempt already wrote it
+        E->>U: record_result(that issue's URL)
+    else no marker
+        E->>G: create the issue (write token)
+        E->>U: record_result(issue URL)
+    end
+    Note over U: record_result checks the URL matches the approved repo,<br/>or the approved issue for an update
+    U->>S: reply with the issue link, react on the source messages
 ```
 
 In `auto` mode the Approve step is skipped and the card is posted after the issue exists. Follow-up replies in the thread run the same loop and produce update proposals instead of new issues.
@@ -79,7 +109,7 @@ The pieces:
 1. **Slack app.** Each team creates their own from the included manifest, named and iconed however they like. It is how JotFlow hears messages and posts back. Slack only talks to installed apps, so this part is unavoidable.
 2. **Orchestrator**, the part of JotFlow that coordinates the rest. It waits for a thread to settle before acting, keeps a per-channel index of active topics so related messages land on the same issue, and holds proposals until they are approved.
 3. **Whiteboard MCP server.** The agent's only way to act. Tools to fetch the work, propose an issue or an update, link a message to a topic, ask the channel a question, and report the result of a write. Any MCP-capable agent can drive it.
-4. **Your agent.** JotFlow starts it in the background, with no window, connected to JotFlow's tools, using a preset for the agent program you use. It reads, drafts, searches your repos for duplicates, and performs the GitHub writes with the access you already gave it.
+4. **Your agent.** JotFlow starts it in the background, with no window, connected to JotFlow's tools, using a preset for the agent program you use. It runs in two containers: drafting runs read, draft, and search your repos for duplicates with a read-only token, and execution runs perform the approved GitHub writes with the token that can write.
 5. **Approval gate.** Each channel is in `propose`, `auto`, or `paused` mode. It covers the whole lifecycle: creation, description edits, comments, assignment, and labels.
 
 ## What a team needs
