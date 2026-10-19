@@ -45,11 +45,12 @@ from jotflow.orchestrator.keywords import (
 from jotflow.orchestrator.people import Person as Person  # re-exported: callers import it here
 from jotflow.orchestrator.people import SlackPeople
 from jotflow.policy import Policy
+from jotflow.reactions import CONFIRM as REACTION_CONFIRM
 from jotflow.store.base import Store
 
 log = logging.getLogger("jotflow.keywords")
 
-CONFIRM = "white_check_mark"
+CONFIRM = REACTION_CONFIRM
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 
 Action = Literal["confirmed", "skipped", "attached", "refused", "ignored"]

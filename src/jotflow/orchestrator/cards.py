@@ -366,19 +366,34 @@ SHORTENED = (
 _LAYOUTS = ((True, False), (True, True), (False, True))
 
 
+def _laid_out(
+    record: ProposalRecord, context: CardContext, with_actions: bool
+) -> tuple[list[Block], str, bool, bool]:
+    """The card's blocks, its header, whether it shows the body, and whether it
+    shows the whole draft."""
+    for show_body, compact in _LAYOUTS[:-1]:
+        blocks, header, shortened = _assemble(record, context, show_body, compact)
+        if len(blocks) + (2 if with_actions else 0) <= MAX_BLOCKS:
+            break
+    else:
+        show_body, compact = _LAYOUTS[-1]
+        blocks, header, shortened = _assemble(record, context, show_body, compact)
+    return blocks, header, show_body, show_body and not shortened
+
+
+def approvable(record: ProposalRecord, context: CardContext) -> bool:
+    """Whether the card shows the whole draft, so it may be approved: the same rule
+    that decides whether it gets an Approve button, used for reaction approval (#34)."""
+    with_actions = record.state in (ProposalState.PENDING, ProposalState.FAILED)
+    return _laid_out(record, context, with_actions)[3]
+
+
 def render_card(record: ProposalRecord, context: CardContext) -> Card:
     """The card for ``record`` in its current state."""
     pending = record.state is ProposalState.PENDING
     # A failed proposal can be retried, or discarded, while its draft is kept (#27).
     retryable = record.state is ProposalState.FAILED and record.draft_cleared_at is None
-    for show_body, compact in _LAYOUTS[:-1]:
-        blocks, header, shortened = _assemble(record, context, show_body, compact)
-        if len(blocks) + (2 if pending or retryable else 0) <= MAX_BLOCKS:
-            break
-    else:
-        show_body, compact = _LAYOUTS[-1]
-        blocks, header, shortened = _assemble(record, context, show_body, compact)
-    approvable = show_body and not shortened
+    blocks, header, show_body, approvable = _laid_out(record, context, pending or retryable)
     if pending:
         if not approvable and show_body:
             blocks.append(_context(SHORTENED))

@@ -33,9 +33,12 @@ from jotflow.orchestrator.cards import (
     ACTION_DISCARD,
     ACTION_REQUEST_CHANGES,
     ACTION_RETRY,
+    CardContext,
+    approvable,
 )
 from jotflow.orchestrator.people import Person, SlackPeople
 from jotflow.policy import Policy, UnknownChannelError
+from jotflow.store import content_hash
 from jotflow.store.base import (
     ContentChangedError,
     DraftClearedError,
@@ -71,6 +74,10 @@ NOT_THIS_CARD = "This card no longer matches a proposal JotFlow knows about."
 STALE = "This card was out of date, so nothing was approved. It now shows the current draft."
 DISCARDED = "This draft was discarded, so it can no longer be approved."
 CHANGES_EMPTY = "There was nothing to post once mentions and markup were removed."
+CARD_UPDATING = "This card is being updated, so nothing was approved. React again in a moment."
+TOO_LONG_TO_REACT = (
+    "This draft is too long to show in full on the card, so it can't be approved here."
+)
 
 
 def _already(state: ProposalState) -> str:
@@ -99,6 +106,7 @@ class ApprovalSlack(Protocol):
 
 
 Refresh = Callable[[str], Awaitable[object]]
+ContextFor = Callable[[ProposalRecord], Awaitable[CardContext]]
 ArmThread = Callable[[str, str], Awaitable[None]]
 
 
@@ -145,7 +153,9 @@ class ApprovalHandler:
         *,
         refresh: Refresh | None = None,
         arm_thread: ArmThread | None = None,
+        context_for: ContextFor | None = None,
     ) -> None:
+        self._context_for = context_for
         self._store = store
         self._policy = policy
         self._slack = slack
@@ -216,6 +226,58 @@ class ApprovalHandler:
         await self.post_changes(checked)
         return None
 
+    # A reaction on the card (#34)
+
+    async def on_reaction(self, event: Mapping[str, Any]) -> str:
+        """The configured reaction on a pending card counts as Approve, when turned on.
+
+        A reaction carries no hash, so it approves only a card that shows the
+        stored draft: drawn at the proposal's current revision (#152), and in
+        full, as the Approve button requires. Every other check is the
+        button's. A reaction that is off, another emoji, or not on a card is
+        ignored without a word.
+        """
+        approval = self._policy.approval
+        # Slack names a toned emoji "thumbsup::skin-tone-2"; the tone is the same reaction.
+        name = str(event.get("reaction") or "").split("::", 1)[0]
+        if not approval.reactions or name != approval.reaction:
+            return "ignored"
+        item = _map(event.get("item"))
+        user_id = _str(event.get("user"))
+        channel = _str(item.get("channel"))
+        ts = _str(item.get("ts"))
+        if item.get("type") != "message" or not user_id or not channel or not ts:
+            return "ignored"
+        record = await self._store.proposal_for_card(channel, ts)
+        if record is None:
+            return "ignored"
+        click = Click(
+            user_id=user_id,
+            channel_id=channel,
+            message_ts=ts,
+            trigger_id=None,
+            value=f"{record.id}:{content_hash(record.proposal)}",
+        )
+        try:
+            # A reaction event has no payload teams; users.info decides external.
+            await self._check_person(event, user_id, payload_teams=False)
+            if record.state is not ProposalState.PENDING:
+                raise Refused(_already(record.state))
+            if record.card_due:
+                raise Refused(CARD_UPDATING)
+            context = (
+                await self._context_for(record)
+                if self._context_for is not None
+                else CardContext(channel=self._policy.channel(record.channel_id))
+            )
+            if not approvable(record, context):
+                raise Refused(TOO_LONG_TO_REACT)
+            return await self._approve(click, record)
+        except Refused as refused:
+            log.info("reaction approval refused for user %s", user_id)
+            await self._tell(user_id, str(refused), channel=channel)
+            return "refused"
+
     # The checks, then the action
 
     async def _guarded(
@@ -236,14 +298,19 @@ class ApprovalHandler:
             await self._tell(click.user_id, str(refused), channel=click.channel_id)
             return "refused"
 
-    async def _check_person(self, body: Mapping[str, Any], user_id: str) -> None:
+    async def _check_person(
+        self, body: Mapping[str, Any], user_id: str, *, payload_teams: bool = True
+    ) -> None:
         if not _SLACK_ID.fullmatch(user_id):
             raise Refused(NOT_ALLOWED)
         own = await self._slack.own_team()
-        team = _map(body.get("team"))
-        user = _map(body.get("user"))
-        if own is None or team.get("id") != own or user.get("team_id") != own:
+        if own is None:
             raise Refused(NOT_ALLOWED)
+        if payload_teams:
+            team = _map(body.get("team"))
+            user = _map(body.get("user"))
+            if team.get("id") != own or user.get("team_id") != own:
+                raise Refused(NOT_ALLOWED)
         person = await self._slack.person(user_id)
         if person.guest or person.external:
             raise Refused(NOT_ALLOWED)

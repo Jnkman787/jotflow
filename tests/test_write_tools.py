@@ -789,3 +789,82 @@ async def test_a_grant_must_match_its_runs_thread_or_proposal(
             await tools.link_message(token_grant, link())
         else:
             await tools.record_result(token_grant, RecordResultArgs(issue_url=URL))
+
+
+# The policy gate, at the tool (#29): what the policy refuses never becomes a card
+
+
+class _Cards:
+    def __init__(self) -> None:
+        self.posted: list[Any] = []
+
+    async def post(self, channel_id: str, thread_ts: str, card: Any) -> str:
+        self.posted.append(card)
+        return "1.0"
+
+    async def update(self, channel_id: str, ts: str, card: Any) -> None:
+        self.posted.append(card)
+
+
+@pytest.mark.parametrize("tool", ["propose_issue", "propose_update"])
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        (
+            {"repo": "acme-co/secret"},
+            f"repo 'acme-co/secret' is not one of channel {CH}'s repos",
+        ),
+        ({"label": "wontfix"}, "label list"),
+    ],
+)
+async def test_over_the_wire_a_proposal_outside_the_policy_never_becomes_a_card(
+    tools: WriteTools,
+    store: LiveStore,
+    poster: Poster,
+    tool: str,
+    change: dict[str, str],
+    reason: str,
+) -> None:
+    from jotflow.orchestrator.card_sync import CardSync
+    from jotflow.orchestrator.cards import CardPublisher
+    from jotflow.whiteboard.tokens import TokenRegistry
+    from tests.test_mcp_server import client_for, post
+
+    topic_id = await new_topic(tools)
+    if tool == "propose_issue":
+        fields: dict[str, Any] = {}
+        if "repo" in change:
+            fields["repo"] = change["repo"]
+        if "label" in change:
+            fields["labels"] = [change["label"]]
+        arguments = issue(topic_id, **fields).model_dump(mode="json")
+    else:
+        await store.set_topic_issue(topic_id, "acme-co/web", 42)
+        fields = {"repo": change.get("repo", "acme-co/web")}
+        if "label" in change:
+            fields["changes"] = {"comment": "x", "add_labels": [change["label"]]}
+        arguments = update(topic_id, **fields).model_dump(mode="json")
+    registry = TokenRegistry()
+    token = registry.issue(DRAFT, 60)
+    async with client_for(tokens=registry, tools=write_tools(store, POLICY, poster)) as http:
+        reply = await post(
+            http,
+            "tools/call",
+            {"name": tool, "arguments": arguments},
+            Authorization=f"Bearer {token}",
+        )
+    result = reply.json()["result"]
+    assert result["isError"] is True
+    assert reason in result["content"][0]["text"]
+    # Nothing was stored, so no card is due, and nothing reaches Slack.
+    assert await store.thread_proposals(CH, ROOT) == []
+    assert await store.cards_due() == []
+    cards = _Cards()
+    sync = CardSync(store, POLICY, CardPublisher(store, cards), _NoNames())
+    assert await sync.sync() == 0
+    assert cards.posted == [] and poster.posts == []
+
+
+class _NoNames:
+    async def name(self, user_id: str) -> str | None:
+        return None

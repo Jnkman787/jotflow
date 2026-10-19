@@ -67,6 +67,7 @@ def render_policy(policy: Policy) -> str:
         "[approval]",
         f"approvers = {_array(policy.approval.approvers)}",
         f"reactions = {_bool(policy.approval.reactions)}",
+        f"reaction = {toml_string(policy.approval.reaction)}",
         "",
         "[help]",
         f"guide = {_bool(policy.help.guide)}",
