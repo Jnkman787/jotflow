@@ -321,3 +321,15 @@ async def test_the_adapter_reacts_and_replies_without_unfurling() -> None:
             },
         ),
     ]
+
+
+@pytest.mark.parametrize("code", ["invalid_name", "not_in_channel", "is_archived"])
+async def test_a_reaction_slack_will_never_take_does_not_hold_back_the_reply(
+    store: Store, code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    slack = FakeThreadSlack()
+    slack.react_errors = {THREAD: code, REPLY: code}
+    await applied(store)
+    assert await notice(store, slack).tell() == 1
+    assert len(slack.replies) == 1
+    assert code in caplog.text

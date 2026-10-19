@@ -36,6 +36,10 @@ _ISSUE_URL = re.compile(
 )
 # Slack errors on a reaction that mean there is nothing to do for that message.
 _REACTION_DONE = frozenset({"already_reacted", "message_not_found", "no_item_specified"})
+# Slack errors on a reaction that retrying cannot fix: skip it, so the reply still goes.
+_REACTION_SKIP = frozenset(
+    {"invalid_name", "not_in_channel", "channel_not_found", "is_archived", "too_many_reactions"}
+)
 # Slack errors on the reply that retrying cannot fix: the thread or channel is gone.
 _REPLY_FINAL = frozenset(
     {"channel_not_found", "is_archived", "not_in_channel", "thread_not_found", "message_not_found"}
@@ -144,7 +148,10 @@ class ThreadNotice:
             try:
                 await self._slack.react(ref.channel_id, ref.ts, name)
             except Exception as exc:
-                if slack_error(exc) not in _REACTION_DONE:
+                code = slack_error(exc)
+                if code in _REACTION_SKIP:
+                    log.warning("proposal %s: no reaction on a source (%s)", record.id, code)
+                elif code not in _REACTION_DONE:
                     raise
 
     def _back_off(self, proposal_id: str) -> None:

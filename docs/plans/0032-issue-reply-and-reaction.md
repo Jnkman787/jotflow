@@ -5,9 +5,9 @@
 - Issue: #32
 - Also serves: #38 (`jotflow rebuild` reads the URL in the thread), #6 (`issue_links`), #152 (the outbox pattern), D4
 - Draft PR: #157, stacked on #155 (`feat/channel-modes`) for its paused-channel rule
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: CodeRabbit, then ready; rebase onto main once #155 merges
+- Next safe action: review; rebase onto main once #155 merges
 
 ## Objective and done-when
 
@@ -34,7 +34,7 @@ Done when:
   - On upgrade, every proposal already applied counts as told. Nothing told threads before #32, and an old thread should not suddenly get a reply.
   - Both stores implement it, with contract and schema tests.
 - **`orchestrator/thread_notice.py`**, `ThreadNotice(store, policy, slack)`. `tell()` takes each due proposal:
-  1. It reacts with the configured emoji on each source message. Slack's `already_reacted` counts as done, and `message_not_found` skips that message.
+  1. It reacts with the configured emoji on each source message. Slack's `already_reacted` counts as done, and `message_not_found` skips that message. Errors that retrying cannot fix, such as `invalid_name` for an emoji the workspace lacks, or `not_in_channel`, skip the reaction with a warning, so the reply still goes out.
   2. It replies in the thread: "Created web#7: https://github.com/acme-co/web/issues/7", or "Updated web#42: ...". The nickname comes from the channel's policy, and the URL is the one `record_result` validated against the approved repo. The reply is mrkdwn built only by JotFlow: `<url|web#7>`, where the URL must match `https://github.com/owner/name/issues/N` again here, below the model's own check, and the nickname comes from policy. Links never unfurl.
   3. It records `thread_told_at`.
   - Reactions go first because they are idempotent, so a retry repeats them harmlessly but never repeats the reply. Only a failure of step 3 itself could double the reply.
@@ -59,9 +59,9 @@ Done when:
 - [x] Orchestrator: run it in the card loop
 - [x] Tests through the real orchestrator: an applied proposal gets one reply and its reactions; a retry never doubles the reply; a paused channel waits
 - [x] Docs: architecture's execution section, README
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: skipped, the free CLI allowance was rate-limited. A self-review found that a reaction Slack will never take could hold back the reply forever, which is now fixed and tested
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
