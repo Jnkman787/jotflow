@@ -28,9 +28,10 @@ issue_reaction = "ticket"
 
 [agent]
 # Which agent program drafts and writes issues. It must name the same preset
-# as JOTFLOW_AGENT_PRESET in agent.env and agent-exec.env. Setup writes all of
-# them when you choose one. Leave it out and JotFlow connects to Slack but
-# starts no agent runs.
+# as JOTFLOW_AGENT_PRESET in agent.env and agent-exec.env, except with codex,
+# where agent-exec.env stays on claude-code, as JotFlow expects. Setup writes
+# all of them when you choose one. Leave it out and JotFlow connects to Slack
+# but starts no agent runs.
 #   claude-code  supported, for every run kind
 #   codex        experimental, for drafting and question runs only; its
 #                agent-exec.env still uses claude-code (docs/presets.md)
