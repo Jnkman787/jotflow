@@ -12,7 +12,7 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.models import ChannelMode
-from jotflow.orchestrator.help import channel_help, help_text
+from jotflow.orchestrator.help import channel_help, channel_repos, help_text
 from jotflow.orchestrator.identity import LinkCommand
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
 from jotflow.orchestrator.modes import ModeCommand
@@ -147,6 +147,9 @@ def register_commands(
             user = str(command.get("user_id") or "")
             reply = await modes.handle(channel, user, rest)
             await respond(reply.text)
+            return
+        if word == "repos" and policy is not None:
+            await ack(channel_repos(policy, str(command.get("channel_id") or ""), rest))
             return
         if text in ("", "help"):
             channel = str(command.get("channel_id") or "")
