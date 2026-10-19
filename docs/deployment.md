@@ -108,10 +108,12 @@ Database migrations run when JotFlow starts, each in one transaction, so a faile
 **JotFlow without Docker**, for trying it out or development. JotFlow runs as an ordinary program. What that gives up:
 
 - **No agent runs.** The agent containers are what keep the GitHub write token away from drafting runs, which read untrusted Slack text (D6). Without them there's no runner to call, so agent runs stay off: JotFlow connects, reads keywords, and answers commands, and nothing is drafted or written.
-- **JotFlow's own container limits.** These are a read-only root filesystem, every Linux capability dropped, no privilege escalation, its own user, and networks that reach only the runners and Slack. The systemd settings below put back what a unit can: no new privileges, a private `/tmp`, and a read-only system apart from JotFlow's folder. They don't separate JotFlow's network from the rest of the host.
+- **JotFlow's own container limits.** These are a read-only root filesystem, every Linux capability dropped, no privilege escalation, its own user, and internal networks that reach only the runners, plus outbound internet for Slack's connection. The systemd settings below put back what a unit can: no new privileges, a private `/tmp`, and a read-only system apart from JotFlow's folder. They don't separate JotFlow's network from the rest of the host.
 - **The files' isolation.** `.env` and `jotflow.db` sit in a folder that any process running as the same user can read. Run JotFlow as its own user, with that folder at mode 0700.
 
 Don't run the agent's runner outside its container to get agent runs back. Its isolation from JotFlow's secrets and from the other runner is the defence, not a detail of packaging.
+
+If you run `jotflow runner` yourself on the same host, outside separate containers, you lose the token split. Processes running as the same user can read each other's environment through `/proc`, so both GitHub tokens, the read-only one and the one that can write, are exposed to every run, including drafting runs that read untrusted Slack text. Even inside the containers, runs of the same kind can read each other this way. The threat model accepts that only because they hold the same token: see [Accepted in v1](threat-model.md#accepted-in-v1) and #181.
 
 Under systemd:
 
