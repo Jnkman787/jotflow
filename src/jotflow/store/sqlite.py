@@ -543,6 +543,9 @@ class SqliteStore:
                 " WHERE (p.card_revision IS NULL OR p.card_revision < p.revision)"
                 " AND NOT EXISTS (SELECT 1 FROM channel_modes AS m"
                 " WHERE m.channel_id = p.channel_id AND m.mode = 'paused')"
+                # Auto mode's card waits for its write (#28), so it is not due until then.
+                " AND NOT (p.card_ts IS NULL AND p.approved_by = 'auto'"
+                " AND p.state IN ('approved', 'executing', 'reconciling'))"
                 " ORDER BY p.created_at, p.id LIMIT ?",
                 (limit,),
             )

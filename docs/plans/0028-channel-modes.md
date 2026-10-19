@@ -5,9 +5,9 @@
 - Issue: #28
 - Also serves: D2 (the mode is runtime state), D7 (who may change it, and the auto warning), #51's update to #28, #152 (the card), #27 (approval)
 - Draft PR: #155
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: CodeRabbit, then ready for review
+- Next safe action: review; then #32
 
 ## Objective and done-when
 
@@ -53,8 +53,8 @@ Done when:
   - It refuses in an unconfigured channel, and refuses guests, external users, and non-approvers when approvers are on.
   - It calls `set_channel_mode(changed_by=...)` and posts the announcement.
   - Setting the mode a channel already has is a private "already" reply, with no announcement.
-- **The announcement**, as plain text: "<display name> set JotFlow to auto in this channel. <what that means>." In `auto`, it adds the warning when the channel is shared with another organisation, from `conversations.info`, or when a member is a guest, from `conversations.members` and the cached `users.info`. It checks the first 1000 members. A larger channel gets the warning anyway, worded as "could not check every member", so it fails closed.
-- **`register_commands`** routes `mode` to `ModeCommand`. `help` stays as it is, and its mode line reads the stored mode as today.
+- **The announcement**, as plain text: "<display name> set JotFlow to auto in this channel. <what that means>." In `auto`, it adds the warning when the channel is shared with another organisation, from `conversations.info`, or when a member is a guest, from `conversations.members` and the cached `users.info`. It checks the first 1000 members. A larger channel gets the warning anyway, and so does a channel whose scan fails, so it fails closed.
+- **`register_commands`** routes `mode` to `ModeCommand`. It acknowledges at once and answers through `respond`, because the auto member scan can outlast Slack's three seconds. `help` stays as it is, and its mode line reads the stored mode as today.
 
 ## Risks and open questions
 
@@ -72,9 +72,9 @@ Done when:
 - [x] Approval: refuse in a paused channel
 - [x] Tests through the real orchestrator and a real Bolt app, for each mode
 - [x] Docs: architecture's approval gate, README's "Using it", `/jotflow help`
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: three findings, all fixed (ack /jotflow mode before the member scan, warn when the scan fails, keep auto writes under way out of `cards_due`)
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 

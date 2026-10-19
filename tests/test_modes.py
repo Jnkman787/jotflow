@@ -218,19 +218,33 @@ class FakeApp:
         return register
 
 
-async def test_the_slash_command_routes_mode(store: Store) -> None:
+async def test_the_slash_command_acks_first_then_answers_mode(store: Store) -> None:
     slack = FakeModeSlack()
     app = FakeApp()
     register_commands(cast(Any, app), policy(), None, ModeCommand(store, policy(), slack))
-    answers: list[str] = []
+    events: list[str] = []
 
-    async def ack(answer: str) -> None:
-        answers.append(answer)
+    async def ack(answer: str | None = None) -> None:
+        events.append(f"ack:{answer}")
+
+    async def respond(answer: str) -> None:
+        events.append(f"respond:{answer}")
 
     command = {"text": "Mode Auto", "channel_id": CH, "user_id": ALEX}
-    await app.commands[SLASH_COMMAND](ack=ack, command=command)
-    assert answers == ["Done: JotFlow is in auto mode here."]
+    await app.commands[SLASH_COMMAND](ack=ack, command=command, respond=respond)
+    assert events == ["ack:None", "respond:Done: JotFlow is in auto mode here."]
     assert len(slack.announced) == 1
+
+
+async def test_a_failed_member_check_still_announces_with_the_warning(store: Store) -> None:
+    class Failing(FakeModeSlack):
+        async def outsiders(self, channel_id: str) -> str | None:
+            raise RuntimeError("ratelimited")
+
+    slack = Failing()
+    assert (await ModeCommand(store, policy(), slack).handle(CH, ALEX, "auto")).changed
+    ((_, text),) = slack.announced
+    assert "Warning: this channel has members JotFlow could not check." in text
 
 
 # --- the Bolt adapter ------------------------------------------------------------------------

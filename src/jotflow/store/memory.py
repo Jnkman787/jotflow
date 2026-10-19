@@ -25,6 +25,7 @@ from jotflow.models import (
 )
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
+    AUTO_APPROVER,
     DEFAULT_RUN_TIMEOUTS,
     ChannelModeSetting,
     Clock,
@@ -51,6 +52,15 @@ from jotflow.store.base import (
     utc_now,
 )
 from jotflow.store.titles import clean_title
+
+_WRITING = frozenset({ProposalState.APPROVED, ProposalState.EXECUTING, ProposalState.RECONCILING})
+
+
+def _auto_writing(record: ProposalRecord) -> bool:
+    """Auto mode's card waits for its write (#28), so it is not due until then."""
+    return (
+        record.card_ts is None and record.approved_by == AUTO_APPROVER and record.state in _WRITING
+    )
 
 
 class MemoryStore:
@@ -252,7 +262,11 @@ class MemoryStore:
             return record.model_copy(deep=True)
 
     async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
-        due = [r for r in self._proposals.values() if r.card_due and not self._paused(r.channel_id)]
+        due = [
+            r
+            for r in self._proposals.values()
+            if r.card_due and not self._paused(r.channel_id) and not _auto_writing(r)
+        ]
         due.sort(key=lambda r: (r.created_at, r.id))
         return [r.model_copy(deep=True) for r in due[:limit]]
 

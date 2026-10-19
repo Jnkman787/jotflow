@@ -124,14 +124,17 @@ def register_commands(
     ``modes``, ``/jotflow mode`` shows or sets the channel's mode (#28).
     """
 
-    async def on_command(ack: Any, command: dict[str, Any]) -> None:
+    async def on_command(ack: Any, command: dict[str, Any], respond: Any = None) -> None:
         text = str(command.get("text") or "").strip().lower()
         word, _, rest = text.partition(" ")
         if word == "mode" and modes is not None:
+            # Setting auto can scan the channel's members, which takes longer than
+            # Slack's three seconds: acknowledge first, then answer privately.
+            await ack()
             channel = str(command.get("channel_id") or "")
             user = str(command.get("user_id") or "")
             reply = await modes.handle(channel, user, rest)
-            await ack(reply.text)
+            await respond(reply.text)
             return
         if text in ("", "help"):
             channel = str(command.get("channel_id") or "")

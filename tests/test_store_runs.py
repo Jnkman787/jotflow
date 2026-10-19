@@ -581,3 +581,19 @@ async def test_a_paused_channels_cards_wait_until_it_is_unpaused(store: Store) -
     assert [p.id for p in await store.cards_due()] == ["p2"]
     await store.set_channel_mode(CH, ChannelMode.PROPOSE, changed_by="U0LEAD")
     assert [p.id for p in await store.cards_due()] == ["p1", "p2"]
+
+
+async def test_an_auto_write_under_way_is_not_due_for_a_card(store: Store) -> None:
+    from jotflow.store.hashing import content_hash
+
+    await store.add_proposal(record("p1"))
+    added = await store.get_proposal("p1")
+    assert added is not None
+    await store.transition(
+        "p1", ProposalState.APPROVED, approved_by="auto", expected_hash=content_hash(added.proposal)
+    )
+    assert await store.cards_due() == []
+    await store.transition("p1", ProposalState.EXECUTING)
+    assert await store.cards_due() == []
+    await store.transition("p1", ProposalState.FAILED)
+    assert [p.id for p in await store.cards_due()] == ["p1"]

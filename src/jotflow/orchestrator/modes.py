@@ -150,7 +150,12 @@ class ModeCommand:
         name = await self._slack.name(user_id) or "Someone"
         lines = [f"{name} set JotFlow to {mode.value} mode in this channel.", MEANING[mode]]
         if mode is ChannelMode.AUTO:
-            who = await self._slack.outsiders(channel_id)
+            try:
+                who = await self._slack.outsiders(channel_id)
+            except Exception as exc:
+                # Fail closed: an unchecked channel gets the warning.
+                log.warning("could not check %s's members (%s)", channel_id, type(exc).__name__)
+                who = "members JotFlow could not check"
             if who is not None:
                 lines.append(AUTO_WARNING.format(who=who))
         await self._slack.announce(channel_id, "\n".join(lines))
