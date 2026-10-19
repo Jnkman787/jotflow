@@ -200,6 +200,10 @@ CLAUDE_PROMPTS: Mapping[RunKind, str] = {
 }
 
 
+# The Claude Code release this preset was verified with; docker-compose.yml pins it.
+CLAUDE_CODE_VERSION = "2.1.303"
+
+
 @dataclass(frozen=True)
 class ClaudeCodePreset:
     """Claude Code in print mode (verified with 2.1.303; see docs/presets.md).
@@ -265,6 +269,19 @@ class ClaudeCodePreset:
             "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
         }
         return RunPlan(argv=tuple(argv), config=config, env=env, github_token_env=False)
+
+    def check_install(self, *, which: Callable[[str], str | None] = shutil.which) -> str | None:
+        """Why this image can't run claude-code, or None if it can.
+
+        A runner whose image lacks the CLI, such as one built with only Codex for
+        a codex agent.env, would otherwise start and then fail every run.
+        """
+        if which("claude") is None:
+            return (
+                "the claude CLI is not installed; add @anthropic-ai/claude-code@"
+                f"{CLAUDE_CODE_VERSION} to AGENT_NPM_PACKAGES"
+            )
+        return None
 
 
 CLAUDE_CODE = ClaudeCodePreset()
