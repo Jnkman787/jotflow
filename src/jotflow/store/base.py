@@ -186,6 +186,15 @@ class MessageLink:
 
 
 @dataclass(frozen=True)
+class PendingThread:
+    """A thread waiting out its quiet window (#130). Pointers and a time only."""
+
+    channel_id: str
+    thread_ts: str
+    due_at: datetime
+
+
+@dataclass(frozen=True)
 class TopicRecord:
     """A topic with its activity times. ``topic.messages`` holds the linked pointers."""
 
@@ -559,6 +568,30 @@ class Store(Protocol):
 
     async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
         """Runs for one thread, oldest first."""
+        ...
+
+    # Threads waiting out their quiet window (#130)
+
+    async def arm_thread(self, channel_id: str, thread_ts: str, due_at: datetime) -> None:
+        """Record when the thread falls due, replacing any earlier due time."""
+        ...
+
+    async def pending_threads(self) -> list[PendingThread]:
+        """Every waiting thread, soonest due first."""
+        ...
+
+    async def queue_pending(self, channel_id: str, thread_ts: str) -> Run | None:
+        """Queue the waiting thread's drafting run and forget the thread, atomically.
+
+        The run coalesces with a queued one, as :meth:`enqueue_run` does.
+        Returns None, queuing nothing, if the thread was not waiting, or if a
+        person has since marked its first message as chatter: a later skip
+        cancels the wait, and the thread is forgotten (#56).
+        """
+        ...
+
+    async def drop_pending(self, channel_id: str, thread_ts: str) -> None:
+        """Forget a waiting thread without queuing anything."""
         ...
 
     async def overdue_runs(self) -> list[Run]:

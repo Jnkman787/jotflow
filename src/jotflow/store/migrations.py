@@ -158,6 +158,17 @@ CREATE TABLE packet_messages (
 )
 """
 
+# Threads waiting out their quiet window, so a restart forgets none (#130).
+# Pointers and a time only, never message text.
+_PENDING_THREADS = """
+CREATE TABLE pending_threads (
+    channel_id TEXT NOT NULL, -- Slack channel id
+    thread_ts TEXT NOT NULL, -- the thread's parent ts; a top-level post's own ts
+    due_at TEXT NOT NULL, -- UTC, ISO 8601: when the quiet window ends
+    PRIMARY KEY (channel_id, thread_ts)
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -212,6 +223,9 @@ MIGRATIONS: tuple[Migration, ...] = (
             "ALTER TABLE proposals ADD COLUMN card_ts TEXT"
             " /* Slack ts of the proposal's card message, so later states edit it (#26) */",
         ),
+    ),
+    Migration(
+        6, (_PENDING_THREADS, "CREATE INDEX pending_threads_due ON pending_threads (due_at)")
     ),
 )
 

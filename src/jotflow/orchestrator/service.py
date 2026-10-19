@@ -10,7 +10,8 @@ feeds accepted messages to the debouncer, and drives runs through
 1. Open the store.
 2. Recover interrupted runs, before anything else touches runs.
 3. Build the tools and start the MCP server.
-4. Start the supervisor and the debouncer's flush loop.
+4. Re-arm threads still waiting out their quiet window (#130).
+5. Start the supervisor and the debouncer's flush loop.
 
 **Stop order is the reverse:**
 
@@ -289,6 +290,11 @@ class Orchestrator:
         # Only drafting runs come from the debouncer; with them off, queue none.
         if RunKind.DRAFTING in self.kinds.on:
             self._debouncer = Debouncer(self._store, self._policy)
+            # After recovery, before the first flush: threads that were waiting
+            # out their quiet window when JotFlow stopped (#130).
+            restored = await self._debouncer.restore()
+            if restored:
+                log.info("%d thread(s) still waiting out their quiet window", restored)
         supervise = (
             self._supervisor.run(self._stop)
             if self._tick_seconds is None

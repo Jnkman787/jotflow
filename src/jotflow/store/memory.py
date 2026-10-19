@@ -33,6 +33,7 @@ from jotflow.store.base import (
     LinkSource,
     MessageLink,
     NotFoundError,
+    PendingThread,
     Recovery,
     ToolCallRecord,
     TopicRecord,
@@ -60,6 +61,7 @@ class MemoryStore:
         self._identities: dict[str, IdentityLink] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
         self._runs: dict[str, Run] = {}
+        self._pending: dict[tuple[str, str], datetime] = {}
         self._calls: list[ToolCallRecord] = []
         self._packets: dict[tuple[str, str, str], MessageRef] = {}
 
@@ -423,6 +425,43 @@ class MemoryStore:
     async def get_run(self, run_id: str) -> Run | None:
         run = self._runs.get(run_id)
         return None if run is None else run.model_copy()
+
+    async def arm_thread(self, channel_id: str, thread_ts: str, due_at: datetime) -> None:
+        check_id(channel_id, "channel id")
+        check_id(thread_ts, "thread ts")
+        if due_at.tzinfo is None:
+            raise ValueError("due_at must be timezone-aware")
+        async with self._lock:
+            self._pending[(channel_id, thread_ts)] = due_at
+
+    async def pending_threads(self) -> list[PendingThread]:
+        return [
+            PendingThread(channel_id, thread_ts, due)
+            for (channel_id, thread_ts), due in sorted(
+                self._pending.items(), key=lambda item: (item[1], item[0])
+            )
+        ]
+
+    async def queue_pending(self, channel_id: str, thread_ts: str) -> Run | None:
+        seconds = check_run_request(
+            RunKind.DRAFTING, channel_id, thread_ts, None, DEFAULT_RUN_TIMEOUTS[RunKind.DRAFTING]
+        )
+        async with self._lock:
+            if self._pending.pop((channel_id, thread_ts), None) is None:
+                return None
+            root = self._messages.get((channel_id, thread_ts))
+            if root is not None and root.chatter and root.linked_by == "person":
+                return None
+            existing = self._active_run_for(RunKind.DRAFTING, channel_id, thread_ts, None)
+            if existing is not None:
+                return existing.model_copy()
+            return self._insert_run(
+                RunKind.DRAFTING, channel_id, thread_ts, None, seconds
+            ).model_copy()
+
+    async def drop_pending(self, channel_id: str, thread_ts: str) -> None:
+        async with self._lock:
+            self._pending.pop((channel_id, thread_ts), None)
 
     async def thread_runs(self, channel_id: str, thread_ts: str) -> list[Run]:
         return [
