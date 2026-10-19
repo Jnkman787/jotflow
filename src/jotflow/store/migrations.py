@@ -293,7 +293,17 @@ MIGRATIONS: tuple[Migration, ...] = (
         (_PROPOSAL_EDITS, "CREATE INDEX proposal_edits_proposal ON proposal_edits (proposal_id)"),
     ),
     # Who reacted with a keyword's reaction, so removing it can take the keyword back (#138).
-    Migration(11, (_REACTION_MARKS,)),
+    Migration(
+        11,
+        (
+            _REACTION_MARKS,
+            # A person's skip from before marks were kept stays: no reaction removed
+            # later can undo it, as for a skip: in the text (CodeRabbit).
+            "INSERT INTO reaction_marks (channel_id, ts, user_id, keyword, marked_at)"
+            " SELECT channel_id, ts, 'text', 'skip', linked_at FROM message_refs"
+            " WHERE chatter = 1 AND linked_by = 'person'",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version
