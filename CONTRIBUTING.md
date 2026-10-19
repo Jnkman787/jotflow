@@ -27,6 +27,10 @@ docker compose up -d
 
 In a checkout, setup leaves the checkout's own Compose files alone, and `docker compose up -d` builds both images from this source. Set `JOTFLOW_IMAGE_REF` and `JOTFLOW_AGENT_IMAGE_REF` in `.env` to run other images, such as a published release or your own per-commit tag. `make check` runs every check CI runs.
 
+## Releasing
+
+Only the maintainer cuts releases. [docs/releasing.md](docs/releasing.md) is the runbook: the one-time PyPI and GitHub setup, the version bump, the tag, what to watch, the steps after a release, and how to roll back.
+
 ## Ground rules
 
 - All changes land through pull requests. Direct pushes and force pushes to `main` are blocked, and only maintainers listed in `.github/CODEOWNERS` can merge.
