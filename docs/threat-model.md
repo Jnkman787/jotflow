@@ -13,7 +13,7 @@ JotFlow reads chosen Slack channels, and after a quiet period hands a thread to 
 | Asset | Where it lives | Why it matters |
 |---|---|---|
 | Slack bot token (`xoxb-`) and app token (`xapp-`) | JotFlow's `.env`, mode 0600 (`jotflow init`) | Read the configured channels, post as the bot, and receive events |
-| GitHub read PAT | `agent.env`, in the `agent` service only | Read issues, labels and, if granted, repo contents |
+| GitHub read PAT | `agent.env`, in the `agent` service only | Read issues and labels |
 | GitHub write PAT | `agent-exec.env`, in the `agent-exec` service only | Create and edit issues in every repo it reaches |
 | Runner secrets, one per runner | `.env`, plus the matching agent env file | Start runs on that runner |
 | Per-run MCP tokens (`jfr_…`) | JotFlow's memory as SHA-256 digests; the run's 0600 MCP config | Act through JotFlow's tools as one run, within one channel and thread |
@@ -89,7 +89,7 @@ It holds the write PAT, so JotFlow can't stop it writing. JotFlow can only narro
 
 ### Malicious repo or GitHub text
 
-Issue bodies, comments, and with Contents read, repo files, all read by the agent.
+Issue bodies, comments, and public repo files, through Codex's resource tools, all read by the agent.
 
 | Threat | Defence | Enforced in |
 |---|---|---|
