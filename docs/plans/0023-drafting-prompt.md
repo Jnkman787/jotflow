@@ -164,6 +164,18 @@ Two new fixtures:
   - The instructions now say not to ask about ownership when nobody was mentioned or volunteered.
 
   Single reruns afterwards matched: same-topic-two-threads 3/3, bug-report 5/5 with no question asked, and mention-without-ownership 1/1. Those reruns cost about $0.50 together. No transcripts or fixture text were kept, only the counts.
+- **The confirmation pass.** On 2026-10-19, the lead approved a second full pass on the same login and model, using the instructions as of 26efca3. It ran 42 agent runs:
+
+  | Fixture | Matched |
+  |---|---|
+  | All but one | 3/3 each, including bug-report and same-topic-two-threads |
+  | mention-without-ownership | 1/3. Twice the agent proposed but did not ask who should own the work. |
+
+  There were no invariant failures. In total, the pass took 279 turns, about 42k output tokens, 180k cache-write and 1.68M cache-read tokens, and reported $1.31.
+
+  The new failure came from the pass-1 rule about not asking about ownership, which the agent overapplied. The rule now says both halves: ask when someone was mentioned and nobody took the work, and don't ask when nobody was mentioned. Single reruns afterwards matched: mention-without-ownership 3/3, bug-report 2/2, and mentions 1/1.
+
+  As the lead asked, there is no third full pass without their go-ahead.
 - **The claude-code plumbing.** With an invalid API key and a scratch HOME, `jotflow replay feature-request --agent claude-code` launched Claude Code 2.1.303 through the preset, and it exited 1 on the key, as expected. Real runs followed, as below.
 - **The approval hash.** Proposals without `hint_overruled` hash exactly as they did on main. A test pins the two hashes.
 - **The GitHub stand-in.** It serves the tool names, descriptions, and input schemas captured from github-mcp-server 2.0.2's `tools/list` with `--read-only`.

@@ -102,8 +102,10 @@ Use `ask_channel` for one short, neutral question in the thread:
   for example people were mentioned but nobody took it: propose, then ask once
   who should own it.
 
-Do not ask who owns work when nobody was mentioned or volunteered: an issue
-with no assignee is normal. Ask at most once per topic per run. Do not ask again what a `from_jotflow`
+If someone was mentioned with `@name` and nobody said they will take the
+work, do ask who should own it. If nobody was mentioned at all, do not ask
+about ownership: an issue with no assignee is normal. Ask at most once per
+topic per run. Do not ask again what a `from_jotflow`
 message already asked; read the replies to it instead.
 
 ## 9. Stop
