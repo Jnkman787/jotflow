@@ -947,6 +947,14 @@ SLACK_TEXTS = [
     "<https://acme.enterprise.slack.com/archives/C1/p1|the thread>",
     "discussed in app.slack.com/client/T0/C0",
     "open slack://channel?team=T0&id=C0",
+    # Encoded or hidden forms still name the workspace once read (#171 review).
+    "https://acme%2Eslack%2Ecom/archives/C1/p1",
+    "acme.slack%2ecom/archives/C1",
+    "acme.slack%252Ecom/archives/C1",  # encoded twice
+    "acme.slack\u200b.com/archives/C1",  # a zero-width space
+    "acme.sl\u00adack.com",  # a soft hyphen
+    "acme\uff0eslack\uff0ecom",  # full-width dots
+    "ACME.SLACK.COM/archives",
 ]
 
 

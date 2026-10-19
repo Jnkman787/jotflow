@@ -23,10 +23,12 @@ import hashlib
 import json
 import re
 import secrets
+import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol, TypeVar
+from urllib.parse import unquote
 
 import anyio
 from pydantic import BaseModel, Field, model_validator
@@ -199,6 +201,20 @@ NO_SLACK_LINKS = (
 )
 
 
+def _for_link_check(text: str) -> str:
+    """``text`` as GitHub and a browser would read a link in it: percent-escapes
+    decoded (repeatedly, so ``%252E`` counts), compatibility forms folded (a
+    full-width dot is a dot), and invisible control and format characters such
+    as zero-width spaces removed, so none of them can hide a Slack domain."""
+    for _ in range(3):
+        decoded = unquote(text)
+        if decoded == text:
+            break
+        text = decoded
+    folded = unicodedata.normalize("NFKC", text)
+    return "".join(c for c in folded if unicodedata.category(c) not in ("Cc", "Cf"))
+
+
 def clean_question(text: str) -> str:
     """``text`` made safe to post: no broadcasts, no Slack markup, no control characters."""
     cleaned = _SPECIAL_MENTION.sub("", text)
@@ -366,7 +382,7 @@ class WriteTools:
         if self._policy.issue_links != "none":
             return
         for text in texts:
-            if text and _SLACK_LINK.search(text):
+            if text and _SLACK_LINK.search(_for_link_check(text)):
                 raise ToolError(NO_SLACK_LINKS)
 
     def _repo_and_labels(self, grant: Grant, repo: str, labels: list[str]) -> tuple[str, list[str]]:
