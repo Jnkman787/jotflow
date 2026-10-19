@@ -5,9 +5,9 @@
 - Issue: #91
 - Also serves: #7 (setup), #122 (visibility from `gh`), D2, D5, D7, D11
 - Draft PR: #185
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: the architect's call on part 2; CodeRabbit; ready for review
+- Next safe action: review; the architect confirms part 2
 
 ## Objective and done-when
 
@@ -56,8 +56,8 @@ Done when:
 - [x] `/jotflow repos`, per the decision
 - [x] Docs: README setup step 5, `jotflow.example.toml` if needed
 - [x] CodeRabbit once: four findings, all fixed. The repos reply says to edit jotflow.toml rather than re-run setup, and to restart, not `up -d`. Picking more than 20 repos is asked again rather than cut. The plan's owner default is corrected
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
