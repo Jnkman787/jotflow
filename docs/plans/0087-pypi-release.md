@@ -22,7 +22,7 @@ The package and the images are built from the same tag and version, and publishe
 
 Done when:
 
-- [x] The `jotflow` package is published to PyPI on each `vX.Y.Z` tag through PyPI trusted publishing (OIDC). No API token is stored anywhere, and only the publish job gets `id-token: write`
+- [x] The `jotflow` package is published to PyPI on each `vX.Y.Z` tag through PyPI trusted publishing (OIDC). No API token is stored anywhere, and only the publish jobs get `id-token: write`: PyPI's, and the image publish job for its attestations
 - [x] The sdist and wheel are built from the tagged commit, with build provenance attestations
 - [x] Run outside a checkout, `jotflow init` also writes `docker-compose.yml` and `docker-compose.policy.yml`, pinned to `ghcr.io/jnkman787/jotflow:X.Y.Z` and `jotflow-agent:X.Y.Z`, and never overwrites an existing file without asking
 - [ ] From an empty folder on a clean machine (open until the first tag proves it; the package job's smoke test covers the rest), `uvx jotflow init` then `docker compose up -d` reaches the connected state with no clone
@@ -34,7 +34,7 @@ Done when:
 
 - **`release.yml`**, extended. The image jobs are #39's, already merged.
   - A `package` job runs on tags and on pull requests that touch packaging. It checks out the tagged commit and runs `uv build`, giving an sdist and a wheel. It checks that the wheel's version is the `version` job's, which already checks the tag against `pyproject.toml` and `__version__`. It installs the wheel into a fresh venv and smoke-tests it: `jotflow --version`, and rendering the published Compose files, which must parse with `docker compose config`. Then it uploads `dist/` as an artifact. Permissions: `contents: read`.
-  - A `pypi` job runs on tags only, after the images are published, so a version on PyPI always has its images on GHCR. It uses the `pypi` environment and `pypa/gh-action-pypi-publish`, pinned by SHA, with trusted publishing and PEP 740 attestations. It also attests build provenance for `dist/*` with `actions/attest-build-provenance`. It alone has `id-token: write` and `attestations: write`.
+  - A `pypi` job runs on tags only, after the images are published, so a version on PyPI always has its images on GHCR. It uses the `pypi` environment and `pypa/gh-action-pypi-publish`, pinned by SHA, with trusted publishing and PEP 740 attestations. It also attests build provenance for `dist/*` with `actions/attest-build-provenance`. It and the image publish job, which signs the images' attestations, are the only jobs with `id-token: write` and `attestations: write`.
   - The version cannot drift, because one `version` job's output names the images and the package, and the package job refuses a wheel whose version differs.
 - **Templates in the package.** `src/jotflow/templates/` holds copies of the repo's own `docker-compose.yml`, `docker-compose.policy.yml`, `agent.env.example`, and `agent-exec.env.example`. A test fails if a copy ever differs from the root file, and `make templates` copies them again. A Hatch force-include was tried first, but it broke the image builds: `.dockerignore` sends only `src/` and the project files, so the forced files were missing there. `jotflow.deploy.published_compose(text, version)` makes the base file runnable without the source:
   - It removes each service's `build:` block.
