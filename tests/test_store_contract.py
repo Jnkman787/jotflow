@@ -885,3 +885,50 @@ async def test_a_card_leads_back_to_its_proposal(store: Store) -> None:
     found = await store.proposal_for_card(CH, "1760781900.000100")
     assert found is not None and found.id == "p1"
     assert await store.proposal_for_card(OTHER, "1760781900.000100") is None
+
+
+# --- telling the thread (#32) ----------------------------------------------------------
+
+
+async def _applied(store: Store, proposal_id: str = "p1", **fields: object) -> None:
+    from jotflow.models import ExecutionResult
+
+    await store.add_proposal(record(proposal_id, **fields))  # type: ignore[arg-type]
+    await store.transition(proposal_id, S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
+    await store.transition(proposal_id, S.EXECUTING)
+    url = "https://github.com/acme-co/web/issues/7"
+    await store.transition(proposal_id, S.APPLIED, result=ExecutionResult(issue_url=url))
+
+
+async def test_only_an_applied_proposal_is_due_to_tell_its_thread(store: Store) -> None:
+    await store.add_proposal(record("pending"))
+    await _applied(store, "done", thread="1760781700.000100")
+    assert [p.id for p in await store.threads_due()] == ["done"]
+    await store.mark_thread_told("done")
+    assert await store.threads_due() == []
+    told = await store.get_proposal("done")
+    assert told is not None and told.thread_told_at is not None
+
+
+async def test_telling_twice_keeps_the_first_time(store: Store, clock: Clock) -> None:
+    await _applied(store)
+    await store.mark_thread_told("p1")
+    first = await store.get_proposal("p1")
+    clock.tick(60)
+    await store.mark_thread_told("p1")
+    again = await store.get_proposal("p1")
+    assert first is not None and again is not None
+    assert again.thread_told_at == first.thread_told_at
+
+
+async def test_a_paused_channel_waits_to_tell_its_threads(store: Store) -> None:
+    await _applied(store)
+    await store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+    assert await store.threads_due() == []
+    await store.set_channel_mode(CH, ChannelMode.PROPOSE, changed_by="U0LEAD")
+    assert [p.id for p in await store.threads_due()] == ["p1"]
+
+
+async def test_telling_an_unknown_proposal_fails(store: Store) -> None:
+    with pytest.raises(NotFoundError):
+        await store.mark_thread_told("nope")

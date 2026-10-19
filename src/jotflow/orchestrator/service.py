@@ -65,6 +65,7 @@ from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
 from jotflow.orchestrator.people import SlackPeople
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
+from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.policy import Policy
 from jotflow.store import SqliteStore, Store
 from jotflow.whiteboard.read_tools import read_tools
@@ -215,6 +216,7 @@ class Orchestrator:
         card_seconds: float = SYNC_SECONDS,
         approval_slack: ApprovalSlack | None = None,
         mode_slack: ModeSlack | None = None,
+        thread_slack: ThreadSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -239,6 +241,8 @@ class Orchestrator:
         self._approval_slack = approval_slack
         self.approval: ApprovalHandler | None = None
         self._mode_slack = mode_slack
+        self._thread_slack = thread_slack
+        self.threads: ThreadNotice | None = None
         self.modes: ModeCommand | None = None
         self.auto: AutoApprover | None = None
         self._keywords: KeywordHandler | None = None
@@ -288,6 +292,10 @@ class Orchestrator:
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode)
+        # Once an issue is written, its thread hears where it went (#32).
+        self.threads = ThreadNotice(
+            self._store, self._policy, self._thread_slack or BoltThreadSlack(self._client)
+        )
         self.modes = ModeCommand(
             self._store,
             self._policy,
@@ -445,6 +453,8 @@ class Orchestrator:
                 if self.auto is not None:
                     await self.auto.approve_due()
                 await cards.sync()
+                if self.threads is not None:
+                    await self.threads.tell()
             except Exception:
                 log.exception("card sync failed")
             with contextlib.suppress(TimeoutError):

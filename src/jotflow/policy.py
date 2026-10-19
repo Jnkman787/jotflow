@@ -28,7 +28,7 @@ from pydantic import (
 )
 
 from jotflow.models import RepoName, shown
-from jotflow.reactions import DEFAULT_APPROVAL, KEYWORD_REACTIONS, reserved
+from jotflow.reactions import DEFAULT_APPROVAL, DEFAULT_ISSUE_REACTION, KEYWORD_REACTIONS, reserved
 from jotflow.text import unsafe_text_problem
 
 _CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{2,}")
@@ -321,6 +321,13 @@ class Policy(_Strict):
     debounce_seconds: int = Field(
         default=120, ge=1, le=86_400, description="Quiet window before a thread is drafted"
     )
+    issue_reaction: EmojiName | Literal[""] = Field(
+        default=DEFAULT_ISSUE_REACTION,
+        description=(
+            "Reaction added to a proposal's source messages once its issue is written (#32); "
+            "empty for none"
+        ),
+    )
     topic_window_days: int = Field(
         default=14,
         ge=1,
@@ -342,6 +349,21 @@ class Policy(_Strict):
     def repo(self, channel_id: str, ref: str) -> RepoPolicy:
         """The repo ``ref`` names in ``channel_id``, by ``owner/name`` or nickname."""
         return self.channel(channel_id).repo(ref, channel_id=channel_id)
+
+    @model_validator(mode="after")
+    def _reactions_never_collide(self) -> Policy:
+        """The issue reaction is JotFlow's own, so it can't also mean a keyword,
+        JotFlow's keyword confirmation, or approval (#32, #154)."""
+        name = self.issue_reaction
+        if not name:
+            return self
+        if name in KEYWORD_REACTIONS:
+            raise ValueError(f"issue_reaction {name} already stands for a keyword")
+        if name in reserved():
+            raise ValueError(f"issue_reaction {name} is JotFlow's keyword confirmation")
+        if name == self.approval.reaction:
+            raise ValueError(f"issue_reaction {name} is also the approval reaction")
+        return self
 
     def debounce_for(self, channel_id: str) -> int:
         override = self.channel(channel_id).debounce_seconds

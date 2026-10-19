@@ -54,6 +54,7 @@ def render_policy(policy: Policy) -> str:
         f"issue_links = {toml_string(policy.issue_links)}",
         f"debounce_seconds = {policy.debounce_seconds}",
         f"topic_window_days = {policy.topic_window_days}",
+        f"issue_reaction = {toml_string(policy.issue_reaction)}",
         "",
         "[agent]",
     ]

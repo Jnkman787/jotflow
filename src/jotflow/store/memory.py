@@ -278,6 +278,27 @@ class MemoryStore:
             shown = max(record.card_revision or 0, min(revision, record.revision))
             self._proposals[proposal_id] = record.model_copy(update={"card_revision": shown})
 
+    async def threads_due(self, limit: int = 50) -> list[ProposalRecord]:
+        due = [
+            r
+            for r in self._proposals.values()
+            if r.state is ProposalState.APPLIED
+            and r.thread_told_at is None
+            and not self._paused(r.channel_id)
+        ]
+        due.sort(key=lambda r: (r.created_at, r.id))
+        return [r.model_copy(deep=True) for r in due[:limit]]
+
+    async def mark_thread_told(self, proposal_id: str) -> None:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            if record.thread_told_at is None:
+                self._proposals[proposal_id] = record.model_copy(
+                    update={"thread_told_at": self._clock()}
+                )
+
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._lock:
             record = self._proposals.get(proposal_id)

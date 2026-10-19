@@ -292,6 +292,8 @@ def check_new_proposal(record: ProposalRecord) -> None:
         raise ValueError("a new proposal has no card yet")
     if record.revision != 1:
         raise ValueError("a new proposal starts at revision 1")
+    if record.thread_told_at is not None:
+        raise ValueError("a new proposal has not been applied, so its thread was not told")
     if record.content_hash or record.approved_by or record.approved_at or record.result:
         raise ValueError("a new proposal cannot be approved or carry a result yet")
     for user in record.participants:
@@ -526,6 +528,17 @@ class Store(Protocol):
     async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
         """Record that the card now shows ``revision``. Never moves backwards, so a
         change that landed while the card was being drawn keeps it due."""
+        ...
+
+    async def threads_due(self, limit: int = 50) -> list[ProposalRecord]:
+        """Applied proposals whose thread has not been told the issue URL, oldest first.
+
+        Paused channels are left out until unpaused (#32, #28).
+        """
+        ...
+
+    async def mark_thread_told(self, proposal_id: str) -> None:
+        """Record that the thread was told. Only the first call sets the time."""
         ...
 
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
