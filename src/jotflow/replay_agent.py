@@ -37,6 +37,7 @@ from jotflow.adapters.runner import LIVE, LaunchRequest, Runner, RunnerConfig, R
 from jotflow.models import RunKind, RunStatus
 from jotflow.replay import Check, Prepared, ReplayError, ReplayReport, finish, prepare
 from jotflow.store import Store
+from jotflow.testing.scripted_agent import ERROR_FILE
 from jotflow.testing.threads import TOPIC_KEY_PREFIX, SavedThread
 from jotflow.whiteboard.server import PATH, McpServer, build_app
 
@@ -215,7 +216,12 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
         view = await _wait(runner, started.run.id)
         ok = view["state"] == RunState.EXITED.value and view["exit_code"] == 0
         if not ok:
-            failed.append(f"{run.thread_ts} {view['state']} exit {view['exit_code']}")
+            detail = f"{run.thread_ts} {view['state']} exit {view['exit_code']}"
+            error = root / ERROR_FILE
+            if error.exists():  # the scripted stand-in says why it failed
+                detail += f" ({error.read_text(encoding='utf-8').strip()})"
+                error.unlink()
+            failed.append(detail)
         await prepared.lifecycle.finish(
             started.run.id,
             RunStatus.SUCCEEDED if ok else RunStatus.FAILED,

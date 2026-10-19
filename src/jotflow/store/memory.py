@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -38,6 +38,7 @@ from jotflow.store.base import (
     MessageLink,
     NotFoundError,
     NoticeKind,
+    OperatorToken,
     PendingThread,
     ProposalEdit,
     ReactionKeyword,
@@ -80,6 +81,7 @@ class MemoryStore:
         self._topics: dict[str, TopicRecord] = {}
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
+        self._operators: dict[str, OperatorToken] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
         self._notices: set[tuple[str, str, str]] = set()
         self._marks: dict[tuple[str, str, str, str], ReactionMark] = {}
@@ -394,6 +396,36 @@ class MemoryStore:
     async def unlink_identity(self, slack_user_id: str) -> bool:
         async with self._lock:
             return self._identities.pop(slack_user_id, None) is not None
+
+    # Operator tokens
+
+    async def add_operator_token(self, token: OperatorToken) -> OperatorToken:
+        async with self._lock:
+            if any(
+                t.name == token.name or t.digest == token.digest for t in self._operators.values()
+            ):
+                raise ConflictError(f"an operator token named {token.name} already exists")
+            self._operators[token.id] = token
+            return token
+
+    async def operator_tokens(self) -> list[OperatorToken]:
+        return sorted(self._operators.values(), key=lambda t: (t.created_at, t.id), reverse=True)
+
+    async def revoke_operator_token(self, name: str) -> OperatorToken | None:
+        async with self._lock:
+            for token in self._operators.values():
+                if token.name == name and token.revoked_at is None:
+                    revoked = replace(token, revoked_at=self._clock())
+                    self._operators[token.id] = revoked
+                    return revoked
+            return None
+
+    async def touch_operator_tokens(self, used: Mapping[str, datetime]) -> None:
+        async with self._lock:
+            for token_id, when in used.items():
+                token = self._operators.get(token_id)
+                if token is not None and (token.last_used_at is None or when > token.last_used_at):
+                    self._operators[token_id] = replace(token, last_used_at=when)
 
     # Channel modes
 
