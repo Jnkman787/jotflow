@@ -47,7 +47,7 @@ Done when:
 
 ## Risks and open questions
 
-- **PyPI renders README.md** as the project page, and relative links to `docs/` break there. The README already links `docs/` relatively, so this isn't new. Making the README's links absolute GitHub URLs pinned to `main` would fix it. I'd do that in this PR unless the maintainer prefers otherwise.
+- **PyPI renders README.md** as the project page, where relative links to `docs/` break. Decided on 2026-10-19 by the lead: the README's links to docs/ become absolute, as `https://github.com/Jnkman787/jotflow/blob/main/docs/...`, so they work on PyPI and GitHub. Links inside docs/ stay relative. docs/releasing.md's "Before the tag" step gets a note that a release may pin those links to its tag.
 - **The reorganisation changes paths** that the moved text names, such as `jotflow.example.toml`, `agent.env.example`, and the Compose files. Building after it merges avoids a second pass.
 - **Conflicts.** Any README change merged before this one needs re-applying. The build starts from a fresh main.
 
@@ -58,6 +58,7 @@ Done when:
 - [ ] Wait for the reorganisation to merge, then rebase
 - [ ] Move the blocks, rewrite the links, and shorten the Quickstart
 - [ ] Point the two tests and two docstrings at the new files
+- [ ] Make the README's docs/ links absolute, and add the pin-to-tag note to docs/releasing.md
 - [ ] Run the no-fact-lost script and the link checker, and list every moved block in the PR
 - [ ] CodeRabbit once, `make check`, then mark ready
 
