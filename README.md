@@ -258,7 +258,7 @@ Setup writes two files next to `docker-compose.yml`. Neither is committed to git
 - **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that is not enforced: the folder's Windows permissions decide who can read it, and setup says so instead of "Only your user can read that file". Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
 - **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option. Each repo can say whether it's public or private on GitHub. Setup fills that in from your own `gh` login if you have one, and asks otherwise. Cards for a public repo carry a warning.
 
-Running `uvx jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`, and it keeps the agent containers' secrets.
+Running `uvx jotflow init` again is safe. It offers to keep tokens that still work, and it keeps the agent containers' secrets. For an existing `jotflow.toml`, it asks `Keep its channels and repos? [Y/n]`. Answer `y` to keep them and go straight to the agent preset, which is how you turn the agent on or change it later. Answer `n` to go through the channels again, where each one's repos can be kept.
 
 #### If your workspace needs admin approval
 
@@ -291,15 +291,18 @@ ok    configuration: 1 channel(s) in jotflow.toml
 ok    agent: claude-code, both agent files filled in
 ```
 
-A `warn` line says what's still missing, for example:
+Right after setup, before the agent files are filled in, each `warn` line says what's still missing:
 
 ```
 ok    configuration: 1 channel(s) in jotflow.toml
-warn  agent: JOTFLOW_GITHUB_READ_TOKEN is blank in agent.env
 warn  agent: COMPOSE_PROFILES in .env does not include agent, so docker compose up -d will not start the agent containers
+warn  agent: JOTFLOW_GITHUB_READ_TOKEN is blank in agent.env
+warn  agent: ANTHROPIC_API_KEY is blank in agent.env, which passes it to the agent
+warn  agent: JOTFLOW_GITHUB_WRITE_TOKEN is blank in agent-exec.env
+warn  agent: ANTHROPIC_API_KEY is blank in agent-exec.env, which passes it to the agent
 ```
 
-JotFlow still starts with warnings, but drafts nothing until they're fixed. If check says `configuration problem` instead, fix what it names, or run `uvx jotflow init` again, before starting JotFlow. With no preset, check prints only the configuration line. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
+Fill in the agent files as [the agent containers](#the-agent-containers) describes, then run `uvx jotflow init` again to set `COMPOSE_PROFILES`. JotFlow still starts with warnings, but drafts nothing until they're fixed. If check says `configuration problem` instead, fix what it names, or run `uvx jotflow init` again, before starting JotFlow. With no preset, check prints only the configuration line. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
 
 Optionally, the [live check](#troubleshooting), `check --live`, does a real round trip to Slack: it posts one test message in a channel the bot is in and deletes it. It runs while JotFlow is stopped, so do it before the next step or stop JotFlow first.
 
