@@ -1416,6 +1416,10 @@ def test_the_check_command_is_printed_the_way_jotflow_was_started(tmp_path: Path
     ):
         got = init.launch_command(environ={}, prefix=venv, module_file=str(installed), argv0=argv0)
         assert got == expected, argv0
+    # An absolute launcher path under the current folder, as Windows passes, is made relative.
+    under = str(Path.cwd() / ".venv" / "Scripts" / "jotflow.exe")
+    got = init.launch_command(environ={}, prefix=venv, module_file=str(installed), argv0=under)
+    assert got == str(Path(".venv") / "Scripts" / "jotflow.exe")
     # uv's variable alone, outside its cache, as in a uv-managed venv, is not uvx.
     assert (
         init.launch_command(

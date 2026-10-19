@@ -1202,8 +1202,15 @@ def launch_command(
     if env.get("UV") and "archive-v" in str(prefix if prefix is not None else sys.prefix):
         return "uvx jotflow"
     program = Path(argv0 if argv0 is not None else sys.argv[0])
-    # A relative path the user typed, such as .venv/bin/jotflow, works again as typed.
-    if program.name.startswith("jotflow") and len(program.parts) > 1 and not program.is_absolute():
+    if program.is_absolute():
+        # Windows launchers pass an absolute path, such as ...\.venv\Scripts\jotflow.exe:
+        # under this folder, say it relative to it, so it works without activating the venv.
+        try:
+            program = program.relative_to(Path.cwd())
+        except ValueError:
+            return "jotflow"
+    # A relative path, such as .venv/bin/jotflow, works again as typed.
+    if program.name.startswith("jotflow") and len(program.parts) > 1:
         return str(program)
     return "jotflow"
 
