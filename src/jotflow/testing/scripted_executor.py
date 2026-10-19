@@ -105,6 +105,13 @@ def _with_sets(github: Github, repo: str, write: dict[str, Any]) -> dict[str, An
     arguments = dict(write["arguments"])
     owner, name = repo.split("/", 1)
     number = arguments.get("issue_number")
+    if write.get("markers_from_current"):
+        from jotflow.execution.writes import with_kept_markers
+
+        _, issue = github.call(
+            "issue_read", {"method": "get", "owner": owner, "repo": name, "issue_number": number}
+        )
+        arguments["body"] = with_kept_markers(arguments["body"], issue.get("body") or "")
     for key, change in (
         ("labels", write.get("labels_from_current")),
         ("assignees", write.get("assignees_from_current")),

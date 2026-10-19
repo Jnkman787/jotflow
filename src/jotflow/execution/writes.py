@@ -37,6 +37,23 @@ def marker(proposal_id: str) -> str:
     return f"<!-- {MARKER_PREFIX}{proposal_id} -->"
 
 
+# A whole line that is one of JotFlow's markers, as an issue body carries it.
+_MARKER_LINE = re.compile(r"^<!-- jotflow:proposal:[A-Za-z0-9_-]{1,64} -->$", re.MULTILINE)
+
+
+def with_kept_markers(planned: str, current: str) -> str:
+    """``planned``, plus every JotFlow marker line ``current`` has that it lacks (#167).
+
+    A body replacement must not drop the marker of the proposal that created the
+    issue, which a retry or a rebuild (#38) looks for, nor any later one.
+    """
+    kept: list[str] = []
+    for found in _MARKER_LINE.findall(current):
+        if found not in planned and found not in kept:
+            kept.append(found)
+    return planned + "".join(f"\n{line}" for line in kept)
+
+
 def clean_name(name: str) -> str:
     """A Slack display name made safe as plain text in a GitHub body."""
     visible = without_unsafe_chars(name)  # no bidi overrides or zero-width characters
@@ -125,6 +142,13 @@ class PlannedWrite(BaseModel):
             "Read the issue's current assignees first; pass assignees = current + add - remove"
         ),
     )
+    markers_from_current: bool = Field(
+        default=False,
+        description=(
+            "Read the issue's current body first; after the given body, add each line of it "
+            "that is a JotFlow marker (<!-- jotflow:proposal:... -->) the given body lacks"
+        ),
+    )
 
 
 class PlannedChecks(BaseModel):
@@ -194,10 +218,9 @@ def _plan_update(
         else None
     )
     if changes.body is not None:
-        # The marker goes in the body only when there is no comment to carry it.
-        edit["body"] = (
-            changes.body if changes.comment is not None else _with_footer(changes.body, mark)
-        )
+        # A replaced body keeps the footer: who raised it, its links, this update's
+        # marker, and every marker the old body had, such as the creating one (#167).
+        edit["body"] = _with_footer(changes.body, tail)
     if changes.body is not None or labels or assignees:
         writes.append(
             PlannedWrite(
@@ -205,6 +228,7 @@ def _plan_update(
                 arguments=edit,
                 labels_from_current=labels,
                 assignees_from_current=assignees,
+                markers_from_current=changes.body is not None,
             )
         )
     if changes.comment is not None:

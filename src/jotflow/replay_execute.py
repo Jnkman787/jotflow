@@ -42,7 +42,7 @@ from jotflow.adapters.presets import (
 )
 from jotflow.adapters.runner import EXECUTION_KINDS, LaunchRequest, Runner, RunnerConfig, RunState
 from jotflow.execution.attribution import execution_footer
-from jotflow.execution.writes import PlannedWrite
+from jotflow.execution.writes import PlannedWrite, with_kept_markers
 from jotflow.execution.writes import plan as plan_writes
 from jotflow.models import ProposalRecord, ProposalState, RunKind, RunStatus
 from jotflow.replay import Check, Prepared, ReplayError, ReplayReport, prepare, run_script
@@ -165,6 +165,8 @@ def _expected(write: PlannedWrite, repos: dict[str, GithubRepo], repo: str) -> d
         current = list(getattr(issue, key, ())) if issue is not None else []
         wanted = [v for v in current if v not in change.remove]
         arguments[key] = sorted({*wanted, *change.add})
+    if write.markers_from_current:
+        arguments["body"] = with_kept_markers(arguments["body"], issue.body if issue else "")
     return arguments
 
 
