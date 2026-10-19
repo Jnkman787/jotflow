@@ -187,6 +187,12 @@ class MemoryStore:
         record = self._proposals.get(proposal_id)
         return None if record is None else record.model_copy(deep=True)
 
+    async def proposal_for_card(self, channel_id: str, card_ts: str) -> ProposalRecord | None:
+        for record in self._proposals.values():
+            if record.channel_id == channel_id and record.card_ts == card_ts:
+                return record.model_copy(deep=True)
+        return None
+
     async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         found = [
             r.model_copy(deep=True)

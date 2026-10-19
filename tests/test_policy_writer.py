@@ -133,3 +133,10 @@ def test_help_settings_round_trip_and_only_the_overriding_channel_gets_a_table()
     assert parse_policy(text) == policy
     assert "near_miss_nudge = false" in text
     assert "[channels.C0TWO1.help]" in text and "[channels.C0ONE1.help]" not in text
+
+
+def test_a_custom_approval_reaction_round_trips() -> None:
+    policy = _policy(approval={"reactions": True, "reaction": "+1"})
+    text = render_policy(policy)
+    assert 'reaction = "+1"' in text
+    assert parse_policy(text) == policy

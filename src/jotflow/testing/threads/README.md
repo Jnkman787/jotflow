@@ -1,6 +1,6 @@
 # Saved threads
 
-Each `.json` file here is a saved Slack thread in the `jotflow-thread/1` format. Tests run every file through JotFlow's real ingest filter. `jotflow replay` feeds them through the store and the tool layer with a scripted fake agent. They ship with the package, so they also work as demos without a clone.
+Each `.json` file here is a saved Slack thread in the `jotflow-thread/1` format. Tests run every file through JotFlow's real ingest filter. `jotflow replay` feeds them through the store and the tool layer with a scripted fake agent, and `jotflow replay --agent claude-code` runs a real agent against them instead (see [Checking a real agent](#checking-a-real-agent)). They ship with the package, so they also work as demos without a clone.
 
 Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel, the `acme-co` repos, and the people. A test fails if a file contains a real-looking Slack id, a URL or email outside the fictional domains, a repo owner other than `acme-co`, or anything shaped like a token.
 
@@ -16,6 +16,8 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `keywords.json` | `idea:` is a hint the agent follows. `re: web#42` is attached by JotFlow, and the agent proposes an update to #42. `skip:` keeps a message and its reply out of every agent run. "Skip button is broken" has no colon, so it is an ordinary bug report. The bot's own confirmation reaction is ignored. |
 | `mentions.json` | A bug report with `<!here>` and `<@U0BOB>`, and Bob's reply taking it: "assign it to me". The agent picks `acme-co/api` by its description and assigns `acme-bob`, Bob's linked GitHub login. Alice is mentioned in the reply but not assigned. |
 | `mention-without-ownership.json` | An idea that mentions Bob, and Bob's reply with an opinion, but nobody says who takes it. One topic and one `create_issue` proposal with no assignees, and one `ask_channel` question asking who should own it. |
+| `closed-duplicate.json` | An idea that matches a closed issue, `acme-co/web#55`, that no topic is linked to. One topic, no proposal, and one `ask_channel` question naming the issue, since the agent searches closed issues too. |
+| `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.
 
@@ -36,6 +38,7 @@ A file is one JSON object. Unknown fields are rejected everywhere, so a typo fai
 | `existing_topics` | Topics that exist before the thread starts, as `jotflow.models.Topic`. |
 | `events` | Slack events in delivery order. See below. |
 | `agent` | The scripted fake agent: one entry per drafting run. See below. |
+| `github` | Optional. What a real agent's GitHub read tools see, by `owner/name`: the repo's `labels` and its `issues`, each with `number`, `title`, `state` (`open` or `closed`), `body`, and `labels`. Every repo must be in `policy`, and an issue's labels must be in its repo's list. |
 | `expected` | The outcome. See below. |
 
 ### Events
@@ -84,3 +87,22 @@ thread = load_thread("path/to/saved.json")
 ```
 
 `load_thread` raises `ThreadError` with one line per problem, each naming the field at fault.
+
+## Checking a real agent
+
+`jotflow replay --agent <preset>` replaces the script with a real agent and compares its outcome with `expected`. Each of the fixture's drafting runs goes through the real runner, gets a real run token, and reaches JotFlow's MCP server, which runs in-process on `127.0.0.1`. A stand-in for GitHub's MCP server, `jotflow.testing.fake_github_mcp`, answers github-mcp-server 2.0.2's read tools from the fixture's `github` block, so nothing reaches GitHub or Slack.
+
+The agent uses your own model login, and each run costs model tokens. Only `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, and the proxy variables pass from your environment, plus `HOME` for a CLI login. Here are the options:
+
+```
+jotflow replay feature-request --agent claude-code
+jotflow replay --all --agent claude-code --repeat 3 --model sonnet
+jotflow replay --all --agent scripted
+```
+
+- **`--all`** runs every built-in fixture.
+- **`--repeat N`** runs each fixture N times and prints how often each check passed. Real agents vary between runs.
+- **`--agent scripted`** plays the fixture's script over real MCP, with no model. Tests and CI use it to check the whole harness.
+
+Every replay, scripted or real, also checks two rules: no proposal draws on a message marked chatter, and every assignee is a linked GitHub login.
+

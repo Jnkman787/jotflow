@@ -187,6 +187,15 @@ class BoltSlackReader:
 # Slack markup to readable text.
 
 _MENTION = re.compile(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>")
+# A Slack user id, as write_tools checks participants. Anything else is no author.
+_SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
+
+
+def _author_id(raw: Mapping[str, Any]) -> str | None:
+    user = raw.get("user")
+    return user if isinstance(user, str) and _SLACK_USER.fullmatch(user) else None
+
+
 _CHANNEL = re.compile(r"<#([CG][A-Z0-9]+)(?:\|([^>]*))?>")
 _SPECIAL = re.compile(r"<!(here|channel|everyone)(?:\|[^>]*)?>")
 _SUBTEAM = re.compile(r"<!subteam\^[A-Z0-9]+(?:\|([^>]*))?>")
@@ -408,8 +417,8 @@ class SlackWorkSource:
 
         ids: list[str] = []
         for message, rest, _ in kept:
-            author = message.get("user")
-            if isinstance(author, str):
+            author = _author_id(message)
+            if author is not None:
                 ids.append(author)
             ids.extend(mentioned_ids(rest))
         names = await self._names.resolve(ids, budget)
@@ -438,9 +447,11 @@ class SlackWorkSource:
         topic_id: str | None,
         names: Mapping[str, str],
     ) -> ThreadMessage:
-        user_id = raw.get("user") if isinstance(raw.get("user"), str) else None
+        user_id = _author_id(raw)
         if user_id is not None:
             author = names.get(user_id, user_id)
+        elif isinstance(raw.get("user"), str):
+            author = "someone"  # not a Slack user id, so neither it nor a name is kept
         else:
             profile = raw.get("bot_profile") or {}
             author = str(raw.get("username") or profile.get("name") or "a bot")

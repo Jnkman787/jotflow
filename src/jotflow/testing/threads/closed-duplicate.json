@@ -1,0 +1,208 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "closed-duplicate",
+  "description": "An idea that matches a closed issue no topic is linked to. The agent finds it by searching closed issues and asks whether it is the same request, instead of proposing a second issue.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792317000.000100",
+      "user": "U0CAROL",
+      "text": "The login page should remember my email address so I don't have to type it every time."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792317120.000100",
+      "user": "U0ALICE",
+      "text": "Yes, that would save a lot of typing.",
+      "thread_ts": "1792317000.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792317000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792317000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.8
+          },
+          "topic_key": "remember-email",
+          "title": "Remember the email on the login page"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792317120.000100",
+              "thread_ts": "1792317000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:remember-email"
+          }
+        },
+        {
+          "tool": "ask_channel",
+          "arguments": {
+            "text": "This looks like acme-co/web#55, which was closed. Is it the same request, or something new?"
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        },
+        {
+          "number": 55,
+          "title": "Remember the email address on the login page",
+          "state": "closed",
+          "body": "Prefill the email field with the last address used on this device.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "One new topic, no proposal, and one ask_channel question naming the closed issue it may duplicate.",
+    "accepted": [
+      "1792317000.000100",
+      "1792317120.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:remember-email",
+        "messages": [
+          "1792317000.000100",
+          "1792317120.000100"
+        ]
+      }
+    ],
+    "asks": [
+      "1792317000.000100"
+    ]
+  }
+}

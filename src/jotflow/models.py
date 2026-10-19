@@ -29,8 +29,11 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_validator,
 )
+
+from jotflow.text import unsafe_text_problem
 
 # GitHub's rules: an owner is 1 to 39 letters, digits, or hyphens, not starting
 # with a hyphen; a repo name is 1 to 100 letters, digits, ".", "-", or "_",
@@ -116,6 +119,19 @@ class MessageRef(BaseModel):
     permalink: str | None = None
 
 
+HINT_OVERRULED_DESCRIPTION = (
+    "Only when you overrule the author's idea: or bug: hint: a one-line reason. "
+    "Agent-written, so untrusted"
+)
+
+
+def _safe_hint(value: str | None) -> str | None:
+    # Shown to an approver on the card, so held to the same rule as labels.
+    if value is not None and (problem := unsafe_text_problem(value)):
+        raise ValueError(f"hint_overruled {problem}")
+    return value
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -135,6 +151,14 @@ class IssueProposal(BaseModel):
         default_factory=list, description="Slack messages this proposal was drawn from"
     )
     confidence: float = Field(ge=0.0, le=1.0)
+    hint_overruled: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description=HINT_OVERRULED_DESCRIPTION,
+    )
+
+    _hint_overruled = field_validator("hint_overruled")(_safe_hint)
 
 
 class IssueChanges(BaseModel):
@@ -158,6 +182,14 @@ class UpdateProposal(BaseModel):
     changes: IssueChanges
     sources: list[MessageRef] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
+    hint_overruled: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description=HINT_OVERRULED_DESCRIPTION,
+    )
+
+    _hint_overruled = field_validator("hint_overruled")(_safe_hint)
 
 
 Proposal = Annotated[IssueProposal | UpdateProposal, Field(discriminator="kind")]
@@ -373,6 +405,13 @@ class TopicSummary(BaseModel):
         description="Up to five Slack thread timestamps, most recent first",
     )
     last_active: AwareDatetime
+    issue_proposed: Literal[True] | None = Field(
+        default=None,
+        description=(
+            "True when a proposal for a new issue on this topic is waiting for approval or "
+            "being written. Do not propose another; link messages to the topic instead"
+        ),
+    )
 
 
 class TopicIndex(BaseModel):
