@@ -66,6 +66,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--all", action="store_true", help="replay every built-in fixture")
     parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="with --agent: approve each scripted proposal and check its execution run",
+    )
+    parser.add_argument(
         "--repeat", type=int, default=1, help="with --agent: run each fixture this many times"
     )
     parser.add_argument("--model", default=None, help="with --agent: the model for drafting runs")
@@ -94,6 +99,9 @@ def run(args: argparse.Namespace) -> int:
     times = getattr(args, "repeat", 1)
     if times < 1 or (times > 1 and agent is None):
         print("jotflow replay: --repeat needs --agent and a count of 1 or more", file=sys.stderr)
+        return EXIT_USAGE
+    if getattr(args, "execute", False) and agent is None:
+        print("jotflow replay: --execute needs --agent", file=sys.stderr)
         return EXIT_USAGE
     if agent is not None and getattr(args, "db", None) is not None:
         print("jotflow replay: --db and --agent cannot be combined", file=sys.stderr)
@@ -134,14 +142,25 @@ async def _replay_all(threads: list[tuple[str, SavedThread]]) -> int:
 
 
 def estimate(
-    threads: list[tuple[str, SavedThread]], agent: str, times: int, model: str | None
+    threads: list[tuple[str, SavedThread]],
+    agent: str,
+    times: int,
+    model: str | None,
+    *,
+    execute: bool = False,
 ) -> str:
-    runs = sum(len(thread.agent) for _, thread in threads) * times
+    if execute:
+        # Each proposal runs twice: cleanly, and after a scripted interrupted attempt.
+        runs = sum(len(thread.expected.proposals) for _, thread in threads) * 2 * times
+        kind = RunKind.EXECUTION
+    else:
+        runs = sum(len(thread.agent) for _, thread in threads) * times
+        kind = RunKind.DRAFTING
     if agent == SCRIPTED:
         return f"{runs} scripted agent run(s); no model"
-    chosen = model or PRESETS[agent].default_models.get(RunKind.DRAFTING, "the CLI's default")
+    chosen = model or PRESETS[agent].default_models.get(kind, "the CLI's default")
     return (
-        f"{len(threads)} fixture(s) x {times}: {runs} {agent} drafting run(s) on {chosen}, "
+        f"{len(threads)} fixture(s) x {times}: {runs} {agent} {kind.value} run(s) on {chosen}, "
         "using your model login. Each run costs model tokens."
     )
 
@@ -149,7 +168,8 @@ def estimate(
 async def _with_agent(threads: list[tuple[str, SavedThread]], args: argparse.Namespace) -> int:
     model = getattr(args, "model", None)
     times = getattr(args, "repeat", 1)
-    print(estimate(threads, args.agent, times, model), file=sys.stderr)
+    execute = getattr(args, "execute", False)
+    print(estimate(threads, args.agent, times, model, execute=execute), file=sys.stderr)
     if args.agent != SCRIPTED and not getattr(args, "yes", False):
         print("jotflow replay: add --yes to start them", file=sys.stderr)
         return EXIT_USAGE
@@ -180,8 +200,13 @@ async def _one_with_agent(
         agent=args.agent,
         thread_ref=ref,
         time_limit=getattr(args, "time_limit", DEFAULT_TIME_LIMIT),
-        models={RunKind.DRAFTING: model} if model else {},
+        models=(
+            {RunKind.EXECUTION if getattr(args, "execute", False) else RunKind.DRAFTING: model}
+            if model
+            else {}
+        ),
         usage_file=usage,
+        execute=getattr(args, "execute", False),
     )
     tally, reports = await repeat(thread, options, getattr(args, "repeat", 1))
     if len(reports) == 1:

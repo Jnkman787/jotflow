@@ -5,7 +5,7 @@
 - Issue: #31
 - Also serves: #55 (the maintainer's live execution run uses these instructions)
 - Draft PR: #156
-- Status: planning (implementation starts once #144 merges, since it builds on #144's harness)
+- Status: implementing; only the real Claude Code run is left, waiting on the lead's go-ahead
 - Last verified: plan written against main at 6503610, 2026-10-19
 - Next safe action: commit this plan and open the draft PR
 
@@ -128,16 +128,24 @@ A fixture with a missing label checks the error path. CI does all of this with a
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
 - [x] Commit this plan and open the draft PR
 - [x] `execution/writes.py`: the planned writes, the checks, and the footer, with tests
-- [ ] `instructions/execution.md` and the new `ExecutionWork` fields
-- [ ] The fake server's write tools, write log, and `list_issues` default
-- [ ] `replay --execute` with the scripted stand-in, the second-run check, and a missing-label fixture
-- [ ] Docs: architecture.md's execution runs and docs/presets.md's GitHub access
-- [ ] `make check` passes
+- [x] `instructions/execution.md` and the new `ExecutionWork` fields
+- [x] The fake server's write tools, write log, and `list_issues` default
+- [x] `replay --execute` with the scripted stand-in, the second-run check, and a missing-label fixture
+- [x] Docs: architecture.md's execution runs and docs/presets.md's GitHub access
+- [x] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-None yet.
+- **The stand-in run.** `jotflow replay --all --agent scripted --execute` handles every fixture's proposals as planned, in both scenarios: the clean run, where every logged write equals the planned one and the proposal is applied with the right URL, and the run after an interrupted attempt, which finds the marker and writes nothing. That's 11 fixtures and 10 proposals, with keywords contributing 3. missing-label reports the label and writes nothing.
+- **The comparison catches deviation.** `tests/test_replay_execute.py` runs every fixture with the stand-in. It shows that a stand-in that changes a body fails with "the writes differ from the planned ones", and that one that skips the marker check fails with "wrote again after an interrupted attempt".
+- **The footer.** `tests/test_execution_attribution.py` covers the poster and the people looped in, the permalinks, a bot root, a failed lookup, a slow lookup, and `issue_links = "none"`. `tests/test_execution_writes.py` covers each proposal shape and the name cleaning.
+- **`make check`** is green at 96% coverage.
+
+**Implementation notes:**
+- `approval.py`'s author lookup moved to `SlackPeople.authors`, and one `SlackPeople` is now shared, so `auth.test` runs once per process.
+- `CommandPreset` writes a JotFlow-only config, so the stand-in executor has its own test preset that writes the same two-server config as claude-code.
+- The fake GitHub server refuses to create an issue with a label that doesn't exist. The real API would create the label, so the fake's refusal makes a test notice.
 
 ## Handoff notes
 
