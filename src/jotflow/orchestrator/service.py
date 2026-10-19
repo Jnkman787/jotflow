@@ -46,6 +46,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from jotflow.config import Settings
 from jotflow.models import ChannelMode, ProposalRecord, RunKind
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
+from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
     SYNC_SECONDS,
     BoltPeople,
@@ -240,6 +241,7 @@ class Orchestrator:
         self.cards: CardSync | None = None
         self._approval_slack = approval_slack
         self.approval: ApprovalHandler | None = None
+        self.edits: CardEdits | None = None
         self._mode_slack = mode_slack
         self._thread_slack = thread_slack
         self.threads: ThreadNotice | None = None
@@ -310,13 +312,22 @@ class Orchestrator:
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
         # an approved proposal's execution run waits in the queue until they are.
+        approval_slack = self._approval_slack or BoltApprovalSlack(self._client)
         self.approval = ApprovalHandler(
             self._store,
             self._policy,
-            self._approval_slack or BoltApprovalSlack(self._client),
+            approval_slack,
             refresh=self.cards.refresh,
             arm_thread=self._arm_thread,
             context_for=drawn_with,
+        )
+        # The card's repo dropdown and assign buttons pass the same gate (#160).
+        self.edits = CardEdits(
+            self._store,
+            self._policy,
+            self.approval.guarded,
+            approval_slack,
+            refresh=self.cards.refresh,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(

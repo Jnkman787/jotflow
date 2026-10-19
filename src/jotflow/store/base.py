@@ -262,6 +262,46 @@ def check_github_login(login: str) -> str:
 
 
 NoticeKind = Literal["guide", "tip", "nudge"]
+# What a person changed from the card (#160). The value itself is never stored.
+EditField = Literal["repo", "assign", "unassign"]
+EDIT_FIELDS: tuple[EditField, ...] = ("repo", "assign", "unassign")
+# A person edits only what is still waiting for approval, or a failed write to retry.
+EDITABLE_STATES = frozenset({ProposalState.PENDING, ProposalState.FAILED})
+
+
+@dataclass(frozen=True)
+class ProposalEdit:
+    """One edit made from the card: who, when, and which field, never the value."""
+
+    proposal_id: str
+    edited_by: str
+    field: EditField
+    edited_at: datetime
+
+
+def check_edit(
+    record: ProposalRecord, draft: IssueProposal | UpdateProposal, by: str, field: str
+) -> None:
+    """Raise unless ``draft`` may replace ``record``'s draft as an edit by ``by``."""
+    check_id(by, "Slack user id")
+    if field not in EDIT_FIELDS:
+        raise ValueError(f"unknown edit {field!r}")
+    if record.state not in EDITABLE_STATES or record.draft_cleared_at is not None:
+        error = TransitionError(record.id, record.state, record.state)
+        error.args = (f"proposal {record.id} is {record.state}, so it can't be edited",)
+        raise error
+    if draft.kind != record.proposal.kind or draft.topic_id != record.proposal.topic_id:
+        raise ValueError("an edit keeps the proposal's kind and topic")
+
+
+def edited_draft(
+    record: ProposalRecord, draft: IssueProposal | UpdateProposal
+) -> IssueProposal | UpdateProposal:
+    """``draft`` as stored after an edit: a new repo drops the agent's visibility report,
+    which was about the old repo (#122), so the card re-derives it from policy."""
+    if draft.repo.casefold() != record.proposal.repo.casefold() and draft.repo_visibility:
+        return draft.model_copy(update={"repo_visibility": None})
+    return draft
 
 
 def check_notice(channel_id: str, user_id: str, kind: str) -> None:
@@ -513,6 +553,26 @@ class Store(Protocol):
         result: ExecutionResult | None = None,
     ) -> ProposalRecord:
         """Move a proposal to ``to`` atomically; see :func:`plan_transition`."""
+        ...
+
+    async def edit_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        by: str,
+        field: EditField,
+    ) -> ProposalRecord:
+        """Replace a pending or failed proposal's draft with a person's edit (#160).
+
+        Raises the revision, so the card is redrawn, and records who changed
+        which field and when, never the value. A failed proposal keeps its old
+        approval fields; a retry approves the edited draft's hash.
+        """
+        ...
+
+    async def proposal_edits(self, proposal_id: str) -> list[ProposalEdit]:
+        """The edits made to a proposal from its card, oldest first."""
         ...
 
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
