@@ -49,8 +49,8 @@ _SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Slack: xoxb-, xoxp-, xoxa-, xoxe-, xoxs-, xoxr-, and app-level xapp-.
     (re.compile(r"\bxox[a-z]-[A-Za-z0-9-]+"), "[redacted token]"),
     (re.compile(r"\bxapp-[A-Za-z0-9-]+"), "[redacted token]"),
-    # JotFlow's own per-run MCP tokens (#16).
-    (re.compile(r"\bjfr_[A-Za-z0-9_-]+"), "[redacted token]"),
+    # JotFlow's own MCP tokens: per-run (#16) and operator (#58).
+    (re.compile(r"\bjf[ro]_[A-Za-z0-9_-]+"), "[redacted token]"),
     # GitHub personal, OAuth, user, server, and refresh tokens.
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]+"), "[redacted token]"),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), "[redacted token]"),

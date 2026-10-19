@@ -146,9 +146,11 @@ async def call(spec: ToolSpec, grant: Grant, arguments: Any = None) -> Any:
 def test_three_tools_with_the_token_tables_kinds(store: MemoryStore, clock: Clock) -> None:
     by_name = tools(store, clock)
     assert set(by_name) == {"list_topics", "get_topic", "get_work"}
-    assert by_name["list_topics"].kinds == {RunKind.DRAFTING, RunKind.QUESTION}
-    assert by_name["get_topic"].kinds == {RunKind.DRAFTING, RunKind.QUESTION}
-    assert by_name["get_work"].kinds == set(RunKind)
+    readers = {RunKind.DRAFTING, RunKind.QUESTION, RunKind.OPERATOR}
+    assert by_name["list_topics"].kinds == readers
+    assert by_name["get_topic"].kinds == readers
+    # Every run kind, and never an operator token (#58).
+    assert by_name["get_work"].kinds == {RunKind.DRAFTING, RunKind.EXECUTION, RunKind.QUESTION}
 
 
 def test_descriptions_are_fixed_text(store: MemoryStore, clock: Clock) -> None:

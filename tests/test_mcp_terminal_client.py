@@ -58,6 +58,7 @@ TOKEN_TABLE: dict[RunKind, set[str]] = {
     },
     RunKind.EXECUTION: {"get_work", "record_result"},
     RunKind.QUESTION: {"get_work", "list_topics", "get_topic", "ask_channel"},
+    RunKind.OPERATOR: {"list_topics", "get_topic"},
 }
 
 
@@ -74,6 +75,8 @@ def all_tools() -> tuple[ToolSpec, ...]:
 def grant_for(kind: RunKind) -> Grant:
     if kind is RunKind.EXECUTION:
         return Grant(f"run-{kind.value}", kind, CH, proposal_id="p1")
+    if kind is RunKind.OPERATOR:
+        return Grant("operator:t1", kind, CH, channels=frozenset({CH}))
     return Grant(f"run-{kind.value}", kind, CH, thread_ts=POST)
 
 

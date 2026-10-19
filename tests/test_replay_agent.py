@@ -113,18 +113,25 @@ def test_replay_option_problems_exit_2(
     assert problem in capsys.readouterr().err
 
 
+def _replayed(capsys: pytest.CaptureFixture[str], **kw: object) -> tuple[int, str]:
+    """Run ``jotflow replay`` and return its exit code and everything it printed."""
+    code = replay_command.run(args(**kw))
+    captured = capsys.readouterr()
+    return code, captured.out + captured.err
+
+
 def test_replay_all_scripted_and_with_the_stand_in(capsys: pytest.CaptureFixture[str]) -> None:
-    assert replay_command.run(args(all=True)) == replay_command.EXIT_MATCH
-    assert capsys.readouterr().out.count("Matches the expected outcome.") == len(
-        list(builtin_paths())
-    )
-    assert replay_command.run(args(thread="chatter", agent="scripted")) == replay_command.EXIT_MATCH
-    assert "agent scripted" in capsys.readouterr().out
-    assert (
-        replay_command.run(args(thread="mentions", agent="scripted", repeat=2, model="haiku"))
-        == replay_command.EXIT_MATCH
-    )
-    assert "mentions: 2/2 runs matched" in capsys.readouterr().out
+    # Each failure message carries the full report, so a rare failure (#184) shows
+    # which fixture and check differed.
+    code, out = _replayed(capsys, all=True)
+    assert code == replay_command.EXIT_MATCH, out
+    assert out.count("Matches the expected outcome.") == len(list(builtin_paths())), out
+    code, out = _replayed(capsys, thread="chatter", agent="scripted")
+    assert code == replay_command.EXIT_MATCH, out
+    assert "agent scripted" in out, out
+    code, out = _replayed(capsys, thread="mentions", agent="scripted", repeat=2, model="haiku")
+    assert code == replay_command.EXIT_MATCH, out
+    assert "mentions: 2/2 runs matched" in out, out
 
 
 def test_a_failed_repeat_prints_the_failing_report(
@@ -248,3 +255,23 @@ async def test_a_topic_whose_issue_is_proposed_says_so() -> None:
     topics = (await spec.handler(grant, NoArguments())).topics
     assert all(t.issue_proposed is None for t in topics)
     assert "issue_proposed" not in (await spec.handler(grant, NoArguments())).to_prompt()
+
+
+async def test_a_failing_stand_in_says_why(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from jotflow import replay_agent
+
+    real = replay_agent._preset
+
+    def broken(options: AgentOptions, index: int) -> CommandPreset:
+        preset = real(options, index)
+        assert isinstance(preset, CommandPreset)
+        command = list(preset.command)
+        command[command.index("--run") + 1] = "99"  # no such scripted run
+        return CommandPreset(tuple(command))
+
+    monkeypatch.setattr(replay_agent, "_preset", broken)
+    report = await replay_with_agent(
+        builtin_thread("chatter"), AgentOptions("scripted", "chatter", time_limit=60)
+    )
+    agent = report.checks[0]
+    assert agent.ok is False and "run 99: IndexError" in agent.detail

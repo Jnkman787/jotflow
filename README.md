@@ -368,6 +368,8 @@ The command refuses in CI, refuses without `--confirm`, and checks the repo and 
 
 ## Troubleshooting
 
+Running JotFlow on a server, with backups, upgrades, and rollback, is covered in [docs/deployment.md](docs/deployment.md).
+
 **Is JotFlow still connected?** `docker compose ps` shows `healthy` while JotFlow is connected to Slack, and `unhealthy` within about three minutes of losing it: 90 seconds for the heartbeat to go stale, then three failed checks 30 seconds apart. JotFlow rewrites a small heartbeat file every 30 seconds while connected, and `jotflow health` checks its age, without the network or any token. Its log shows `socket mode disconnected`, then `socket mode reconnecting (attempt N)` every 30 seconds, then `socket mode reconnected after Ns`. Slack's client reconnects by itself; the attempt count is JotFlow's own checks. To alert, watch for the container turning `unhealthy`: for example, `docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q jotflow)"` from cron, or your monitor's Docker health integration. Outside Docker, run `uvx jotflow health` on the same machine. It exits 0 when healthy and 1 otherwise, and `--max-age 120` changes how old the heartbeat may be.
 
 **Check a fresh install** with the live check. It posts one marked test message to a channel in `jotflow.toml`, checks that JotFlow receives it without logging its text, then deletes it.
@@ -442,6 +444,41 @@ Most people never need these: just post, and JotFlow works out the rest.
 <!-- jotflow-help:end -->
 
 Comments and closures on GitHub do not flow back into Slack yet; that is planned after v1.
+
+### Ask from a terminal (admins)
+
+An admin can give someone a read-only token, so their own terminal agent can look up a channel's topics. It can call only `list_topics` and `get_topic`, on the channels you name, and it can't propose, write or approve anything.
+
+```sh
+docker compose exec jotflow jotflow operator create --name alex --channel C0123ABCD
+docker compose exec jotflow jotflow operator list
+docker compose exec jotflow jotflow operator revoke alex
+```
+
+`create` prints the token once, so pass it on privately. It lasts 30 days unless you add `--days`, up to 365. Repeat `--channel` for more channels. `list` shows each token's channels, expiry and last use, never the token. A revoked token stops working within 2 seconds.
+
+No port is opened for this. The person's MCP client starts JotFlow's bridge inside the container as its server command, with the token in its environment:
+
+```json
+{
+  "mcpServers": {
+    "jotflow": {
+      "command": "docker",
+      "args": ["compose", "--project-directory", "/path/to/jotflow", "exec", "-T",
+               "-e", "JOTFLOW_OPERATOR_TOKEN", "jotflow", "jotflow", "operator", "connect"],
+      "env": { "JOTFLOW_OPERATOR_TOKEN": "jfo_..." }
+    }
+  }
+}
+```
+
+`-e JOTFLOW_OPERATOR_TOKEN` with no value copies the token from the environment, so it never appears in a command line. Keep a config file that holds the token private. From another machine, run the same command over ssh, reading the token from a private file on the host:
+
+```sh
+ssh jotflow-host 'cd /path/to/jotflow && JOTFLOW_OPERATOR_TOKEN=$(cat ~/.jotflow-operator-token) docker compose exec -T -e JOTFLOW_OPERATOR_TOKEN jotflow jotflow operator connect'
+```
+
+Anyone who can run `docker compose exec` on the host can already read JotFlow's database and Slack tokens, so only give host access to people you would trust with those. JotFlow logs each call with the token's id, the tool, the channel and the time.
 
 ## Principles
 
