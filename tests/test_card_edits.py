@@ -326,3 +326,46 @@ async def test_a_failing_edit_is_logged_and_still_acknowledged(
     await click(rig.app(), body(ACTION_REPO, f"{PID}:api"))
     assert "card edit repo failed" in caplog.text
     assert THREAD  # the thread is untouched
+
+
+# --- the reviewer's six checks, by name ------------------------------------------------------
+
+
+async def test_with_approvers_off_any_member_edits() -> None:
+    rig = Rig()
+    await rig.proposal()
+    await click(rig.app(), body(ACTION_REPO, f"{PID}:api", user="U0CAROL"))
+    assert (await rig.draft()).repo == "acme-co/api"
+
+
+async def test_an_author_approver_may_edit_but_another_approver_must_approve() -> None:
+    from jotflow.orchestrator.approval import OWN_PROPOSAL
+
+    rig = Rig(approvers=[ALICE, "U0CAROL"])
+    await rig.proposal()
+    old = content_hash(await rig.draft())
+    app = rig.app()
+    # Alice wrote the thread's first message: she may edit it.
+    await click(app, body(ACTION_REPO, f"{PID}:api", user=ALICE))
+    new = content_hash(await rig.draft())
+    assert new != old
+    # ...but not approve it, old card or new.
+    await click(app, body(ACTION_APPROVE, f"{PID}:{new}", user=ALICE))
+    assert rig.slack.ephemerals[-1] == (CH, ALICE, OWN_PROPOSAL)
+    # Carol's click on the card from before the edit is stale; on the new one it approves.
+    await click(app, body(ACTION_APPROVE, f"{PID}:{old}", user="U0CAROL"))
+    assert rig.slack.ephemerals[-1] == (CH, "U0CAROL", STALE)
+    await click(app, body(ACTION_APPROVE, f"{PID}:{new}", user="U0CAROL"))
+    record = await rig.store.get_proposal(PID)
+    assert record is not None and record.state is ProposalState.APPROVED
+    assert record.approved_by == "U0CAROL" and record.proposal.repo == "acme-co/api"
+
+
+async def test_a_nickname_the_channel_does_not_list_is_refused() -> None:
+    rig = Rig()
+    await rig.proposal()
+    app = rig.app()
+    for nickname in ("mobile", "acme-co/web", "", "WEB2"):
+        await click(app, body(ACTION_REPO, f"{PID}:{nickname}"))
+    assert (await rig.draft()).repo == "acme-co/web"
+    assert {text for _, _, text in rig.slack.ephemerals} == {NOT_A_CHANNEL_REPO}

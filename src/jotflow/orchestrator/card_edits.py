@@ -21,7 +21,7 @@ from typing import Any, Protocol
 from jotflow.models import IssueProposal, ProposalRecord, UpdateProposal
 from jotflow.orchestrator.approval import Click, Refused
 from jotflow.orchestrator.cards import ACTION_ASSIGN, ACTION_REPO, ACTION_UNASSIGN
-from jotflow.policy import Policy, PolicyViolation, RepoPolicy
+from jotflow.policy import Policy, RepoPolicy
 from jotflow.store.base import EDITABLE_STATES, EditField, Store, TransitionError
 
 log = logging.getLogger("jotflow.edits")
@@ -144,14 +144,12 @@ class CardEdits:
     # Helpers
 
     def _channel_repo(self, channel_id: str, nickname: str) -> RepoPolicy:
-        """The dropdown carries the repo's nickname, which is unique in the channel."""
-        try:
-            entry = self._policy.repo(channel_id, nickname)
-        except PolicyViolation:
-            raise Refused(NOT_A_CHANNEL_REPO) from None
-        if entry not in self._policy.channel(channel_id).repos:  # pragma: no cover - by design
-            raise Refused(NOT_A_CHANNEL_REPO)
-        return entry
+        """The dropdown carries a nickname, unique in the channel. Nothing else is accepted:
+        not an owner/name, and not a nickname this channel's policy does not list."""
+        for entry in self._policy.channel(channel_id).repos:
+            if entry.nickname == nickname:
+                return entry
+        raise Refused(NOT_A_CHANNEL_REPO)
 
     @staticmethod
     def _allowed_labels(entry: RepoPolicy, labels: list[str]) -> list[str]:
