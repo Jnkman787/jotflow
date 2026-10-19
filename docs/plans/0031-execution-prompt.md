@@ -34,6 +34,15 @@ From the issue, refined:
 - Building Slack permalinks when the workspace URL is unknown. The line is left out then, as with `issue_links = "none"`.
 - Changing what approval locks. The hash still covers the proposal fields only. The computed writes are a function of those fields, the proposal id, and the policy.
 
+## Decisions (lead, 2026-10-19)
+
+1. #31 owns the whole issue-body footer, permalinks included. That takes #32's first box. #32 keeps the thread reply with the issue URL and the source-message reaction.
+2. The workspace URL comes from the `auth.test` JotFlow already makes at startup for the team check (`orchestrator/people.py`). It is reused, not called a second time.
+3. Under `issue_links = "none"`, the footer is the marker only, with no names and no links.
+4. A real Claude Code run of `replay --execute` needs the maintainer's go-ahead, as #144's did: one pass, with the same limits.
+
+**The poster.** Proposals store participants sorted, so the poster isn't recorded. The execution `get_work` reads only the thread root's author id through the existing Slack reader, keeps nothing else, and looks the author up by name. If it can't, the footer says "Raised in Slack" without a poster.
+
 ## Design
 
 ### JotFlow computes the writes
@@ -112,13 +121,13 @@ A fixture with a missing label checks the error path. CI does all of this with a
 
 - **Label and assignee replacement on update needs a read.** If GitHub's state changes between the read and the write, a label added in between could be dropped. That's accepted, because the window is seconds and the comparison test covers the logic.
 - **The name lookup adds Slack calls to the execution `get_work`.** They're bounded by the participant cap and run with the same 8 s per-request timeout and fallbacks as drafting. A failed lookup leaves the name out.
-- **The permalink base URL is new wiring in `jotflow run`.** It's from `auth.test` at startup. If that's too much here, the first PR uses only `sources[].permalink` and the rest follows.
+- **The permalink base URL** comes from the existing `auth.test` call, per decision 2.
 
 ## Progress checklist
 
-- [ ] Confirm the issue is ready: bounded objective, testable done-when, no open decision
+- [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
 - [x] Commit this plan and open the draft PR
-- [ ] `execution/writes.py`: the planned writes, the checks, and the footer, with tests
+- [x] `execution/writes.py`: the planned writes, the checks, and the footer, with tests
 - [ ] `instructions/execution.md` and the new `ExecutionWork` fields
 - [ ] The fake server's write tools, write log, and `list_issues` default
 - [ ] `replay --execute` with the scripted stand-in, the second-run check, and a missing-label fixture
