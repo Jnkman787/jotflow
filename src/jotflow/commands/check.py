@@ -27,6 +27,7 @@ import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from jotflow import agent_setup
 from jotflow.commands.run import (
     SettingsError,
     load_settings,
@@ -135,6 +136,65 @@ def confirm(
     return answer.strip().lower() in {"y", "yes"}
 
 
+AGENT_FILES = (
+    ("agent.env", agent_setup.READ_TOKEN_KEY),
+    ("agent-exec.env", agent_setup.WRITE_TOKEN_KEY),
+)
+ENV_ALLOW_KEY = "JOTFLOW_AGENT_ENV_ALLOW"
+
+
+def agent_readiness(policy: Policy, folder: Path) -> list[str]:
+    """What the agent containers still need, as warnings (#41). Never their values.
+
+    Only with ``[agent] preset`` set: without one, JotFlow starts no agent runs.
+    It reads the files ``jotflow init`` writes next to ``.env``.
+    """
+    preset = policy.agent.preset
+    if not preset:
+        return []
+    if not (folder / ".env").exists():
+        # Inside JotFlow's container, say: the agent files are only in the JotFlow folder.
+        return ["not checked here: run jotflow check in your JotFlow folder, next to .env"]
+    found: list[str] = []
+    dotenv = read_env(folder / ".env")
+    for key in (agent_setup.ENV_DRAFTING_KEY, agent_setup.ENV_EXECUTION_KEY):
+        if not dotenv.get(key, "").strip():
+            found.append(f".env has no {key}; run jotflow init again to set it")
+    profiles = {p.strip() for p in dotenv.get(agent_setup.PROFILES_KEY, "").split(",")}
+    if agent_setup.AGENT_PROFILE not in profiles:
+        found.append(
+            f"{agent_setup.PROFILES_KEY} in .env does not include {agent_setup.AGENT_PROFILE}, "
+            "so docker compose up -d will not start the agent containers"
+        )
+    for name, token_key in AGENT_FILES:
+        path = folder / name
+        if not path.exists():
+            found.append(f"{name} is missing; run jotflow init again to write it")
+            continue
+        env = read_env(path)
+        for key in (agent_setup.AGENT_SECRET_KEY, token_key):
+            if not env.get(key, "").strip():
+                found.append(f"{key} is blank in {name}")
+        if preset == "command":
+            if not env.get(agent_setup.COMMAND_KEY, "").strip():
+                found.append(f"{agent_setup.COMMAND_KEY} is blank in {name}")
+        else:
+            named = env.get(agent_setup.PRESET_KEY, "").strip()
+            # A codex team runs claude-code for execution: codex never serves it (#172).
+            allowed = {preset} | (
+                {"claude-code"} if preset == "codex" and name == "agent-exec.env" else set()
+            )
+            if named not in allowed:
+                shown_name = named or "no preset"
+                found.append(
+                    f"{name} names {shown_name}, but jotflow.toml's [agent] preset is {preset}"
+                )
+        for key in (k.strip() for k in env.get(ENV_ALLOW_KEY, "").split(",") if k.strip()):
+            if not env.get(key, "").strip():
+                found.append(f"{key} is blank in {name}, which passes it to the agent")
+    return found
+
+
 def _load() -> tuple[Settings, Policy]:
     settings = load_settings()
     return settings, load_policy(settings.config_path)
@@ -156,6 +216,12 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     count = len(policy.channels)
     print(f"ok    configuration: {count} channel(s) in {settings.config_path}")
+    if policy.agent.preset:
+        warnings = agent_readiness(policy, Path("."))
+        for warning in warnings:
+            print(f"warn  agent: {warning}")
+        if not warnings:
+            print(f"ok    agent: {policy.agent.preset}, both agent files filled in")
     if not getattr(args, "live", False):
         return EXIT_OK
 

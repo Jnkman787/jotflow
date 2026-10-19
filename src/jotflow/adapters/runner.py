@@ -161,6 +161,11 @@ class RunnerConfig:
             raise ConfigError(
                 "a runner serves either drafting and question runs, or execution runs only"
             )
+        # A token left blank is named first, so the split rule below never hides it.
+        if self.serves_execution and not self.write_token:
+            raise ConfigError("JOTFLOW_GITHUB_WRITE_TOKEN is missing in agent-exec.env")
+        if not self.serves_execution and not self.read_token:
+            raise ConfigError("JOTFLOW_GITHUB_READ_TOKEN is missing in agent.env")
         if self.serves_execution:
             if self.write_token is None or self.read_token is not None:
                 raise ConfigError(

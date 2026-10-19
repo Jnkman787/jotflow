@@ -275,7 +275,8 @@ async def test_a_failing_agent_reports_its_exit_code(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("overrides", "problem"),
     [
-        ({"read_token": None}, "holds the read GitHub token and never the write one"),
+        ({"read_token": None}, "JOTFLOW_GITHUB_READ_TOKEN is missing in agent.env"),
+        ({"read_token": ""}, "JOTFLOW_GITHUB_READ_TOKEN is missing in agent.env"),
         ({"write_token": WRITE}, "holds the read GitHub token and never the write one"),
         (
             {"kinds": frozenset({RunKind.DRAFTING, RunKind.EXECUTION})},
@@ -291,11 +292,18 @@ def test_a_conversation_runner_never_holds_the_write_token(
         config(tmp_path, **overrides)
 
 
-@pytest.mark.parametrize("overrides", [{"write_token": None}, {"read_token": READ}])
+@pytest.mark.parametrize(
+    ("overrides", "problem"),
+    [
+        ({"write_token": None}, "JOTFLOW_GITHUB_WRITE_TOKEN is missing in agent-exec.env"),
+        ({"write_token": ""}, "JOTFLOW_GITHUB_WRITE_TOKEN is missing in agent-exec.env"),
+        ({"read_token": READ}, "holds the write GitHub token and never the read"),
+    ],
+)
 def test_an_execution_runner_never_holds_the_read_token(
-    tmp_path: Path, overrides: dict[str, Any]
+    tmp_path: Path, overrides: dict[str, Any], problem: str
 ) -> None:
-    with pytest.raises(ConfigError, match="holds the write GitHub token and never the read"):
+    with pytest.raises(ConfigError, match=problem):
         config(tmp_path, execution=True, **overrides)
 
 
