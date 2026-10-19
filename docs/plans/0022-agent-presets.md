@@ -44,7 +44,7 @@ The issue says presets are selectable in `jotflow.toml`. D6 and #54 moved the ag
 The runner gets these settings:
 
 - **`JOTFLOW_AGENT_PRESET`** names a preset. Setting both this and `JOTFLOW_AGENT_COMMAND`, or neither, is a startup error.
-- **`JOTFLOW_AGENT_MODEL`** is the model for every kind this runner serves. `JOTFLOW_AGENT_MODEL_DRAFTING`, `_QUESTION`, and `_EXECUTION` override it per kind. Values are checked against a conservative pattern of letters, digits, `.`, `-`, `_`, `:`, `[`, and `]`, up to 100 characters. When unset, the preset's default applies: `sonnet` for drafting and question, and `haiku` for execution, as architecture.md suggests. With the raw command, the model settings are an error, since the runner can't place them.
+- **`JOTFLOW_AGENT_MODEL`** is the model for every kind this runner serves. `JOTFLOW_AGENT_MODEL_DRAFTING`, `_QUESTION`, and `_EXECUTION` override it per kind. Values are checked against a conservative pattern of letters, digits, `.`, `-`, `_`, `:`, `[`, and `]`, up to 100 characters. When unset, the preset's default applies: `claude-sonnet-5-5` for drafting and question, and `claude-haiku-5-5` for execution, as architecture.md suggests. (2026-10-19: these were the aliases `sonnet` and `haiku` until a live deploy showed that Claude Code 2.1.303 resolves `haiku` to Haiku 4.5. Full ids name one model on every CLI version; see docs/presets.md.) With the raw command, the model settings are an error, since the runner can't place them.
 - **`JOTFLOW_GITHUB_MCP_COMMAND`** is the path of the GitHub MCP server. It defaults to the binary the image installs, `/usr/local/bin/github-mcp-server`.
 
 ### The preset interface (`src/jotflow/adapters/presets.py`)
