@@ -19,7 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from jotflow.models import RunKind, RunStatus
+from jotflow.models import MessageRef, RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
 from jotflow.orchestrator.keywords import split_keyword
@@ -102,6 +102,34 @@ class _Poster:
         return f"1792310999.{len(self.threads):06d}"
 
 
+# The fictional workspace's address, for permalinks in planned issue bodies.
+FIXTURE_WORKSPACE_URL = "https://acme-co.slack.com/"
+
+
+class FixtureAttribution:
+    """Who wrote what and their names, from the fixture, for execution footers (#31)."""
+
+    def __init__(self, thread: SavedThread) -> None:
+        self._thread = thread
+
+    async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
+        found: set[str] = set()
+        for ref in refs:
+            message = self._thread.messages.get(ref.ts)
+            if message is None:
+                raise LookupError(f"message {ref.ts} was not found")
+            if message.user and message.user != self._thread.workspace.bot.user_id:
+                found.add(message.user)
+        return found
+
+    async def name(self, user_id: str) -> str | None:
+        user = self._thread.users.get(user_id)
+        return user.name if user else None
+
+    async def workspace_url(self) -> str | None:
+        return FIXTURE_WORKSPACE_URL
+
+
 class _FixtureReader:
     """The two Slack reads the live work packet makes, answered from the fixture.
 
@@ -170,6 +198,7 @@ class _Replay:
     poster: _Poster
     topics: dict[str, str] = field(default_factory=dict)  # key:<name> or fixture id -> store id
     accepted: list[MessageEvent] = field(default_factory=list)  # messages ingest accepted
+    attribution: FixtureAttribution | None = None
 
     def resolve(self, topic: str | None) -> str | None:
         if topic is None:
@@ -253,9 +282,10 @@ def _participants(thread: SavedThread, accepted: Sequence[MessageEvent], root: s
     return seen
 
 
-async def _run_script(
+async def run_script(
     replay: _Replay, lifecycle: RunLifecycle, registry: TokenRegistry, accepted: list[MessageEvent]
 ) -> None:
+    """Play the fixture's scripted drafting runs in-process."""
     max_running = replay.thread.policy.agent.max_concurrent_runs
     for run in replay.thread.agent:
         await replay.store.enqueue_run(RunKind.DRAFTING, run.channel, run.thread_ts)
@@ -406,6 +436,7 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
     active = store or MemoryStore(clock=clock)
     poster = _Poster()
     accepted, ignored, messages = _ingest(thread)
+    attribution = FixtureAttribution(thread)
     bot = thread.workspace.bot
     source = SlackWorkSource(
         _FixtureReader(thread, messages), active, bot=BotIdentity(bot.user_id, bot.bot_id)
@@ -413,11 +444,13 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
     specs = {
         spec.name: spec
         for spec in (
-            *read_tools(active, thread.policy, source, clock=clock),
+            *read_tools(active, thread.policy, source, clock=clock, attribution=attribution),
             *write_tools(active, thread.policy, poster, clock=clock),
         )
     }
-    state = _Replay(thread, active, clock, specs, poster, accepted=messages)
+    state = _Replay(
+        thread, active, clock, specs, poster, accepted=messages, attribution=attribution
+    )
     registry = TokenRegistry(clock=clock.mono)
     lifecycle = RunLifecycle(active, registry, clock=clock)
     report = ReplayReport(thread.name, thread.description)
@@ -439,7 +472,7 @@ async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayRe
     prepared = await prepare(thread, store=store)
     state, report = prepared.state, prepared.report
     try:
-        await _run_script(state, prepared.lifecycle, prepared.registry, state.accepted)
+        await run_script(state, prepared.lifecycle, prepared.registry, state.accepted)
     except ReplayError as exc:
         report.checks.append(Check("script", False, str(exc)))
     else:

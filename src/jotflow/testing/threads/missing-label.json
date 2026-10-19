@@ -1,0 +1,219 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "missing-label",
+  "description": "A clean feature request, proposed with the enhancement label, for a repo that has no enhancement label on GitHub. Drafting goes as in feature-request; executing it must fail, naming the missing label, and write nothing, since GitHub would otherwise create the label.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792310400.000100",
+      "user": "U0ALICE",
+      "text": "It would be great if the dashboard could export the current table as CSV. Finance asks for this every month."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792310640.000100",
+      "user": "U0BOB",
+      "text": "Yes please, even just the visible columns would do.",
+      "thread_ts": "1792310400.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792310400.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792310400.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "csv-export",
+          "title": "CSV export of reports"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792310640.000100",
+              "thread_ts": "1792310400.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:csv-export"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:csv-export",
+            "repo": "acme-co/web",
+            "title": "Export the dashboard table as CSV",
+            "body": "People want to download the dashboard table as a CSV file. Exporting only the visible columns is enough for a first version.",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792310400.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792310640.000100",
+                "thread_ts": "1792310400.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": []
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "As feature-request: one topic and one create_issue proposal. Executing it fails on the missing label.",
+    "accepted": [
+      "1792310400.000100",
+      "1792310640.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:csv-export",
+        "messages": [
+          "1792310400.000100",
+          "1792310640.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:csv-export"
+      }
+    ]
+  }
+}

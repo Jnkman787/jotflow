@@ -171,9 +171,11 @@ class KeywordHandler:
 class BoltKeywordSlack:
     """:class:`KeywordSlack` over slack-sdk's client."""
 
-    def __init__(self, client: Any, team_id: str | None = None) -> None:
+    def __init__(
+        self, client: Any, team_id: str | None = None, *, people: SlackPeople | None = None
+    ) -> None:
         self._client = client
-        self._people = SlackPeople(client, team_id)
+        self._people = people or SlackPeople(client, team_id)
 
     async def _own_team(self) -> str | None:
         """This workspace's id, from ``auth.test`` once, unless it was given."""
