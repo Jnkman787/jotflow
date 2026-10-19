@@ -95,7 +95,9 @@ def test_search_scores_words_across_open_and_closed_issues() -> None:
 
 def test_list_read_and_labels() -> None:
     server = fake()
-    open_web = call(server, "list_issues", owner="acme-co", repo="web")
+    every = call(server, "list_issues", owner="acme-co", repo="web")
+    assert [i["number"] for i in every["issues"]] == [42, 31, 23, 17]  # both states
+    open_web = call(server, "list_issues", owner="acme-co", repo="web", state="OPEN")
     assert [i["number"] for i in open_web["issues"]] == [42, 31, 23]
     closed = call(
         server, "list_issues", owner="acme-co", repo="web", state="CLOSED", direction="ASC"

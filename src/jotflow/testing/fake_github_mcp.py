@@ -145,8 +145,9 @@ class FakeGithub:
 
     def _list(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         name, repo = self._repo(arguments)
-        state = str(arguments.get("state") or "OPEN").lower()
-        issues = [i for i in repo.issues if i.state == state]
+        # Like github-mcp-server 2.0.2: no state means open and closed issues.
+        state = str(arguments.get("state") or "").lower()
+        issues = [i for i in repo.issues if not state or i.state == state]
         issues.sort(key=lambda i: i.number, reverse=arguments.get("direction") != "ASC")
         return {
             "issues": [_issue(name, i) for i in issues],
