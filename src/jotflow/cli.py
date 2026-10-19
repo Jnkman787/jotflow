@@ -16,6 +16,7 @@ from jotflow import __version__
 from jotflow.commands import check as check_command
 from jotflow.commands import fixture as fixture_command
 from jotflow.commands import health as health_command
+from jotflow.commands import identity as identity_command
 from jotflow.commands import init as init_command
 from jotflow.commands import operator as operator_command
 from jotflow.commands import replay as replay_command
@@ -41,6 +42,10 @@ COMMANDS: dict[str, tuple[ModuleType, str]] = {
     "operator": (
         operator_command,
         "Read-only tokens for a terminal agent: create, list, revoke, and the connect bridge",
+    ),
+    "identity": (
+        identity_command,
+        "Remove someone's GitHub link from the host, and tell them privately",
     ),
     "execute-fixture": (
         fixture_command,

@@ -45,6 +45,7 @@ from jotflow.store.base import (
     ConflictError,
     EditField,
     IdentityLink,
+    IdentityUnlink,
     LinkSource,
     MessageLink,
     NotFoundError,
@@ -706,6 +707,34 @@ class SqliteStore:
                 "DELETE FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
             )
             return cursor.rowcount > 0
+
+    async def remove_identity(self, slack_user_id: str, *, removed_by: str) -> bool:
+        check_id(slack_user_id, "Slack user id")
+        check_id(removed_by, "remover")
+        async with self._write():
+            cursor = await self._db.execute(
+                "DELETE FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
+            )
+            if cursor.rowcount == 0:
+                return False
+            await self._db.execute(
+                "INSERT INTO identity_unlinks (id, slack_user_id, removed_by, removed_at)"
+                " VALUES (?, ?, ?, ?)",
+                (secrets.token_hex(8), slack_user_id, removed_by, to_text(self._clock())),
+            )
+            return True
+
+    async def identity_unlinks(self) -> list[IdentityUnlink]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM identity_unlinks ORDER BY removed_at DESC, id DESC"
+            )
+        return [
+            IdentityUnlink(
+                row["id"], row["slack_user_id"], row["removed_by"], from_text(row["removed_at"])
+            )
+            for row in rows
+        ]
 
     # Operator tokens
 

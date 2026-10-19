@@ -4,7 +4,7 @@
 
 JotFlow is a self-hosted, agent-agnostic bridge between a shared Slack channel and your GitHub repositories. Anyone on the team, engineer or not, drops an idea, bug, or request into the channel. JotFlow watches the conversation, connects follow-up messages and replies to the same topic, and has *your* AI agent draft the corresponding GitHub issue. A human approves it, or the channel is configured to let it through automatically. Either way, the result is posted back to Slack so everyone sees what was created.
 
-> **Status: milestone 1, installable.** Setup and `jotflow run` are ready to use: follow the Quickstart below to connect JotFlow to your Slack workspace. Drafting and approving issues arrives in later milestones; see the [roadmap](docs/roadmap.md). [docs/architecture.md](docs/architecture.md) is the full design.
+> **Status: preparing the first release, 0.1.0.** Setup, drafting, approval cards, and GitHub writes all work: follow the Quickstart below to connect JotFlow to your Slack workspace. The [roadmap](docs/roadmap.md) says what's left, and [docs/architecture.md](docs/architecture.md) is the full design.
 
 ## Why
 
@@ -92,7 +92,7 @@ The pieces:
 
 ## Quickstart
 
-**What works today:** JotFlow connects to Slack and logs each message in the channels you choose. With `[agent] preset` set in `jotflow.toml` and the agent containers set up, it also starts an agent run on each thread once the thread goes quiet. The agent can ask a clarifying question in the thread, and a run that fails posts a short notice there. Proposal cards and GitHub issues arrive in later milestones. Without a preset, JotFlow posts nothing.
+**What works today:** With `[agent] preset` set in `jotflow.toml` and the agent containers set up, JotFlow starts an agent run on each thread in the channels you choose, once the thread goes quiet. The agent drafts a proposal, which JotFlow posts as a card for the team to approve, or asks a clarifying question in the thread. An approved card becomes a GitHub issue or comment, written by the agent's execution container, and JotFlow replies in the thread with its link. Without a preset, JotFlow connects and answers `/jotflow`, but drafts nothing.
 
 Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages. It can take longer the first time Docker downloads JotFlow, or if your workspace needs an admin to approve new apps. Every name and id below is made up; use your own.
 
@@ -113,7 +113,7 @@ Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages
 - **Manifest**: a file describing a Slack app: its name, permissions, and settings. Slack builds the app from it, so you don't click through every setting.
 - **Docker, image, container**: Docker runs programs in a sealed box called a container. The image is what the box is built from. Docker Compose, the `docker compose` command, starts JotFlow's container with the right settings.
 - **Slash command**: a command typed in Slack that starts with `/`, such as `/invite` or `/jotflow help`.
-- **Milestone**: a stage on the [roadmap](docs/roadmap.md). Milestone 1, today, connects JotFlow to Slack; drafting issues comes in milestone 3.
+- **Milestone**: a stage on the [roadmap](docs/roadmap.md), from "installable" to "ready for another team".
 
 ### 1. Prerequisites
 
@@ -266,7 +266,7 @@ On Windows in PowerShell, setup has already added the `COMPOSE_PATH_SEPARATOR=:`
 docker compose up -d
 ```
 
-This starts JotFlow. The agent containers, where your team's agent will draft issues and write the approved ones, are off until you set them up; agent runs arrive in milestone 3.
+This starts JotFlow. The agent containers, where your team's agent will draft issues and write the approved ones, are off until you set them up.
 
 #### The agent containers
 
@@ -419,13 +419,14 @@ Every error names what to fix. The common ones are below. Wherever it says `uvx 
 
 ## Using it
 
-This is how JotFlow works for the people in the channel once drafting and approval cards land, in later releases (milestones 3 and 4).
+This is how JotFlow works for the people in the channel.
 
 - **Just post.** Write your idea, bug, or request in the channel like you normally would. JotFlow waits for the conversation to settle, then posts a proposed issue for the team to approve.
 - **Steer it if you like.** Start a message with `idea:` or `bug:` to say what it is, `re:` to add to an existing issue (JotFlow's link replies tell you exactly what to type), or `skip:` if it isn't an idea at all. Reacting with :no_entry_sign: works like `skip:`. Most people never need these.
 - **See where it went.** Once an issue is written, JotFlow replies in the thread with its link and adds a :ticket: reaction to the messages it came from. Set `issue_reaction` in `jotflow.toml` to use another emoji, or `""` for none.
 - **Change how a channel works.** `/jotflow mode` shows the channel's mode: `propose`, the default, where nothing is written until someone approves; `auto`, where proposals are written straight away; or `paused`, where JotFlow reads and writes nothing. `/jotflow mode auto` sets it, and JotFlow announces the change in the channel. With approvers on, only they can change it.
 - **React instead.** :no_entry_sign: skips a message, and :bulb: or :bug: says it is an idea or a bug. Remove your reaction to take it back. If your Slack app was created before this release, update it from the new manifest and reinstall it, as [manifests/README.md](manifests/README.md) explains, or removing a reaction does nothing.
+- **Link your GitHub login.** `/jotflow link your-github-login` lets proposals assign you, and `/jotflow unlink` removes it. Links are self-declared, so cards mark them "(unverified)". If someone linked a login that's yours, an approver, or an admin listed under `[identity]` in `jotflow.toml`, can remove it with `/jotflow unlink` and that person's Slack member ID. Copy it from their profile's ⋯ menu; names aren't accepted. The person is told privately. Whoever runs JotFlow can do the same on the host with `jotflow identity unlink <member-id>`.
 - **Forgot the words?** Type `/jotflow help`. Only you see the answer, and it lists this channel's repos and how approval works here.
 - **Help finds you.** JotFlow pins a short guide once in each channel. Your first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...` without the colon, gets a private suggestion once. JotFlow never acts on a near miss. Each of these can be turned off in `jotflow.toml`'s `[help]` table, for every channel or for one.
 
@@ -440,6 +441,7 @@ Start a message with a keyword to steer JotFlow. The colon is required.
   skip:       not an idea; on a top-level message it keeps the whole thread out
 Or react instead: :no_entry_sign: for skip:, :bulb: for idea:, or :bug: for bug:. Remove your reaction to take it back.
 /jotflow link your-github-login lets proposals assign you; /jotflow unlink undoes it.
+Approvers can remove someone else's link with /jotflow unlink and their Slack member ID.
 /jotflow repos lists the repos this channel feeds.
 Most people never need these: just post, and JotFlow works out the rest.
 ```

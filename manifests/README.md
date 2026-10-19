@@ -17,7 +17,7 @@ JotFlow needs both tokens. Keep them secret and out of the repository. Token rot
 
 ## Add a missing scope
 
-**Updating an app created before `reaction_removed` was added (#138).** The manifest now subscribes to `reaction_removed`, so removing a keyword's reaction can take it back. An app made from the older manifest keeps working, but removing a reaction then does nothing. To pick it up, open the app's **App Manifest** page, paste `manifests/slack-app.json` (or `slack-app-manifest.json` from setup), save, and click **Reinstall to Workspace** if Slack asks.
+**Updating an app created from an older manifest.** The manifest now subscribes to `reaction_removed` (#138), so removing a keyword's reaction can take it back. It also turns on a read-only Messages tab (#173), where JotFlow tells a person their GitHub link was removed. It needs no new scope, people can't write to the app there, and JotFlow reads no DMs. An app made from the older manifest keeps working, but removing a reaction then does nothing, and the removal note can't be delivered, so the person who removed the link is asked to pass it on. To pick both up, open the app's **App Manifest** page, paste `manifests/slack-app.json` (or `slack-app-manifest.json` from setup), save, and click **Reinstall to Workspace** if Slack asks.
 
 If JotFlow or setup reports a missing scope, open the app's **OAuth & Permissions** page, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Reinstalling can issue a new bot token. If setup is still asking for the bot token, paste the new one there. If setup has already stopped, run `uv run jotflow init` again and paste it.
 
@@ -50,7 +50,7 @@ Each permission below is used in this release. JotFlow asks for nothing it doesn
 | App Home tabs | off | The app has no DM scopes, so messages sent to it would never be read |
 | Org-wide deploy | off | The app is internal to one workspace |
 
-There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Questions to the bot by @-mention arrive in M5 and will add `app_mentions:read`.
+There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Answering questions by @-mention isn't built yet (#57). When it is, the manifest will add `app_mentions:read`, and the release notes will say to update the app.
 
 ## Changing the manifest
 

@@ -1151,3 +1151,40 @@ async def test_an_operator_token_is_usable_until_it_expires(clock: Clock) -> Non
     made = operator_token("alex", clock.now)
     assert made.usable(clock.now)
     assert not made.usable(made.expires_at)
+
+
+# Removing someone else's identity link (#173)
+
+
+async def test_removing_a_link_records_who_whom_and_when(store: Store, clock: Clock) -> None:
+    await store.link_identity("U0BOB", "octo-cat")
+    when = clock.tick()
+    assert await store.remove_identity("U0BOB", removed_by="U0APPROVE")
+    assert await store.get_identity("U0BOB") is None
+    [record] = await store.identity_unlinks()
+    assert (record.slack_user_id, record.removed_by, record.removed_at) == (
+        "U0BOB",
+        "U0APPROVE",
+        when,
+    )
+    assert "octo-cat" not in repr(record)
+
+
+async def test_removing_a_missing_link_records_nothing(store: Store) -> None:
+    assert not await store.remove_identity("U0NOBODY", removed_by="operator")
+    assert await store.identity_unlinks() == []
+
+
+async def test_removals_are_listed_newest_first(store: Store, clock: Clock) -> None:
+    await store.link_identity("U0BOB", "octo-cat")
+    await store.link_identity("U0SAM", "sam-gh")
+    assert await store.remove_identity("U0BOB", removed_by="operator")
+    clock.tick()
+    assert await store.remove_identity("U0SAM", removed_by="U0APPROVE")
+    assert [r.slack_user_id for r in await store.identity_unlinks()] == ["U0SAM", "U0BOB"]
+
+
+async def test_a_self_unlink_is_not_recorded(store: Store) -> None:
+    await store.link_identity("U0BOB", "octo-cat")
+    assert await store.unlink_identity("U0BOB")
+    assert await store.identity_unlinks() == []

@@ -35,6 +35,10 @@ KEYWORD_LINES: dict[Keyword, tuple[str, str]] = {
 INTRO = "Start a message with a keyword to steer JotFlow. The colon is required."
 CLOSING = "Most people never need these: just post, and JotFlow works out the rest."
 LINK_LINE = "/jotflow link your-github-login lets proposals assign you; /jotflow unlink undoes it."
+# Removing someone else's link takes their member ID, never a name (#173).
+UNLINK_OTHER_LINE = (
+    "Approvers can remove someone else's link with /jotflow unlink and their Slack member ID."
+)
 REPOS_LINE = "/jotflow repos lists the repos this channel feeds."
 COMMAND = "/jotflow help"
 
@@ -54,7 +58,17 @@ def reaction_lines() -> list[str]:
 
 def help_text() -> str:
     """What ``/jotflow help`` shows, privately."""
-    return "\n".join([INTRO, *keyword_lines(), *reaction_lines(), LINK_LINE, REPOS_LINE, CLOSING])
+    return "\n".join(
+        [
+            INTRO,
+            *keyword_lines(),
+            *reaction_lines(),
+            LINK_LINE,
+            UNLINK_OTHER_LINE,
+            REPOS_LINE,
+            CLOSING,
+        ]
+    )
 
 
 def guide_text(bot: str = "JotFlow") -> str:

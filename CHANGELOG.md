@@ -29,18 +29,19 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 - **Channel modes.** `/jotflow mode` shows or sets `propose`, `auto`, or `paused`. Every change is announced, and `auto` warns in a channel with guests or external members.
 - **After the write,** JotFlow replies in the thread with the issue's link and reacts on the messages it came from.
 - **Help where people are.** `/jotflow help` explains everything for that channel, privately. JotFlow pins a short guide once per channel, gives a person's first message a one-time tip, and privately suggests the right form for a mistyped keyword. Each of these can be turned off in `[help]`.
-- **Linking accounts.** `/jotflow link your-github-login` lets proposals assign you, and `/jotflow repos` lists the repos a channel feeds.
+- **Linking accounts.** `/jotflow link your-github-login` lets proposals assign you, and `/jotflow repos` lists the repos a channel feeds. An approver or identity admin can remove someone else's link with `/jotflow unlink <member-id>`, and the person is told privately.
 
 ### The agent
 
 - **Your agent, in its own containers.** Drafting and questions run in one container with a read-only GitHub token. Approved writes run in another, with the token that can write. The write token never sits where untrusted Slack text is read.
-- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `command` runs your own agent instead.
+- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `codex` is experimental and serves drafting and question runs only. `command` runs your own agent instead.
 - **Exact writes.** An execution run gets only the approved fields. It finds an issue it already wrote by a hidden marker before writing again, and JotFlow checks the reported issue URL against the approved repo. A failed write is retried a few times, then reported on the card.
 - **Issue bodies** carry permalinks to the Slack messages they came from, or no Slack details at all with `issue_links = "none"`.
 
 ### Running it
 
 - **Health.** `docker compose ps` shows `healthy` while JotFlow is connected to Slack, and logs say when the connection drops and comes back.
+- **Removing a link from the host.** `jotflow identity unlink <member-id>` removes someone's GitHub link and tells them.
 - **Operator tokens.** `jotflow operator create` issues an admin's read-only token for chosen channels, and `jotflow operator connect` bridges it to an MCP client over stdio. No port is published.
 - **Replay.** `jotflow replay` runs a saved thread through the real pipeline with no Slack or network, to see what JotFlow would do. `jotflow check --live` confirms a real Slack app hears its channel.
 - **Docs.** The [deployment guide](docs/deployment.md) covers servers, backups, upgrades, and rollback. The [threat model](docs/threat-model.md) says what JotFlow protects and what it accepts.
@@ -50,7 +51,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 - **No GitHub credentials in JotFlow.** The team's own tokens live only in the agent containers.
 - **Thread text** is never stored. Drafts are removed once a proposal is final, and the database overwrites what it deletes.
 - **Logs** never hold message text, and every token shape JotFlow knows is redacted.
-- **Agent runs** get a short-lived token scoped to one run, one channel, and one thread. The containers drop all capabilities, run read-only as their own user, and publish no port.
+- **Agent runs** get a short-lived token scoped to one run, one channel, and one thread, and, for writes, one approved proposal. The containers drop all capabilities, run read-only as their own user, and publish no port.
 
 ### Known limitations
 

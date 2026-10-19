@@ -84,11 +84,14 @@ def _retry_after(error: SlackApiError) -> float | None:
 
 @dataclass
 class Budget:
-    """Seconds of rate-limit waiting that one ``get_work`` call may spend.
+    """Seconds of rate-limit waiting that one piece of work may spend.
 
-    One budget is shared by every Slack call the call makes: the thread's
-    pages, each name lookup, and the related excerpts. So the total wait stays
-    inside the MCP server's 30 s request timeout, however many calls it takes.
+    The caller creates one budget and shares it across every Slack call that
+    piece of work makes, so the total wait stays bounded however many calls it
+    takes. ``get_work`` shares one across the thread's pages, each name lookup
+    and the related excerpts, which keeps it inside the MCP server's 30 s
+    request timeout. The auto-mode guest scan (#161) shares one across its
+    member and directory pages.
     """
 
     remaining: float = RETRY_BUDGET_SECONDS

@@ -74,6 +74,9 @@ def render_policy(policy: Policy) -> str:
         f"guide = {_bool(policy.help.guide)}",
         f"newcomer_tip = {_bool(policy.help.newcomer_tip)}",
         f"near_miss_nudge = {_bool(policy.help.near_miss_nudge)}",
+        "",
+        "[identity]",
+        f"admins = {_array(policy.identity.admins)}",
     ]
     for channel_id, channel in policy.channels.items():
         # Channel ids are validated to [CG][A-Z0-9]+, so they are bare keys.
