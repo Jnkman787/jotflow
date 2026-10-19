@@ -54,6 +54,11 @@ _SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     # GitHub personal, OAuth, user, server, and refresh tokens.
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]+"), "[redacted token]"),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), "[redacted token]"),
+    # Model API keys the agent's login uses (#219): Anthropic's sk-ant-..., then
+    # OpenAI's sk-..., sk-proj-... and the like. JotFlow's own process never holds
+    # them, so this is a backstop. 20+ characters keeps words like sk-learn intact.
+    (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}"), "[redacted token]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), "[redacted token]"),
     # Any bearer value, in a header or anywhere else.
     (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1[redacted token]"),
 )

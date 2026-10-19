@@ -39,7 +39,38 @@ SECRETS = {
     "github classic": _fake("gh" + "p_", "A1b2C3d4E5f6G7h8I9j0" * 2),
     "github fine-grained": _fake("github" + "_pat_", "11ABCDEFG0" + "x" * 50),
     "github app": _fake("gh" + "s_", "Z9" * 18),
+    "anthropic": _fake("sk-" + "ant-", "api03-" + "Qx9_" * 20 + "AA"),
+    "openai project": _fake("s" + "k-", "proj-" + "Ab3-" * 30),
+    "openai legacy": _fake("s" + "k-", "Zz8" * 16),
 }
+
+MODEL_KEYS = ("anthropic", "openai project", "openai legacy")
+
+
+@pytest.mark.parametrize("name", MODEL_KEYS)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "starting agent with OPENAI_API_KEY={key} and nothing else",
+        '{{"api_key": "{key}", "model": "gpt-5.5"}}',
+        "x-api-key:{key};retry=1",
+        "GET /v1?key={key}&page=2 failed",
+    ],
+)
+def test_a_model_key_inside_a_longer_line_is_redacted(name: str, template: str) -> None:
+    key = SECRETS[name]
+    line = template.format(key=key)
+    out = redact(line, bodies=False)
+    assert key not in out
+    assert key[:12] not in out  # no prefix of the key survives either
+    assert "[redacted token]" in out
+    before, _, after = template.partition("{key}")
+    assert out.startswith(before.replace("{{", "{")) and out.endswith(after.replace("}}", "}"))
+
+
+def test_ordinary_words_that_start_with_sk_are_left_alone() -> None:
+    line = "installed sk-learn and sk-ant-colony, then ask-me-anything"
+    assert redact(line, bodies=False) == line
 
 
 @pytest.fixture(autouse=True)
