@@ -30,8 +30,8 @@ A preset is a small frozen dataclass with a `plan()` method. The runner calls `p
 class ExamplePreset:
     name: str = "example"
     default_models: Mapping[RunKind, str] = field(default_factory=dict)
-    needs_github_mcp: bool = True          # the runner checks the binary at startup
-    github_token_in_config: bool = True    # the runner checks the token's characters
+    needs_github_mcp: bool = True  # the runner checks the binary at startup
+    github_token_in_config: bool = True  # the runner checks the token's characters
 
     def plan(self, run: RunContext) -> RunPlan:
         allowed = [*JOTFLOW_TOOLS[run.kind], *GITHUB_TOOLS[run.kind]]
@@ -42,8 +42,13 @@ class ExamplePreset:
             }
         }
         argv = (
-            "example-cli", "run", "--mcp-config", str(run.config_path),
-            "--allow-tools", ",".join(allowed), PROMPTS[run.kind],
+            "example-cli",
+            "run",
+            "--mcp-config",
+            str(run.config_path),
+            "--allow-tools",
+            ",".join(allowed),
+            PROMPTS[run.kind],
         )
         return RunPlan(
             argv=argv,
