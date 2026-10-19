@@ -40,12 +40,12 @@ Done when:
   - Reactions go first because they are idempotent, so a retry repeats them harmlessly but never repeats the reply. Only a failure of step 3 itself could double the reply.
   - Failures back off from 2 seconds to a minute, as `CardSync` does. Errors that retrying cannot fix, such as the thread or channel being gone, mark it told and log.
   - It runs in the orchestrator's card loop, after `CardSync.sync`.
-- **The policy key** (asked of the architect): a top-level `issue_reaction`, defaulting to `"ticket"`. An empty string means no reaction. The value is checked as a Slack emoji name, and must not be the keyword confirmation `white_check_mark`. It goes in the example file and `policy_writer`, with round-trip and refusal tests.
+- **The policy key**, agreed with the architect: a top-level `issue_reaction`, defaulting to `reactions.DEFAULT_ISSUE_REACTION`, `"ticket"`. An empty string means no reaction. It reuses #158's shared `EmojiName` type, up to 100 characters. A Policy-level check refuses it when it collides with a keyword reaction, JotFlow's keyword confirmation (`reactions.CONFIRM`), or the approval reaction. It goes in the example file and `policy_writer`, with round-trip and refusal tests.
 - **Scope.** The reaction needs `reactions:write`, which the manifest already has. The reply needs `chat:write`.
 
 ## Risks and open questions
 
-- The policy key and its default await the architect.
+- Settled: the architect approved the key and asked for the shared `EmojiName` and the collision check, both done.
 - **Migration numbers.** Nothing open uses 9 today. Whichever lands later renumbers.
 - An update proposal's sources may include messages from another thread. Each gets the reaction, and the reply goes to the proposal's own thread.
 
