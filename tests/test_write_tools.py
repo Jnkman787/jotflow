@@ -938,3 +938,97 @@ async def test_linking_through_the_command_is_what_makes_someone_assignable(
     )
     record = await store.get_proposal(result.proposal_id)
     assert record is not None and record.proposal.assignees == ["Acme-Bob"]  # as proposed
+
+
+# issue_links = "none" keeps Slack links out of drafted text (#168)
+
+SLACK_TEXTS = [
+    "see https://acme.slack.com/archives/C0EXAMPLE1/p1792310400000100",
+    "<https://acme.enterprise.slack.com/archives/C1/p1|the thread>",
+    "discussed in app.slack.com/client/T0/C0",
+    "open slack://channel?team=T0&id=C0",
+    # Encoded or hidden forms still name the workspace once read (#171 review).
+    "https://acme%2Eslack%2Ecom/archives/C1/p1",
+    "acme.slack%2ecom/archives/C1",
+    "acme.slack%252Ecom/archives/C1",  # encoded twice
+    "acme.slack\u200b.com/archives/C1",  # a zero-width space
+    "acme.sl\u00adack.com",  # a soft hyphen
+    "acme\uff0eslack\uff0ecom",  # full-width dots
+    "ACME.SLACK.COM/archives",
+]
+
+
+def _closed_policy() -> Any:
+    return POLICY.model_copy(update={"issue_links": "none"})
+
+
+@pytest.fixture
+def closed(tools: WriteTools, store: MemoryStore, poster: Poster, clock: Clock) -> WriteTools:
+    """The write tools, with the packet recorded, in a channel set to issue_links = none."""
+    return WriteTools(store, _closed_policy(), poster, clock=clock, new_id=Ids())
+
+
+@pytest.mark.parametrize("text", SLACK_TEXTS)
+@pytest.mark.parametrize("field", ["title", "body"])
+async def test_with_issue_links_none_a_slack_link_in_an_issue_is_refused(
+    closed: WriteTools, store: MemoryStore, field: str, text: str
+) -> None:
+    tools = closed
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match="keeps Slack out of GitHub") as refused:
+        await tools.propose_issue(DRAFT, issue(topic_id, **{field: f"Export: {text}"[:200]}))
+    assert str(refused.value) == wt.NO_SLACK_LINKS
+    assert await store.thread_proposals(CH, ROOT) == []
+
+
+@pytest.mark.parametrize("change", ["body", "comment"])
+async def test_with_issue_links_none_a_slack_link_in_an_update_is_refused(
+    closed: WriteTools, store: MemoryStore, change: str
+) -> None:
+    tools = closed
+    topic_id = await new_topic(tools)
+    await store.set_topic_issue(topic_id, "acme-co/web", 42)
+    changes = {change: f"Also: {SLACK_TEXTS[0]}"}
+    with pytest.raises(ToolError, match="keeps Slack out of GitHub"):
+        await tools.propose_update(DRAFT, update(topic_id, changes=changes))
+    assert await store.thread_proposals(CH, ROOT) == []
+
+
+async def test_with_issue_links_none_ordinary_text_about_slack_is_fine(
+    closed: WriteTools,
+) -> None:
+    tools = closed
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(
+        DRAFT, issue(topic_id, title="Slack sign-in fails", body="The Slack button on notslack.com")
+    )
+    assert result.state is ProposalState.PENDING
+
+
+async def test_with_issue_links_on_a_slack_link_is_allowed(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(DRAFT, issue(topic_id, body=f"See {SLACK_TEXTS[0]}"))
+    assert result.state is ProposalState.PENDING
+
+
+async def test_over_the_wire_the_refusal_is_a_tool_result_the_agent_can_act_on(
+    closed: WriteTools, store: LiveStore, poster: Poster
+) -> None:
+    from jotflow.whiteboard.tokens import TokenRegistry
+    from tests.test_mcp_server import client_for, post
+
+    tools = closed
+    topic_id = await new_topic(tools)
+    registry = TokenRegistry()
+    token = registry.issue(DRAFT, 60)
+    arguments = issue(topic_id, body=f"See {SLACK_TEXTS[0]}").model_dump(mode="json")
+    specs = write_tools(store, _closed_policy(), poster)
+    async with client_for(tokens=registry, tools=specs) as http:
+        reply = await post(
+            http,
+            "tools/call",
+            {"name": "propose_issue", "arguments": arguments},
+            Authorization=f"Bearer {token}",
+        )
+    result = reply.json()["result"]
+    assert result["isError"] is True and result["content"][0]["text"] == wt.NO_SLACK_LINKS

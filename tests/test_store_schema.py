@@ -124,6 +124,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "pending_threads",
             "help_notices",
             "proposal_edits",
+            "reaction_marks",
         }
         for table in tables:
             (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
@@ -313,5 +314,24 @@ async def test_after_the_upgrade_old_applied_threads_are_not_told_again(tmp_path
     store = await SqliteStore.open(path)
     try:
         assert await store.threads_due() == []
+    finally:
+        await store.close()
+
+
+async def test_a_persons_skip_from_before_the_upgrade_survives_a_reaction_removal(
+    tmp_path: Path,
+) -> None:
+    from jotflow.models import MessageRef
+
+    path = tmp_path / "jotflow.db"
+    old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 11])
+    await old.mark_chatter(MessageRef(channel_id="C0IDEAS01", ts="1.1"), by="person")
+    await old.mark_chatter(MessageRef(channel_id="C0IDEAS01", ts="2.2"))  # the agent's
+    await old.close()
+    store = await SqliteStore.open(path)
+    try:
+        (mark,) = await store.reaction_marks("C0IDEAS01", "1.1")
+        assert (mark.user_id, mark.keyword) == ("text", "skip")
+        assert await store.reaction_marks("C0IDEAS01", "2.2") == []
     finally:
         await store.close()

@@ -32,7 +32,8 @@ class BotIdentity:
 
 @dataclass(frozen=True)
 class Accepted:
-    kind: Literal["message", "reaction"]
+    # "reaction_removed" takes back what a keyword's reaction meant (#138).
+    kind: Literal["message", "reaction", "reaction_removed"]
     ref: MessageRef
     reaction: str | None = None
 
@@ -61,6 +62,9 @@ class _RecentKeys:
         self._keys.move_to_end(key)
         while len(self._keys) > self._capacity:
             self._keys.popitem(last=False)
+
+    def discard(self, key: tuple[str, ...]) -> None:
+        self._keys.pop(key, None)
 
 
 def _str(value: Any) -> str | None:
@@ -104,7 +108,9 @@ class EventFilter:
         if kind == "message":
             return self._message(event, event_id)
         if kind == "reaction_added":
-            return self._reaction(event, event_id)
+            return self._reaction(event, event_id, removed=False)
+        if kind == "reaction_removed":
+            return self._reaction(event, event_id, removed=True)
         return Ignored(f"event type {kind!r}")
 
     def _message(self, event: Mapping[str, Any], event_id: str | None) -> Decision:
@@ -126,7 +132,9 @@ class EventFilter:
         ref = MessageRef(channel_id=channel, ts=ts, thread_ts=_str(event.get("thread_ts")))
         return self._deliver(Accepted("message", ref), [("message", channel, ts)], event_id)
 
-    def _reaction(self, event: Mapping[str, Any], event_id: str | None) -> Decision:
+    def _reaction(
+        self, event: Mapping[str, Any], event_id: str | None, *, removed: bool
+    ) -> Decision:
         item = event.get("item")
         if not isinstance(item, Mapping) or item.get("type") != "message":
             return Ignored("reaction on something other than a message")
@@ -141,8 +149,17 @@ class EventFilter:
         if self._is_own(event):
             return Ignored("own reaction", channel)
         ref = MessageRef(channel_id=channel, ts=ts)
-        key = ("reaction", channel, ts, user, name)
-        return self._deliver(Accepted("reaction", ref, reaction=name), [key], event_id)
+        kind: Literal["reaction", "reaction_removed"] = (
+            "reaction_removed" if removed else "reaction"
+        )
+        decision = self._deliver(
+            Accepted(kind, ref, reaction=name), [(kind, channel, ts, user, name)], event_id
+        )
+        if isinstance(decision, Accepted):
+            # Adding after a removal, or removing after an add, is new, not a redelivery.
+            other = "reaction" if removed else "reaction_removed"
+            self._seen.discard((other, channel, ts, user, name))
+        return decision
 
 
 def log_decision(decision: Decision) -> None:
@@ -152,6 +169,12 @@ def log_decision(decision: Decision) -> None:
         if decision.kind == "message":
             log.info("message channel=%s ts=%s thread_ts=%s", ref.channel_id, ref.ts, ref.thread_ts)
         else:
-            log.info("reaction channel=%s ts=%s name=%s", ref.channel_id, ref.ts, decision.reaction)
+            log.info(
+                "%s channel=%s ts=%s name=%s",
+                decision.kind,
+                ref.channel_id,
+                ref.ts,
+                decision.reaction,
+            )
     else:
         log.debug("ignored: %s channel=%s", decision.reason, decision.channel_id)

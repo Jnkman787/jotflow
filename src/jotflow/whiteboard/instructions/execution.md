@@ -46,6 +46,12 @@ the issue's current labels (`issue_read`, `method` `get_labels`) or current
 assignees (`issue_read`, `method` `get`). Pass `labels` (or `assignees`) as
 the current set, plus `add`, minus `remove`, in addition to `arguments`.
 
+When an item has `markers_from_current`, read the issue's current body first
+(`issue_read`, `method` `get`). After the `body` in `arguments`, add each whole
+line of the current body that is a JotFlow marker, `<!-- jotflow:proposal:... -->`,
+and is not already in the new body, each on its own line, in the order found.
+Change nothing else in the body.
+
 If a write fails, do not retry with different text. Call `record_result` with
 `error` saying which write failed and GitHub's reason, and stop.
 

@@ -40,6 +40,8 @@ from jotflow.store.base import (
     NoticeKind,
     PendingThread,
     ProposalEdit,
+    ReactionKeyword,
+    ReactionMark,
     Recovery,
     ToolCallRecord,
     TopicRecord,
@@ -48,6 +50,7 @@ from jotflow.store.base import (
     check_finish,
     check_github_login,
     check_id,
+    check_mark,
     check_new_proposal,
     check_notice,
     check_run_request,
@@ -79,6 +82,7 @@ class MemoryStore:
         self._identities: dict[str, IdentityLink] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
         self._notices: set[tuple[str, str, str]] = set()
+        self._marks: dict[tuple[str, str, str, str], ReactionMark] = {}
         self._edits: list[ProposalEdit] = []
         self._runs: dict[str, Run] = {}
         self._pending: dict[tuple[str, str], datetime] = {}
@@ -410,6 +414,37 @@ class MemoryStore:
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         return self._modes.get(channel_id)
+
+    async def add_reaction_mark(
+        self, channel_id: str, ts: str, user_id: str, keyword: ReactionKeyword
+    ) -> bool:
+        check_mark(channel_id, ts, user_id, keyword)
+        async with self._lock:
+            key = (channel_id, ts, user_id, keyword)
+            if key in self._marks:
+                return False
+            self._marks[key] = ReactionMark(channel_id, ts, user_id, keyword, self._clock())
+            return True
+
+    async def remove_reaction_mark(
+        self, channel_id: str, ts: str, user_id: str, keyword: ReactionKeyword
+    ) -> bool:
+        check_mark(channel_id, ts, user_id, keyword)
+        async with self._lock:
+            return self._marks.pop((channel_id, ts, user_id, keyword), None) is not None
+
+    async def reaction_marks(self, channel_id: str, ts: str) -> list[ReactionMark]:
+        found = [m for m in self._marks.values() if (m.channel_id, m.ts) == (channel_id, ts)]
+        return sorted(found, key=lambda m: (m.marked_at, m.user_id, m.keyword))
+
+    async def unmark_chatter(self, ref: MessageRef) -> bool:
+        async with self._lock:
+            key = (ref.channel_id, ref.ts)
+            existing = self._messages.get(key)
+            if existing is None or not existing.chatter or existing.linked_by != "person":
+                return False
+            del self._messages[key]
+            return True
 
     async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
         check_notice(channel_id, user_id, kind)
