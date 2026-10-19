@@ -351,6 +351,8 @@ class SqliteStore:
             else ExecutionResult.model_validate_json(row["result_json"]),
             participants=[u["slack_user_id"] for u in users],
             card_ts=row["card_ts"],
+            revision=row["revision"],
+            card_revision=row["card_revision"],
             draft_cleared_at=None
             if row["draft_cleared_at"] is None
             else from_text(row["draft_cleared_at"]),
@@ -443,7 +445,7 @@ class SqliteStore:
             cursor = await self._db.execute(
                 """
                 UPDATE proposals SET state = ?, content_hash = ?, approved_by = ?,
-                    approved_at = ?, result_json = ?, updated_at = ?
+                    approved_at = ?, result_json = ?, updated_at = ?, revision = revision + 1
                 WHERE id = ? AND state = ?
                 """,
                 (
@@ -478,7 +480,8 @@ class SqliteStore:
             now = to_text(self._clock())
             for row in rows:
                 await self._db.execute(
-                    "UPDATE proposals SET state = 'superseded', updated_at = ?"
+                    "UPDATE proposals SET state = 'superseded', updated_at = ?,"
+                    " revision = revision + 1"
                     " WHERE id = ? AND state = 'pending'",
                     (now, row["id"]),
                 )
@@ -492,7 +495,8 @@ class SqliteStore:
     ) -> None:
         """Replace the stored draft with its cleared form, inside the caller's transaction."""
         await self._db.execute(
-            "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?"
+            "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?,"
+            " revision = revision + 1"
             " WHERE id = ? AND draft_cleared_at IS NULL",
             (canonical_json(cleared_draft(draft)), now, now, proposal_id),
         )
@@ -523,6 +527,26 @@ class SqliteStore:
                 raise NotFoundError(f"no proposal {proposal_id}")
             updated = await self._get_proposal(proposal_id)
         return _found(updated)
+
+    async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM proposals WHERE card_revision IS NULL OR card_revision < revision"
+                " ORDER BY created_at, id LIMIT ?",
+                (limit,),
+            )
+            return [await self._proposal(row) for row in rows]
+
+    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE proposals"
+                " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision))"
+                " WHERE id = ?",
+                (revision, proposal_id),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(f"no proposal {proposal_id}")
 
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._write():
@@ -921,7 +945,7 @@ class SqliteStore:
                         now=now,
                     )
                     await self._db.execute(
-                        "UPDATE proposals SET state = ?, updated_at = ?"
+                        "UPDATE proposals SET state = ?, updated_at = ?, revision = revision + 1"
                         " WHERE id = ? AND state = 'executing'",
                         (changes.state.value, to_text(now), record.id),
                     )

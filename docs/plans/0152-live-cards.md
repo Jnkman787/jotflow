@@ -1,0 +1,91 @@
+# Post and update the proposal card in the live service
+
+## Links and status
+
+- Issue: #152
+- Also serves: #26 and #120 (the card), #27 (its buttons need a posted card), #28 (auto mode), #122 (the public-repo warning), D7
+- Draft PR: #153
+- Status: ready for review
+- Last verified: 2026-10-19, `make check` passes with the code below
+- Next safe action: review; #27's handlers use `Orchestrator.cards`
+
+## Objective and done-when
+
+The card is built and tested, but nothing in `jotflow run` posts it. After this, every proposal gets one card in its thread, and that same message follows the proposal through every state.
+
+Done when:
+
+- [x] A drafting run that proposes an issue yields one card in the thread, with `card_ts` stored, tested through the real orchestrator with a fake Slack
+- [x] Every state change edits the same card, and a superseded proposal's card says so
+- [x] In `auto` mode the card still posts, with the auto-approval state line
+- [x] A Slack failure leaves the proposal intact and is retried, with a test. Posting never runs inside an MCP tool's write path
+- [x] No agent text is ever posted as mrkdwn
+- [x] `make check` passes, including the coverage floor
+
+**Out of scope:**
+- Looking up a repo's visibility on GitHub. JotFlow holds no GitHub token, so the card keeps saying "visibility was not checked" until a later issue supplies it.
+- The buttons' handlers, which are security's #27.
+
+## Design
+
+- **The store is the outbox.** Migration 8 adds two columns to `proposals`:
+  - `revision`, an integer that every change a card shows increases: `add_proposal`, `transition`, `clear_draft`, `supersede_pending`, and a result being recorded
+  - `card_revision`, the revision the posted card shows, or null before the first post
+  - `set_card_ts` changes neither, since it changes nothing on the card.
+  - `ProposalRecord` gains both, read-only, outside the content hash.
+  - `Store.cards_due(limit)` returns the proposals whose card is behind: `card_revision` null or below `revision`, oldest first. The loop asks for its batch plus the number waiting to retry, so those cannot crowd out the rest.
+  - `Store.mark_card_shown(id, revision)` raises `card_revision` to that revision, never lowers it. So a transition that lands while a card is being edited leaves the card behind, and it is edited again on the next pass.
+  - Both stores implement them, and a contract test covers both.
+  - This is the "one subscriber on the store's transitions" the issue asks for. Nothing scattered calls Slack after a write. The store records that a card is stale, and one loop catches up. That holds across a restart too.
+- **`orchestrator/card_sync.py`**, which is mine. Security owns `cards.py`'s rendering for #27.
+  - `card_context(policy, store, people, record)` builds the full `CardContext`: the channel's policy, display names for the participants and the approver, and their identity links from the store.
+  - `CardSync(store, policy, publisher, people)` has two methods:
+    - `sync()` takes each due proposal and decides:
+      - a proposal with no card yet, that is pending or later (approved, executing, reconciling, applied, failed), gets posted
+      - one that was superseded or rejected before any card went up gets none, and is marked shown so it stops coming back
+      - anything else gets its card edited in place
+    - `refresh(proposal_id)` does the same for one proposal right away. #27's handlers can call it after a transition, though the loop would catch up within a second anyway.
+  - One draw runs at a time, under a lock, and re-reads the proposal first, so `sync` and `refresh` never both post the same new card. A Slack error retrying cannot fix, such as `message_not_found` after someone deleted the card, or `is_archived`, marks the card as shown and leaves it alone (CodeRabbit).
+  - The orchestrator runs `sync()` in its own loop, about once a second, next to the debouncer's flush loop, and never in the MCP write path. A Slack error is logged, and the proposal stays due, so the next pass retries. There is no limit on retries, but the loop paces itself: a failed proposal waits 2 seconds, then twice as long each time, up to a minute, so a Slack outage does not flood the log. The log names the error's type only, never its text, which could quote the card.
+- **`GiveUpNotice`** (#30) keeps its thread reply for a proposal with no card. For one with a card, it only needs the transition, and `CardSync` re-renders it. That removes the second place that re-renders a card.
+- **Auto mode.** The proposal is approved at once, and the card is posted already approved, with the auto-approval state line that `cards.py` renders today.
+
+## Risks and open questions
+
+- **Migration numbers.** #150 adds migration 7, so this is 8. Whichever lands later renumbers.
+- **#27 overlap.** Agreed with security: they own `cards.py` rendering, `Debouncer.arm`, and the shared guest and external check. I own `card_sync.py`, the store's card revision, and the orchestrator wiring for cards. Their handlers transition proposals and let `CardSync` edit the card, or call `refresh`.
+- **Existing databases** get `revision = 1`, and `card_revision = 1` for every proposal that already has a card or is no longer pending. Only proposals still waiting for a person get a card after the upgrade. Nothing posted cards before #152, so without that rule every old proposal, applied ones included, would get a card (CodeRabbit).
+
+## Progress checklist
+
+- [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
+- [x] Commit this plan and open the draft PR
+- [x] Store: migration 8, `revision`, `card_revision`, `cards_due`, `mark_card_shown`, both stores, contract and schema tests
+- [x] `card_sync.py`: `card_context`, `CardSync.sync` and `refresh`, with backoff
+- [x] Orchestrator: the sync loop; `GiveUpNotice` relies on it
+- [x] Tests: through the real orchestrator, a proposal posts one card, transitions edit it, supersede, auto mode, Slack failure and retry, plain text only
+- [x] Docs: architecture's card section, and the plan's handoff for #27
+- [x] CodeRabbit once: four findings, all fixed (upgrade backfill, a lock between draws, retries crowding the batch and final Slack errors, plan status)
+- [x] `make check` passes
+- [x] Mark the PR ready for review
+
+## Validation
+
+- `make check` passes.
+- `tests/test_card_sync.py` runs on both stores:
+  - one card per proposal, with `card_ts` stored, and nothing more on the next pass
+  - approval and execution edit the same message, and a superseded card says so
+  - a proposal superseded before its card gets none
+  - auto mode posts the card approved and with no Approve button
+  - a change that lands while a card is drawn is drawn again
+  - a Slack failure leaves the proposal pending and is retried after a doubling wait, and the log never holds the error's text
+  - `refresh`, an unconfigured channel, and agent text staying out of mrkdwn
+  - the card's context of names and identities, and `BoltPeople`'s lookups and failures
+- `tests/test_store_contract.py` covers the outbox on both stores. `tests/test_store_schema.py` shows that cards posted before the upgrade are not posted again.
+- `tests/test_service.py` runs the real orchestrator. A drafting run's real `link_message` and `propose_issue` calls yield one card, posted by the loop and never by the tool write itself. A stored proposal gets its card from the running loop and is edited after approval. Cards are drawn with runs off, and a failing pass is logged while the loop goes on.
+
+## Handoff notes
+
+- For #27: `Orchestrator.cards` is the `CardSync`. Handlers transition the proposal and the loop edits the card within about a second, or they call `cards.refresh(proposal_id)` for an immediate edit. Don't call `CardPublisher.show` directly, or the card's revision won't be recorded and it is drawn again.
+- `GiveUpNotice` no longer redraws a card itself. The failure raises the revision, and the loop does it.
+- Repo visibility is not looked up, so the card keeps saying it was not checked.

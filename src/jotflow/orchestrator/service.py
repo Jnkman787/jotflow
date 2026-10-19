@@ -45,7 +45,8 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
 from jotflow.models import ChannelMode, RunKind
-from jotflow.orchestrator.cards import CardPublisher, SlackCardPoster
+from jotflow.orchestrator.card_sync import SYNC_SECONDS, BoltPeople, CardSync, People
+from jotflow.orchestrator.cards import CardPoster, CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
 from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
@@ -200,6 +201,9 @@ class Orchestrator:
         runner: RunnerClient | None = None,
         keyword_slack: KeywordSlack | None = None,
         help_slack: HelpSlack | None = None,
+        card_poster: CardPoster | None = None,
+        people: People | None = None,
+        card_seconds: float = SYNC_SECONDS,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -217,6 +221,10 @@ class Orchestrator:
         self._keyword_slack = keyword_slack
         self._help_slack = help_slack
         self._help: HelpHandler | None = None
+        self._card_poster = card_poster
+        self._people = people
+        self._card_seconds = card_seconds
+        self.cards: CardSync | None = None
         self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
         self._tick_seconds = tick_seconds
@@ -250,13 +258,18 @@ class Orchestrator:
     async def _start(self) -> None:
         self._store = await self._open_store(self._settings.database_path)
         poster = SlackThreadPoster(self._client)
-        cards = CardPublisher(self._store, SlackCardPoster(self._client))
         lifecycle = RunLifecycle(
-            self._store,
-            self.registry,
-            on_gave_up=GiveUpNotice(poster, self._policy, cards=cards),
+            self._store, self.registry, on_gave_up=GiveUpNotice(poster, self._policy)
         )
         await lifecycle.recover()
+        # One subscriber draws every card, outside any MCP write path (#152).
+        self.cards = CardSync(
+            self._store,
+            self._policy,
+            CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
+            self._people or BoltPeople(self._client),
+        )
+        self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
             self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
@@ -307,7 +320,7 @@ class Orchestrator:
             if self._tick_seconds is None
             else self._supervisor.run(self._stop, interval=self._tick_seconds)
         )
-        self._tasks = [asyncio.create_task(supervise, name="jotflow-supervisor")]
+        self._tasks.append(asyncio.create_task(supervise, name="jotflow-supervisor"))
         if self._debouncer is not None:
             self._tasks.append(
                 asyncio.create_task(self._flush_loop(self._debouncer), name="jotflow-debouncer")
@@ -370,6 +383,15 @@ class Orchestrator:
                     await self._help.ensure_guide(channel_id)
             except Exception:
                 log.exception("could not pin the help guide in %s", channel_id)
+
+    async def _card_loop(self, cards: CardSync) -> None:
+        while not self._stop.is_set():
+            try:
+                await cards.sync()
+            except Exception:
+                log.exception("card sync failed")
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=self._card_seconds)
 
     async def _flush_loop(self, debouncer: Debouncer) -> None:
         while not self._stop.is_set():

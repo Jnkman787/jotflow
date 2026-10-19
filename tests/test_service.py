@@ -25,6 +25,7 @@ from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
+from tests.test_card_sync import FakeCardPoster, FakePeople
 from tests.test_help import FakeHelpSlack
 from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
@@ -93,6 +94,7 @@ class Rig:
         self.info_status = 200
         self.slack = FakeSlack()
         self.help = FakeHelpSlack()
+        self.cards = FakeCardPoster()
         self.runner = RunnerClient(
             conversation=RunnerEndpoint("http://agent:8766", SECRET),
             execution=RunnerEndpoint("http://agent-exec:8766", EXEC_SECRET),
@@ -108,6 +110,9 @@ class Rig:
             runner=self.runner,
             keyword_slack=self.slack,
             help_slack=self.help,
+            card_poster=self.cards,
+            people=FakePeople(),
+            card_seconds=0.01,
             flush_seconds=0.01,
             tick_seconds=0.01,
             info_attempts=2,
@@ -827,3 +832,121 @@ async def test_a_help_failure_is_logged_and_the_debouncer_still_runs(
     finally:
         await rig.orchestrator.stop()
     assert "could not offer help" in caplog.text
+
+
+# The live card (#152)
+
+
+async def test_a_proposal_gets_its_card_from_the_running_service() -> None:
+    from tests.test_card_sync import approve, proposal
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.store.add_proposal(proposal())
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+        await approve(rig.store)
+
+        async def edited() -> bool:
+            return len(rig.cards.updates) == 1
+
+        await until(edited)
+    finally:
+        await rig.orchestrator.stop()
+    record = await rig.store.get_proposal("p1")
+    assert record is not None and record.card_ts == "1760782000.000001"
+    assert rig.cards.updates[0][1] == record.card_ts
+    assert len(rig.cards.posts) == 1
+
+
+async def test_cards_are_drawn_even_while_agent_runs_are_off() -> None:
+    from tests.test_card_sync import proposal
+
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        await rig.store.add_proposal(proposal())
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+        assert rig.orchestrator.cards is not None
+        assert not await rig.orchestrator.cards.refresh("p1")
+    finally:
+        await rig.orchestrator.stop()
+
+
+async def test_a_card_sync_error_is_logged_and_the_loop_goes_on(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = Rig()
+    calls = 0
+
+    async def broken(*_: Any, **__: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("store is down")
+
+    monkeypatch.setattr(rig.store, "cards_due", broken)
+    with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+
+        async def twice() -> bool:
+            return calls >= 2
+
+        await until(twice)
+        await rig.orchestrator.stop()
+    assert "card sync failed" in caplog.text
+
+
+async def test_a_drafting_runs_propose_issue_yields_one_card() -> None:
+    # Runs off, so no supervisor takes the run: this test plays the drafting agent.
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        assert rig.server is not None
+        specs = {spec.name: spec for spec in rig.server.tools}
+        await rig.store.enqueue_run(RunKind.DRAFTING, CH, THREAD)
+        run = await rig.store.claim_next_run(max_running=1)
+        assert run is not None
+        grant = Grant(run_id=run.id, kind=RunKind.DRAFTING, channel_id=CH, thread_ts=THREAD)
+        packet = [MessageRef(channel_id=CH, ts=THREAD, thread_ts=THREAD)]
+        await rig.store.record_packet(run.id, packet)
+
+        async def call(tool: str, arguments: dict[str, Any]) -> Any:
+            spec = specs[tool]
+            return await spec.handler(grant, spec.input_model.model_validate(arguments))
+
+        linked = await call(
+            "link_message",
+            {"ts": THREAD, "decision": "new_topic", "title": "Dark mode", "confidence": 0.9},
+        )
+        await call(
+            "propose_issue",
+            {
+                "topic_id": linked.topic_id,
+                "repo": "acme-co/web",
+                "title": "Add a dark mode",
+                "body": "People asked for a dark theme.",
+                "sources": [{"channel_id": CH, "ts": THREAD}],
+                "confidence": 0.8,
+            },
+        )
+        assert rig.cards.posts == []  # the tool write itself never calls Slack
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+    finally:
+        await rig.orchestrator.stop()
+    ((channel, thread, card),) = rig.cards.posts
+    assert (channel, thread) == (CH, THREAD)
+    assert "Add a dark mode" in json.dumps(card.blocks)
+    (stored,) = await rig.store.thread_proposals(CH, THREAD)
+    assert stored.card_ts is not None and not stored.card_due

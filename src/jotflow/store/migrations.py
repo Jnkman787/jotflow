@@ -239,6 +239,22 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),
     # Help notices are sent once per person or channel, across restarts (#80).
     Migration(7, (_HELP_NOTICES,)),
+    # The store is the card's outbox: a card is due while it shows an older revision (#152).
+    Migration(
+        8,
+        (
+            "ALTER TABLE proposals ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+            " /* rises with every change a proposal's card shows (#152) */",
+            "ALTER TABLE proposals ADD COLUMN card_revision INTEGER"
+            " /* the revision the posted card shows; null before it is posted */",
+            # A card already posted shows what is stored now. Before #152 nothing posted
+            # cards, so only a proposal still waiting for a person gets one after the upgrade.
+            "UPDATE proposals SET card_revision = revision"
+            " WHERE card_ts IS NOT NULL OR state != 'pending'",
+            "CREATE INDEX proposals_card_due ON proposals (created_at)"
+            " WHERE card_revision IS NULL OR card_revision < revision",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version
