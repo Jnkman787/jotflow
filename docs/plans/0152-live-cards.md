@@ -81,7 +81,7 @@ Done when:
   - `refresh`, an unconfigured channel, and agent text staying out of mrkdwn
   - the card's context of names and identities, and `BoltPeople`'s lookups and failures
 - `tests/test_store_contract.py` covers the outbox on both stores. `tests/test_store_schema.py` shows that cards posted before the upgrade are not posted again.
-- `tests/test_service.py` runs the real orchestrator: a stored proposal gets its card from the running loop and is edited after approval. Cards are drawn with runs off, and a failing pass is logged while the loop goes on.
+- `tests/test_service.py` runs the real orchestrator. A drafting run's real `link_message` and `propose_issue` calls yield one card, posted by the loop and never by the tool write itself. A stored proposal gets its card from the running loop and is edited after approval. Cards are drawn with runs off, and a failing pass is logged while the loop goes on.
 
 ## Handoff notes
 

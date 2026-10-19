@@ -902,3 +902,51 @@ async def test_a_card_sync_error_is_logged_and_the_loop_goes_on(
         await until(twice)
         await rig.orchestrator.stop()
     assert "card sync failed" in caplog.text
+
+
+async def test_a_drafting_runs_propose_issue_yields_one_card() -> None:
+    # Runs off, so no supervisor takes the run: this test plays the drafting agent.
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        assert rig.server is not None
+        specs = {spec.name: spec for spec in rig.server.tools}
+        await rig.store.enqueue_run(RunKind.DRAFTING, CH, THREAD)
+        run = await rig.store.claim_next_run(max_running=1)
+        assert run is not None
+        grant = Grant(run_id=run.id, kind=RunKind.DRAFTING, channel_id=CH, thread_ts=THREAD)
+        packet = [MessageRef(channel_id=CH, ts=THREAD, thread_ts=THREAD)]
+        await rig.store.record_packet(run.id, packet)
+
+        async def call(tool: str, arguments: dict[str, Any]) -> Any:
+            spec = specs[tool]
+            return await spec.handler(grant, spec.input_model.model_validate(arguments))
+
+        linked = await call(
+            "link_message",
+            {"ts": THREAD, "decision": "new_topic", "title": "Dark mode", "confidence": 0.9},
+        )
+        await call(
+            "propose_issue",
+            {
+                "topic_id": linked.topic_id,
+                "repo": "acme-co/web",
+                "title": "Add a dark mode",
+                "body": "People asked for a dark theme.",
+                "sources": [{"channel_id": CH, "ts": THREAD}],
+                "confidence": 0.8,
+            },
+        )
+        assert rig.cards.posts == []  # the tool write itself never calls Slack
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+    finally:
+        await rig.orchestrator.stop()
+    ((channel, thread, card),) = rig.cards.posts
+    assert (channel, thread) == (CH, THREAD)
+    assert "Add a dark mode" in json.dumps(card.blocks)
+    (stored,) = await rig.store.thread_proposals(CH, THREAD)
+    assert stored.card_ts is not None and not stored.card_due
