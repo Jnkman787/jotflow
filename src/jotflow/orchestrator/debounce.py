@@ -76,9 +76,10 @@ class Debouncer:
         thread = thread_of(ref)
         window = timedelta(seconds=self._policy.debounce_for(ref.channel_id))
         due = self._clock() + window
-        self._due[thread] = due
-        # The durable copy, so a restart forgets no waiting thread (#130).
+        # The durable copy first, so a failed save is never a thread that
+        # waits in memory and then silently queues nothing (#130).
         await self._store.arm_thread(thread.channel_id, thread.thread_ts, due)
+        self._due[thread] = due
         if ref.thread_ts and ref.thread_ts != ref.ts:
             await self._join_parents_topic(ref)
         return thread
@@ -127,18 +128,32 @@ class Debouncer:
         return min(self._due.values(), default=None)
 
     async def flush(self, now: datetime | None = None) -> list[Thread]:
-        """Queue a drafting run for every thread whose window has passed."""
+        """Queue a drafting run for every thread whose window has passed.
+
+        Returns the threads queued, leaving out any a person skipped meanwhile.
+        """
         moment = now or self._clock()
         ready = sorted(
             (t for t, due in self._due.items() if due <= moment),
             key=lambda t: (self._due[t], t.channel_id, t.thread_ts),
         )
+        queued: list[Thread] = []
         for thread in ready:
             # Queues the run and forgets the thread in one step, so a crash
-            # between the two cannot queue it twice after a restart.
-            await self._store.queue_pending(thread.channel_id, thread.thread_ts)
+            # between the two cannot queue it twice after a restart. The store
+            # queues nothing if a person skipped the thread's first message
+            # after it was armed, such as by a skip reaction in the window.
+            run = await self._store.queue_pending(thread.channel_id, thread.thread_ts)
             del self._due[thread]
+            if run is None:
+                log.info(
+                    "thread %s in %s was skipped while it waited; no run",
+                    thread.thread_ts,
+                    thread.channel_id,
+                )
+                continue
+            queued.append(thread)
             log.info(
                 "thread %s in %s is quiet; drafting run queued", thread.thread_ts, thread.channel_id
             )
-        return ready
+        return queued

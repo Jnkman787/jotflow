@@ -816,6 +816,13 @@ class SqliteStore:
             )
             if cursor.rowcount == 0:
                 return None
+            skipped = await self._one(
+                "SELECT 1 FROM message_refs WHERE channel_id = ? AND ts = ?"
+                " AND chatter = 1 AND linked_by = 'person'",
+                (channel_id, thread_ts),
+            )
+            if skipped is not None:
+                return None
             existing = await self._active_run_for(RunKind.DRAFTING, channel_id, thread_ts, None)
             if existing is not None:
                 return existing

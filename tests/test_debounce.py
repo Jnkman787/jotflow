@@ -307,3 +307,38 @@ async def test_a_root_only_the_agent_called_chatter_is_re_armed(store: Store, cl
     await Debouncer(store, POLICY, clock=clock).note(message(ROOT))
     await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT), by="agent")
     assert await Debouncer(store, POLICY, clock=clock).restore() == 1
+
+
+async def test_a_skip_reaction_on_the_root_inside_the_window_cancels_the_run(
+    store: Store, debouncer: Debouncer, clock: Clock
+) -> None:
+    await debouncer.note(message(ROOT))
+    # What the keyword handler stores for a :no_entry_sign: on the first message.
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT), by="person")
+    clock.advance(121)
+    assert await debouncer.flush() == []
+    assert await store.thread_runs(CH, ROOT) == []
+    assert await store.pending_threads() == [] and debouncer.pending() == {}
+
+
+async def test_a_skip_on_a_reply_does_not_cancel_its_thread(
+    store: Store, debouncer: Debouncer, clock: Clock
+) -> None:
+    reply = "1760781630.000200"
+    await debouncer.note(message(ROOT))
+    await debouncer.note(message(reply, ROOT))
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=reply, thread_ts=ROOT), by="person")
+    clock.advance(121)
+    assert await debouncer.flush() == [Thread(CH, ROOT)]
+
+
+async def test_a_failed_save_leaves_nothing_waiting_in_memory(
+    store: Store, debouncer: Debouncer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def broken(*_: object) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(store, "arm_thread", broken)
+    with pytest.raises(RuntimeError, match="disk full"):
+        await debouncer.note(message(ROOT))
+    assert debouncer.pending() == {}

@@ -584,7 +584,9 @@ class Store(Protocol):
         """Queue the waiting thread's drafting run and forget the thread, atomically.
 
         The run coalesces with a queued one, as :meth:`enqueue_run` does.
-        Returns None, queuing nothing, if the thread was not waiting.
+        Returns None, queuing nothing, if the thread was not waiting, or if a
+        person has since marked its first message as chatter: a later skip
+        cancels the wait, and the thread is forgotten (#56).
         """
         ...
 

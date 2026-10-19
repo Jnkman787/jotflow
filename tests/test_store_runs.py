@@ -538,3 +538,18 @@ async def test_pending_threads_survive_reopening(tmp_path: Path, clock: Clock) -
         ]
     finally:
         await second.close()
+
+
+async def test_queue_pending_skips_a_thread_a_person_skipped_while_it_waited(
+    store: Store, clock: Clock
+) -> None:
+    from jotflow.models import MessageRef
+
+    await store.arm_thread(CH, T1, clock.now)
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=T1), by="person")
+    assert await store.queue_pending(CH, T1) is None
+    assert await store.pending_threads() == [] and await store.thread_runs(CH, T1) == []
+    # The agent's chatter call is not a person's skip.
+    await store.arm_thread(CH, T2, clock.now)
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=T2), by="agent")
+    assert await store.queue_pending(CH, T2) is not None

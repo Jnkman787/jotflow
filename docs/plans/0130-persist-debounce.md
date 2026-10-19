@@ -26,7 +26,6 @@ From the lead:
 
 **Out of scope:**
 
-- Re-checking chatter at flush time for a thread armed in this process. That changes today's debouncer behaviour, which is #56's call, so I'll raise it with product.
 - Retries of reconciling proposals (#30), which come next.
 
 ## Design
@@ -51,6 +50,8 @@ From the lead:
 
 **Why a recovered run doesn't double up.** `recover()` interrupts queued drafting runs and queues one fresh one per thread. A restored thread for the same thread then coalesces into it through the queued-drafting unique index. If that fresh run has already started, the store queues one follow-up. That is today's rule for a message arriving during a run, so a thread gets at most one extra run, never a burst.
 
+**Review change: a skip after arming, and saving first.** Product, the lead and the reviewer agreed that a person's skip of a thread's first message cancels a thread already waiting, for example a skip reaction inside the window. `queue_pending` therefore checks the root inside its transaction. If a person has marked it chatter, it deletes the row, queues nothing, and returns None. `flush()` returns only the threads it actually queued. A skip on a reply doesn't cancel the thread. `note()` saves the due time before arming in memory, so a failed save never leaves a thread waiting in memory that then queues nothing.
+
 ## Risks and open questions
 
 - **Clock changes:** due times are UTC. A time far in the past just flushes at once.
@@ -70,12 +71,17 @@ From the lead:
 
 ## Validation
 
-`make check` is green, with 1598 tests. `debounce.py` and `service.py` are at 100% coverage.
+`make check` is green, with 1765 tests. `debounce.py` and `service.py` are at 100% coverage.
 
 - The store contract tests run against both stores. They cover arm, push back, ordering, `queue_pending` queuing once and coalescing with a queued run, drop, input checks, and rows surviving a reopen.
 - The debouncer tests cover a waiting thread kept in the store, a restart re-arming it, a window that ended while down, a thread flushed before the restart not queued again, a person's skip dropped, and the agent's chatter still re-armed.
 - The orchestrator test checks that a thread waiting at shutdown is drafted after start, and that a person-skipped one is not.
 - The schema test covers `pending_threads`.
+- Review change tests:
+  - A skip reaction on the root inside the window gives no run and no row, through the real Bolt app and keyword handler. It fails without the store guard.
+  - A skip on a reply still lets the thread run.
+  - A failed save leaves nothing waiting in memory.
+  - `queue_pending` skips a thread a person skipped, but not one the agent called chatter.
 
 ## Handoff notes
 

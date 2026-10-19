@@ -725,3 +725,28 @@ async def test_a_thread_waiting_at_shutdown_is_drafted_after_a_restart() -> None
     assert await rig.store.thread_runs(CH, "1760781700.000100") == []
     assert await rig.store.pending_threads() == []
     await rig.orchestrator.stop()
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skip_reaction_inside_the_window_means_no_drafting_run() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        post = {"type": "message", "channel": CH, "ts": THREAD, "text": "maybe a dark mode?"}
+        await rig.orchestrator.note(accepted(), post)
+        assert await rig.store.pending_threads()
+        reaction = {
+            "type": "reaction_added",
+            "user": "U0ALEX",
+            "item_user": "U0ALEX",
+            "reaction": "no_entry_sign",
+            "item": {"type": "message", "channel": CH, "ts": THREAD},
+        }
+        await _deliver(app, reaction, "Ev9")
+        await asyncio.sleep(1.3)  # past the 1 s window, with the flush loop running
+    finally:
+        await rig.orchestrator.stop()
+    assert await rig.store.thread_runs(CH, THREAD) == []
+    assert await rig.store.pending_threads() == []
+    assert not [c for c in rig.calls if c[0] == "POST"]

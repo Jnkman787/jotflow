@@ -449,6 +449,9 @@ class MemoryStore:
         async with self._lock:
             if self._pending.pop((channel_id, thread_ts), None) is None:
                 return None
+            root = self._messages.get((channel_id, thread_ts))
+            if root is not None and root.chatter and root.linked_by == "person":
+                return None
             existing = self._active_run_for(RunKind.DRAFTING, channel_id, thread_ts, None)
             if existing is not None:
                 return existing.model_copy()
