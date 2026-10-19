@@ -178,6 +178,7 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
    - **the repos, from a list, if you have the [GitHub CLI](https://cli.github.com/) signed in.** Setup asks whose repos to list, shows them numbered, and you type the ones to add, such as `1,3` or `2-4`. Each one's nickname, "what it covers", and public or private come from GitHub, and you can change any of them. It uses your own `gh` login to read the list, and keeps nothing but the repos you pick. Press Enter at the list to type repos instead, as below.
    - **the channel id.** Open the channel, click its name at the top, and find the **Channel ID** at the bottom of the **About** tab. It starts with `C`, or `G` for some private channels, for example `C0IDEAS01`. The channel must already exist in Slack. Pasting the channel's link works too, from **Copy link** or from your browser's address bar. The name, such as `#ideas`, does not: setup says `That is the channel's name. Setup needs its id` and asks again. Anything else that isn't an id gets `not a Slack channel id`.
    - **each GitHub repo** that channel feeds, as `owner/name`: the part after `github.com/` in its URL. For example `https://github.com/acme-co/web` is `acme-co/web`. Pasting the link works too.
+   - **public or private**, unless setup could ask GitHub. With the GitHub CLI signed in, setup looks it up and says what it found. Otherwise it asks `Public or private on GitHub [skip]` straight after the repo, before the nickname. Type `public`, `private`, or press Enter to skip; cards for a public repo carry a warning, and cards for a skipped one say visibility wasn't checked.
    - **a nickname**, a short word people type to point at the repo. Later, starting a Slack message with `re: web#42` points it at issue 42 in that repo.
    - **what it covers**, in one sentence, for example `The customer-facing website`. When a channel feeds several repos, the agent uses these sentences to choose one.
    - **labels** a proposal may put on an issue. The default, `any`, allows any label that already exists on the repo. A comma-separated list, for example `bug, enhancement`, narrows it to just those; list only labels that already exist on the repo.
@@ -215,6 +216,9 @@ Setup step 5 of 6: Channels and repos
   ...
 Channel id: C0IDEAS01
   GitHub repo (owner/name or link): https://github.com/acme-co/web
+  ...
+  Public or private on GitHub [skip]: private
+  ...
   Nickname [web]:
   What it covers: The customer-facing website
   Labels [any]:
@@ -223,13 +227,28 @@ Add another channel? [y/N]:
 
 Setup step 6 of 6: The agent preset
   ...
-Agent preset [none]:
+Agent preset [none]: claude-code
 
+Which model should the agent use? Press Enter for the preset's defaults: a stronger
+model for drafting and questions, a faster one for writing approved issues.
+  ...
+Agent model:
+
+  agent.env got a new runner secret.
+  agent-exec.env got a new runner secret.
+Saved agent.env and agent-exec.env. Only your user can read them.
+  Before the agent containers can start, fill in JOTFLOW_GITHUB_READ_TOKEN in agent.env and JOTFLOW_GITHUB_WRITE_TOKEN in agent-exec.env, and the model login, as their comments describe. Then run jotflow init again, or add COMPOSE_PROFILES=agent to .env.
 Saved both tokens to .env. Only your user can read that file.
   Also set COMPOSE_FILE there, so `docker compose up -d` hands jotflow.toml to JotFlow.
-Wrote jotflow.toml: 1 channel, 1 repo, no agent preset.
+Wrote jotflow.toml: 1 channel, 1 repo, claude-code.
+Wrote docker-compose.yml.
+Wrote docker-compose.policy.yml.
 Connected to Slack as @idea_bot in Acme Co.
+
+Next: invite @idea_bot to each channel JotFlow should watch with /invite @idea_bot. It never joins channels by itself.
 ```
+
+With `none` as the preset, setup skips the model question and the agent files, and JotFlow connects to Slack but drafts nothing.
 
 Setup writes two files next to `docker-compose.yml`. Neither is committed to git.
 
@@ -246,7 +265,17 @@ If Slack shows **Request to Install** instead of **Install to Workspace**, an ad
 2. Wait for the admin to approve the app. Slack usually notifies you when they do.
 3. Run `uvx jotflow init` again. When it asks `Have you already created a Slack app for JotFlow?`, answer `y`. It then skips the create link, so you don't make a second app. Open your existing app at <https://api.slack.com/apps>, under **Your Apps**, and continue from setup step 3. You can copy the app-level token again from **Basic Information**.
 
-### 4. Invite the bot
+### 4. Check the setup
+
+```
+uvx jotflow check
+```
+
+This reads `.env` and `jotflow.toml` exactly as JotFlow will, and prints one `ok` or `FAIL` line for each thing it checks, such as `ok    configuration: 1 channel(s) in jotflow.toml`. It posts nothing and needs no Docker. Fix any `FAIL` line, or run `uvx jotflow init` again, before starting JotFlow. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
+
+Optionally, after inviting the bot, the [live check](#troubleshooting) confirms that a real Slack channel reaches JotFlow. It posts one test message and deletes it, and runs while JotFlow is stopped.
+
+### 5. Invite the bot
 
 In Slack, in each channel you listed, type:
 
@@ -256,7 +285,7 @@ In Slack, in each channel you listed, type:
 
 Use the bot's handle, which setup printed after `Connected to Slack as`; Slack also suggests it as you type. If Slack asks whether to add the app to the channel, click **Add**. JotFlow never joins channels by itself. Joining a channel is always a person's choice.
 
-### 5. Start JotFlow
+### 6. Start JotFlow
 
 Make sure Docker is running first: Docker Desktop, or on Linux the Docker service. Otherwise Docker says `Cannot connect to the Docker daemon`, its name for the background service; start Docker, wait until it says it is running, and try again.
 
@@ -296,13 +325,13 @@ Pin the exact version rather than `latest`, so an upgrade happens only when you 
 gh attestation verify oci://ghcr.io/jnkman787/jotflow:X.Y.Z --owner Jnkman787
 ```
 
-### 6. See it working
+### 7. See it working
 
 ```
 docker compose logs -f jotflow
 ```
 
-Post a message in one of your channels. In this release the bot posts nothing back in Slack, so the log is where you see it working. A line like the last one below appears:
+When JotFlow starts, it pins a short guide in each channel it watches. Post a message in one of them: your first message gets a one-time tip that only you can see. With an agent preset, a card with the proposed issue appears in the thread once the conversation goes quiet. The log shows each step either way. A line like the last one below appears:
 
 ```
 2026-10-18 09:41:02,118 INFO jotflow.run: watching 1 configured channel(s) as @idea_bot
@@ -312,7 +341,7 @@ Post a message in one of your channels. In this release the bot posts nothing ba
 
 In each `message` line, `ts` is the message's id in Slack, which is also the time it was posted, and `thread_ts` is the thread it is a reply in, or `None` for a new message. The log shows where a message was posted and when, never what it says, and never a token. It does show channel ids and your bot and workspace names, so remove those before pasting logs into a public issue. Adding a reaction logs a `reaction` line in the same way. Press Ctrl-C to stop following the log; JotFlow keeps running. Stop it with `docker compose down`.
 
-To run JotFlow without Docker, use `uvx jotflow run` from the same folder instead of steps 5 and 6. It prints the same lines in that terminal, rather than to `docker compose logs`; press Ctrl-C to stop it.
+To run JotFlow without Docker, use `uvx jotflow run` from the same folder instead of steps 6 and 7. It prints the same lines in that terminal, rather than to `docker compose logs`; press Ctrl-C to stop it.
 
 ### See it work without Slack
 
@@ -327,11 +356,11 @@ It prints what happened at each step, `ok` or `FAIL`, and whether the result mat
 
 ### Check that the agent can write an issue
 
-Before approval in Slack exists, you can hand JotFlow one approved issue and watch the agent write it. Use a test repo, because this creates a real issue there.
+To test the write side on its own, without drafting or approving in Slack, you can hand JotFlow one approved issue and watch the agent write it. Use a test repo, because this creates a real issue there.
 
 You need:
 
-- the agent containers set up, as in step 5
+- the agent containers set up, as in step 6
 - `[agent] preset` set in `jotflow.toml`
 - a test channel whose repo list names the test repo
 - the `ts` of one message in that channel, from the log, which is where a failure notice would go

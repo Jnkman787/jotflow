@@ -64,4 +64,9 @@ Stays open on #10, because it needs the live sandbox workspace:
 
 ## Handoff notes
 
-None yet.
+2026-10-19, after the architect's fresh-user pass on main at be3af34 (Refs #41):
+
+- Step 3's list and its sample session now show the visibility question setup asks when `gh` can't look. It comes straight after the repo, so README-order answers had landed in the wrong fields.
+- The sample session was re-captured by running init against the fake Slack client, with `claude-code`. It now has the model question, the agent-file lines, the Compose files, and the closing "Next:" line.
+- A new step 4 runs `jotflow check`, and points to the optional live check. The old steps 4 to 6 are now 5 to 7. The check's wording is to be confirmed against the architect's parallel PR, which adds agent readiness and changes setup's closing line.
+- Leftovers: step 7 no longer says the bot posts nothing, and the write-side check no longer says approval in Slack doesn't exist.
