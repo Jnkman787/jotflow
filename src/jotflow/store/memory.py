@@ -203,6 +203,10 @@ class MemoryStore:
                 return record.model_copy(deep=True)
         return None
 
+    async def run_proposals(self, run_id: str) -> list[ProposalRecord]:
+        found = [r.model_copy(deep=True) for r in self._proposals.values() if r.run_id == run_id]
+        return sorted(found, key=lambda r: (r.created_at, r.id))
+
     async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         found = [
             r.model_copy(deep=True)
