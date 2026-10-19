@@ -50,7 +50,7 @@ Each permission below is used in this release. JotFlow asks for nothing it doesn
 | App Home tabs | off | The app has no DM scopes, so messages sent to it would never be read |
 | Org-wide deploy | off | The app is internal to one workspace |
 
-There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Questions to the bot by @-mention arrive in M5 and will add `app_mentions:read`.
+There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Answering questions by @-mention isn't built yet (#57). When it is, the manifest will add `app_mentions:read`, and the release notes will say to update the app.
 
 ## Changing the manifest
 

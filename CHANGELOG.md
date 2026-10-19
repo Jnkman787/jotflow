@@ -34,7 +34,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 ### The agent
 
 - **Your agent, in its own containers.** Drafting and questions run in one container with a read-only GitHub token. Approved writes run in another, with the token that can write. The write token never sits where untrusted Slack text is read.
-- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `command` runs your own agent instead.
+- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `codex` is experimental and serves drafting and question runs only. `command` runs your own agent instead.
 - **Exact writes.** An execution run gets only the approved fields. It finds an issue it already wrote by a hidden marker before writing again, and JotFlow checks the reported issue URL against the approved repo. A failed write is retried a few times, then reported on the card.
 - **Issue bodies** carry permalinks to the Slack messages they came from, or no Slack details at all with `issue_links = "none"`.
 
@@ -50,7 +50,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 - **No GitHub credentials in JotFlow.** The team's own tokens live only in the agent containers.
 - **Thread text** is never stored. Drafts are removed once a proposal is final, and the database overwrites what it deletes.
 - **Logs** never hold message text, and every token shape JotFlow knows is redacted.
-- **Agent runs** get a short-lived token scoped to one run, one channel, and one thread. The containers drop all capabilities, run read-only as their own user, and publish no port.
+- **Agent runs** get a short-lived token scoped to one run, one channel, and one thread, and, for writes, one approved proposal. The containers drop all capabilities, run read-only as their own user, and publish no port.
 
 ### Known limitations
 
