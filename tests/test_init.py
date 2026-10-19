@@ -185,10 +185,13 @@ def test_rerun_keeps_working_tokens_without_asking_again(options: InitOptions) -
     options.config_file.write_text(EXAMPLE.read_text())
     before = options.env_file.read_text()
     policy_before = options.config_file.read_text()
-    script = Script(answers=["", "", ""])
+    script = Script(answers=["", "", "", ""])  # tokens, policy, preset
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert script.text.count("Keep it?") == 0  # prompts go to the reader, not the output
-    assert sum("Keep it?" in p for p in script.prompts) == 3
+    assert sum("Keep it?" in p for p in script.prompts) == 2
+    assert sum("Keep its channels and repos?" in p for p in script.prompts) == 1
+    # A kept jotflow.toml still offers the preset, so the agent can be turned on later.
+    assert any(p.startswith("Agent preset") for p in script.prompts)
     assert not any("Paste" in p for p in script.prompts)
     assert not options.manifest_out.exists()
     assert options.env_file.read_text() == before + f"\n{COMPOSE_FILE_KEY}={COMPOSE_FILE_VALUE}\n"
@@ -400,7 +403,7 @@ def test_compose_file_is_written_once(options: InitOptions) -> None:
     assert first.count(f"{COMPOSE_FILE_KEY}=") == 1
     assert "docker compose up -d" in script.text
     # a re-run keeping everything leaves .env byte for byte the same
-    script = Script(answers=["", "", ""])
+    script = Script(answers=["", "", "", ""])  # tokens, policy, preset
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert options.env_file.read_text() == first
 
@@ -428,7 +431,7 @@ def test_keeping_an_unreadable_policy_warns(options: InitOptions) -> None:
     options.env_file.write_text(f"{BOT_TOKEN_KEY}={GOOD_BOT}\n{APP_TOKEN_KEY}={GOOD_APP}\n")
     options.config_file.write_text(EXAMPLE.read_text())
     options.config_file.chmod(0o600)
-    script = Script(answers=["", "", ""])
+    script = Script(answers=["", "", "", ""])  # tokens, policy, preset
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "chmod 644" in script.text
     assert stat.S_IMODE(options.config_file.stat().st_mode) == 0o600
@@ -830,7 +833,7 @@ def _with_agent(options: InitOptions, model: str = "", **rotate: bool) -> Script
 def _kept_session(options: InitOptions, model: str = "", **rotate: bool) -> Script:
     """A re-run that keeps the tokens and jotflow.toml, whose preset is claude-code."""
     opts = replace(options, **rotate)
-    script = Script(answers=["", "", "", model])
+    script = Script(answers=["", "", "", "", model])  # tokens, policy, preset, model
     assert run_init(script.console(), FakeSlackApi.working(), opts) == 0
     return script
 
@@ -952,7 +955,7 @@ def test_a_failed_write_changes_no_file(
         real_replace(src, dst)  # type: ignore[arg-type]
 
     monkeypatch.setattr(init_envfile.os, "replace", failing)
-    script = Script(answers=["", "", "", ""])
+    script = Script(answers=["", "", "", "", ""])  # tokens, policy, preset, model
     with pytest.raises(OSError, match="disk full"):
         run_init(
             script.console(), FakeSlackApi.working(), replace(options, rotate_runner_secret=True)
@@ -982,7 +985,7 @@ def test_the_command_preset_is_detected_and_kept(options: InitOptions) -> None:
         assert "JOTFLOW_AGENT_PRESET" not in values and values["JOTFLOW_AGENT_COMMAND"]
         assert values["JOTFLOW_RUNNER_SECRET"]
     # A re-run that keeps jotflow.toml keeps the command preset.
-    rerun = Script(answers=["", "", ""])
+    rerun = Script(answers=["", "", "", ""])  # tokens, policy, preset
     assert run_init(rerun.console(), FakeSlackApi.working(), options) == 0
     assert load_policy(options.config_file).agent.preset == "command"
     assert "kept its runner secret" in rerun.text
@@ -1359,3 +1362,37 @@ def test_picking_more_repos_than_a_channel_can_feed_is_asked_again() -> None:
         check("1-21")
     assert check("1-20") == "1-20"
     assert check("1-5,3,4") == "1-5,3,4"  # repeats count once
+
+
+def test_a_kept_policy_can_still_turn_the_agent_on(options: InitOptions) -> None:
+    """#41: keeping jotflow.toml's channels still asks the preset question."""
+    first = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(first.console(), FakeSlackApi.working(), options) == 0
+    before = load_policy(options.config_file)
+    assert before.agent.preset is None
+    # Keep both tokens, keep the channels and repos, then choose claude-code.
+    script = Script(answers=["", "", "", "claude-code", ""])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    after = load_policy(options.config_file)
+    assert after.agent.preset == "claude-code"
+    assert after.model_copy(update={"agent": before.agent}) == before  # nothing else changed
+    assert options.config_file.with_name("jotflow.toml.bak").exists()
+    assert options.agent_file.exists() and options.agent_exec_file.exists()
+    assert "Keep it to change only the agent preset next" in script.text
+
+
+def test_keeping_the_same_preset_leaves_jotflow_toml_alone(options: InitOptions) -> None:
+    _with_agent(options)
+    before = options.config_file.read_text()
+    _kept_session(options)
+    assert options.config_file.read_text() == before
+    assert not options.config_file.with_name("jotflow.toml.bak").exists()
+
+
+def test_setup_ends_with_the_next_three_steps(options: InitOptions) -> None:
+    script = Script(answers=["", "Idea Bot", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    tail = script.text[script.text.index("Next:") :].splitlines()
+    assert tail[1].startswith("  1. Invite @") and "/invite @" in tail[1]
+    assert tail[2] == "  2. Check the setup with: jotflow check"
+    assert tail[3] == "  3. Start JotFlow with: docker compose up -d"

@@ -750,6 +750,17 @@ def _ask_policy(console: Console, existing: Policy | None, detected: str | None 
         ):
             break
 
+    preset = _ask_preset(console, existing, detected)
+
+    data = existing.model_dump() if existing else {}
+    # Keep any other agent settings, such as max_concurrent_runs; change only the preset.
+    data["agent"] = {**(existing.agent.model_dump() if existing else {}), "preset": preset}
+    data["channels"] = {cid: channel.model_dump() for cid, channel in channels.items()}
+    return Policy.model_validate(data)
+
+
+def _ask_preset(console: Console, existing: Policy | None, detected: str | None) -> str | None:
+    """Setup step 6: which agent the team runs. ``None`` means no agent runs."""
     console.say()
     _step(console, 6)
     _explain(console, EXPLAIN_PRESET)
@@ -767,13 +778,7 @@ def _ask_policy(console: Console, existing: Policy | None, detected: str | None 
         current or "none",
         _preset_answer,
     )
-    preset = None if preset_answer == "none" else preset_answer
-
-    data = existing.model_dump() if existing else {}
-    # Keep any other agent settings, such as max_concurrent_runs; change only the preset.
-    data["agent"] = {**(existing.agent.model_dump() if existing else {}), "preset": preset}
-    data["channels"] = {cid: channel.model_dump() for cid, channel in channels.items()}
-    return Policy.model_validate(data)
+    return None if preset_answer == "none" else preset_answer
 
 
 def _policy_step(console: Console, options: InitOptions) -> Policy | None:
@@ -794,9 +799,18 @@ def _policy_step(console: Console, options: InitOptions) -> Policy | None:
         else:
             console.say()
             console.say(f"{path} is already set up: {_summary(existing)}.")
-            if console.confirm("Keep it?"):
+            console.say(
+                "  Keep it to change only the agent preset next. Answer n to go through the "
+                "channels again; each one's repos can be kept."
+            )
+            if console.confirm("Keep its channels and repos?"):
                 _warn_if_unreadable(console, path)
-                return None
+                # The preset is still asked, so a team can turn the agent on later (#41).
+                preset = _ask_preset(console, existing, _detected_preset(options))
+                if preset == existing.agent.preset:
+                    return None
+                agent = existing.agent.model_copy(update={"preset": preset})
+                return existing.model_copy(update={"agent": agent})
     return _ask_policy(console, existing, _detected_preset(options))
 
 
@@ -1158,10 +1172,13 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
     console.say(f"Connected to Slack as {_describe(identity)}.")
     console.say()
     bot = f"@{identity.bot_user}" if identity.bot_user else "the bot"
+    console.say("Next:")
     console.say(
-        f"Next: invite {bot} to each channel JotFlow should watch with /invite {bot}. "
+        f"  1. Invite {bot} to each channel JotFlow should watch with /invite {bot}. "
         "It never joins channels by itself."
     )
+    console.say("  2. Check the setup with: jotflow check")
+    console.say("  3. Start JotFlow with: docker compose up -d")
     return 0
 
 

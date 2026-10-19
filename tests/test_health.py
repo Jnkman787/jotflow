@@ -162,10 +162,13 @@ def health(monkeypatch: pytest.MonkeyPatch, path: Path, *args: str) -> int:
 def test_health_is_zero_while_the_heartbeat_is_fresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import time
+    import types
 
+    # One frozen "now" for both the beat and the check, so a second can't tick between them.
+    now = 1_792_310_400.0
+    monkeypatch.setattr(health_command, "time", types.SimpleNamespace(time=lambda: now))
     path = tmp_path / "hb"
-    Heartbeat(path, clock=lambda: time.time() - 20).beat()
+    Heartbeat(path, clock=lambda: now - 20).beat()
     assert health(monkeypatch, path) == 0
     assert capsys.readouterr().out.startswith("healthy: connected to Slack, heartbeat 20s ago")
 
@@ -173,12 +176,14 @@ def test_health_is_zero_while_the_heartbeat_is_fresh(
 def test_health_is_one_when_stale_missing_or_garbled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import time
+    import types
 
+    now = 1_792_310_400.0  # frozen, as above, so "120s ago" can't become 121
+    monkeypatch.setattr(health_command, "time", types.SimpleNamespace(time=lambda: now))
     path = tmp_path / "hb"
     assert health(monkeypatch, path) == 1
     assert "no heartbeat at" in capsys.readouterr().out
-    Heartbeat(path, clock=lambda: time.time() - 120).beat()
+    Heartbeat(path, clock=lambda: now - 120).beat()
     assert health(monkeypatch, path) == 1
     assert "the last heartbeat was 120s ago" in capsys.readouterr().out
     assert health(monkeypatch, path, "--max-age", "300") == 0
