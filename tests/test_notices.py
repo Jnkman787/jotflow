@@ -46,27 +46,26 @@ async def _failed(store: MemoryStore, *, card_ts: str | None) -> Any:
 async def test_without_a_card_one_fixed_reply_goes_to_the_thread() -> None:
     store = MemoryStore()
     record = await _failed(store, card_ts=None)
-    poster, cards = Poster(), Cards()
-    await GiveUpNotice(poster, POLICY, cards=CardPublisher(store, cards))(record)
-    assert poster.posts == [(CH, THREAD, GAVE_UP_NOTICE.format(attempts=3))]
-    assert cards.updates == []
+    poster = Poster()
+    await GiveUpNotice(poster, POLICY, attempts=5)(record)
+    assert poster.posts == [(CH, THREAD, GAVE_UP_NOTICE.format(attempts=5))]
 
 
-async def test_with_a_card_the_card_shows_the_fixed_failed_line() -> None:
+async def test_with_a_card_the_card_sync_shows_the_fixed_failed_line() -> None:
+    from jotflow.orchestrator.card_sync import CardSync
+
     store = MemoryStore()
     record = await _failed(store, card_ts="1760781699.000500")
     poster, cards = Poster(), Cards()
-    await GiveUpNotice(poster, POLICY, cards=CardPublisher(store, cards))(record)
-    assert poster.posts == []
+    await GiveUpNotice(poster, POLICY)(record)
+    assert poster.posts == []  # no reply: the card says it
+
+    class NoNames:
+        async def name(self, user_id: str) -> str | None:
+            return None
+
+    await CardSync(store, POLICY, CardPublisher(store, cards), NoNames()).sync()
     ((channel, ts, card),) = cards.updates
     assert (channel, ts) == (CH, "1760781699.000500")
     assert FAILED_LINE in str(card.blocks)
     assert "SECRET-REASON" not in str(card.blocks) and "SECRET-REASON" not in card.text
-
-
-async def test_without_a_card_publisher_the_thread_is_told() -> None:
-    store = MemoryStore()
-    record = await _failed(store, card_ts="1760781699.000500")
-    poster = Poster()
-    await GiveUpNotice(poster, POLICY, attempts=5)(record)
-    assert poster.posts == [(CH, THREAD, GAVE_UP_NOTICE.format(attempts=5))]

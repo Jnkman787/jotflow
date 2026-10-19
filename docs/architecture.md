@@ -234,6 +234,7 @@ The mode applies uniformly to creation, description edits, comments, assignment,
   - assignees, with unverified identities marked, and the people involved, with one-click assign and remove
   - size, confidence, links to the source messages, and a state line
   Agent-written text is always `plain_text`, so nothing in it can ping or link. The Approve button carries the content hash of the draft it shows. The card's message ts is stored, so later states edit the same message.
+- **Keeping the card live** (`src/jotflow/orchestrator/card_sync.py`, #152). The store is the card's outbox. Every change a card shows raises the proposal's revision, and the card records the revision it shows. One loop in the orchestrator, about once a second, posts each missing card and edits each one that is behind. So `propose_issue` and the other tool writes never call Slack, and a Slack failure cannot fail them. A card that could not be drawn stays due and is retried, waiting longer each time up to a minute, across restarts too. A proposal superseded or rejected before its card went up gets none.
 - Guests and external Slack Connect users can never approve.
 
 **Who may approve, configurable** (D7):

@@ -25,6 +25,7 @@ from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
+from tests.test_card_sync import FakeCardPoster, FakePeople
 from tests.test_help import FakeHelpSlack
 from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
@@ -93,6 +94,7 @@ class Rig:
         self.info_status = 200
         self.slack = FakeSlack()
         self.help = FakeHelpSlack()
+        self.cards = FakeCardPoster()
         self.runner = RunnerClient(
             conversation=RunnerEndpoint("http://agent:8766", SECRET),
             execution=RunnerEndpoint("http://agent-exec:8766", EXEC_SECRET),
@@ -108,6 +110,9 @@ class Rig:
             runner=self.runner,
             keyword_slack=self.slack,
             help_slack=self.help,
+            card_poster=self.cards,
+            people=FakePeople(),
+            card_seconds=0.01,
             flush_seconds=0.01,
             tick_seconds=0.01,
             info_attempts=2,
@@ -827,3 +832,73 @@ async def test_a_help_failure_is_logged_and_the_debouncer_still_runs(
     finally:
         await rig.orchestrator.stop()
     assert "could not offer help" in caplog.text
+
+
+# The live card (#152)
+
+
+async def test_a_proposal_gets_its_card_from_the_running_service() -> None:
+    from tests.test_card_sync import approve, proposal
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.store.add_proposal(proposal())
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+        await approve(rig.store)
+
+        async def edited() -> bool:
+            return len(rig.cards.updates) == 1
+
+        await until(edited)
+    finally:
+        await rig.orchestrator.stop()
+    record = await rig.store.get_proposal("p1")
+    assert record is not None and record.card_ts == "1760782000.000001"
+    assert rig.cards.updates[0][1] == record.card_ts
+    assert len(rig.cards.posts) == 1
+
+
+async def test_cards_are_drawn_even_while_agent_runs_are_off() -> None:
+    from tests.test_card_sync import proposal
+
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        await rig.store.add_proposal(proposal())
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+        assert rig.orchestrator.cards is not None
+        assert not await rig.orchestrator.cards.refresh("p1")
+    finally:
+        await rig.orchestrator.stop()
+
+
+async def test_a_card_sync_error_is_logged_and_the_loop_goes_on(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = Rig()
+    calls = 0
+
+    async def broken(*_: Any, **__: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("store is down")
+
+    monkeypatch.setattr(rig.store, "cards_due", broken)
+    with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+
+        async def twice() -> bool:
+            return calls >= 2
+
+        await until(twice)
+        await rig.orchestrator.stop()
+    assert "card sync failed" in caplog.text
