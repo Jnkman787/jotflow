@@ -303,3 +303,119 @@ def test_any_other_image_marker_refuses(
     monkeypatch.setenv("JOTFLOW_LIVE_CHECK", "1")
     assert check_command.run(live_args(yes=True)) == 2
     assert no_slack == []
+
+
+# The agent's readiness (#41)
+
+SECRET_A = "a" * 40
+SECRET_B = "b" * 40
+READ_TOKEN = "github_pat_readSENTINEL"
+WRITE_TOKEN = "github_pat_writeSENTINEL"
+MODEL_KEY = "sk-ant-SENTINEL"
+
+
+def _agent_folder(folder: Path, *, profiles: str = "agent", **blank: bool) -> None:
+    def value(key: str, real: str) -> str:
+        return "" if blank.get(key) else real
+
+    (folder / ".env").write_text(
+        f"JOTFLOW_RUNNER_SECRET={value('env_secret', SECRET_A)}\n"
+        f"JOTFLOW_RUNNER_EXEC_SECRET={SECRET_B}\nCOMPOSE_PROFILES={profiles}\n",
+        encoding="utf-8",
+    )
+    (folder / "agent.env").write_text(
+        f"JOTFLOW_RUNNER_SECRET={SECRET_A}\n"
+        f"JOTFLOW_GITHUB_READ_TOKEN={value('read', READ_TOKEN)}\n"
+        "JOTFLOW_AGENT_PRESET=claude-code\n"
+        f"ANTHROPIC_API_KEY={value('model', MODEL_KEY)}\n"
+        "JOTFLOW_AGENT_ENV_ALLOW=ANTHROPIC_API_KEY\n",
+        encoding="utf-8",
+    )
+    (folder / "agent-exec.env").write_text(
+        f"JOTFLOW_RUNNER_SECRET={SECRET_B}\n"
+        f"JOTFLOW_GITHUB_WRITE_TOKEN={value('write', WRITE_TOKEN)}\n"
+        f"JOTFLOW_AGENT_PRESET={'claude-code' if not blank.get('exec_preset') else 'codex'}\n"
+        f"ANTHROPIC_API_KEY={MODEL_KEY}\nJOTFLOW_AGENT_ENV_ALLOW=ANTHROPIC_API_KEY\n",
+        encoding="utf-8",
+    )
+
+
+def _with_preset(folder: Path, preset: str = "claude-code") -> None:
+    (folder / "jotflow.toml").write_text(f'[agent]\npreset = "{preset}"\n' + ONE_CHANNEL)
+
+
+def test_no_preset_means_no_agent_lines(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["check"]) == 0
+    assert "agent" not in capsys.readouterr().out
+
+
+def test_a_ready_agent_setup_says_so(workspace: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace)
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert "ok    agent: claude-code, both agent files filled in" in out
+    assert "warn" not in out
+
+
+def test_an_unready_agent_setup_is_named_and_never_shown(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace, profiles="", read=True, write=True, model=True, env_secret=True)
+    assert main(["check"]) == 0  # warnings, not a refusal: the configuration itself is valid
+    out = capsys.readouterr().out
+    for line in (
+        "warn  agent: .env has no JOTFLOW_RUNNER_SECRET",
+        "warn  agent: COMPOSE_PROFILES in .env does not include agent",
+        "warn  agent: JOTFLOW_GITHUB_READ_TOKEN is blank in agent.env",
+        "warn  agent: JOTFLOW_GITHUB_WRITE_TOKEN is blank in agent-exec.env",
+        "warn  agent: ANTHROPIC_API_KEY is blank in agent.env, which passes it to the agent",
+    ):
+        assert line in out, out
+    for secret in (SECRET_A, SECRET_B, READ_TOKEN, WRITE_TOKEN, MODEL_KEY):
+        assert secret not in out
+
+
+def test_missing_files_and_preset_mismatch_are_named(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace, exec_preset=True)
+    (workspace / "agent.env").unlink()
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert "warn  agent: agent.env is missing; run jotflow init again to write it" in out
+    assert "agent-exec.env names codex, but jotflow.toml's [agent] preset is claude-code" in out
+
+
+def test_codex_teams_run_claude_code_for_execution(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace, "codex")
+    _agent_folder(workspace)
+    (workspace / "agent.env").write_text(
+        (workspace / "agent.env").read_text().replace("claude-code", "codex")
+    )
+    assert main(["check"]) == 0
+    out = capsys.readouterr().out
+    assert "agent-exec.env names" not in out and "agent.env names" not in out
+
+
+def test_the_command_preset_needs_a_command(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace, "command")
+    _agent_folder(workspace)
+    assert main(["check"]) == 0
+    assert "JOTFLOW_AGENT_COMMAND is blank in agent.env" in capsys.readouterr().out
+
+
+def test_without_dotenv_the_agent_files_are_not_checked_here(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace)
+    assert main(["check"]) == 0
+    assert "not checked here: run jotflow check in your JotFlow folder" in capsys.readouterr().out
