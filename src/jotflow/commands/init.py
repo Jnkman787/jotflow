@@ -21,13 +21,14 @@ import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 from pydantic import TypeAdapter, ValidationError
 
 from jotflow import agent_setup
 from jotflow.envfile import EnvChange, read_env, write_envs
-from jotflow.models import RepoName
+from jotflow.github_cli import gh_visibility
+from jotflow.models import RepoName, RepoVisibility
 from jotflow.policy import (
     ChannelId,
     ChannelPolicy,
@@ -155,6 +156,11 @@ EXPLAIN_REPO = (
     "Which GitHub repo does this channel feed? Give its address as owner/name, the part "
     "after github.com/ in its URL.",
     "For example https://github.com/acme-co/web is acme-co/web. Pasting the link works too.",
+)
+EXPLAIN_VISIBILITY = (
+    "Is that repo public or private on GitHub? JotFlow can't look, so it asks. A public "
+    "repo puts a warning on every card, because approving makes the issue visible to "
+    "anyone. Type skip if you're not sure; cards then say visibility was not checked."
 )
 EXPLAIN_NICKNAME = (
     "A short word people type to point at this repo: re: web#42 in Slack later points a "
@@ -484,6 +490,13 @@ def _suggest_nickname(repo: str) -> str:
     return name[:32] or "repo"
 
 
+def _visibility(value: str) -> str:
+    answer = value.strip().lower()
+    if answer not in ("public", "private", "skip"):
+        raise ValueError("Answer public, private, or skip.")
+    return answer
+
+
 def _description(value: str) -> str:
     value = value.strip()
     if not value:
@@ -542,6 +555,13 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
 
     _explain(console, EXPLAIN_REPO, "  ")
     repo = console.ask("  GitHub repo (owner/name or link)", validate=new_repo)
+    visibility = gh_visibility(repo)
+    if visibility is not None:
+        console.say(f"  GitHub says {repo} is {visibility}.")
+    else:
+        _explain(console, EXPLAIN_VISIBILITY, "  ")
+        answer = console.ask("  Public or private on GitHub", "skip", _visibility)
+        visibility = None if answer == "skip" else cast(RepoVisibility, answer)
     _explain(console, EXPLAIN_NICKNAME, "  ")
     nickname = console.ask("  Nickname", _suggest_nickname(repo), new_nickname)
     _explain(console, EXPLAIN_DESCRIPTION, "  ")
@@ -551,7 +571,13 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
     # "any" is None: no labels line in jotflow.toml, which means any existing
     # label. An explicit empty list would be an error there.
     chosen = _split_labels(labels) or None
-    return RepoPolicy(repo=repo, nickname=nickname, description=description, labels=chosen)
+    return RepoPolicy(
+        repo=repo,
+        nickname=nickname,
+        description=description,
+        labels=chosen,
+        visibility=visibility,
+    )
 
 
 def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:

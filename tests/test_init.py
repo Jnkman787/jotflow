@@ -60,7 +60,13 @@ class Script:
 
 
 # One channel with one repo, accepting every default.
-POLICY = ["C0TEST1", "acme/web", "", "The web app", "", "", "", ""]
+@pytest.fixture(autouse=True)
+def _no_gh(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Setup asks gh for a repo's visibility; tests never reach a real one.
+    monkeypatch.setattr(init, "gh_visibility", lambda repo: None)
+
+
+POLICY = ["C0TEST1", "acme/web", "", "", "The web app", "", "", "", ""]
 
 
 @pytest.fixture
@@ -256,11 +262,13 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
         "",
         "https://example.slack.com/archives/C0LINKS1",
         "https://github.com/acme/Web-App.git",
+        "public",
         "",
         "Customer web app",
         "bug, size:s",
         "y",
         "acme/api",
+        "",
         "web-app",  # taken: asked again
         "api",
         "The API",
@@ -271,6 +279,8 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
         "C0LINKS1",  # already listed: asked again
         "G0PRIV2",
         "acme/handbook",
+        "internal",  # not a choice: asked again
+        "private",
         "",
         "Handbook",
         "",
@@ -283,10 +293,11 @@ def test_several_channels_and_repos_with_pasted_links(options: InitOptions) -> N
     policy = load_policy(options.config_file)
     assert list(policy.channels) == ["C0LINKS1", "G0PRIV2"]
     first = policy.channels["C0LINKS1"].repos
-    assert [(r.repo, r.nickname, r.labels) for r in first] == [
-        ("acme/Web-App", "web-app", ("bug", "size:s")),
-        ("acme/api", "api", None),
+    assert [(r.repo, r.nickname, r.labels, r.visibility) for r in first] == [
+        ("acme/Web-App", "web-app", ("bug", "size:s"), "public"),
+        ("acme/api", "api", None, None),
     ]
+    assert policy.channels["G0PRIV2"].repos[0].visibility == "private"
     assert policy.agent.preset is None
     assert "already used in this channel" in script.text
     assert "C0LINKS1 is already listed" in script.text
@@ -307,7 +318,21 @@ def test_invalid_channel_ids_are_explained(options: InitOptions, bad: str, fragm
 
 
 def test_invalid_repo_and_long_description_are_explained(options: InitOptions) -> None:
-    answers = ["", "", "C0TEST1", "not a repo", "acme/web", "", "x" * 201, "Web", "", "", "", ""]
+    answers = [
+        "",
+        "",
+        "C0TEST1",
+        "not a repo",
+        "acme/web",
+        "",
+        "",
+        "x" * 201,
+        "Web",
+        "",
+        "",
+        "",
+        "",
+    ]
     script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "owner/name" in script.text
@@ -523,7 +548,7 @@ def test_examples_are_fictional(options: InitOptions) -> None:
 
 
 def test_none_is_not_a_label_choice(options: InitOptions) -> None:
-    answers = ["", "", "C0TEST1", "acme-co/web", "", "The web app", "none", "", "", "", ""]
+    answers = ["", "", "C0TEST1", "acme-co/web", "", "", "The web app", "none", "", "", "", ""]
     script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "Type any to allow every label the repo already has" in script.text
@@ -532,7 +557,19 @@ def test_none_is_not_a_label_choice(options: InitOptions) -> None:
 
 
 def test_a_label_list_narrows(options: InitOptions) -> None:
-    answers = ["", "", "C0TEST1", "acme-co/web", "", "The web app", "bug, needs-design", "", "", ""]
+    answers = [
+        "",
+        "",
+        "C0TEST1",
+        "acme-co/web",
+        "",
+        "",
+        "The web app",
+        "bug, needs-design",
+        "",
+        "",
+        "",
+    ]
     script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
@@ -552,8 +589,8 @@ def test_labels_answer_rules() -> None:
 
 
 def test_none_for_labels_is_explained_and_asked_again(options: InitOptions) -> None:
-    # POLICY's fifth answer is the labels prompt; answer none, then a list.
-    answers = [*POLICY[:4], "none", "bug", *POLICY[5:]]
+    # POLICY's sixth answer is the labels prompt; answer none, then a list.
+    answers = [*POLICY[:5], "none", "bug", *POLICY[6:]]
     script = Script(answers=["", "", *answers], secrets=[GOOD_APP, GOOD_BOT])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
     assert "Type any to allow every label the repo already has" in script.text
@@ -1068,3 +1105,16 @@ def test_per_kind_models_are_explained_and_kept(options: InitOptions) -> None:
 
 def test_the_model_prompt_says_it_covers_drafting_and_execution() -> None:
     assert "both drafting and execution" in " ".join(init.EXPLAIN_MODEL)
+
+
+def test_gh_fills_in_visibility_without_asking(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(init, "gh_visibility", lambda repo: "public")
+    answers = [a for i, a in enumerate(POLICY) if i != 2]  # no visibility question
+    script = Script(answers=["", "", *answers], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "GitHub says acme/web is public." in script.text
+    assert "Public or private on GitHub" not in script.text
+    (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
+    assert repo.visibility == "public"

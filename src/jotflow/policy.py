@@ -27,7 +27,7 @@ from pydantic import (
     model_validator,
 )
 
-from jotflow.models import RepoName, shown
+from jotflow.models import RepoName, RepoVisibility, shown
 from jotflow.reactions import DEFAULT_APPROVAL, DEFAULT_ISSUE_REACTION, KEYWORD_REACTIONS, reserved
 from jotflow.text import unsafe_text_problem
 
@@ -148,6 +148,13 @@ class RepoPolicy(_Strict):
         description=(
             "Optional. Narrows the labels a proposal may set to this list. Missing means "
             "any label that already exists on the repo; an empty list is an error"
+        ),
+    )
+    visibility: RepoVisibility | None = Field(
+        default=None,
+        description=(
+            "Optional. public or private on GitHub. public puts a warning on every card for "
+            "this repo; the agent can add that warning but never remove it (D7, #122)"
         ),
     )
 

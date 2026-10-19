@@ -600,3 +600,25 @@ def test_the_slack_phase_fits_inside_the_request_timeout() -> None:
     from jotflow.whiteboard.server import REQUEST_TIMEOUT_SECONDS
 
     assert SLACK_PHASE_SECONDS < REQUEST_TIMEOUT_SECONDS
+
+
+async def test_an_execution_packet_leaves_out_the_agents_visibility_report(
+    store: MemoryStore, clock: Clock
+) -> None:
+    draft = IssueProposal(
+        repo="acme-co/web", title="T", body="B", confidence=0.9, repo_visibility="public"
+    )
+    await store.add_proposal(
+        ProposalRecord(
+            id="p1",
+            channel_id=CH,
+            thread_ts=POST,
+            run_id="r0",
+            proposal=draft,
+            created_at=datetime(2026, 10, 18, 8, 0, tzinfo=UTC),
+        )
+    )
+    await store.transition("p1", ProposalState.APPROVED, approved_by=AUTO_APPROVER)
+    grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
+    work: Work = await call(tools(store, clock)["get_work"], grant)
+    assert work.execution is not None and work.execution.proposal.repo_visibility is None

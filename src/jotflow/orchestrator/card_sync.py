@@ -21,8 +21,8 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
-from jotflow.models import ProposalRecord, ProposalState
-from jotflow.orchestrator.cards import CardContext, CardPublisher
+from jotflow.models import ProposalRecord, ProposalState, RepoVisibility
+from jotflow.orchestrator.cards import CardContext, CardPublisher, Visibility
 from jotflow.policy import Policy, UnknownChannelError
 from jotflow.store.base import AUTO_APPROVER, IdentityLink, Store, utc_now
 
@@ -67,6 +67,20 @@ class People(Protocol):
     async def name(self, user_id: str) -> str | None: ...
 
 
+def effective_visibility(policy: RepoVisibility | None, agent: RepoVisibility | None) -> Visibility:
+    """What the card says about a repo's visibility (D7, #122).
+
+    The policy is authoritative; the agent may only add a warning. Either
+    saying public warns. Only the policy can say private, so an agent's
+    private, alone or against the policy's public, never removes anything.
+    """
+    if policy == "public" or agent == "public":
+        return "public"
+    if policy == "private":
+        return "private"
+    return "unknown"
+
+
 async def card_context(
     policy: Policy, store: Store, people: People, record: ProposalRecord
 ) -> CardContext:
@@ -81,8 +95,17 @@ async def card_context(
             names[user] = name
         if (link := await store.get_identity(user)) is not None:
             identities[user] = link
+    channel = policy.channel(record.channel_id)
+    repo = record.proposal.repo
+    configured = next(
+        (r.visibility for r in channel.repos if r.repo.casefold() == repo.casefold()), None
+    )
+    seen = effective_visibility(configured, record.proposal.repo_visibility)
     return CardContext(
-        channel=policy.channel(record.channel_id), names=names, identities=identities
+        channel=channel,
+        names=names,
+        identities=identities,
+        visibility={repo: seen} if seen != "unknown" else {},
     )
 
 
