@@ -295,6 +295,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          # A release builds from a clean slate: no cache another run could have poisoned.
+          enable-cache: false
 
       - name: Build the sdist and wheel from this commit
         run: uv build --out-dir dist
