@@ -565,3 +565,71 @@ def test_a_failed_card_too_long_to_show_offers_only_discard() -> None:
     )
     found = actions(render_card(long, context()))
     assert ACTION_RETRY not in found and ACTION_DISCARD in found
+
+
+# --- an overruled keyword hint (#147) -------------------------------------------
+
+
+def _update(**overrides: Any) -> UpdateProposal:
+    fields: dict[str, Any] = {
+        "topic_id": "t1",
+        "repo": "acme-co/web",
+        "issue_number": 42,
+        "changes": IssueChanges(comment="Keep the column order."),
+        "confidence": 0.7,
+    }
+    fields.update(overrides)
+    return UpdateProposal(**fields)
+
+
+REASON = "The thread describes a crash on save, so this is a bug, not an idea."
+
+
+def test_a_create_card_shows_why_the_hint_was_overruled() -> None:
+    card = render_card(record(issue(hint_overruled=REASON)), context())
+    plain = texts(card, "plain_text")
+    line = f"Hint overruled: {REASON}"
+    assert line in plain
+    # Just after the confidence line, where people read how sure the agent is.
+    assert plain.index(line) == plain.index("Size: s   Confidence: 82%") + 1
+    assert ACTION_APPROVE in actions(card)
+
+
+def test_an_update_card_shows_why_the_hint_was_overruled() -> None:
+    card = render_card(record(_update(hint_overruled=REASON)), context())
+    plain = texts(card, "plain_text")
+    assert plain.index(f"Hint overruled: {REASON}") == plain.index("Confidence: 70%") + 1
+
+
+@pytest.mark.parametrize("proposal", [issue(), _update()], ids=["issue", "update"])
+def test_without_an_overruled_hint_the_card_is_unchanged(
+    proposal: IssueProposal | UpdateProposal,
+) -> None:
+    card = render_card(record(proposal), context())
+    assert "Hint overruled" not in all_text(card)
+    with_hint = render_card(
+        record(proposal.model_copy(update={"hint_overruled": REASON})), context()
+    )
+    assert len(with_hint.blocks) == len(card.blocks) + 1
+
+
+def test_an_overruled_hint_is_only_ever_plain_text() -> None:
+    card = render_card(record(issue(hint_overruled=INJECTION)), context())
+    for text in texts(card, "mrkdwn"):
+        assert "<!channel>" not in text and "evil.example" not in text
+    assert f"Hint overruled: {INJECTION}" in texts(card, "plain_text")
+
+
+def test_the_overruled_hint_is_part_of_what_is_approved() -> None:
+    plain_issue, hinted = issue(), issue(hint_overruled=REASON)
+    assert content_hash(plain_issue) != content_hash(hinted)
+    approve = actions(render_card(record(hinted), context()))[ACTION_APPROVE][0]
+    assert approve["value"] == f"p1:{content_hash(hinted)}"
+
+
+def test_a_cleared_card_shows_no_hint_reason() -> None:
+    from jotflow.store.base import cleared_draft
+
+    cleared = cleared_draft(issue(hint_overruled=REASON))
+    card = _state(ProposalState.REJECTED, proposal=cleared, draft_cleared_at=NOW)
+    assert "Hint overruled" not in all_text(card) and REASON not in all_text(card)
