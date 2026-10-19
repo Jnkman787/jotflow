@@ -619,6 +619,8 @@ def _selection(count: int) -> Callable[[str], str]:
             first, last = int(low), int(high or low)
             if not 1 <= first <= last <= count:
                 raise ValueError(f"Pick numbers from 1 to {count}.")
+        if len(_picked(value)) > MAX_REPOS_PER_CHANNEL:
+            raise ValueError(f"A channel can feed at most {MAX_REPOS_PER_CHANNEL} repos.")
         return value
 
     return check
@@ -662,7 +664,7 @@ def _pick_repos(console: Console) -> list[ListedRepo]:
 
 def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:
     repos: list[RepoPolicy] = []
-    for listed in _pick_repos(console)[:MAX_REPOS_PER_CHANNEL]:
+    for listed in _pick_repos(console):
         repos.append(
             _ask_repo(
                 console, {r.repo.casefold() for r in repos}, {r.nickname for r in repos}, listed

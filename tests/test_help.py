@@ -382,7 +382,8 @@ def test_changing_repos_says_how_and_changes_nothing(argument: str) -> None:
 
     before = policy()
     assert channel_repos(before, CH, argument) == REPOS_CHANGE
-    assert "uvx jotflow init" in REPOS_CHANGE and "GitHub tokens" in REPOS_CHANGE
+    assert "docker compose restart jotflow" in REPOS_CHANGE and "GitHub tokens" in REPOS_CHANGE
+    assert "jotflow init" not in REPOS_CHANGE  # re-running setup would ask everything again
     assert [r.repo for r in before.channels[CH].repos] == ["acme-co/web", "acme-co/api"]
 
 

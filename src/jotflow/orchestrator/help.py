@@ -246,9 +246,10 @@ class BoltHelpSlack:
 
 REPOS_CHANGE = (
     "JotFlow's repos live in jotflow.toml, which a running JotFlow can't change. On the "
-    "machine that runs JotFlow, run `uvx jotflow init` from its folder, answer n to keeping "
-    "jotflow.toml, and add or remove the repo there. Then restart with `docker compose up -d`. "
-    "Also give the agents' GitHub tokens access to a repo you add, on GitHub: setup can't."
+    "machine that runs JotFlow, edit that file's [[channels.<id>.repos]] entries; "
+    "jotflow.example.toml explains each line. Then restart JotFlow with "
+    "`docker compose restart jotflow`, so it reads the file again. Also give the agents' "
+    "GitHub tokens access to a repo you add, on GitHub: JotFlow can't."
 )
 
 

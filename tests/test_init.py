@@ -1334,3 +1334,11 @@ def test_no_wildcard_repo_is_ever_accepted(wildcard: str) -> None:
             f'[channels.C0ONE1]\n[[channels.C0ONE1.repos]]\nrepo = "{wildcard}"\n'
             'nickname = "web"\ndescription = "Web"\n'
         )
+
+
+def test_picking_more_repos_than_a_channel_can_feed_is_asked_again() -> None:
+    check = init._selection(30)
+    with pytest.raises(ValueError, match="at most 20"):
+        check("1-21")
+    assert check("1-20") == "1-20"
+    assert check("1-5,3,4") == "1-5,3,4"  # repeats count once
