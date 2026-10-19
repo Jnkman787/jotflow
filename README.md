@@ -86,7 +86,7 @@ The pieces:
 
 | Component | Needs | Does not need |
 |---|---|---|
-| JotFlow | A Slack app in your workspace, created from the included manifest. It reads messages and channel details in the channels you invite it to and looks up user names, over Socket Mode. Its other permissions, to post messages, add reactions, pin a help message and answer one slash command, are for later releases. [manifests/README.md](manifests/README.md) explains each permission. | Any GitHub access |
+| JotFlow | A Slack app in your workspace, created from the included manifest. Over Socket Mode, it reads messages, reactions and channel details in the channels you invite it to, and looks up user names. It posts proposal cards and replies, adds reactions, pins a short help message, and answers the `/jotflow` slash command. [manifests/README.md](manifests/README.md) explains each permission. | Any GitHub access |
 | Your agent | Whatever GitHub access you already gave it, for example GitHub's MCP server or the `gh` command-line tool | Any Slack access |
 | Your machine | Docker to run JotFlow, and uv or Python 3.12 or newer to run the setup once | A public URL or open ports: Socket Mode connects out to Slack |
 
