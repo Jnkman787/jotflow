@@ -864,7 +864,13 @@ def test_nothing_but_the_runner_secret_reaches_the_agent_files(options: InitOpti
     for path in (options.agent_file, options.agent_exec_file):
         text = path.read_text()
         assert "sentinel" not in text and GOOD_BOT not in text and GOOD_APP not in text
-        assert set(read_env(path)) == {"JOTFLOW_RUNNER_SECRET", "JOTFLOW_AGENT_PRESET"}
+        from jotflow import deploy
+        from jotflow.envfile import parse_env
+
+        # The example's own keys, which start empty, plus what setup writes: never .env's.
+        example = set(parse_env(deploy.template(path.name + ".example")))
+        assert set(read_env(path)) <= example | {"JOTFLOW_RUNNER_SECRET", "JOTFLOW_AGENT_PRESET"}
+        assert "JOTFLOW_GITHUB_TOKEN" not in read_env(path) and "OTHER" not in read_env(path)
 
 
 def test_a_rerun_keeps_both_secrets(options: InitOptions) -> None:
@@ -1118,3 +1124,92 @@ def test_gh_fills_in_visibility_without_asking(
     assert "Public or private on GitHub" not in script.text
     (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
     assert repo.visibility == "public"
+
+
+# --- outside a checkout: the Compose files (#87) ---------------------------------------------
+
+
+def _released(options: InitOptions, version: str = "1.2.3") -> InitOptions:
+    return replace(options, version=version)
+
+
+def test_outside_a_checkout_setup_writes_compose_files_for_this_release(
+    options: InitOptions,
+) -> None:
+    from jotflow import deploy
+
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), _released(options)) == 0
+    folder = options.env_file.parent
+    compose = (folder / "docker-compose.yml").read_text()
+    assert "ghcr.io/jnkman787/jotflow:1.2.3" in compose and "build:" not in compose
+    assert (folder / "docker-compose.policy.yml").read_text() == deploy.template(
+        deploy.COMPOSE_POLICY
+    )
+    assert stat.S_IMODE((folder / "docker-compose.yml").stat().st_mode) == 0o644
+    assert "Wrote " in script.text and "docker-compose.yml" in script.text
+
+
+def test_an_existing_compose_file_is_replaced_only_when_asked(options: InitOptions) -> None:
+    folder = options.env_file.parent
+    (folder / "docker-compose.yml").write_text("services: {}\n")
+    script = Script(answers=["", "", *POLICY, ""], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), _released(options)) == 0
+    assert (folder / "docker-compose.yml").read_text() == "services: {}\n"
+    assert "Keeping your" in script.text
+    assert not (folder / "docker-compose.yml.bak").exists()
+
+    yes = Script(answers=["", "", *POLICY, "y"], secrets=[GOOD_APP, GOOD_BOT])
+    (folder / "docker-compose.policy.yml").unlink()
+    options.env_file.unlink()
+    options.config_file.unlink()
+    assert run_init(yes.console(), FakeSlackApi.working(), _released(options)) == 0
+    assert "ghcr.io/jnkman787/jotflow:1.2.3" in (folder / "docker-compose.yml").read_text()
+    assert (folder / "docker-compose.yml.bak").read_text() == "services: {}\n"
+
+
+def test_an_unchanged_compose_file_is_not_asked_about(options: InitOptions) -> None:
+    _released_run = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(_released_run.console(), FakeSlackApi.working(), _released(options)) == 0
+    options.env_file.unlink()
+    options.config_file.unlink()
+    again = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(again.console(), FakeSlackApi.working(), _released(options)) == 0
+    assert "differs from JotFlow" not in again.text
+
+
+@pytest.mark.parametrize("marker", ["Dockerfile", "pyproject.toml"])
+def test_a_checkout_keeps_its_own_compose_files(options: InitOptions, marker: str) -> None:
+    folder = options.env_file.parent
+    (folder / marker).write_text('[project]\nname = "jotflow"\n')
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), _released(options)) == 0
+    assert not (folder / "docker-compose.yml").exists()
+
+
+def test_a_development_build_pins_no_image(options: InitOptions) -> None:
+    script = Script(answers=["", "", *POLICY], secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), _released(options, "0.0.1")) == 0
+    assert not (options.env_file.parent / "docker-compose.yml").exists()
+    assert "is not a published release" in script.text
+
+
+def test_outside_a_checkout_agent_files_start_from_the_packaged_examples(
+    options: InitOptions,
+) -> None:
+    _with_agent(options)
+    assert options.agent_file.read_text().startswith("# agent.env:")
+
+
+@pytest.mark.parametrize(
+    ("text", "checkout"),
+    [
+        ('[project]\nname = "jotflow"\n', True),
+        ('[project]\nname = "other"\n# name = "jotflow"\n', False),
+        ("not [ valid toml", False),
+        ('[tool.x]\nname = "jotflow"\n', False),
+    ],
+)
+def test_a_checkout_is_told_by_its_project_name(tmp_path: Path, text: str, checkout: bool) -> None:
+    (tmp_path / "pyproject.toml").write_text(text)
+    assert init.in_checkout(tmp_path) is checkout

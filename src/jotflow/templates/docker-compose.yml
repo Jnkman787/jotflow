@@ -1,0 +1,131 @@
+# JotFlow deployment. See the Deployment section of docs/architecture.md.
+#
+# Two containers (D6): JotFlow, with Slack's tokens in .env, and the team's
+# agent, with its own agent.env and never JotFlow's. They meet only on the
+# internal `agents` network. JotFlow never mounts the Docker socket, and no
+# ports are published to the host.
+
+name: jotflow
+
+services:
+  jotflow:
+    build: .
+    # Built from this checkout by default. Set JOTFLOW_IMAGE_REF in .env to run a
+    # published release (ghcr.io/jnkman787/jotflow:X.Y.Z) or your own per-commit
+    # tag. Not JOTFLOW_IMAGE, which marks JotFlow's own image inside it.
+    image: ${JOTFLOW_IMAGE_REF:-jotflow:local}
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Listen on the internal network too, so the agent can reach MCP, and
+      # answer only to the Compose service name besides loopback.
+      JOTFLOW_MCP_HOST: 0.0.0.0
+      JOTFLOW_MCP_ALLOWED_HOSTS: jotflow
+    volumes:
+      - jotflow-data:/data
+    networks:
+      - egress
+      - agents
+      - agents-exec
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Healthy while JotFlow is connected to Slack: jotflow run rewrites a
+    # heartbeat in /tmp every 30 s while connected, and jotflow health checks
+    # its age with no network and no tokens (#133). Alert on "unhealthy".
+    healthcheck:
+      test: ["CMD", "jotflow", "health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  # Two agent services, so the write GitHub token never exists in a container a
+  # drafting run can reach: runs share one uid, and a same-uid process can read
+  # another's /proc/<pid>/environ and run directory (D6, #54).
+  #
+  # Off until the team sets them up: add COMPOSE_PROFILES=agent to .env once
+  # agent.env and agent-exec.env are filled in.
+  agent:
+    profiles: [agent]
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      args:
+        # The CLI version the claude-code preset was verified with (docs/presets.md).
+        AGENT_NPM_PACKAGES: "@anthropic-ai/claude-code@2.1.303"
+    image: ${JOTFLOW_AGENT_IMAGE_REF:-jotflow-agent:local}
+    restart: unless-stopped
+    # Drafting and question runs: the read-only GitHub token and the model
+    # login. Never .env, and never the write token.
+    env_file:
+      - path: agent.env
+        required: false
+    environment:
+      JOTFLOW_RUNNER_KINDS: drafting,question
+      JOTFLOW_RUNNER_ALLOWED_HOSTS: agent
+    volumes:
+      # This service's own home, for the CLI's model login.
+      - agent-home:/home/agent
+    networks:
+      - agents
+      - agent-egress
+    read_only: true
+    tmpfs:
+      # Each run's private directory and MCP config live here, never on disk.
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  agent-exec:
+    profiles: [agent]
+    image: ${JOTFLOW_AGENT_IMAGE_REF:-jotflow-agent:local}
+    restart: unless-stopped
+    # Execution runs only, one at a time: the write GitHub token and the model
+    # login. Never .env, and never the read token.
+    env_file:
+      - path: agent-exec.env
+        required: false
+    environment:
+      JOTFLOW_RUNNER_KINDS: execution
+      JOTFLOW_RUNNER_ALLOWED_HOSTS: agent-exec
+    volumes:
+      # A separate home: nothing a drafting run writes can reach an execution run.
+      - agent-exec-home:/home/agent
+    networks:
+      - agents-exec
+      - agent-exec-egress
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  jotflow-data:
+  agent-home:
+  agent-exec-home:
+
+networks:
+  # Outbound access, for Slack's Socket Mode connection.
+  egress:
+  # No route out of the host. Each agent service meets JotFlow on its own
+  # internal network, so the drafting agent cannot reach agent-exec at all.
+  # Nothing on these networks is published.
+  agents:
+    internal: true
+  agents-exec:
+    internal: true
+  # Each agent's own way out, for its model API and GitHub.
+  agent-egress:
+  agent-exec-egress:

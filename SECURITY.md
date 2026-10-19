@@ -2,6 +2,8 @@
 
 JotFlow writes to GitHub repositories based on content posted in chat. Treat anything that could let untrusted channel content cause an unintended write, bypass the approval gate, or expose message content as a security issue.
 
+[docs/threat-model.md](docs/threat-model.md) describes what JotFlow protects, from whom, how each defence is enforced, and what v1 accepts.
+
 ## Reporting a vulnerability
 
 Please do not open a public issue for security problems.

@@ -185,9 +185,17 @@ A team never needs the source code. Each tagged release publishes two artifacts 
 | Artifact | Published to | Used for |
 |---|---|---|
 | Python package `jotflow` | PyPI | `uvx jotflow init`, the one-time interactive setup on the team's machine |
-| Container image `ghcr.io/jnkman787/jotflow` | GitHub's container registry | `jotflow run`, the always-on service |
+| Container images `ghcr.io/jnkman787/jotflow` and `jotflow-agent` | GitHub's container registry | `jotflow run`, the always-on service, and the team's agent containers |
 
 `jotflow init` writes `jotflow.toml`, `.env`, and a Compose file pinned to the matching image version, so the whole install is `uvx jotflow init` followed by `docker compose up -d`. The repository is where contributors work; cloning it is only needed to change JotFlow.
+
+How a release is made (#39, #87), from `.github/workflows/release.yml` on a `vX.Y.Z` tag:
+
+- One job checks that the tag, `pyproject.toml`, and `__version__` agree. Its version names both images and the package, so they cannot drift.
+- The images are built for amd64 and arm64, published as `:X.Y.Z` and `:latest`, and attested.
+- The package job builds the sdist and wheel from the tagged commit. It installs the wheel alone and renders the published Compose files from it, which must pass `docker compose config`.
+- Only after the images are published, the PyPI job publishes the package through PyPI's trusted publishing, with OIDC and no stored token, and attests the files' build provenance. It and the image publish job, which signs the images' attestations, are the only jobs holding `id-token: write`.
+- The wheel carries the repository's own Compose files and agent env examples. Outside a checkout, `jotflow init` writes them with each `build:` removed and the images pinned to its own version. An existing file is replaced only if the person agrees.
 
 JotFlow is a running service rather than an MCP server listed in an agent's configuration, because it must be connected to Slack when no agent session is open, decides when to start the agent, holds state across days, and serves the whole channel. The MCP connection is how the agent talks to JotFlow while a run lasts.
 
@@ -419,6 +427,8 @@ Setup is a first-class feature: `jotflow init` asks a few questions, checks the 
 Assignment requires a Slack user to GitHub handle mapping. A self-service slash command lets each person link their own account. Links are self-declared in v1, and cards mark them as unverified. `/jotflow link <login>` links the caller only, since it takes no user argument. The login must match GitHub's rule, and `@login` or a pasted profile link also works. `/jotflow link` shows the caller's link, and `/jotflow unlink` removes it. Guests and external Slack Connect users can't link, and a login someone else holds is refused without naming them. The store keeps only the Slack id, the login and the time, and the log keeps the Slack id and the action (#35). An assignee must be the linked login of one of the proposal's participants (#15). Because links are self-declared, someone can claim another person's login first. The card's "(unverified)" shows that, and verification, or an admin path to remove someone else's link, is later work.
 
 ## Security posture
+
+The full picture, by adversary and with the accepted v1 gaps, is in [threat-model.md](threat-model.md).
 
 - Slack content is untrusted input. It reaches only drafting runs. The shipped presets configure drafting runs with read-only GitHub access and no shell or write tools, and execution runs, which can write, receive only the approved structured fields, never the thread itself; because the approved body was drafted from Slack, the execution prompt treats it as content to write, never as instructions. This holds only when the team gives the agent separate read and write GitHub tokens, and only for the shipped presets; a custom command template is the team's responsibility.
 - The agent runs in its own container with an environment allowlist and no access to JotFlow's secrets.
