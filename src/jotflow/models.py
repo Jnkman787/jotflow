@@ -264,6 +264,21 @@ class ProposalRecord(BaseModel):
         ),
     )
     created_at: AwareDatetime
+    revision: int = Field(
+        default=1,
+        ge=1,
+        description="Rises with every change a card shows; the store sets it, not the caller",
+    )
+    card_revision: int | None = Field(
+        default=None,
+        ge=1,
+        description="The revision the posted card shows; behind revision means it needs an edit",
+    )
+
+    @property
+    def card_due(self) -> bool:
+        """Whether the proposal's card is missing or behind what the store holds (#152)."""
+        return self.card_revision is None or self.card_revision < self.revision
 
 
 class Run(BaseModel):

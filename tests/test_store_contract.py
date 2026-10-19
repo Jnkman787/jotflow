@@ -807,3 +807,72 @@ async def test_notices_survive_a_restart(tmp_path: Path) -> None:
         assert not await second.claim_notice("C0IDEAS01", "", "guide")
     finally:
         await second.close()
+
+
+# --- the card outbox (#152) ---------------------------------------------------
+
+
+async def test_a_new_proposal_is_due_for_a_card(store: Store) -> None:
+    await store.add_proposal(record("p1"))
+    (due,) = await store.cards_due()
+    assert (due.id, due.revision, due.card_revision, due.card_due) == ("p1", 1, None, True)
+
+
+async def test_a_shown_card_is_not_due_until_the_proposal_changes(store: Store) -> None:
+    await store.add_proposal(record("p1"))
+    await store.set_card_ts("p1", "1760781900.000100")
+    assert [p.id for p in await store.cards_due()] == ["p1"]  # recording the ts changes nothing
+    await store.mark_card_shown("p1", 1)
+    assert await store.cards_due() == []
+    await store.transition("p1", S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
+    (due,) = await store.cards_due()
+    assert due.revision == 2 and due.card_revision == 1
+
+
+async def test_marking_never_moves_backwards_or_past_the_store(store: Store) -> None:
+    await store.add_proposal(record("p1"))
+    await store.transition("p1", S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
+    await store.mark_card_shown("p1", 1)  # drawn before the approval landed
+    assert [p.id for p in await store.cards_due()] == ["p1"]
+    await store.mark_card_shown("p1", 99)
+    shown = await store.get_proposal("p1")
+    assert shown is not None and shown.card_revision == shown.revision == 2
+    await store.mark_card_shown("p1", 1)
+    again = await store.get_proposal("p1")
+    assert again is not None and again.card_revision == 2
+
+
+async def test_supersede_and_clear_make_a_card_due(store: Store) -> None:
+    for proposal_id in ("old", "new"):
+        await store.add_proposal(record(proposal_id))
+        await store.mark_card_shown(proposal_id, 1)
+    await store.supersede_pending(CH, "1760781600.000100", keep_id="new")
+    assert [p.id for p in await store.cards_due()] == ["old"]
+    await store.mark_card_shown("old", 99)
+    await store.transition("new", S.REJECTED)  # rejecting also clears the draft
+    assert [p.id for p in await store.cards_due()] == ["new"]
+    await store.mark_card_shown("new", 99)
+    await store.clear_draft("new")  # already cleared: nothing the card shows changed
+    assert await store.cards_due() == []
+
+
+async def test_cards_due_are_oldest_first_and_limited(store: Store) -> None:
+    for n in (3, 1, 2):
+        created = datetime(2026, 10, 18, 9, n, tzinfo=UTC)
+        await store.add_proposal(record(f"p{n}", thread=f"17607816{n:02d}.000100", created=created))
+    assert [p.id for p in await store.cards_due()] == ["p1", "p2", "p3"]
+    assert [p.id for p in await store.cards_due(limit=2)] == ["p1", "p2"]
+
+
+async def test_marking_an_unknown_proposal_fails(store: Store) -> None:
+    with pytest.raises(NotFoundError):
+        await store.mark_card_shown("nope", 1)
+
+
+def test_a_new_proposal_must_start_at_revision_one() -> None:
+    from jotflow.store.base import check_new_proposal
+
+    with pytest.raises(ValueError, match="revision 1"):
+        check_new_proposal(record().model_copy(update={"revision": 2}))
+    with pytest.raises(ValueError, match="no card yet"):
+        check_new_proposal(record().model_copy(update={"card_revision": 1}))

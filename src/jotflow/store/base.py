@@ -288,8 +288,10 @@ def check_new_proposal(record: ProposalRecord) -> None:
     check_id(record.thread_ts, "thread ts")
     if record.state is not ProposalState.PENDING:
         raise ValueError("a new proposal must be pending")
-    if record.card_ts is not None:
+    if record.card_ts is not None or record.card_revision is not None:
         raise ValueError("a new proposal has no card yet")
+    if record.revision != 1:
+        raise ValueError("a new proposal starts at revision 1")
     if record.content_hash or record.approved_by or record.approved_at or record.result:
         raise ValueError("a new proposal cannot be approved or carry a result yet")
     for user in record.participants:
@@ -507,6 +509,19 @@ class Store(Protocol):
 
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
         """Record the Slack ts of the proposal's card message, so later states edit it."""
+        ...
+
+    async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
+        """Proposals whose card is missing or behind, oldest first (#152).
+
+        Every change a card shows raises a proposal's revision. Recording a
+        card's ts does not.
+        """
+        ...
+
+    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+        """Record that the card now shows ``revision``. Never moves backwards, so a
+        change that landed while the card was being drawn keeps it due."""
         ...
 
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:

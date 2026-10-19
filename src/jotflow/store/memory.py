@@ -219,6 +219,7 @@ class MemoryStore:
                 now=self._clock(),
             )
             update: dict[str, object] = {
+                "revision": record.revision + 1,
                 "state": changes.state,
                 "content_hash": changes.content_hash,
                 "approved_by": changes.approved_by,
@@ -244,6 +245,19 @@ class MemoryStore:
             self._proposals[proposal_id] = record
             return record.model_copy(deep=True)
 
+    async def cards_due(self, limit: int = 50) -> list[ProposalRecord]:
+        due = [r for r in self._proposals.values() if r.card_due]
+        due.sort(key=lambda r: (r.created_at, r.id))
+        return [r.model_copy(deep=True) for r in due[:limit]]
+
+    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            shown = max(record.card_revision or 0, min(revision, record.revision))
+            self._proposals[proposal_id] = record.model_copy(update={"card_revision": shown})
+
     async def clear_draft(self, proposal_id: str) -> ProposalRecord:
         async with self._lock:
             record = self._proposals.get(proposal_id)
@@ -251,7 +265,8 @@ class MemoryStore:
                 raise NotFoundError(f"no proposal {proposal_id}")
             check_clearable(record)
             if record.draft_cleared_at is None:
-                record = record.model_copy(update=self._cleared(record), deep=True)
+                update = {**self._cleared(record), "revision": record.revision + 1}
+                record = record.model_copy(update=update, deep=True)
                 self._proposals[proposal_id] = record
             return record.model_copy(deep=True)
 
@@ -269,9 +284,12 @@ class MemoryStore:
             )
             for proposal_id in ids:
                 record = self._proposals[proposal_id]
-                self._proposals[proposal_id] = record.model_copy(
-                    update={"state": ProposalState.SUPERSEDED, **self._cleared(record)}, deep=True
-                )
+                update = {
+                    "state": ProposalState.SUPERSEDED,
+                    "revision": record.revision + 1,
+                    **self._cleared(record),
+                }
+                self._proposals[proposal_id] = record.model_copy(update=update, deep=True)
             return ids
 
     # Identity links
@@ -536,7 +554,8 @@ class MemoryStore:
                         now=now,
                     )
                     self._proposals[record.id] = record.model_copy(
-                        update={"state": changes.state}, deep=True
+                        update={"state": changes.state, "revision": record.revision + 1},
+                        deep=True,
                     )
                     reconciling.append(record.id)
                 seconds = timeouts.get(
