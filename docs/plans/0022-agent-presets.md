@@ -229,3 +229,82 @@ These come from security's second look and the review:
 - **Preset env.** A preset's extra env can no longer set a base name, an allowlisted name, `HOME`, `TMPDIR`, or any JotFlow, Slack, or GitHub name. The runner's own values always win, and a test covers each.
 - **Prompts.** A test pins that the prompt is the same for every run of a kind and never carries a run id, token, URL, path, or model.
 - **The preset in two places.** This was already handled by #136. The README explains that `[agent] preset` in `jotflow.toml` switches runs on and must match the runners, and the runner's startup line names its preset.
+
+## Second part: the Codex CLI preset (spike, 2026-10-19)
+
+I made a spike with Codex CLI 0.163.0 (`@openai/codex`, released 2026-10-15), with no model spend. Codex ran against a local fake Responses API that records the request, so the tool list sent to the model can be read. JotFlow's real MCP server ran on 127.0.0.1, with github-mcp-server 2.0.2 and a sentinel token.
+
+### What works
+
+- **Headless runs.** `codex exec --ephemeral --skip-git-repo-check <prompt>` with stdin closed, which the runner already does.
+- **A private config.** A per-run `CODEX_HOME=<run_dir>/codex` (0700) holds `config.toml` (0600) with both MCP servers:
+  - `[mcp_servers.jotflow] url` with `http_headers = { Authorization = "Bearer …" }`
+  - `[mcp_servers.github] command/args/env`, with the GitHub token in `env`
+
+  So neither token is in argv or the CLI's environment, the same rule as claude-code. Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so they're deleted with the run. Nothing was written to `HOME`. The sentinel tokens appeared only in the 0600 `config.toml`, not in stdout, stderr, the request to the model, or Codex's databases.
+- **Built-in tools off through `[features]`.** I turned off shell_tool, unified_exec, apps, browser_use, browser_use_external, computer_use, image_generation, multi_agent, plugins, remote_plugin, skill_search, skill_mcp_dependency_install, tool_suggest, view_image, hooks, memories, sleep_tool, goals, in_app_browser, and code_mode_host. Then `web_search = "disabled"` and `[tools.experimental_request_user_input] enabled = false`. With those, the request carried only these built-ins:
+  - `list_mcp_resources`, `list_mcp_resource_templates`, and `read_mcp_resource`
+  - `apply_patch`
+  - `tool_search`, through which MCP tools are found, since Codex defers them
+
+  There was no shell.
+- **Limits.** The model per run kind is `model` in the config. The GitHub server is limited per kind by its own `--read-only` and `--tools` flags, as with claude-code. Codex adds `enabled_tools` per MCP server, as a second layer.
+
+### What needs a decision
+
+1. **The MCP protocol version (D13).** JotFlow serves only 2026-07-28. By default Codex 0.163.0 initializes with 2025-06-18, which JotFlow refuses, so Codex sees no JotFlow tools. With `[features] mcp_2026_07_28 = true`, Codex connected and listed JotFlow's tools. The audit showed `server/discover` and `tools/list`, both served. But that flag is marked "under development" in 0.163.0. The options are:
+   - (a) Ship the preset with the flag, pinned to the version I verify.
+   - (b) Have JotFlow also serve 2025-06-18, which changes D13.
+   - (c) Wait for the flag to become stable.
+
+   I recommend (a), with a startup check in the runner's docs that the pinned version still supports the flag.
+2. **Built-ins that can't be removed.** The first is `apply_patch`, which edits files. The plan is `sandbox_mode = "read-only"` and `approval_policy = "never"` for every run kind, so any patch is refused. I haven't seen that refusal yet, because it needs a model to call the tool. The second is the MCP resource tools. github-mcp-server serves repository contents as resources. For drafting, that's within the read token's Contents read. The execution token has Issues only. That's acceptable as documented, but security should weigh in.
+3. **The model login.** A per-run `CODEX_HOME` means Codex's ChatGPT login (`auth.json` in the service's `~/.codex`) isn't seen. The safe choice is API-key login only, with `CODEX_API_KEY` or `OPENAI_API_KEY` through `JOTFLOW_AGENT_ENV_ALLOW`. Linking `auth.json` in would break when Codex refreshes and rewrites it.
+4. **A real check needs an OpenAI login and spend.** The spike can't confirm three things without a real model call:
+   - that `tool_search` finds JotFlow's tools, since only GitHub, which sends instructions, was listed as a search source
+   - that MCP calls run without an approval prompt under `approval_policy = "never"`
+   - that the read-only sandbox refuses `apply_patch`
+
+   `jotflow replay --agent codex` and `--execute` would check all three once the maintainer provides an OpenAI API key and approves the spend.
+
+### Next steps
+
+Pending those decisions:
+- add `CodexPreset` to `presets.py`, with the per-kind config, the model defaults, and `features.mcp_2026_07_28`
+- install `@openai/codex@0.163.0` in the image through `AGENT_NPM_PACKAGES`, where the team chooses Codex
+- add the tests that pin the generated config.toml and argv, and that no prompt carries run data
+- update docs/presets.md
+- run the real replay passes once an OpenAI key is approved
+
+### Decisions and what was built (2026-10-19)
+
+The lead decided on option (a). `features.mcp_2026_07_28` is on, pinned to Codex 0.163.0, and D13 is unchanged. The preset is **experimental** until a real model run confirms `tool_search`, approvals, and that `apply_patch` is refused. The login is an API key only. No OpenAI spend until the lead confirms.
+
+What was built:
+- **`CodexPreset` in `presets.py`.** It writes a per-run `CODEX_HOME` with a 0600 `config.toml`. `RunPlan.files` is new: extra private files, which the runner writes 0600 in 0700 directories inside the run directory, through `runner.write_private`, refusing any path outside it. There's also a small TOML writer, and `EXPERIMENTAL = {"codex"}`, which the runner's startup line reports.
+- **The prompt** is the same fixed per-kind text as claude-code, with no run data.
+- **Tests** pin the argv, the whole generated config per kind, the private file modes, refused paths, and an end-to-end runner run with a fake `codex` that checks the home is removed afterwards.
+- **A check against Codex 0.163.0** of the preset's own generated config, with a fake model API, found the same built-ins as the spike, no shell, JotFlow connected, and no token leaks.
+- **docs/presets.md** has a codex section.
+
+### Security's gating requirements (2026-10-19)
+
+1. **An apply_patch refusal for each kind.** `jotflow.testing.fake_responses_api` streams a scripted `apply_patch` call to Codex. The gate asserts Codex returned "rejected … read-only sandbox", no file was written, and the run ended by itself, so no prompt held it.
+2. **No shell or exec tool.** The gate asserts the offered tools are exactly the five known built-ins. This found that Codex 0.163.0 runs most current models in code mode, with a JavaScript `exec` tool and a sub-agent namespace that config can't turn off. So the preset pins the model to `gpt-5.5`, the only listed catalog model with flat tools, and `RunnerConfig` refuses other models through `verified_models`. A gate test shows the code-mode exec for a refused model.
+3. **Fail closed.** `CodexPreset.check_install()` runs at runner startup. It refuses unless `codex --version` is exactly 0.163.0 and `codex features list` has `mcp_2026_07_28`.
+4. **Docs.** Repository files read through GitHub's resource tools are untrusted text.
+
+CI has a new "Codex preset gate" job. It installs Codex from `ci/codex/package-lock.json` with `npm ci`, so the packages are pinned by integrity hash, and it runs the gate with `JOTFLOW_REQUIRE_CODEX=1`, so a missing Codex fails rather than skips.
+
+The preset stays experimental until a real model run confirms that `tool_search` finds JotFlow's tools, that calls aren't held for approval, and that the real model metadata keeps `gpt-5.5` flat.
+
+### Review: no Codex for execution (2026-10-19)
+
+Security found a blocker. Codex's execution runs still got `read_mcp_resource` and `list_mcp_resource_templates`, so the agent holding the write token could pull arbitrary repository text, such as an attacker's public README, into its context. The threat model promises execution sees approved fields only, and Claude Code's execution run has no resource tools. The fix, security's option 1:
+
+- **`CodexPreset.run_kinds`** is drafting and question only.
+- **`RunnerConfig`** refuses a preset for kinds outside its `run_kinds`. An agent-exec runner set to codex fails closed at startup with "use claude-code in agent-exec.env for execution". `plan()` refuses too.
+- **The gate, tests, presets.md, and the threat model** cover drafting and question only. A test shows an execution runner set to codex refuses to start.
+- **`write_private`** opens its file with `O_NOFOLLOW` and refuses a symlinked directory, with tests.
+
+**Follow-up.** Leaving experimental needs either a runtime check of the offered tool set, comparing each run's first request against the gate's set, or pinned model metadata, so Codex can't pick up a different tool mode for `gpt-5.5` from OpenAI's live model list.

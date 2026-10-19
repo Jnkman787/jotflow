@@ -39,7 +39,7 @@ import tempfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -181,6 +181,13 @@ class RunnerConfig:
         self._check_preset()
 
     def _check_preset(self) -> None:
+        allowed = getattr(self.preset, "run_kinds", None)
+        if allowed is not None and not self.kinds <= allowed:
+            names = " and ".join(sorted(k.value for k in self.kinds - allowed))
+            raise ConfigError(
+                f"the {self.agent.name} preset may not serve {names} runs; "
+                "use claude-code in agent-exec.env for execution"
+            )
         if self.preset is None and self.models:
             raise ConfigError(
                 "JOTFLOW_AGENT_MODEL settings need a preset; put the model in "
@@ -193,6 +200,14 @@ class RunnerConfig:
                 )
             if not MODEL_NAME.fullmatch(model):
                 raise ConfigError(f"{model!r} is not a model name")
+        verified = getattr(self.preset, "verified_models", None)
+        if verified is not None:
+            for kind, model in self.models.items():
+                if model not in verified:
+                    raise ConfigError(
+                        f"the {self.agent.name} preset accepts only these models, whose tools "
+                        f"were checked: {', '.join(verified)}; {kind.value} names {model!r}"
+                    )
         if self.preset is not None and self.preset.github_token_in_config:
             for token in (self.read_token, self.write_token):
                 if token is not None and not GITHUB_TOKEN_CHARS.fullmatch(token):
@@ -278,6 +293,37 @@ def child_env(
         }
     )
     return env
+
+
+def write_private(run_dir: Path, relative: str, text: str) -> Path:
+    """Write ``text`` to ``run_dir/relative``: the file 0600, any new directory 0700.
+
+    ``relative`` must stay inside the run directory, so a preset cannot write
+    anywhere else.
+    """
+    parts = PurePosixPath(relative).parts
+    if (
+        not parts
+        or PurePosixPath(relative).is_absolute()
+        or any(p in ("", ".", "..") for p in parts)
+    ):
+        raise ConfigError(
+            f"a preset file must be a plain path inside the run directory: {relative!r}"
+        )
+    target = run_dir.joinpath(*parts)
+    folder = run_dir
+    for part in parts[:-1]:
+        folder = folder / part
+        if folder.is_symlink():
+            raise ConfigError(f"a preset file's directory is a symlink: {relative!r}")
+        if not folder.exists():
+            folder.mkdir(mode=0o700)
+            folder.chmod(0o700)  # whatever the umask
+    # O_EXCL already refuses an existing file; O_NOFOLLOW refuses a symlink there too.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return target
 
 
 def time_limit(kind: RunKind) -> float:
@@ -399,6 +445,8 @@ class Runner:
             fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(plan.config, handle)
+            for relative, text in plan.files.items():
+                write_private(run_dir, relative, text)
             env = child_env(
                 self._config,
                 run.kind,
