@@ -5,9 +5,9 @@
 - Issue: #23
 - Also serves: #22 (the claude-code preset gets its first real runs)
 - Draft PR: #144
-- Status: implementing
+- Status: ready for review
 - Last verified: plan written against main at e7a30b5, 2026-10-18
-- Next safe action: add the instructions file and the packet fields
+- Next safe action: review #144; then #31 (#156) builds on its harness
 
 ## Objective and done-when
 
@@ -143,8 +143,8 @@ Two new fixtures:
 - [x] `jotflow replay --agent`, the local launcher, the stub preset in CI, `--repeat`, and the two invariants
 - [x] Run Claude Code against every fixture with N=3, record the results, and tune the instructions
 - [x] Docs: architecture.md's agent output contract and the packet, the fixtures README, and docs/presets.md
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
@@ -175,7 +175,7 @@ Two new fixtures:
 
   The new failure came from the pass-1 rule about not asking about ownership, which the agent overapplied. The rule now says both halves: ask when someone was mentioned and nobody took the work, and don't ask when nobody was mentioned. Single reruns afterwards matched: mention-without-ownership 3/3, bug-report 2/2, and mentions 1/1.
 
-  As the lead asked, there is no third full pass without their go-ahead.
+  The lead chose to mark the PR ready on this evidence. The final text has passed targeted reruns of the fixtures its last change touched, but not a full third pass. Real-world quality will be judged in a live sandbox (#55 and the maintainer's deployment). The next full pass is planned after #31, for the execution prompt.
 - **The claude-code plumbing.** With an invalid API key and a scratch HOME, `jotflow replay feature-request --agent claude-code` launched Claude Code 2.1.303 through the preset, and it exited 1 on the key, as expected. Real runs followed, as below.
 - **The approval hash.** Proposals without `hint_overruled` hash exactly as they did on main. A test pins the two hashes.
 - **The GitHub stand-in.** It serves the tool names, descriptions, and input schemas captured from github-mcp-server 2.0.2's `tools/list` with `--read-only`.
