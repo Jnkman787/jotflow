@@ -33,20 +33,20 @@ A name has at most 35 characters: letters, digits, spaces, `.`, `-` and `_`, sta
 
 ## What the manifest asks for
 
-In this release JotFlow only reads: it watches messages and reactions and checks channel details. The permissions marked *later* are for features in later releases, such as approval cards and the help message, and are asked for now so you don't have to reinstall the app when they arrive.
+Each permission below is used in this release. JotFlow asks for nothing it doesn't use, and it has no DM scopes.
 
 | Setting | Value | Why |
 |---|---|---|
 | Bot scopes | `channels:history`, `groups:history` | Read messages in public and private channels the bot is in |
 | | `channels:read`, `groups:read` | Confirm the bot is in each configured channel, and detect channels shared with other organisations |
-| | `chat:write` | *Later:* post proposal cards, questions, and issue links |
-| | `reactions:read`, `reactions:write` | Read reactions; *later:* acknowledge keywords and optional reaction approval |
-| | `pins:write` | *Later:* pin a short help message when JotFlow joins a channel |
-| | `users:read` | *Later:* show names on cards and skip guests and external users |
-| | `commands` | *Later:* the `/jotflow` slash command |
+| | `chat:write` | Post proposal cards, questions, and issue links |
+| | `reactions:read`, `reactions:write` | Read keyword and approval reactions, and react on the messages an issue came from |
+| | `pins:write` | Pin a short help message once per channel |
+| | `users:read` | Show names on cards, and keep guests and external users from approving |
+| | `commands` | The `/jotflow` slash command |
 | Events | `message.channels`, `message.groups`, `reaction_added`, `reaction_removed` | Wake JotFlow when someone posts, reacts, or takes a reaction back |
 | Socket Mode | on | No public URL is needed for a self-hosted install |
-| Interactivity | on | *Later:* Approve and Request Changes buttons and dialogs |
+| Interactivity | on | The card's buttons, repo menu, and dialogs |
 | App Home tabs | off | The app has no DM scopes, so messages sent to it would never be read |
 | Org-wide deploy | off | The app is internal to one workspace |
 
