@@ -455,7 +455,7 @@ docker compose exec jotflow jotflow operator list
 docker compose exec jotflow jotflow operator revoke alex
 ```
 
-`create` prints the token once, so pass it on privately. It lasts 30 days unless you add `--days`, up to 365. Repeat `--channel` for more channels. `list` shows each token's channels, expiry and last use, never the token. A revoked token stops working within 2 seconds.
+`create` prints the token once, so pass it on privately. It lasts 30 days unless you add `--days`, up to 365. Repeat `--channel` for more channels. `list` shows each token's channels, expiry and last use, never the token. A revoked token stops working within 2 seconds. A new token works at once, but while JotFlow is getting a flood of bad tokens it can take up to 2 seconds.
 
 No port is opened for this. The person's MCP client starts JotFlow's bridge inside the container as its server command, with the token in its environment:
 
