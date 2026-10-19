@@ -3,8 +3,8 @@
 ## Links and status
 
 - Issue: #41 (Refs, since #41 is done only when the maintainer completes the no-clone install)
-- Draft PR: to be opened
-- Status: draft
+- Draft PR: #189
+- Status: ready for review
 - Last verified: 2026-10-19, against main
 - Next safe action: review the wording; refresh both files when #185 and any other open feature PR merges
 
@@ -32,6 +32,8 @@ Done when:
 - The changelog can drift from main while more PRs merge before the tag. Whoever merges a user-facing PR adds its line under the unreleased section.
 
 ## Validation
+
+- CodeRabbit skipped: the free allowance was rate limited on 2026-10-19.
 
 - `make check` passes, including the line-endings check.
 - Every relative link resolves in the repo.
