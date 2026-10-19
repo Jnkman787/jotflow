@@ -41,7 +41,7 @@ From the issue, refined:
 3. Under `issue_links = "none"`, the footer is the marker only, with no names and no links.
 4. A real Claude Code run of `replay --execute` needs the maintainer's go-ahead, as #144's did: one pass, with the same limits.
 
-**The poster.** Proposals store participants sorted, so the poster isn't recorded. The execution `get_work` reads only the thread root's author id through the existing Slack reader, keeps nothing else, and looks the author up by name. If it can't, the footer says "Raised in Slack" without a poster.
+**The poster.** Proposals store participants sorted, so the poster isn't recorded. The execution `get_work` finds the thread root's author with `SlackPeople.authors`, which is #151's lookup, moved into `orchestrator/people.py` so approval and execution share it. It keeps only the user id and looks up a display name. A bot-posted root means there's no human poster, so the footer omits "by". A failed lookup leaves the poster out and never fails the write. The same cached `auth.test` gives the workspace URL.
 
 ## Design
 
