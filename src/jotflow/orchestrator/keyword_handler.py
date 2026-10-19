@@ -46,14 +46,16 @@ from jotflow.orchestrator.people import Person as Person  # re-exported: callers
 from jotflow.orchestrator.people import SlackPeople
 from jotflow.policy import Policy
 from jotflow.reactions import CONFIRM as REACTION_CONFIRM
-from jotflow.store.base import Store
+from jotflow.store.base import TEXT_MARK, Store
 
 log = logging.getLogger("jotflow.keywords")
 
 CONFIRM = REACTION_CONFIRM
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 
-Action = Literal["confirmed", "skipped", "attached", "refused", "ignored"]
+Action = Literal[
+    "confirmed", "skipped", "attached", "refused", "ignored", "hinted", "unskipped", "unhinted"
+]
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,8 @@ class KeywordHandler:
         ref = MessageRef(channel_id=channel, ts=ts, thread_ts=thread_ts)
         if keyword == "skip":
             await self._store.mark_chatter(ref, by="person")
+            # The text's own skip: no reaction removed later may undo it (#138).
+            await self._store.add_reaction_mark(channel, ts, TEXT_MARK, "skip")
             outcome = Outcome("skipped")
         elif keyword == "re":
             outcome = await self._attach(ref, rest)
@@ -134,14 +138,14 @@ class KeywordHandler:
         return None
 
     async def on_reaction(self, event: Mapping[str, Any]) -> Outcome:
-        """Handle an accepted reaction that may stand for a keyword."""
+        """Handle an accepted reaction that may stand for a keyword: skip, idea, or bug."""
         keyword = REACTIONS.get(str(event.get("reaction") or ""))
         raw_item = event.get("item")
         item: Mapping[str, Any] = raw_item if isinstance(raw_item, Mapping) else {}
         channel = str(item.get("channel") or "")
         ts = str(item.get("ts") or "")
         user = str(event.get("user") or "")
-        if keyword is None or not channel or not ts or not user:
+        if keyword not in ("skip", "idea", "bug") or not channel or not ts or not user:
             return Outcome("ignored")
         person = await self._slack.person(user)
         if person.guest or person.external:
@@ -152,28 +156,66 @@ class KeywordHandler:
         someone_else = author != user
         if someone_else and approvers and user not in approvers:
             return Outcome("ignored", "only the author or an approver may")
+        # Who reacted is recorded, so removing the reaction can take it back (#138).
+        await self._store.add_reaction_mark(channel, ts, user, keyword)
+        await self._slack.react(channel, ts, CONFIRM)
+        if keyword != "skip":
+            return Outcome("hinted", keyword)  # the work packet reads it as a hint (#139)
         stored = await self._store.get_message(channel, ts)
         ref = MessageRef(
             channel_id=channel, ts=ts, thread_ts=stored.ref.thread_ts if stored else None
         )
         await self._store.mark_chatter(ref, by="person")
-        await self._slack.react(channel, ts, CONFIRM)
         if someone_else:
             await self._slack.reply(
                 channel,
                 ref.thread_ts or ts,
                 f"{_mention(user)} marked {_mention(author)}'s message as not an idea, so it "
-                "stays out of drafting. If that is wrong, say so in this thread.",
+                f"stays out of drafting. {_mention(user)} can remove the reaction to undo it, "
+                "or say so in this thread.",
             )
         return Outcome("skipped")
+
+    async def on_reaction_removed(self, event: Mapping[str, Any]) -> Outcome:
+        """Take back what a removed keyword reaction meant (#138).
+
+        Slack lets only the person who added a reaction remove it, so this is
+        always the person who reacted, who passed the rules when they did. A
+        reaction that never counted, a guest's say, has no mark and changes
+        nothing. A skip is undone only when nobody else's skip reaction is
+        left, and never when the message's own text says ``skip:``.
+        """
+        keyword = REACTIONS.get(str(event.get("reaction") or ""))
+        raw_item = event.get("item")
+        item: Mapping[str, Any] = raw_item if isinstance(raw_item, Mapping) else {}
+        channel = str(item.get("channel") or "")
+        ts = str(item.get("ts") or "")
+        user = str(event.get("user") or "")
+        if keyword not in ("skip", "idea", "bug") or not channel or not ts or not user:
+            return Outcome("ignored")
+        if not await self._store.remove_reaction_mark(channel, ts, user, keyword):
+            return Outcome("ignored", "that reaction never counted")
+        if keyword != "skip":
+            return Outcome("unhinted", keyword)
+        remaining = await self._store.reaction_marks(channel, ts)
+        if any(mark.keyword == "skip" for mark in remaining):
+            return Outcome("ignored", "someone else's skip reaction is still there")
+        stored = await self._store.get_message(channel, ts)
+        if stored is None or not await self._store.unmark_chatter(stored.ref):
+            return Outcome("ignored", "the message is not a person's chatter")
+        log.info("skip undone on %s in %s", ts, channel)
+        # The thread to arm again, so the message reaches drafting.
+        return Outcome("unskipped", stored.ref.thread_ts or ts)
 
 
 class BoltKeywordSlack:
     """:class:`KeywordSlack` over slack-sdk's client."""
 
-    def __init__(self, client: Any, team_id: str | None = None) -> None:
+    def __init__(
+        self, client: Any, team_id: str | None = None, *, people: SlackPeople | None = None
+    ) -> None:
         self._client = client
-        self._people = SlackPeople(client, team_id)
+        self._people = people or SlackPeople(client, team_id)
 
     async def _own_team(self) -> str | None:
         """This workspace's id, from ``auth.test`` once, unless it was given."""

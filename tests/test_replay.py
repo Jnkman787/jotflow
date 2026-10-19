@@ -205,7 +205,7 @@ async def test_a_run_that_does_not_start_is_an_error() -> None:
             return None
 
     with pytest.raises(module.ReplayError, match="did not start"):
-        await module._run_script(state, Stuck(), module.TokenRegistry(), [])  # type: ignore[arg-type]
+        await module.run_script(state, Stuck(), module.TokenRegistry(), [])  # type: ignore[arg-type]
 
 
 async def test_missing_topics_and_chatter_are_reported() -> None:

@@ -56,3 +56,22 @@ def unsafe_text_problem(text: str) -> str | None:
     if _invisible_format_char(text):
         return "must not contain invisible characters such as zero-width spaces"
     return None
+
+
+def without_unsafe_chars(text: str) -> str:
+    """``text`` with the characters :func:`unsafe_text_problem` refuses taken out.
+
+    Control characters and line breaks become spaces; bidirectional overrides
+    and invisible format characters are dropped, so they cannot reorder or hide
+    text where it is shown.
+    """
+    out: list[str] = []
+    for char in text:
+        category = unicodedata.category(char)
+        if category in {"Cc", "Zl", "Zp"}:
+            out.append(" ")
+        elif category == "Cf" or char in _BIDI_CONTROLS:
+            continue
+        else:
+            out.append(char)
+    return "".join(out)

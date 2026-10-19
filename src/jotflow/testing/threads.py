@@ -192,6 +192,8 @@ class GithubIssue(_Strict):
     state: Literal["open", "closed"] = "open"
     body: str = ""
     labels: tuple[str, ...] = ()
+    assignees: tuple[str, ...] = ()
+    comments: tuple[str, ...] = Field(default=(), description="Comment bodies, oldest first")
 
 
 class GithubRepo(_Strict):

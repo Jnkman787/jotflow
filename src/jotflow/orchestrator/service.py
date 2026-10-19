@@ -64,7 +64,7 @@ from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, 
 from jotflow.orchestrator.modes import AutoApprover, BoltModeSlack, ModeCommand, ModeSlack
 from jotflow.orchestrator.notices import GiveUpNotice
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
-from jotflow.orchestrator.people import SlackPeople
+from jotflow.orchestrator.people import SlackAttribution, SlackPeople
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
@@ -290,6 +290,8 @@ class Orchestrator:
         await lifecycle.recover()
         # One subscriber draws every card, outside any MCP write path (#152).
         people = self._people or BoltPeople(self._client)
+        # One auth.test for the whole process: the team check and the workspace URL.
+        slack_people = SlackPeople(self._client)
         self.cards = CardSync(
             self._store,
             self._policy,
@@ -303,11 +305,11 @@ class Orchestrator:
             self._store, self._policy, self._thread_slack or BoltThreadSlack(self._client)
         )
         # Each person links only their own GitHub login (#35).
-        self.links = LinkCommand(self._store, self._link_people or SlackPeople(self._client))
+        self.links = LinkCommand(self._store, self._link_people or slack_people)
         self.modes = ModeCommand(
             self._store,
             self._policy,
-            self._mode_slack or BoltModeSlack(self._client, SlackPeople(self._client), people),
+            self._mode_slack or BoltModeSlack(self._client, slack_people, people),
         )
         store, policy = self._store, self._policy
 
@@ -318,7 +320,9 @@ class Orchestrator:
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
         # an approved proposal's execution run waits in the queue until they are.
-        approval_slack = self._approval_slack or BoltApprovalSlack(self._client)
+        approval_slack = self._approval_slack or BoltApprovalSlack(
+            self._client, people=slack_people
+        )
         self.approval = ApprovalHandler(
             self._store,
             self._policy,
@@ -337,14 +341,21 @@ class Orchestrator:
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
-            self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
+            self._store,
+            self._policy,
+            self._keyword_slack or BoltKeywordSlack(self._client, people=slack_people),
         )
         self._help = HelpHandler(
             self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
         tools = (
-            *read_tools(self._store, self._policy, source),
+            *read_tools(
+                self._store,
+                self._policy,
+                source,
+                attribution=SlackAttribution(slack_people, people.name),
+            ),
             *write_tools(self._store, self._policy, poster),
         )
         self._server = self._make_server(self._settings, self.registry, tools)
@@ -419,8 +430,13 @@ class Orchestrator:
             try:
                 if decision.kind == "message":
                     await self._keywords.on_message(event)
-                else:
+                elif decision.kind == "reaction":
                     await self._keywords.on_reaction(event)
+                else:
+                    outcome = await self._keywords.on_reaction_removed(event)
+                    if outcome.action == "unskipped":
+                        # The skip is undone: the thread drafts again (#138).
+                        await self._arm_thread(decision.ref.channel_id, outcome.detail)
             except Exception:
                 log.exception("could not apply a keyword")
             if decision.kind == "reaction" and self.approval is not None:

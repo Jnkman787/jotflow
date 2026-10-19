@@ -330,7 +330,7 @@ async def test_with_approvers_off_anyone_may_skip_and_it_is_said_in_the_thread(
             ONE,
             ROOT,
             "<@U0BLAKE> marked <@U0ALEX>'s message as not an idea, so it stays out of "
-            "drafting. If that is wrong, say so in this thread.",
+            "drafting. <@U0BLAKE> can remove the reaction to undo it, or say so in this thread.",
         )
     ]
 
@@ -584,3 +584,87 @@ def test_ordinary_sentences_and_real_keywords_are_not_near_misses(text: str) -> 
     from jotflow.orchestrator.keywords import near_miss
 
     assert near_miss(text) is None
+
+
+# --- reactions both ways (#138, #139) ------------------------------------------------------
+
+
+def removed(user: str, name: str = "no_entry_sign") -> dict[str, Any]:
+    return {**reaction(user, user, name), "type": "reaction_removed"}
+
+
+async def test_removing_the_skip_reaction_undoes_the_skip(store: Store) -> None:
+    handler = KeywordHandler(store, policy(), FakeSlack())
+    await handler.on_reaction(reaction("U0ALEX", "U0ALEX"))
+    undone = await handler.on_reaction_removed(removed("U0ALEX"))
+    assert (undone.action, undone.detail) == ("unskipped", ROOT)
+    assert await store.get_message(ONE, ROOT) is None
+    assert await store.reaction_marks(ONE, ROOT) == []
+
+
+async def test_a_skip_stays_while_someone_elses_skip_reaction_remains(store: Store) -> None:
+    handler = KeywordHandler(store, policy(), FakeSlack())
+    await handler.on_reaction(reaction("U0ALEX", "U0ALEX"))
+    await handler.on_reaction(reaction("U0BLAKE", "U0ALEX"))
+    kept = await handler.on_reaction_removed(removed("U0ALEX"))
+    assert kept.action == "ignored"
+    link = await store.get_message(ONE, ROOT)
+    assert link is not None and link.chatter
+    assert (await handler.on_reaction_removed(removed("U0BLAKE"))).action == "unskipped"
+
+
+async def test_removing_a_reaction_never_undoes_a_skip_in_the_text(store: Store) -> None:
+    handler = KeywordHandler(store, policy(), FakeSlack())
+    await handler.on_message(msg("skip: not an idea"))
+    await handler.on_reaction(reaction("U0ALEX", "U0ALEX"))
+    assert (await handler.on_reaction_removed(removed("U0ALEX"))).action == "ignored"
+    link = await store.get_message(ONE, ROOT)
+    assert link is not None and link.chatter
+
+
+async def test_a_reaction_that_never_counted_undoes_nothing(store: Store) -> None:
+    slack = FakeSlack({"U0GUEST": Person("U0GUEST", guest=True)})
+    handler = KeywordHandler(store, policy(), slack)
+    await handler.on_reaction(reaction("U0ALEX", "U0ALEX"))
+    await handler.on_reaction(reaction("U0GUEST", "U0ALEX"))  # ignored: a guest
+    assert (await handler.on_reaction_removed(removed("U0GUEST"))).action == "ignored"
+    link = await store.get_message(ONE, ROOT)
+    assert link is not None and link.chatter
+    assert (await handler.on_reaction_removed(removed("U0ALEX", "thumbsup"))).action == "ignored"
+
+
+@pytest.mark.parametrize(("name", "keyword"), [("bulb", "idea"), ("bug", "bug")])
+async def test_an_idea_or_bug_reaction_is_a_hint_not_chatter(
+    store: Store, name: str, keyword: str
+) -> None:
+    slack = FakeSlack()
+    handler = KeywordHandler(store, policy(), slack)
+    outcome = await handler.on_reaction(reaction("U0ALEX", "U0ALEX", name))
+    assert (outcome.action, outcome.detail) == ("hinted", keyword)
+    assert [m.keyword for m in await store.reaction_marks(ONE, ROOT)] == [keyword]
+    assert await store.get_message(ONE, ROOT) is None
+    assert slack.reactions == [(ONE, ROOT, CONFIRM)] and slack.replies == []
+    removal = await handler.on_reaction_removed(removed("U0ALEX", name))
+    assert removal.action == "unhinted"
+    assert await store.reaction_marks(ONE, ROOT) == []
+
+
+async def test_hint_reactions_follow_the_skip_rules(store: Store) -> None:
+    slack = FakeSlack({"U0GUEST": Person("U0GUEST", external=True)})
+    handler = KeywordHandler(store, policy(approvers=("U0LEAD",)), slack)
+    assert (await handler.on_reaction(reaction("U0GUEST", "U0GUEST", "bulb"))).action == "ignored"
+    assert (await handler.on_reaction(reaction("U0BLAKE", "U0ALEX", "bulb"))).action == "ignored"
+    assert (await handler.on_reaction(reaction("U0LEAD", "U0ALEX", "bulb"))).action == "hinted"
+
+
+def test_every_keyword_reaction_is_kept_apart_from_jotflows_own() -> None:
+    from jotflow.reactions import KEYWORD_REACTIONS, reserved
+
+    assert {"no_entry_sign", "bulb", "bug"} <= set(KEYWORD_REACTIONS)
+    assert set(KEYWORD_REACTIONS) <= reserved()
+    with pytest.raises(ValueError):
+        Policy.model_validate({"issue_reaction": "bulb", "channels": {ONE: {"repos": [WEB]}}})
+    with pytest.raises(ValueError):
+        Policy.model_validate(
+            {"approval": {"reaction": "bug"}, "channels": {ONE: {"repos": [WEB]}}}
+        )

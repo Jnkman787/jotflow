@@ -92,6 +92,7 @@ class AgentOptions:
     time_limit: float = DEFAULT_TIME_LIMIT
     models: Mapping[RunKind, str] = field(default_factory=dict)
     usage_file: Path | None = None  # claude-code: where its result's numbers are appended
+    execute: bool = False  # run approved proposals' execution runs instead (#31)
 
 
 def _preset(options: AgentOptions, index: int) -> Preset:
@@ -120,17 +121,22 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-def _fake_github(thread: SavedThread, root: Path) -> Path:
-    """Write the fixture's github block and a wrapper the preset starts as its server."""
+def _fake_github(thread: SavedThread, root: Path, *, log: Path | None = None) -> Path:
+    """Write the fixture's github block and a wrapper the preset starts as its server.
+
+    With ``log``, every write the fake server makes is appended there (#31).
+    """
     data = root / "github.json"
     data.write_text(
         json.dumps({name: repo.model_dump(mode="json") for name, repo in thread.github.items()}),
         encoding="utf-8",
     )
+    logging = f' --log "{log}"' if log is not None else ""
     wrapper = root / "github-mcp-server"
     wrapper.write_text(
         "#!/bin/sh\n"
-        f'exec "{sys.executable}" -I -m jotflow.testing.fake_github_mcp --data "{data}" "$@"\n',
+        f'exec "{sys.executable}" -I -m jotflow.testing.fake_github_mcp --data "{data}"'
+        f'{logging} "$@"\n',
         encoding="utf-8",
     )
     wrapper.chmod(stat.S_IRWXU)
@@ -292,8 +298,13 @@ async def repeat(
 ) -> tuple[Tally, list[ReplayReport]]:
     tally = Tally(thread.name)
     reports = []
+    from jotflow.replay_execute import replay_execution
+
     for _ in range(times):
-        report = await replay_with_agent(thread, options)
+        if options.execute:
+            report = await replay_execution(thread, options)
+        else:
+            report = await replay_with_agent(thread, options)
         tally.add(report)
         reports.append(report)
     return tally, reports

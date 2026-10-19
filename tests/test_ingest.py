@@ -183,3 +183,24 @@ def test_ignored_event_logs_at_debug(events: EventFilter, caplog: pytest.LogCapt
     assert record.levelno == logging.DEBUG
     assert "unconfigured channel" in record.getMessage()
     assert SECRET_TEXT not in caplog.text
+
+
+# --- reaction_removed (#138) ------------------------------------------------------------------
+
+
+def test_a_removed_reaction_is_accepted_and_re_adding_it_is_not_a_duplicate() -> None:
+    from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
+
+    events = EventFilter(["C0IDEAS01"], BotIdentity("U0BOT", "B0BOT"))
+    item = {"type": "message", "channel": "C0IDEAS01", "ts": "1.1"}
+    added = {"type": "reaction_added", "user": "U0ALEX", "reaction": "bulb", "item": item}
+    gone = {**added, "type": "reaction_removed"}
+    first = events.classify(added)
+    assert isinstance(first, Accepted) and first.kind == "reaction"
+    assert not isinstance(events.classify(added), Accepted)  # a redelivery
+    removal = events.classify(gone)
+    assert isinstance(removal, Accepted) and removal.kind == "reaction_removed"
+    again = events.classify(added)
+    assert isinstance(again, Accepted) and again.kind == "reaction"
+    own = {**gone, "user": "U0BOT"}
+    assert not isinstance(events.classify(own), Accepted)

@@ -602,6 +602,52 @@ def test_the_slack_phase_fits_inside_the_request_timeout() -> None:
     assert SLACK_PHASE_SECONDS < REQUEST_TIMEOUT_SECONDS
 
 
+async def test_execution_work_carries_the_exact_writes_and_instructions(
+    store: MemoryStore, clock: Clock
+) -> None:
+    from jotflow.execution.writes import marker
+    from jotflow.whiteboard.read_tools import EXECUTION_INSTRUCTIONS
+
+    class Attribution:
+        async def authors(self, refs: Any) -> set[str]:
+            return {"U0SAM"}
+
+        async def name(self, user_id: str) -> str | None:
+            return {"U0SAM": "Sam", "U0ALEX": "Alex"}.get(user_id)
+
+        async def workspace_url(self) -> str | None:
+            return "https://acme-co.slack.com/"
+
+    await approved(store)
+    grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
+    spec = checked_registry(
+        read_tools(store, POLICY, FakeSource(), clock=clock, attribution=Attribution())
+    )["get_work"]
+    work: Work = await call(spec, grant)
+    execution = work.execution
+    assert execution is not None
+    assert execution.instructions == EXECUTION_INSTRUCTIONS
+    assert execution.checks.marker == marker("p1")
+    assert execution.checks.marker_in == "recent_issues"
+    [write] = execution.writes
+    assert write.tool == "issue_write"
+    body = write.arguments["body"]
+    assert body.startswith("Show progress.\n\n---\nRaised in Slack by Sam.")
+    assert body.endswith(marker("p1"))
+    assert SAID not in work.model_dump_json()
+
+
+async def test_execution_work_without_slack_still_marks(store: MemoryStore, clock: Clock) -> None:
+    from jotflow.execution.writes import marker
+
+    await approved(store)
+    grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
+    work: Work = await call(tools(store, clock)["get_work"], grant)
+    assert work.execution is not None
+    [write] = work.execution.writes
+    assert write.arguments["body"] == f"Show progress.\n\n---\nRaised in Slack.\n{marker('p1')}"
+
+
 async def test_an_execution_packet_leaves_out_the_agents_visibility_report(
     store: MemoryStore, clock: Clock
 ) -> None:

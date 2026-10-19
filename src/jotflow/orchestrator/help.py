@@ -45,10 +45,10 @@ def keyword_lines() -> list[str]:
 
 
 def reaction_lines() -> list[str]:
-    return [
-        f"React with :{name}: to {keyword} a message instead."
-        for name, keyword in REACTIONS.items()
-    ]
+    """One line naming each keyword's reaction, from the single list in reactions.py."""
+    pairs = [f":{name}: for {keyword}:" for name, keyword in REACTIONS.items()]
+    listed = ", ".join(pairs[:-1]) + (", or " if len(pairs) > 1 else "") + pairs[-1]
+    return [f"Or react instead: {listed}. Remove your reaction to take it back."]
 
 
 def help_text() -> str:
