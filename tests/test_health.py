@@ -227,7 +227,7 @@ async def test_run_until_stopped_beats_while_connected_then_cleans_up(
 
 
 async def test_a_connection_without_a_state_is_not_watched(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     path = tmp_path / "hb"
     monkeypatch.setenv("JOTFLOW_HEARTBEAT_FILE", str(path))
@@ -239,5 +239,7 @@ async def test_a_connection_without_a_state_is_not_watched(
 
     stop = asyncio.Event()
     stop.set()
-    await run_command.run_until_stopped(Bare(), stop)
+    with caplog.at_level(logging.WARNING, logger="jotflow.run"):
+        await run_command.run_until_stopped(Bare(), stop)
     assert not path.exists()
+    assert "does not report whether it is connected" in caplog.text

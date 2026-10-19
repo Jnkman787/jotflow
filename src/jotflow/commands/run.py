@@ -160,6 +160,11 @@ async def run_until_stopped(connection: Connection, stop: asyncio.Event) -> None
         if watched is not None
         else None
     )
+    if watch is None:
+        log.warning(
+            "the Slack connection does not report whether it is connected, so there is no "
+            "heartbeat and jotflow health will say unhealthy"
+        )
     try:
         await stop.wait()
         log.info("shutting down")
