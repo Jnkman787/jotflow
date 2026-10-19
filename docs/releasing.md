@@ -56,7 +56,7 @@ Make these changes in one pull request, `chore(release): 0.1.0`, through the nor
    - `__version__` in `src/jotflow/__init__.py`
    - `uv.lock`, by running `uv lock` after the first two. CI's `uv sync --locked` fails the pull request if you forget, and the release's `uv lock --check` fails the tag
 2. **CHANGELOG.md:** change `## [0.1.0] - unreleased` to today's date, as `## [0.1.0] - 2026-10-20`.
-3. **README.md:** make the status banner say the release, for example `**Status: 0.1.0, the first release.**`. Remove any line that still says "preparing".
+3. **README.md:** make the status banner say the release, for example `**Status: 0.1.0, the first release.**`. Remove any line that still says "preparing". The README links to `docs/` by absolute URLs on `main`, so they work on PyPI too. Decide whether this release pins them to its tag, for example `blob/v0.1.0/docs/install.md`, so the PyPI page always matches the released docs.
 4. **docs/releases/v0.1.0.md:** read it once more against the CHANGELOG.
 
 `make check` passes, and the pull request also runs release.yml's dry run, because it touches `pyproject.toml`. That dry run builds both images for both architectures, and the package, and pushes nothing, so a release is proven before its tag exists. Merge only when every check is green.
@@ -128,7 +128,7 @@ The run concludes green with every job done. A failed job in steps 2 to 4 can be
    docker compose ps   # jotflow becomes healthy
    ```
 
-   Follow the README alone, with a Slack workspace you can test in. Post in a watched channel and approve the card. This run is the evidence for these boxes:
+   Follow the README and docs/install.md alone, with a Slack workspace you can test in. Post in a watched channel and approve the card. This run is the evidence for these boxes:
    - #87: the clean-machine `uvx jotflow init` box
    - #39: the box for the `:X.Y.Z` and `:latest` tags
    - #41: the README-only install

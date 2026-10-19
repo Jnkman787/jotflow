@@ -286,7 +286,7 @@ class Console:
 
 
 def _step(console: Console, number: int) -> None:
-    """A heading that matches the README's numbered setup steps."""
+    """A heading that matches docs/install.md's numbered setup steps."""
     console.say(f"Setup step {number} of {STEPS}: {STEP_TITLES[number]}")
 
 

@@ -621,13 +621,15 @@ def test_any_writes_no_labels_line(options: InitOptions) -> None:
 # --- #100: fresh-eyes fixes ---------------------------------------------------
 
 
-def test_steps_are_numbered_like_the_readme(options: InitOptions) -> None:
+def test_steps_are_numbered_like_the_install_guide(options: InitOptions) -> None:
     text = _fresh_session(options).text
     headings = [line for line in text.splitlines() if line.startswith("Setup step ")]
     assert headings == [f"Setup step {n} of 6: {init.STEP_TITLES[n]}" for n in range(1, 7)]
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    guide = (Path(__file__).resolve().parents[1] / "docs" / "install.md").read_text(
+        encoding="utf-8"
+    )
     for n, title in init.STEP_TITLES.items():
-        assert f"{n}. **{title}" in readme, title
+        assert f"{n}. **{title}" in guide, title
 
 
 def test_an_existing_app_skips_the_create_link(options: InitOptions) -> None:

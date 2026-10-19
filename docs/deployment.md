@@ -1,6 +1,6 @@
 # Deploying JotFlow
 
-The README's quickstart gets JotFlow running on one machine. This guide is for whoever keeps it running after that: on a server, through upgrades and restores, and beyond plain Docker Compose.
+The [install guide](install.md) gets JotFlow running on one machine. This guide is for whoever keeps it running after that: on a server, through upgrades and restores, and beyond plain Docker Compose.
 
 It links rather than repeats. What JotFlow protects, and what it deliberately doesn't, is in the [threat model](threat-model.md). How the parts fit together is in [architecture.md](architecture.md).
 
@@ -101,7 +101,7 @@ Database migrations run when JotFlow starts, each in one transaction, so a faile
 
 - **Is it connected?** `docker compose ps` shows `healthy` while JotFlow is connected to Slack. The health check, `jotflow health`, reads a heartbeat that `jotflow run` rewrites every 30 seconds while connected, so a lost connection shows `unhealthy` within a few minutes. Point any monitoring at that status.
 - **Logs** go to Docker: `docker compose logs -f jotflow`. They hold ids, timestamps, and reasons, never message text. Every line passes one redacting formatter that also removes every token shape JotFlow knows. `--log-bodies` is refused inside JotFlow's image, because Docker keeps its logs.
-- **Is the Slack app set up right?** The README's live check posts one test message and confirms JotFlow hears it. It runs from the JotFlow folder on the host, not in the container, which refuses it.
+- **Is the Slack app set up right?** The [live check](troubleshooting.md) posts one test message and confirms JotFlow hears it. It runs from the JotFlow folder on the host, not in the container, which refuses it.
 
 ## Beyond Compose
 

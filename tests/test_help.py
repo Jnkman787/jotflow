@@ -29,7 +29,7 @@ from jotflow.store import MemoryStore, SqliteStore, Store
 CH = "C0IDEAS01"
 QUIET = "C0QUIET01"
 ROOT = "1760781600.000100"
-README = Path(__file__).resolve().parents[1] / "README.md"
+USAGE = Path(__file__).resolve().parents[1] / "docs" / "usage.md"
 WEB = {"repo": "acme-co/web", "nickname": "web", "description": "Web"}
 API = {"repo": "acme-co/api", "nickname": "api", "description": "API"}
 
@@ -99,11 +99,9 @@ def test_the_guide_names_every_keyword_and_the_help_command() -> None:
     assert "/jotflow help" in guide and "after a person approves" in guide
 
 
-def test_the_readme_shows_exactly_the_help_text() -> None:
-    readme = README.read_text(encoding="utf-8")
-    block = readme.split("<!-- jotflow-help:start -->\n", 1)[1].split("<!-- jotflow-help:end -->")[
-        0
-    ]
+def test_the_usage_guide_shows_exactly_the_help_text() -> None:
+    usage = USAGE.read_text(encoding="utf-8")
+    block = usage.split("<!-- jotflow-help:start -->\n", 1)[1].split("<!-- jotflow-help:end -->")[0]
     assert block == f"```\n{help_text()}\n```\n"
 
 
