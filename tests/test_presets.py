@@ -371,3 +371,54 @@ def test_runner_preset_settings_problems_exit_2(
         monkeypatch.setenv(name, value)
     assert runner_command.run(runner_command.argparse.Namespace()) == runner_command.EXIT_CONFIG
     assert problem in capsys.readouterr().err
+
+
+def test_no_prompt_carries_run_data(tmp_path: Path) -> None:
+    """D1: the prompt is fixed per kind. Run ids, tokens, paths, and models never reach it."""
+    for kind in RunKind:
+        run = context(kind, tmp_path, model="claude-sonnet-5-5")
+        plan = CLAUDE_CODE.plan(run)
+        prompt = plan.argv[plan.argv.index("-p") + 1]
+        assert prompt == presets.CLAUDE_PROMPTS[kind]
+        for value in (run.run_id, run.mcp_token, run.github_token, run.mcp_url, str(tmp_path)):
+            assert value not in prompt
+        assert "claude-sonnet" not in prompt
+    # The same prompt for any two runs of one kind.
+    first = CLAUDE_CODE.plan(context(RunKind.DRAFTING, tmp_path / "a"))
+    second = CLAUDE_CODE.plan(
+        RunContext(
+            kind=RunKind.DRAFTING,
+            run_id="run-2",
+            run_dir=tmp_path / "b",
+            config_path=tmp_path / "b" / "mcp.json",
+            mcp_url="http://elsewhere:1/mcp",
+            mcp_token="jfr_" + "u" * 43,
+            github_token="github_pat_other",
+            model="haiku",
+        )
+    )
+    assert first.argv[2] == second.argv[2]
+
+
+def test_preset_env_cannot_replace_base_allowlisted_or_runner_names(tmp_path: Path) -> None:
+    from jotflow.adapters.runner import child_env
+
+    config = preset_config(env_allow=("ANTHROPIC_API_KEY",))
+    environ = {"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "model-key", "HOME": "/home/agent"}
+    extra = {
+        "PATH": "/evil",
+        "NODE_OPTIONS": "--require /evil.js",  # a base name, even when the runner has none
+        "ANTHROPIC_API_KEY": "other",
+        "HOME": "/evil",
+        "TMPDIR": "/evil",
+        "JOTFLOW_RUN_ID": "other",
+        "XDG_CACHE_HOME": str(tmp_path / "cache"),
+    }
+    env = child_env(config, RunKind.DRAFTING, "run-1", tmp_path, environ, extra=extra)
+    assert env["PATH"] == "/usr/bin"
+    assert "NODE_OPTIONS" not in env
+    assert env["ANTHROPIC_API_KEY"] == "model-key"
+    assert env["HOME"] == "/home/agent"
+    assert env["TMPDIR"] == str(tmp_path)
+    assert env["JOTFLOW_RUN_ID"] == "run-1"
+    assert env["XDG_CACHE_HOME"] == str(tmp_path / "cache")
