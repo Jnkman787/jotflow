@@ -278,6 +278,19 @@ Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it mus
 
 The first start builds JotFlow's image, which takes a minute or two.
 
+**Run a published release instead of building.** Each release tag `vX.Y.Z` publishes `ghcr.io/jnkman787/jotflow:X.Y.Z` and `ghcr.io/jnkman787/jotflow-agent:X.Y.Z` for amd64 and arm64, plus `:latest`. To use them, add these to `.env` and run `docker compose pull` before `docker compose up -d`:
+
+```
+JOTFLOW_IMAGE_REF=ghcr.io/jnkman787/jotflow:X.Y.Z
+JOTFLOW_AGENT_IMAGE_REF=ghcr.io/jnkman787/jotflow-agent:X.Y.Z
+```
+
+Pin the exact version rather than `latest`, so an upgrade happens only when you change it. A source build can also tag itself per commit through the same lines, which keeps older builds around for a quick rollback. Each published image carries a signed build provenance attestation, which GitHub's CLI checks:
+
+```
+gh attestation verify oci://ghcr.io/jnkman787/jotflow:X.Y.Z --owner Jnkman787
+```
+
 ### 6. See it working
 
 ```

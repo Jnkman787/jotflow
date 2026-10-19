@@ -34,7 +34,11 @@ def refused(server: FakeGithub, tool: str, /, **arguments: Any) -> str:
 
 
 def test_it_lists_github_mcp_server_2_0_2s_read_tools() -> None:
-    assert {t["name"] for t in tool_definitions()} == READ_TOOLS
+    assert {t["name"] for t in tool_definitions()} == READ_TOOLS | {
+        "issue_write",
+        "add_issue_comment",
+    }
+    assert {t["name"] for t in fake().tools} == READ_TOOLS  # read-only by default
     for tool in tool_definitions():
         assert tool["inputSchema"]["type"] == "object"
     assert {t["name"] for t in fake(["list_label", "nope"]).tools} == {"list_label"}
@@ -194,3 +198,116 @@ def test_main_reads_its_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(sys, "stdout", out)
     assert main(["stdio", "--data", str(data)]) == 0
     assert json.loads(out.getvalue())["result"] == {}
+
+
+def writer(tmp_path: Path) -> tuple[FakeGithub, list[dict[str, GithubRepo]], Path]:
+    saved: list[dict[str, GithubRepo]] = []
+    log = tmp_path / "writes.jsonl"
+    server = FakeGithub(
+        builtin_thread("existing-topic").github, read_only=False, save=saved.append, log=log
+    )
+    return server, saved, log
+
+
+def test_writes_change_the_data_and_are_logged(tmp_path: Path) -> None:
+    server, saved, log = writer(tmp_path)
+    assert {"issue_write", "add_issue_comment"} <= {t["name"] for t in server.tools}
+    made = call(
+        server,
+        "issue_write",
+        method="create",
+        owner="acme-co",
+        repo="web",
+        title="New thing",
+        body="Body <!-- jotflow:proposal:p1 -->",
+        labels=["enhancement"],
+        assignees=["acme-bob"],
+    )
+    assert made["html_url"] == "https://github.com/acme-co/web/issues/43"
+    found = call(server, "issue_read", method="get", owner="acme-co", repo="web", issue_number=43)
+    assert found["body"].endswith("<!-- jotflow:proposal:p1 -->")
+    assert found["assignees"] == [{"login": "acme-bob"}]
+    call(server, "add_issue_comment", owner="acme-co", repo="web", issue_number=43, body="More.")
+    comments = call(
+        server, "issue_read", method="get_comments", owner="acme-co", repo="web", issue_number=43
+    )
+    assert [c["body"] for c in comments] == ["More."]
+    call(
+        server,
+        "issue_write",
+        method="update",
+        owner="acme-co",
+        repo="web",
+        issue_number=43,
+        labels=["bug"],
+        state="closed",
+    )
+    updated = call(server, "issue_read", method="get", owner="acme-co", repo="web", issue_number=43)
+    assert (updated["state"], updated["labels"]) == ("closed", [{"name": "bug"}])
+    assert [json.loads(line)["tool"] for line in log.read_text().splitlines()] == [
+        "issue_write",
+        "add_issue_comment",
+        "issue_write",
+    ]
+    assert len(saved) == 3 and saved[-1]["acme-co/web"].issues[-1].comments == ("More.",)
+
+
+def test_bad_writes_are_refused_and_not_logged(tmp_path: Path) -> None:
+    server, saved, log = writer(tmp_path)
+    base = {"owner": "acme-co", "repo": "web"}
+    assert "title" in refused(server, "issue_write", method="create", **base)
+    assert "labels do not exist: wontfix" in refused(
+        server, "issue_write", method="create", title="t", labels=["wontfix"], **base
+    )
+    assert "404" in refused(server, "issue_write", method="update", issue_number=99, **base)
+    assert "unknown method" in refused(server, "issue_write", method="delete", **base)
+    assert "body" in refused(server, "add_issue_comment", issue_number=42, **base)
+    assert "404" in refused(server, "add_issue_comment", issue_number=99, body="x", **base)
+    assert saved == [] and not log.exists()
+
+
+def test_a_second_process_sees_the_first_ones_write(tmp_path: Path) -> None:
+    data = tmp_path / "github.json"
+    repos = builtin_thread("existing-topic").github
+    data.write_text(json.dumps({k: v.model_dump(mode="json") for k, v in repos.items()}))
+    create = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "issue_write",
+            "arguments": {
+                "method": "create",
+                "owner": "acme-co",
+                "repo": "web",
+                "title": "T",
+                "body": "B",
+            },
+        },
+    }
+    run = [sys.executable, "-I", "-m", "jotflow.testing.fake_github_mcp", "--data", str(data)]
+    subprocess.run(
+        [*run, "--log", str(tmp_path / "log"), "stdio"],
+        input=json.dumps(create) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    listed = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "list_issues", "arguments": {"owner": "acme-co", "repo": "web"}},
+    }
+    done = subprocess.run(
+        [*run, "stdio", "--read-only"],
+        input=json.dumps(listed) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    text = json.loads(done.stdout)["result"]["content"][0]["text"]
+    assert json.loads(text)["issues"][0]["number"] == 43
+    assert len((tmp_path / "log").read_text().splitlines()) == 1

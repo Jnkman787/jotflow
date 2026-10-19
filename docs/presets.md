@@ -43,6 +43,8 @@ The preset also sets these variables:
 - **`CLAUDE_CODE_DISABLE_AUTO_MEMORY`** keeps the CLI from writing memory files that a later run could load.
 - **`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`** keep the CLI from sending telemetry or error reports, and from updating itself.
 
+**How the agent reaches GitHub.** claude-code reaches GitHub only through the pinned github-mcp-server in the agent image. Drafting and question runs use the read-only token with `--read-only`, and execution runs use the write token with the execution tools. The team configures only the two fine-grained tokens, in `agent.env` and `agent-exec.env`. Execution runs copy the exact writes JotFlow plans (#31), so the model never composes an issue body. The team doesn't need to set up `gh` or any other GitHub tool.
+
 **What the write token can reach.** An execution run's `issue_write` and `add_issue_comment` can create, edit, close, relabel, or comment on any issue in any repo the write token reaches. JotFlow checks only the issue URL the agent reports to `record_result`, after the write. So the write token is the real limit. Make it a fine-grained token limited to exactly the repos your channels feed, with Issues read and write and no other permission. Make the read-only token the same way, with Issues read and Contents read.
 
 **Public GitHub is read too.** A drafting run's `search_issues` searches all of public GitHub, not only the token's repos, so its results are another source of untrusted text. Drafts still need approval before anything is written.
