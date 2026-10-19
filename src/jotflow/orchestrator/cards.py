@@ -150,8 +150,15 @@ def _repo_entry(channel: ChannelPolicy, repo: str) -> RepoPolicy | None:
     return None
 
 
-def _repo_option(entry: RepoPolicy) -> dict[str, Any]:
-    return {"text": plain(f"{entry.nickname}: {entry.repo}", MAX_OPTION_TEXT), "value": entry.repo}
+def _repo_option(record: ProposalRecord, entry: RepoPolicy) -> dict[str, Any]:
+    # "<proposal id>:<nickname>", like the assign buttons' "<id>:<payload>", so a
+    # click names its proposal (#160). The nickname, at most 32 characters and
+    # unique in the channel, keeps the value inside Slack's 150 where a long
+    # owner/name would not; the handler maps it back through the policy.
+    return {
+        "text": plain(f"{entry.nickname}: {entry.repo}", MAX_OPTION_TEXT),
+        "value": f"{record.id}:{entry.nickname}",
+    }
 
 
 def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) -> list[Block]:
@@ -166,8 +173,8 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
                 "accessory": {
                     "type": "static_select",
                     "action_id": ACTION_REPO,
-                    "initial_option": _repo_option(entry),
-                    "options": [_repo_option(r) for r in context.channel.repos],
+                    "initial_option": _repo_option(record, entry),
+                    "options": [_repo_option(record, r) for r in context.channel.repos],
                 },
             }
         )

@@ -283,6 +283,24 @@ class ApprovalHandler:
 
     # The checks, then the action
 
+    async def guarded(
+        self,
+        body: Mapping[str, Any],
+        action: Callable[[Click, ProposalRecord], Awaitable[str]],
+    ) -> str:
+        """Run ``action`` for a card click, once the click passes the gate's checks.
+
+        The checks are those every card action shares: this workspace's team
+        for the payload and the person, no guests or external users, the
+        proposal's own card in its own channel, and a channel that isn't
+        paused. Who may *approve* (the approver list and authorship) is
+        Approve's own check, inside its action. ``action`` may raise
+        :class:`Refused`; its fixed text reaches only the person. Returns the
+        action's outcome, ``"refused"``, or ``"ignored"`` for a malformed payload.
+        Card edits (#160) use this entry point.
+        """
+        return await self._guarded(body, action)
+
     async def _guarded(
         self,
         body: Mapping[str, Any],
@@ -440,7 +458,8 @@ def _click(body: Mapping[str, Any]) -> Click | None:
     actions = body.get("actions") if isinstance(body.get("actions"), list) else []
     action = _map(actions[0]) if actions else {}
     user_id = _str(user.get("id"))
-    value = _str(action.get("value"))
+    # A button sends value; a select menu sends selected_option.value.
+    value = _str(action.get("value")) or _str(_map(action.get("selected_option")).get("value"))
     if user_id is None or value is None or len(value) > 128:
         return None
     message_ts = _str(container.get("message_ts"))
