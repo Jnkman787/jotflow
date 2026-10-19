@@ -336,7 +336,7 @@ There are two agent containers, so the GitHub token that can write never sits wh
 2. Name it, for example `jotflow-read` or `jotflow-write`, and pick an expiration. Under **Resource owner**, choose the user or organisation that owns the repos. An organisation may need an owner to approve the token before it works.
 3. Under **Repository access**, choose **Only select repositories**, and pick exactly the repos in `jotflow.toml`.
 4. Under **Permissions**, then **Repository permissions**:
-   - for the read token, set **Contents** and **Issues** to **Read-only**
+   - for the read token, set **Issues** to **Read-only**, and nothing else
    - for the write token, set **Issues** to **Read and write**, and nothing else
 
    GitHub adds **Metadata: Read-only** to both by itself.
