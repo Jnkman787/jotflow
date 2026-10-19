@@ -1111,3 +1111,32 @@ async def test_an_applied_issue_is_told_in_its_thread_by_the_running_service() -
         await rig.orchestrator.stop()
     assert rig.threads.replies == [(CH, THREAD, f"Created <{URL}|web#7>")]
     assert {name for _, _, name in rig.threads.reactions} == {"ticket"}
+
+
+# Taking a skip reaction back (#138)
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_removing_a_skip_reaction_lets_the_thread_draft_again() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        item = {"type": "message", "channel": CH, "ts": THREAD}
+        skip = {
+            "type": "reaction_added",
+            "user": "U0ALEX",
+            "item_user": "U0ALEX",
+            "reaction": "no_entry_sign",
+            "item": item,
+        }
+        await _deliver(app, skip, "Ev20")
+        link = await rig.store.get_message(CH, THREAD)
+        assert link is not None and link.chatter
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+        await _deliver(app, {**skip, "type": "reaction_removed"}, "Ev21")
+        assert await rig.store.get_message(CH, THREAD) is None
+        assert rig.orchestrator._debouncer.pending()  # armed again: it will draft
+    finally:
+        await rig.orchestrator.stop()

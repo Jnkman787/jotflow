@@ -98,7 +98,7 @@ The server declares only the `tools` capability, with `listChanged: false`: no p
 **Exact writes (#31).** JotFlow, not the agent, decides what is written. The execution packet carries JotFlow's own instructions (`src/jotflow/whiteboard/instructions/execution.md`), the checks to make first, and the exact GitHub MCP tool calls to copy, built by `src/jotflow/execution/writes.py`:
 
 - **A new issue** is one `issue_write` create.
-- **An update** is an `issue_write` update for a body, label, or assignee change, then an `add_issue_comment` for a comment. GitHub replaces the whole label and assignee set on update, so those changes are given as additions and removals against the issue's current set, which the agent reads first.
+- **An update** is an `issue_write` update for a body, label, or assignee change, then an `add_issue_comment` for a comment. GitHub replaces the whole label and assignee set on update, so those changes are given as additions and removals against the issue's current set, which the agent reads first. A replaced body keeps the footer, with this update's attribution, permalinks, and marker. It also keeps every JotFlow marker line the old body had, such as the creating proposal's, which a retry or a rebuild (#38) looks for. Those come from the issue's current body, not from JotFlow's store, so they survive a rebuilt store (#167).
 - **The footer.** Every planned body and comment ends with a footer: "Raised in Slack by <poster>, with <names> looped in", the Slack permalinks, and the hidden marker. With `issue_links = "none"`, it is the marker alone.
 
 The poster comes from the thread root's author, using the same lookup approval uses, and a bot-posted root names no one. The people "looped in" are the Slack-confirmed authors of the proposal's cited sources, never the agent-written participants list. Display names are cleaned so they can't mention, link, or break the markdown. That removes HTML entities such as `&#64;`, bidirectional overrides, and zero-width characters. The permalinks come from each source's own link, or are built from the workspace URL that the startup `auth.test` returns. A lookup that fails leaves its part out and never stops the write.
@@ -185,9 +185,17 @@ A team never needs the source code. Each tagged release publishes two artifacts 
 | Artifact | Published to | Used for |
 |---|---|---|
 | Python package `jotflow` | PyPI | `uvx jotflow init`, the one-time interactive setup on the team's machine |
-| Container image `ghcr.io/jnkman787/jotflow` | GitHub's container registry | `jotflow run`, the always-on service |
+| Container images `ghcr.io/jnkman787/jotflow` and `jotflow-agent` | GitHub's container registry | `jotflow run`, the always-on service, and the team's agent containers |
 
 `jotflow init` writes `jotflow.toml`, `.env`, and a Compose file pinned to the matching image version, so the whole install is `uvx jotflow init` followed by `docker compose up -d`. The repository is where contributors work; cloning it is only needed to change JotFlow.
+
+How a release is made (#39, #87), from `.github/workflows/release.yml` on a `vX.Y.Z` tag:
+
+- One job checks that the tag, `pyproject.toml`, and `__version__` agree. Its version names both images and the package, so they cannot drift.
+- The images are built for amd64 and arm64, published as `:X.Y.Z` and `:latest`, and attested.
+- The package job builds the sdist and wheel from the tagged commit. It installs the wheel alone and renders the published Compose files from it, which must pass `docker compose config`.
+- Only after the images are published, the PyPI job publishes the package through PyPI's trusted publishing, with OIDC and no stored token, and attests the files' build provenance. It alone holds `id-token: write`.
+- The wheel carries the repository's own Compose files and agent env examples. Outside a checkout, `jotflow init` writes them with each `build:` removed and the images pinned to its own version. An existing file is replaced only if the person agrees.
 
 JotFlow is a running service rather than an MCP server listed in an agent's configuration, because it must be connected to Slack when no agent session is open, decides when to start the agent, holds state across days, and serves the whole channel. The MCP connection is how the agent talks to JotFlow while a run lasts.
 
@@ -208,12 +216,12 @@ Rules:
 
 - The colon is required, so sentences like "Skip button is broken" are never read as commands. Typos are tolerated only on keywords of four or more letters, and only as two neighbouring letters swapped, such as `skpi:`. A wrong letter is not, because `Ship:` or `Skin:` would then drop a thread.
 - JotFlow confirms a recognised keyword with a reaction on the message, so the poster knows it was understood. Reactions never restart the wait before drafting.
-- Keywords can have an equivalent reaction, for people who forget or prefer clicking. Today only `skip:` has one, :no_entry_sign:. `re:` cannot, because it needs an issue number. Reactions from guests and external users are ignored.
+- Keywords can have an equivalent reaction, for people who forget or prefer clicking: :no_entry_sign: for `skip:`, :bulb: for `idea:`, and :bug: for `bug:`, listed once in `reactions.py`. `re:` cannot have one, because it needs an issue number. Reactions from guests and external users are ignored. An idea or bug reaction reaches the agent as a hint, like the text keyword, and a keyword in the text wins. Removing a reaction takes its keyword back (#138, #139). JotFlow records who reacted, so a skip is undone only when no one else's skip reaction is left, and never when the message's own text says `skip:`.
 - A `re:` that names an issue outside the channel's repos is refused, with a thread reply that says why. One that names an issue with no topic yet starts a topic for it.
 - `re:` and `skip:` are stored as the poster's own decision, which the agent cannot overrule. JotFlow applies them before the debouncer joins a reply to its parent's topic, and a skip reaction that arrives later still overrides that join. The debouncer never arms a thread for a `skip:` message, or for any reply under a `skip:` first message, so neither costs an agent run or restarts the wait.
 - JotFlow strips the keyword before the agent sees the text, and passes the rest as untrusted thread content. A keyword never adds instructions to the agent's prompt.
 - No keyword can skip approval or change the channel mode.
-- Acting on someone else's message: with approvers off, anyone may, and JotFlow posts a visible note in the thread that the author can undo. With approvers on, only the author or an approver may.
+- Acting on someone else's message: with approvers off, anyone may, and JotFlow posts a visible note in the thread. Slack lets only the person who reacted remove the reaction, so they can undo it; the author asks in the thread. With approvers on, only the author or an approver may.
 - Editing a message after its card is posted never changes what is approved.
 - Help comes from one text (#80). `/jotflow help` shows the set privately, with the channel's repos and how approval works there. JotFlow pins a short guide once in each channel, a person's first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...`, gets one private suggestion. JotFlow never acts on a near miss. Each is recorded in the store before it is sent, so none repeats after a restart, and each can be turned off per channel in `[help]`. Nothing is posted in a paused channel.
 - When JotFlow replies with an issue link, it includes the exact handle to use, for example "reply `re: web#42` to add to this", so nobody needs to know issue numbers.
@@ -419,6 +427,8 @@ Setup is a first-class feature: `jotflow init` asks a few questions, checks the 
 Assignment requires a Slack user to GitHub handle mapping. A self-service slash command lets each person link their own account. Links are self-declared in v1, and cards mark them as unverified. `/jotflow link <login>` links the caller only, since it takes no user argument. The login must match GitHub's rule, and `@login` or a pasted profile link also works. `/jotflow link` shows the caller's link, and `/jotflow unlink` removes it. Guests and external Slack Connect users can't link, and a login someone else holds is refused without naming them. The store keeps only the Slack id, the login and the time, and the log keeps the Slack id and the action (#35). An assignee must be the linked login of one of the proposal's participants (#15). Because links are self-declared, someone can claim another person's login first. The card's "(unverified)" shows that, and verification, or an admin path to remove someone else's link, is later work.
 
 ## Security posture
+
+The full picture, by adversary and with the accepted v1 gaps, is in [threat-model.md](threat-model.md).
 
 - Slack content is untrusted input. It reaches only drafting runs. The shipped presets configure drafting runs with read-only GitHub access and no shell or write tools, and execution runs, which can write, receive only the approved structured fields, never the thread itself; because the approved body was drafted from Slack, the execution prompt treats it as content to write, never as instructions. This holds only when the team gives the agent separate read and write GitHub tokens, and only for the shipped presets; a custom command template is the team's responsibility.
 - The agent runs in its own container with an environment allowlist and no access to JotFlow's secrets.

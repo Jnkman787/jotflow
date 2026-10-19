@@ -49,6 +49,8 @@ from jotflow.store.base import (
     NoticeKind,
     PendingThread,
     ProposalEdit,
+    ReactionKeyword,
+    ReactionMark,
     Recovery,
     StoreError,
     ToolCallRecord,
@@ -58,6 +60,7 @@ from jotflow.store.base import (
     check_finish,
     check_github_login,
     check_id,
+    check_mark,
     check_new_proposal,
     check_notice,
     check_run_request,
@@ -731,6 +734,53 @@ class SqliteStore:
             )
             row = await self._one("SELECT * FROM channel_modes WHERE channel_id = ?", (channel_id,))
         return self._mode(_found(row))
+
+    async def add_reaction_mark(
+        self, channel_id: str, ts: str, user_id: str, keyword: ReactionKeyword
+    ) -> bool:
+        check_mark(channel_id, ts, user_id, keyword)
+        async with self._write():
+            cursor = await self._db.execute(
+                "INSERT OR IGNORE INTO reaction_marks (channel_id, ts, user_id, keyword, marked_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (channel_id, ts, user_id, keyword, to_text(self._clock())),
+            )
+            return cursor.rowcount == 1
+
+    async def remove_reaction_mark(
+        self, channel_id: str, ts: str, user_id: str, keyword: ReactionKeyword
+    ) -> bool:
+        check_mark(channel_id, ts, user_id, keyword)
+        async with self._write():
+            cursor = await self._db.execute(
+                "DELETE FROM reaction_marks"
+                " WHERE channel_id = ? AND ts = ? AND user_id = ? AND keyword = ?",
+                (channel_id, ts, user_id, keyword),
+            )
+            return cursor.rowcount == 1
+
+    async def reaction_marks(self, channel_id: str, ts: str) -> list[ReactionMark]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM reaction_marks WHERE channel_id = ? AND ts = ?"
+                " ORDER BY marked_at, user_id, keyword",
+                (channel_id, ts),
+            )
+        return [
+            ReactionMark(
+                r["channel_id"], r["ts"], r["user_id"], r["keyword"], from_text(r["marked_at"])
+            )
+            for r in rows
+        ]
+
+    async def unmark_chatter(self, ref: MessageRef) -> bool:
+        async with self._write():
+            cursor = await self._db.execute(
+                "DELETE FROM message_refs WHERE channel_id = ? AND ts = ?"
+                " AND chatter = 1 AND linked_by = 'person'",
+                (ref.channel_id, ref.ts),
+            )
+            return cursor.rowcount == 1
 
     async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:
         check_notice(channel_id, user_id, kind)

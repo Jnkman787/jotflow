@@ -127,3 +127,23 @@ def test_execute_with_the_stand_in_from_the_command_line(
         == replay_command.EXIT_MATCH
     )
     assert "3 proposal(s) handled as planned" in capsys.readouterr().out
+
+
+def test_the_expected_body_keeps_the_creating_marker() -> None:
+    from jotflow.execution.writes import PlannedWrite, marker
+    from jotflow.replay_execute import _expected
+
+    repos = dict(builtin_thread("body-update").github)
+    write = PlannedWrite(
+        tool="issue_write",
+        arguments={
+            "method": "update",
+            "owner": "acme-co",
+            "repo": "web",
+            "issue_number": 42,
+            "body": f"New.\n\n---\n{marker('a1b2c3d4e5f60718')}",
+        },
+        markers_from_current=True,
+    )
+    body = _expected(write, repos, "acme-co/web")["body"]
+    assert body == (f"New.\n\n---\n{marker('a1b2c3d4e5f60718')}\n{marker('0123456789abcdef')}")

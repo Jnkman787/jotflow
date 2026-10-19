@@ -1,0 +1,215 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "body-update",
+  "description": "A follow-up that restates what the CSV export should do, so the agent proposes replacing acme-co/web#42's body. JotFlow created #42, so its body carries the creating proposal's hidden marker. Executing the update must keep that marker, and write the new body with JotFlow's footer.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [
+    {
+      "id": "topic-csv-export",
+      "channel_id": "C0EXAMPLE1",
+      "title": "Export the dashboard table as CSV",
+      "repo": "acme-co/web",
+      "issue_number": 42,
+      "messages": [
+        {
+          "channel_id": "C0EXAMPLE1",
+          "ts": "1792224000.000100"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792314600.000100",
+      "user": "U0BOB",
+      "text": "For the CSV export: it should export every visible column, in screen order, and apply the dashboard's date filter."
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792314600.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792314600.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.91,
+            "topic_id": "topic-csv-export"
+          }
+        },
+        {
+          "tool": "propose_update",
+          "arguments": {
+            "topic_id": "topic-csv-export",
+            "repo": "acme-co/web",
+            "issue_number": 42,
+            "changes": {
+              "body": "Export the dashboard table as CSV: every visible column, in screen order, with the dashboard's date filter applied."
+            },
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792314600.000100"
+              }
+            ],
+            "confidence": 0.88
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        },
+        {
+          "number": 42,
+          "title": "Export the dashboard table as CSV",
+          "state": "open",
+          "body": "Finance needs a monthly CSV of the dashboard table.\n\n---\nRaised in Slack.\n<!-- jotflow:proposal:0123456789abcdef -->",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "The message joins topic-csv-export, and one update_issue proposal replaces acme-co/web#42's body. Executing it keeps #42's creating marker.",
+    "accepted": [
+      "1792314600.000100"
+    ],
+    "topics": [
+      {
+        "topic": "topic-csv-export",
+        "messages": [
+          "1792314600.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "update_issue",
+        "repo": "acme-co/web",
+        "topic": "topic-csv-export",
+        "issue_number": 42
+      }
+    ]
+  }
+}

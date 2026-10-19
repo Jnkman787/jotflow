@@ -430,8 +430,13 @@ class Orchestrator:
             try:
                 if decision.kind == "message":
                     await self._keywords.on_message(event)
-                else:
+                elif decision.kind == "reaction":
                     await self._keywords.on_reaction(event)
+                else:
+                    outcome = await self._keywords.on_reaction_removed(event)
+                    if outcome.action == "unskipped":
+                        # The skip is undone: the thread drafts again (#138).
+                        await self._arm_thread(decision.ref.channel_id, outcome.detail)
             except Exception:
                 log.exception("could not apply a keyword")
             if decision.kind == "reaction" and self.approval is not None:

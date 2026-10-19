@@ -19,6 +19,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `small-talk.json` | A greeting and a friendly reply. Both are chatter: no topic, no proposal, and no question. |
 | `opinion-followup.json` | A tentative idea ("Maybe the dashboard should…"), then replies asking what everyone thinks and a +1. One topic and one proposal. The replies are discussion on that topic, with no second proposal and no question. |
 | `closed-duplicate.json` | An idea that matches a closed issue, `acme-co/web#55`, that no topic is linked to. One topic, no proposal, and one `ask_channel` question naming the issue, since the agent searches closed issues too. |
+| `body-update.json` | As `existing-topic.json`, but the agent proposes replacing #42's body. JotFlow created #42, so its body carries the creating proposal's hidden marker. Executing the update keeps that marker and adds JotFlow's footer. |
 | `missing-label.json` | As `feature-request.json`, but the repo has no `enhancement` label on GitHub. Drafting is the same. Executing the proposal must fail, naming the missing label, and write nothing. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 

@@ -262,6 +262,32 @@ def check_github_login(login: str) -> str:
 
 
 NoticeKind = Literal["guide", "tip", "nudge"]
+# Keywords a reaction can stand for (#138, #139).
+ReactionKeyword = Literal["idea", "bug", "skip"]
+REACTION_KEYWORDS: tuple[ReactionKeyword, ...] = ("idea", "bug", "skip")
+# The mark a message's own ``skip:`` text leaves, so removing a reaction never undoes it.
+TEXT_MARK = "text"
+
+
+@dataclass(frozen=True)
+class ReactionMark:
+    """One person's reaction standing for a keyword on one message."""
+
+    channel_id: str
+    ts: str
+    user_id: str
+    keyword: ReactionKeyword
+    marked_at: datetime
+
+
+def check_mark(channel_id: str, ts: str, user_id: str, keyword: str) -> None:
+    check_id(channel_id, "channel id")
+    check_id(ts, "message timestamp")
+    check_id(user_id, "Slack user id")
+    if keyword not in REACTION_KEYWORDS:
+        raise ValueError(f"no reaction stands for {keyword!r}")
+
+
 # What a person changed from the card (#160). The value itself is never stored.
 EditField = Literal["repo", "assign", "unassign"]
 EDIT_FIELDS: tuple[EditField, ...] = ("repo", "assign", "unassign")
@@ -637,6 +663,33 @@ class Store(Protocol):
     ) -> ChannelModeSetting: ...
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None: ...
+
+    # Keyword reactions (#138, #139)
+    async def add_reaction_mark(
+        self, channel_id: str, ts: str, user_id: str, keyword: ReactionKeyword
+    ) -> bool:
+        """Record that ``user_id``'s reaction stands for ``keyword`` on the message.
+
+        True only when it is new: the same person reacting twice is one mark.
+        """
+        ...
+
+    async def remove_reaction_mark(
+        self, channel_id: str, ts: str, user_id: str, keyword: ReactionKeyword
+    ) -> bool:
+        """Remove that mark. True if it was there."""
+        ...
+
+    async def reaction_marks(self, channel_id: str, ts: str) -> list[ReactionMark]:
+        """The message's reaction marks, oldest first."""
+        ...
+
+    async def unmark_chatter(self, ref: MessageRef) -> bool:
+        """Remove a person's chatter mark, so the message is unplaced again (#138).
+
+        Leaves an agent's mark, a topic link, or no mark at all alone; True if removed.
+        """
+        ...
 
     # Help notices (#80)
     async def claim_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> bool:

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format format-check typecheck test cov eol check run live-check eval-agent eval-execute manifest clean
+.PHONY: help install lint format format-check typecheck test cov eol check run live-check eval-agent eval-execute manifest templates clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -45,6 +45,10 @@ eval-agent: ## Claude Code against every fixture, 3 times each; costs model toke
 
 eval-execute: ## Claude Code executing every fixture's proposals; costs model tokens. Prints the run count; start with YES=1
 	uv run jotflow replay --all --agent claude-code --execute $(if $(YES),--yes,)
+
+templates: ## Copy the deployment files into the package, for jotflow init outside a checkout
+	cp docker-compose.yml docker-compose.policy.yml agent.env.example agent-exec.env.example \
+		src/jotflow/templates/
 
 manifest: ## Regenerate manifests/slack-app.json from the renderer
 	uv run python -m jotflow.slack_manifest > manifests/slack-app.json.tmp \

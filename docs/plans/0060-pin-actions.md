@@ -14,6 +14,10 @@
   - actionlint 1.7.12, a binary pinned by sha256, which runs every `run:` script through the runner's shellcheck.
 - [x] Push protection is confirmed. The repository API reports `secret_scanning` and `secret_scanning_push_protection` as enabled, along with Dependabot security updates.
 
+**From the #174 review (#39), folded in here:**
+- `:latest` moves only when the tag is the highest released `vX.Y.Z`. The version job lists the repo's tags with `git ls-remote` and compares them numerically, so a fix released on an older line leaves `latest` where it is.
+- A pull request's dry-run build is its own `dry-run` job, with `contents: read` only. The `build` job, holding `packages: write`, runs only on a tag.
+
 ## Design
 
 zizmor audits supply-chain risks: unpinned uses, excessive permissions, template injection, persisted checkout credentials, and impostor commits. actionlint catches syntax, expression and shell errors.
