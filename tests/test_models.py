@@ -228,3 +228,24 @@ def test_hint_overruled_is_one_short_line_or_nothing() -> None:
     for bad in ("", "x" * 201, "two\nlines"):
         with pytest.raises(ValidationError):
             IssueProposal.model_validate({**base, "hint_overruled": bad})
+
+
+@pytest.mark.parametrize(
+    "bad", ["it‮is a bug", "zero​width", " leading space", "trailing ", "tab\there"]
+)
+def test_hint_overruled_follows_the_label_character_rule(bad: str) -> None:
+    from pydantic import ValidationError
+
+    from jotflow.models import IssueChanges, IssueProposal, UpdateProposal
+
+    with pytest.raises(ValidationError, match="hint_overruled"):
+        IssueProposal(repo="acme-co/web", title="t", body="b", confidence=0.5, hint_overruled=bad)
+    with pytest.raises(ValidationError, match="hint_overruled"):
+        UpdateProposal(
+            topic_id="t1",
+            repo="acme-co/web",
+            issue_number=1,
+            changes=IssueChanges(),
+            confidence=0.5,
+            hint_overruled=bad,
+        )

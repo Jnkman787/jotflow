@@ -29,8 +29,11 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
     model_validator,
 )
+
+from jotflow.text import unsafe_text_problem
 
 # GitHub's rules: an owner is 1 to 39 letters, digits, or hyphens, not starting
 # with a hyphen; a repo name is 1 to 100 letters, digits, ".", "-", or "_",
@@ -122,6 +125,13 @@ HINT_OVERRULED_DESCRIPTION = (
 )
 
 
+def _safe_hint(value: str | None) -> str | None:
+    # Shown to an approver on the card, so held to the same rule as labels.
+    if value is not None and (problem := unsafe_text_problem(value)):
+        raise ValueError(f"hint_overruled {problem}")
+    return value
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -145,9 +155,10 @@ class IssueProposal(BaseModel):
         default=None,
         min_length=1,
         max_length=200,
-        pattern=r"^[^\r\n]*$",
         description=HINT_OVERRULED_DESCRIPTION,
     )
+
+    _hint_overruled = field_validator("hint_overruled")(_safe_hint)
 
 
 class IssueChanges(BaseModel):
@@ -175,9 +186,10 @@ class UpdateProposal(BaseModel):
         default=None,
         min_length=1,
         max_length=200,
-        pattern=r"^[^\r\n]*$",
         description=HINT_OVERRULED_DESCRIPTION,
     )
+
+    _hint_overruled = field_validator("hint_overruled")(_safe_hint)
 
 
 Proposal = Annotated[IssueProposal | UpdateProposal, Field(discriminator="kind")]
