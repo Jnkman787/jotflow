@@ -277,6 +277,11 @@ CODEX_VERSION = "0.163.0"
 # ``exec`` tool and a sub-agent namespace whatever the config says, so only
 # these are accepted; any other is refused at startup.
 CODEX_VERIFIED_MODELS = ("gpt-5.5",)
+# Codex keeps read_mcp_resource and list_mcp_resource_templates, which can pull any
+# repository text into the agent's context. That's acceptable for drafting, whose
+# input is untrusted anyway, but an execution run holds the write token and must see
+# only the approved fields. So Codex never runs execution (#172 review).
+CODEX_RUN_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
 # Every built-in Codex feature that adds a tool or acts outside the run, off. The
 # shell goes with shell_tool and unified_exec. mcp_2026_07_28 is on: JotFlow serves
 # only that MCP version, and this release marks the flag "under development".
@@ -365,9 +370,11 @@ class CodexPreset:
 
     name: str = "codex"
     default_models: Mapping[RunKind, str] = field(
-        default_factory=lambda: dict.fromkeys(RunKind, CODEX_VERIFIED_MODELS[0])
+        default_factory=lambda: dict.fromkeys(CODEX_RUN_KINDS, CODEX_VERIFIED_MODELS[0])
     )
     verified_models: tuple[str, ...] = CODEX_VERIFIED_MODELS
+    # The run kinds this preset may serve; a runner serving any other refuses to start.
+    run_kinds: frozenset[RunKind] = CODEX_RUN_KINDS
     needs_github_mcp: bool = True
     github_token_in_config: bool = True
 
@@ -404,6 +411,8 @@ class CodexPreset:
         return None
 
     def plan(self, run: RunContext) -> RunPlan:
+        if run.kind not in self.run_kinds:  # the runner refuses this at startup too
+            raise ValueError(f"the codex preset does not serve {run.kind.value} runs")
         home = run.run_dir / "codex"
         github = github_server(run)
         document: dict[str, Any] = {}

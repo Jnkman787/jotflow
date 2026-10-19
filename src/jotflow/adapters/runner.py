@@ -181,6 +181,13 @@ class RunnerConfig:
         self._check_preset()
 
     def _check_preset(self) -> None:
+        allowed = getattr(self.preset, "run_kinds", None)
+        if allowed is not None and not self.kinds <= allowed:
+            names = " and ".join(sorted(k.value for k in self.kinds - allowed))
+            raise ConfigError(
+                f"the {self.agent.name} preset may not serve {names} runs; "
+                "use claude-code in agent-exec.env for execution"
+            )
         if self.preset is None and self.models:
             raise ConfigError(
                 "JOTFLOW_AGENT_MODEL settings need a preset; put the model in "
@@ -307,10 +314,13 @@ def write_private(run_dir: Path, relative: str, text: str) -> Path:
     folder = run_dir
     for part in parts[:-1]:
         folder = folder / part
+        if folder.is_symlink():
+            raise ConfigError(f"a preset file's directory is a symlink: {relative!r}")
         if not folder.exists():
             folder.mkdir(mode=0o700)
             folder.chmod(0o700)  # whatever the umask
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # O_EXCL already refuses an existing file; O_NOFOLLOW refuses a symlink there too.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
     return target

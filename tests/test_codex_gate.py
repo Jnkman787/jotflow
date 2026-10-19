@@ -2,7 +2,8 @@
 
 Codex runs with this preset's own generated config, pointed at a scripted fake
 Responses API instead of OpenAI, with JotFlow's real MCP server and the fake
-GitHub server attached. For each run kind it shows:
+GitHub server attached. For each run kind it serves (drafting and question;
+Codex never runs execution) it shows:
 
 - Codex offers the model no shell or exec tool, only the known built-ins
 - a scripted ``apply_patch`` call is refused, writes no file, and prompts no one
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from jotflow.adapters.presets import CODEX, CODEX_VERSION, RunContext
+from jotflow.adapters.presets import CODEX, CODEX_RUN_KINDS, CODEX_VERSION, RunContext
 from jotflow.adapters.runner import write_private
 from jotflow.models import RunKind
 from jotflow.policy import parse_policy
@@ -105,17 +106,14 @@ def _fake_github(root: Path) -> Path:
     return wrapper
 
 
-@pytest.mark.parametrize("kind", list(RunKind))
+@pytest.mark.parametrize("kind", sorted(CODEX_RUN_KINDS))
 async def test_codex_offers_no_shell_and_refuses_apply_patch(
     kind: RunKind, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level("INFO", logger="jotflow.mcp.audit")
     store = MemoryStore()
     registry = TokenRegistry()
-    if kind is RunKind.EXECUTION:
-        grant = Grant("run-gate", kind, CH, proposal_id="p1")
-    else:
-        grant = Grant("run-gate", kind, CH, thread_ts="1792310400.000100")
+    grant = Grant("run-gate", kind, CH, thread_ts="1792310400.000100")
     token = registry.issue(grant, 600)
     port = _free_port()
     tools = (*read_tools(store, POLICY), *write_tools(store, POLICY, NeverPosts()))

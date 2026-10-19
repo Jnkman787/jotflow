@@ -177,7 +177,8 @@ def test_every_kind_has_a_turn_limit(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("name", sorted(PRESETS))
 def test_preset_env_never_touches_the_runners_names(name: str, tmp_path: Path) -> None:
-    for kind in RunKind:
+    served = getattr(PRESETS[name], "run_kinds", frozenset(RunKind))
+    for kind in served:
         for key in PRESETS[name].plan(context(kind, tmp_path)).env:
             assert not _FORBIDDEN_ENV.search(key)
             assert key not in {"HOME", "TMPDIR", "PATH"}
@@ -444,7 +445,10 @@ def test_codex_is_an_experimental_preset() -> None:
     assert "claude-code" not in presets.EXPERIMENTAL
 
 
-@pytest.mark.parametrize("kind", list(RunKind))
+CODEX_KINDS = sorted(presets.CODEX_RUN_KINDS)
+
+
+@pytest.mark.parametrize("kind", CODEX_KINDS)
 def test_codex_argv_carries_no_run_data(kind: RunKind, tmp_path: Path) -> None:
     plan = presets.CODEX.plan(codex_context(kind, tmp_path, "gpt-5.5-codex"))
     assert plan.argv == (
@@ -465,7 +469,7 @@ def test_codex_argv_carries_no_run_data(kind: RunKind, tmp_path: Path) -> None:
     assert plan.config == {"mcpServers": {}}  # Codex reads only its own config
 
 
-@pytest.mark.parametrize("kind", list(RunKind))
+@pytest.mark.parametrize("kind", CODEX_KINDS)
 def test_codex_config_is_pinned(kind: RunKind, tmp_path: Path) -> None:
     config = codex_config(kind, tmp_path, "gpt-5.5-codex")
     assert config["model"] == "gpt-5.5-codex"
@@ -493,15 +497,14 @@ def test_codex_config_is_pinned(kind: RunKind, tmp_path: Path) -> None:
         "required": True,
     }
     assert github["command"] == "/usr/local/bin/github-mcp-server"
-    assert ("--read-only" in github["args"]) is (kind is not RunKind.EXECUTION)
+    assert "--read-only" in github["args"]  # Codex serves conversation runs only
     assert github["enabled_tools"] == list(GITHUB_TOOLS[kind])
-    token = WRITE if kind is RunKind.EXECUTION else READ
-    assert github["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": token}
+    assert github["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": READ}
 
 
 def test_codex_defaults_to_its_verified_model_and_refuses_others() -> None:
     config = preset_config(preset=presets.CODEX)
-    assert {config.model(k) for k in RunKind} == {"gpt-5.5"}
+    assert {config.model(k) for k in presets.CODEX_RUN_KINDS} == {"gpt-5.5"}
     assert preset_config(preset=presets.CODEX, models={RunKind.DRAFTING: "gpt-5.5"})
     with pytest.raises(ConfigError, match="accepts only these models"):
         preset_config(preset=presets.CODEX, models={RunKind.DRAFTING: "gpt-6.1-sol"})
@@ -585,3 +588,49 @@ async def test_a_codex_run_end_to_end(tmp_path: Path) -> None:
     for secret in (TOKEN, READ):
         assert secret not in json.dumps(env) and secret not in " ".join(record["argv"])
     assert not Path(record["run_dir"]).exists()  # the home, config, and logs go with the run
+
+
+def test_codex_never_serves_execution_runs(tmp_path: Path) -> None:
+    # Codex keeps its MCP resource tools, so a run holding the write token could pull
+    # arbitrary repository text into its context. Execution stays with claude-code.
+    assert {RunKind.DRAFTING, RunKind.QUESTION} == presets.CODEX_RUN_KINDS
+    with pytest.raises(ConfigError, match="may not serve execution runs; use claude-code"):
+        preset_config(
+            preset=presets.CODEX, kinds=EXECUTION_KINDS, read_token=None, write_token=WRITE
+        )
+    with pytest.raises(ValueError, match="does not serve execution"):
+        presets.CODEX.plan(context(RunKind.EXECUTION, tmp_path))
+
+
+def test_an_execution_runner_set_to_codex_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in ("JOTFLOW_AGENT_COMMAND", "JOTFLOW_GITHUB_READ_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(presets.CodexPreset, "check_install", lambda self, **kw: None)
+    for name, value in {
+        "JOTFLOW_RUNNER_SECRET": SECRET,
+        "JOTFLOW_AGENT_PRESET": "codex",
+        "JOTFLOW_GITHUB_WRITE_TOKEN": WRITE,
+        "JOTFLOW_RUNNER_KINDS": "execution",
+        "JOTFLOW_GITHUB_MCP_COMMAND": sys.executable,
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert runner_command.run(runner_command.argparse.Namespace()) == runner_command.EXIT_CONFIG
+    assert "may not serve execution runs; use claude-code" in capsys.readouterr().err
+
+
+def test_private_files_never_follow_a_symlink(tmp_path: Path) -> None:
+    from jotflow.adapters.runner import write_private
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "link").symlink_to(outside)
+    with pytest.raises(ConfigError, match="directory is a symlink"):
+        write_private(run_dir, "link/config.toml", "x")
+    (run_dir / "file.toml").symlink_to(outside / "target")
+    with pytest.raises(OSError):
+        write_private(run_dir, "file.toml", "x")
+    assert list(outside.iterdir()) == []

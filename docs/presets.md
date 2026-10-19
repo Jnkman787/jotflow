@@ -104,7 +104,9 @@ Update the table above with the new versions and date.
 
 **Experimental.** It hasn't been confirmed by a real model run. Use claude-code for real channels until a real `jotflow replay --agent codex` pass (and `--execute`) is recorded here. The runner's startup line says "(experimental)".
 
-**Install it.** Build the agent image with `AGENT_NPM_PACKAGES="@openai/codex@0.163.0"`, the version this preset was checked against. Set `JOTFLOW_AGENT_PRESET=codex` in both agent env files, and `[agent] preset = "codex"` in `jotflow.toml`.
+**Drafting and question runs only.** Codex keeps its MCP resource tools (`read_mcp_resource`, `list_mcp_resource_templates`), which can pull any repository text into the agent's context. That's acceptable for drafting, whose input is untrusted anyway. An execution run holds the write token and must see only the approved fields, so the codex preset refuses execution: an `agent-exec` runner set to `codex` won't start. Use `claude-code` in `agent-exec.env`.
+
+**Install it.** Build the agent image with `AGENT_NPM_PACKAGES="@openai/codex@0.163.0"`, the version this preset was checked against. Set `JOTFLOW_AGENT_PRESET=codex` in `agent.env` only, and keep `JOTFLOW_AGENT_PRESET=claude-code` in `agent-exec.env`.
 
 **The model login is an API key only.** Put `CODEX_API_KEY` or `OPENAI_API_KEY` in each env file, and list it in `JOTFLOW_AGENT_ENV_ALLOW`. Each run gets its own `CODEX_HOME`, so a ChatGPT login saved by `codex login` in the home volume isn't seen.
 
@@ -129,7 +131,7 @@ The command carries no run data. `CODEX_HOME` points at `<run dir>/codex` (0700)
 Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so the runner removes them with the run. Neither token is in the command line or the environment.
 
 **The security gate.** `tests/test_codex_gate.py` runs in CI's "Codex preset gate" job, with Codex 0.163.0 from `ci/codex`'s lockfile. Codex runs this preset's own config, and for every run kind it checks four things:
-- the model is offered exactly the five built-ins below, and no shell, `exec`, or `local_shell` tool
+- for drafting and question runs, the model is offered exactly the five built-ins below, and no shell, `exec`, or `local_shell` tool
 - a scripted `apply_patch` call is refused ("writing is blocked by read-only sandbox; rejected by user approval settings"), no file is written, and no prompt holds the run
 - JotFlow's MCP server is reached
 - neither token reaches the model
@@ -139,7 +141,7 @@ Codex talks only to `jotflow.testing.fake_responses_api` on 127.0.0.1, so it cos
 **What was checked, on 2026-10-19,** without a model call. Codex 0.163.0 ran this preset's own config against a local fake model API that records the request, with JotFlow's real MCP server and github-mcp-server 2.0.2:
 
 - **JotFlow:** Codex connected. JotFlow's audit shows `server/discover` and `tools/list` served.
-- **Built-in tools:** for drafting and execution runs, the request carried only `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `apply_patch`, and `tool_search`. There was no shell. Codex reaches MCP tools through `tool_search`.
+- **Built-in tools:** for drafting runs, the request carried only `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `apply_patch`, and `tool_search`. There was no shell. Codex reaches MCP tools through `tool_search`.
 - **Tokens:** neither sentinel token appeared in the output or the request, and nothing was written to `HOME`. `CODEX_HOME` was 0700 and `config.toml` was 0600.
 
 **Not yet confirmed, which is why it's still experimental.** These need a real model run:
@@ -149,5 +151,5 @@ Codex talks only to `jotflow.testing.fake_responses_api` on 127.0.0.1, so it cos
 
 The `apply_patch` refusal is already shown, by the gate.
 
-**Codex's MCP resource tools** let a drafting run read repository files through GitHub's server, which is within the read-only token's Contents read. The write token has Issues only. File contents read this way are untrusted text, like Slack messages. The drafting instructions treat every field and tool result outside JotFlow's own instructions as data, and drafts still need approval.
+**Codex's MCP resource tools** let a drafting or question run read repository files through GitHub's server, which is within the read-only token's Contents read. Execution never runs on Codex, so the write token never meets them. File contents read this way are untrusted text, like Slack messages. The drafting instructions treat every field and tool result outside JotFlow's own instructions as data, and drafts still need approval.
 

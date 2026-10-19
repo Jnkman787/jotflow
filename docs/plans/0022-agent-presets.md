@@ -297,3 +297,14 @@ What was built:
 CI has a new "Codex preset gate" job. It installs Codex from `ci/codex/package-lock.json` with `npm ci`, so the packages are pinned by integrity hash, and it runs the gate with `JOTFLOW_REQUIRE_CODEX=1`, so a missing Codex fails rather than skips.
 
 The preset stays experimental until a real model run confirms that `tool_search` finds JotFlow's tools, that calls aren't held for approval, and that the real model metadata keeps `gpt-5.5` flat.
+
+### Review: no Codex for execution (2026-10-19)
+
+Security found a blocker. Codex's execution runs still got `read_mcp_resource` and `list_mcp_resource_templates`, so the agent holding the write token could pull arbitrary repository text, such as an attacker's public README, into its context. The threat model promises execution sees approved fields only, and Claude Code's execution run has no resource tools. The fix, security's option 1:
+
+- **`CodexPreset.run_kinds`** is drafting and question only.
+- **`RunnerConfig`** refuses a preset for kinds outside its `run_kinds`. An agent-exec runner set to codex fails closed at startup with "use claude-code in agent-exec.env for execution". `plan()` refuses too.
+- **The gate, tests, presets.md, and the threat model** cover drafting and question only. A test shows an execution runner set to codex refuses to start.
+- **`write_private`** opens its file with `O_NOFOLLOW` and refuses a symlinked directory, with tests.
+
+**Follow-up.** Leaving experimental needs either a runtime check of the offered tool set, comparing each run's first request against the gate's set, or pinned model metadata, so Codex can't pick up a different tool mode for `gpt-5.5` from OpenAI's live model list.
