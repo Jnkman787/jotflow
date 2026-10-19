@@ -418,6 +418,7 @@ This is how JotFlow works for the people in the channel once drafting and approv
 - **Steer it if you like.** Start a message with `idea:` or `bug:` to say what it is, `re:` to add to an existing issue (JotFlow's link replies tell you exactly what to type), or `skip:` if it isn't an idea at all. Reacting with :no_entry_sign: works like `skip:`. Most people never need these.
 - **See where it went.** Once an issue is written, JotFlow replies in the thread with its link and adds a :ticket: reaction to the messages it came from. Set `issue_reaction` in `jotflow.toml` to use another emoji, or `""` for none.
 - **Change how a channel works.** `/jotflow mode` shows the channel's mode: `propose`, the default, where nothing is written until someone approves; `auto`, where proposals are written straight away; or `paused`, where JotFlow reads and writes nothing. `/jotflow mode auto` sets it, and JotFlow announces the change in the channel. With approvers on, only they can change it.
+- **React instead.** :no_entry_sign: skips a message, and :bulb: or :bug: says it is an idea or a bug. Remove your reaction to take it back. If your Slack app was created before this release, update it from the new manifest and reinstall it, as [manifests/README.md](manifests/README.md) explains, or removing a reaction does nothing.
 - **Forgot the words?** Type `/jotflow help`. Only you see the answer, and it lists this channel's repos and how approval works here.
 - **Help finds you.** JotFlow pins a short guide once in each channel. Your first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...` without the colon, gets a private suggestion once. JotFlow never acts on a near miss. Each of these can be turned off in `jotflow.toml`'s `[help]` table, for every channel or for one.
 
@@ -430,7 +431,7 @@ Start a message with a keyword to steer JotFlow. The colon is required.
   bug:        this is a bug; the agent takes it as a hint
   re: web#42  add this to an existing issue; re: 42 works when the channel has one repo
   skip:       not an idea; on a top-level message it keeps the whole thread out
-React with :no_entry_sign: to skip a message instead.
+Or react instead: :no_entry_sign: for skip:, :bulb: for idea:, or :bug: for bug:. Remove your reaction to take it back.
 /jotflow link your-github-login lets proposals assign you; /jotflow unlink undoes it.
 Most people never need these: just post, and JotFlow works out the rest.
 ```

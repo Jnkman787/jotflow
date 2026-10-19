@@ -262,7 +262,7 @@ async def test_registered_listener_logs_pointer_not_text(
     caplog.set_level(logging.DEBUG, logger="jotflow")
     app = FakeApp()
     register_handlers(app, EventFilter(["C0TEST1"], BotIdentity("U0BOT")))  # type: ignore[arg-type]
-    assert set(app.listeners) == {"message", "reaction_added"}
+    assert set(app.listeners) == {"message", "reaction_added", "reaction_removed"}
     event = {
         "type": "message",
         "channel": "C0TEST1",
@@ -394,7 +394,7 @@ async def test_serve_connects_waits_and_closes(
     assert handler.calls == ["connect", "close"]
     assert harness.signals_removed
     assert harness.mcp_calls == ["mcp start", "mcp stop"]
-    assert set(harness.app.listeners) == {"message", "reaction_added"}
+    assert set(harness.app.listeners) == {"message", "reaction_added", "reaction_removed"}
     assert "watching 1 configured channel(s) as @jotbot" in caplog.text
     assert "not a member" not in caplog.text
 

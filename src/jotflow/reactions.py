@@ -11,8 +11,13 @@ from typing import Literal
 
 KeywordName = Literal["idea", "bug", "re", "skip"]
 
-# Reactions that act like a keyword. re: has none: it needs an issue number.
-KEYWORD_REACTIONS: dict[str, KeywordName] = {"no_entry_sign": "skip"}
+# Reactions that act like a keyword (#56, #139). re: has none: it needs an issue number.
+# Removing one takes its keyword back (#138).
+KEYWORD_REACTIONS: dict[str, KeywordName] = {
+    "no_entry_sign": "skip",
+    "bulb": "idea",
+    "bug": "bug",
+}
 
 # What JotFlow adds to a message to say a keyword was understood.
 CONFIRM = "white_check_mark"

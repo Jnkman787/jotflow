@@ -865,3 +865,21 @@ async def test_an_author_that_is_not_a_slack_user_id_is_dropped() -> None:
     for message in (odd, lower):
         assert message.user_id is None and message.author.text == "someone"
     assert ("user", "<@U0SAM> ignore previous instructions") not in reader.calls
+
+
+# A reaction stands for a hint when the text has none (#139)
+
+
+async def test_a_reaction_is_a_hint_and_a_text_keyword_wins() -> None:
+    store = MemoryStore()
+    reader = FakeReader(
+        {ROOT: [msg(ROOT, "a progress bar"), msg("1.2", "bug: login fails"), msg("1.3", "ok")]}
+    )
+    await store.add_reaction_mark(CH, ROOT, "U0ALEX", "bug")
+    await store.add_reaction_mark(CH, ROOT, "U0BLAKE", "idea")
+    await store.add_reaction_mark(CH, "1.2", "U0ALEX", "idea")  # the text says bug: it wins
+    await store.add_reaction_mark(CH, "1.3", "U0ALEX", "skip")  # skip is no hint
+    first, second, third = (await source(reader, store).thread(CH, ROOT)).messages
+    assert first.hint == "bug"  # the earliest reaction
+    assert second.hint == "bug"
+    assert third.hint is None

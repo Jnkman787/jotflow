@@ -1036,3 +1036,54 @@ async def test_a_repo_change_drops_the_agents_visibility_report(store: Store) ->
         "p2", draft(repo_visibility="private", assignees=["acme-alice"]), by="U0BOB", field="assign"
     )
     assert kept.proposal.repo_visibility == "private"
+
+
+# --- reaction marks (#138, #139) ------------------------------------------------------------
+
+
+async def test_a_reaction_mark_is_recorded_once_per_person_and_keyword(
+    store: Store, clock: Clock
+) -> None:
+    assert await store.add_reaction_mark(CH, "1.1", "U0ALICE", "skip")
+    assert not await store.add_reaction_mark(CH, "1.1", "U0ALICE", "skip")
+    clock.tick()
+    assert await store.add_reaction_mark(CH, "1.1", "U0BOB", "skip")
+    assert await store.add_reaction_mark(CH, "1.1", "U0ALICE", "idea")
+    marks = await store.reaction_marks(CH, "1.1")
+    assert [(m.user_id, m.keyword) for m in marks] == [
+        ("U0ALICE", "skip"),
+        ("U0ALICE", "idea"),
+        ("U0BOB", "skip"),
+    ]
+    assert await store.reaction_marks(CH, "2.2") == []
+
+
+async def test_removing_a_mark_takes_only_that_one(store: Store) -> None:
+    await store.add_reaction_mark(CH, "1.1", "U0ALICE", "skip")
+    await store.add_reaction_mark(CH, "1.1", "U0BOB", "skip")
+    assert await store.remove_reaction_mark(CH, "1.1", "U0ALICE", "skip")
+    assert not await store.remove_reaction_mark(CH, "1.1", "U0ALICE", "skip")
+    assert [m.user_id for m in await store.reaction_marks(CH, "1.1")] == ["U0BOB"]
+
+
+async def test_a_mark_must_name_a_keyword_a_reaction_stands_for(store: Store) -> None:
+    with pytest.raises(ValueError, match="no reaction stands for"):
+        await store.add_reaction_mark(CH, "1.1", "U0ALICE", "re")  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        await store.add_reaction_mark(CH, "1.1", "", "skip")
+
+
+async def test_unmarking_removes_only_a_persons_chatter_mark(store: Store) -> None:
+    person = MessageRef(channel_id=CH, ts="1.1")
+    agent = MessageRef(channel_id=CH, ts="2.2")
+    await store.mark_chatter(person, by="person")
+    await store.mark_chatter(agent)
+    assert await store.unmark_chatter(person)
+    assert await store.get_message(CH, "1.1") is None
+    assert not await store.unmark_chatter(agent)
+    assert await store.get_message(CH, "2.2") is not None
+    assert not await store.unmark_chatter(MessageRef(channel_id=CH, ts="3.3"))
+    topic = await store.create_topic(CH, "Dark mode")
+    linked = MessageRef(channel_id=CH, ts="4.4")
+    await store.link_message(linked, topic.topic.id, by="person")
+    assert not await store.unmark_chatter(linked)

@@ -17,6 +17,8 @@ JotFlow needs both tokens. Keep them secret and out of the repository. Token rot
 
 ## Add a missing scope
 
+**Updating an app created before `reaction_removed` was added (#138).** The manifest now subscribes to `reaction_removed`, so removing a keyword's reaction can take it back. An app made from the older manifest keeps working, but removing a reaction then does nothing. To pick it up, open the app's **App Manifest** page, paste `manifests/slack-app.json` (or `slack-app-manifest.json` from setup), save, and click **Reinstall to Workspace** if Slack asks.
+
 If JotFlow or setup reports a missing scope, open the app's **OAuth & Permissions** page, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Reinstalling can issue a new bot token. If setup is still asking for the bot token, paste the new one there. If setup has already stopped, run `uv run jotflow init` again and paste it.
 
 ## Use a different bot name
@@ -42,7 +44,7 @@ In this release JotFlow only reads: it watches messages and reactions and checks
 | | `pins:write` | *Later:* pin a short help message when JotFlow joins a channel |
 | | `users:read` | *Later:* show names on cards and skip guests and external users |
 | | `commands` | *Later:* the `/jotflow` slash command |
-| Events | `message.channels`, `message.groups`, `reaction_added` | Wake JotFlow when someone posts or reacts |
+| Events | `message.channels`, `message.groups`, `reaction_added`, `reaction_removed` | Wake JotFlow when someone posts, reacts, or takes a reaction back |
 | Socket Mode | on | No public URL is needed for a self-hosted install |
 | Interactivity | on | *Later:* Approve and Request Changes buttons and dialogs |
 | App Home tabs | off | The app has no DM scopes, so messages sent to it would never be read |
