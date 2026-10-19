@@ -44,9 +44,10 @@ from typing import Any, Protocol
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
-from jotflow.models import RunKind
+from jotflow.models import ChannelMode, RunKind
 from jotflow.orchestrator.cards import CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
+from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
@@ -198,6 +199,7 @@ class Orchestrator:
         open_store: StoreOpener = open_sqlite,
         runner: RunnerClient | None = None,
         keyword_slack: KeywordSlack | None = None,
+        help_slack: HelpSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -213,6 +215,8 @@ class Orchestrator:
         self._open_store = open_store
         self._runner = runner
         self._keyword_slack = keyword_slack
+        self._help_slack = help_slack
+        self._help: HelpHandler | None = None
         self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
         self._tick_seconds = tick_seconds
@@ -256,6 +260,9 @@ class Orchestrator:
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
             self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
+        )
+        self._help = HelpHandler(
+            self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
         tools = (
@@ -328,12 +335,41 @@ class Orchestrator:
                     await self._keywords.on_reaction(event)
             except Exception:
                 log.exception("could not apply a keyword")
+            if decision.kind == "message":
+                await self._offer_help(decision, event)
         if self._debouncer is None:
             return
         try:
             await self._debouncer.note(decision)
         except Exception:
             log.exception("could not note a message for the debouncer")
+
+    async def _offer_help(self, decision: Accepted, event: Mapping[str, Any]) -> None:
+        """The guide, tip, or nudge, never in a paused channel (#80). Errors are only logged."""
+        if self._help is None:
+            return
+        try:
+            if await self.channel_mode(decision.ref.channel_id) is ChannelMode.PAUSED:
+                return
+            await self._help.on_message(event)
+        except Exception:
+            log.exception("could not offer help")
+
+    async def channel_mode(self, channel_id: str) -> ChannelMode:
+        """The channel's mode, from the store, or propose when nobody set one."""
+        setting = await self.store.get_channel_mode(channel_id)
+        return ChannelMode.PROPOSE if setting is None else setting.mode
+
+    async def ensure_guides(self, channel_ids: Sequence[str]) -> None:
+        """Pin the help guide in each channel that has none yet, at startup (#80)."""
+        if self._help is None:
+            return
+        for channel_id in channel_ids:
+            try:
+                if await self.channel_mode(channel_id) is not ChannelMode.PAUSED:
+                    await self._help.ensure_guide(channel_id)
+            except Exception:
+                log.exception("could not pin the help guide in %s", channel_id)
 
     async def _flush_loop(self, debouncer: Debouncer) -> None:
         while not self._stop.is_set():

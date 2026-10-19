@@ -205,7 +205,7 @@ Rules:
 - No keyword can skip approval or change the channel mode.
 - Acting on someone else's message: with approvers off, anyone may, and JotFlow posts a visible note in the thread that the author can undo. With approvers on, only the author or an approver may.
 - Editing a message after its card is posted never changes what is approved.
-- `/jotflow help` shows the set privately, JotFlow pins a short help message when it joins a channel, and a newcomer's first card carries a one-line keyword tip.
+- Help comes from one text (#80). `/jotflow help` shows the set privately, with the channel's repos and how approval works there. JotFlow pins a short guide once in each channel, a person's first message gets a one-time private tip, and a message that looks like a mistyped keyword, such as `skip` or `Idea - ...`, gets one private suggestion. JotFlow never acts on a near miss. Each is recorded in the store before it is sent, so none repeats after a restart, and each can be turned off per channel in `[help]`. Nothing is posted in a paused channel.
 - When JotFlow replies with an issue link, it includes the exact handle to use, for example "reply `re: web#42` to add to this", so nobody needs to know issue numbers.
 
 ## Channels and repos

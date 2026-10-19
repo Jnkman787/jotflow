@@ -25,6 +25,7 @@ from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
+from tests.test_help import FakeHelpSlack
 from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
 from tests.test_runner import ENVIRON, SECRET, _free_port, config
@@ -91,6 +92,7 @@ class Rig:
         self.info_preset = "claude-code"
         self.info_status = 200
         self.slack = FakeSlack()
+        self.help = FakeHelpSlack()
         self.runner = RunnerClient(
             conversation=RunnerEndpoint("http://agent:8766", SECRET),
             execution=RunnerEndpoint("http://agent-exec:8766", EXEC_SECRET),
@@ -105,6 +107,7 @@ class Rig:
             open_store=self._open,
             runner=self.runner,
             keyword_slack=self.slack,
+            help_slack=self.help,
             flush_seconds=0.01,
             tick_seconds=0.01,
             info_attempts=2,
@@ -750,3 +753,77 @@ async def test_a_skip_reaction_inside_the_window_means_no_drafting_run() -> None
     assert await rig.store.thread_runs(CH, THREAD) == []
     assert await rig.store.pending_threads() == []
     assert not [c for c in rig.calls if c[0] == "POST"]
+
+
+# Help in the channel, after keywords (#80)
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_first_message_through_the_app_gets_the_guide_and_a_tip() -> None:
+    from jotflow.orchestrator.help import TIP, guide_text, nudge
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        root = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX"}
+        await _deliver(app, {**root, "text": "Dark mode would be nice"}, "Ev8")
+        await _deliver(app, _reply(REPLY, "skip"), "Ev9")
+    finally:
+        await rig.orchestrator.stop()
+    assert rig.help.guides == [(CH, guide_text())]
+    # One notice per message: the tip first, then the near miss gets its one nudge, in-thread.
+    assert rig.help.whispers == [
+        (CH, "U0ALEX", None, TIP),
+        (CH, "U0ALEX", THREAD, nudge("skip")),
+    ]
+
+
+async def test_a_paused_channel_gets_no_help() -> None:
+    from jotflow.models import ChannelMode
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+        event = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX", "text": "hi"}
+        await rig.orchestrator.note(accepted(), event)
+        await rig.orchestrator.ensure_guides([CH])
+    finally:
+        await rig.orchestrator.stop()
+    assert rig.help.whispers == rig.help.guides == []
+
+
+async def test_guides_are_pinned_at_startup_once() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.orchestrator.ensure_guides([CH])
+        await rig.orchestrator.ensure_guides([CH])
+        assert await rig.orchestrator.channel_mode(CH) is not None
+    finally:
+        await rig.orchestrator.stop()
+    assert len(rig.help.guides) == 1
+
+
+async def test_a_help_failure_is_logged_and_the_debouncer_still_runs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig()
+
+    async def broken(*_: Any, **__: Any) -> None:
+        raise RuntimeError("slack is down")
+
+    rig.help.whisper = broken  # type: ignore[method-assign]
+    rig.help.pin_guide = broken  # type: ignore[method-assign]
+    await rig.orchestrator.start()
+    try:
+        event = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX", "text": "hi"}
+        with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+            await rig.orchestrator.note(accepted(), event)
+            await rig.orchestrator.ensure_guides(["C0OTHER01"])
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending()
+    finally:
+        await rig.orchestrator.stop()
+    assert "could not offer help" in caplog.text

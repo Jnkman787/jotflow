@@ -767,3 +767,36 @@ async def test_packet_membership_is_per_run(store: Store) -> None:
     assert await store.packet_ref("run-2", CH, "1.000200") is None
     assert await store.packet_ref("run-1", OTHER, "1.000200") is None
     assert await store.packet_ref("run-1", CH, "9.000100") is None
+
+
+# Help notices (#80)
+
+
+async def test_a_notice_is_claimed_once_per_person_kind_and_channel(store: Store) -> None:
+    assert await store.claim_notice("C0IDEAS01", "U0ALEX", "tip")
+    assert not await store.claim_notice("C0IDEAS01", "U0ALEX", "tip")
+    assert await store.claim_notice("C0IDEAS01", "U0ALEX", "nudge")
+    assert await store.claim_notice("C0IDEAS02", "U0ALEX", "tip")
+    assert await store.claim_notice("C0IDEAS01", "U0BLAKE", "tip")
+    assert await store.claim_notice("C0IDEAS01", "", "guide")
+    assert not await store.claim_notice("C0IDEAS01", "", "guide")
+
+
+@pytest.mark.parametrize(
+    ("user", "kind"),
+    [("", "tip"), ("U0ALEX", "guide"), ("U0ALEX", "banner"), (" ", "nudge")],
+)
+async def test_a_notice_must_fit_its_kind(store: Store, user: str, kind: str) -> None:
+    with pytest.raises(ValueError):
+        await store.claim_notice("C0IDEAS01", user, kind)  # type: ignore[arg-type]
+
+
+async def test_notices_survive_a_restart(tmp_path: Path) -> None:
+    first = await SqliteStore.open(tmp_path / "j.db")
+    assert await first.claim_notice("C0IDEAS01", "", "guide")
+    await first.close()
+    second = await SqliteStore.open(tmp_path / "j.db")
+    try:
+        assert not await second.claim_notice("C0IDEAS01", "", "guide")
+    finally:
+        await second.close()

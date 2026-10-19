@@ -169,6 +169,16 @@ CREATE TABLE pending_threads (
 )
 """
 
+_HELP_NOTICES = """
+CREATE TABLE help_notices (
+    channel_id TEXT NOT NULL, -- Slack channel id
+    user_id TEXT NOT NULL, -- Slack user id the notice was for; '' for the channel's guide
+    kind TEXT NOT NULL CHECK (kind IN ('guide', 'tip', 'nudge')), -- which notice (#80)
+    sent_at TEXT NOT NULL, -- UTC, ISO 8601: when it was claimed, just before sending
+    PRIMARY KEY (channel_id, user_id, kind)
+)
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         1,
@@ -227,6 +237,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         6, (_PENDING_THREADS, "CREATE INDEX pending_threads_due ON pending_threads (due_at)")
     ),
+    # Help notices are sent once per person or channel, across restarts (#80).
+    Migration(7, (_HELP_NOTICES,)),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

@@ -71,6 +71,35 @@ def split_keyword(text: str) -> tuple[Keyword | None, str]:
     return keyword, text[match.end() :]
 
 
+# A keyword word, then punctuation where the colon belongs, such as "Idea - dark mode".
+# A plain hyphen counts only with a space beside it, so "re-run" is a word.
+_WRONG_MARK = re.compile(r"\s*([A-Za-z]+)(?:\s*[\u2013\u2014;,.=]|\s+-|-\s)")
+# "re 42", "re #42", or "re web#42": an issue reference without the colon.
+_BARE_RE = re.compile(r"\s*re\s+#?(?:[A-Za-z0-9][\w./-]*#)?[0-9]+\b", re.IGNORECASE)
+
+
+def near_miss(text: str) -> Keyword | None:
+    """The keyword a message seems to mean but did not type correctly, if any.
+
+    JotFlow never acts on a near miss: it only suggests the right form. To
+    stay quiet, only clear mistakes count: the keyword alone, the keyword with
+    other punctuation where the colon goes, or ``re`` before an issue number.
+    A keyword followed by an ordinary word, as in "Skip button is broken",
+    is ordinary text.
+    """
+    if split_keyword(text)[0] is not None:
+        return None
+    alone = _keyword_for(text.strip().rstrip("!.?").lower())
+    if alone is not None:
+        return alone
+    if _BARE_RE.match(text):
+        return "re"
+    mark = _WRONG_MARK.match(text)
+    if mark is not None:
+        return _keyword_for(mark.group(1).lower())
+    return None
+
+
 class ReferenceError(ValueError):
     """An ``re:`` reference JotFlow cannot use. The message says why."""
 

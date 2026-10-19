@@ -8,13 +8,13 @@ import pytest
 
 from jotflow.models import MessageRef
 from jotflow.orchestrator.debounce import Debouncer
+from jotflow.orchestrator.help import help_text
 from jotflow.orchestrator.ingest import Accepted
 from jotflow.orchestrator.keyword_handler import (
     CONFIRM,
     BoltKeywordSlack,
     KeywordHandler,
     Person,
-    help_text,
 )
 from jotflow.orchestrator.keywords import (
     KEYWORDS,
@@ -529,3 +529,53 @@ async def test_bolt_adapter_looks_up_its_own_team_once() -> None:
 async def test_without_its_own_team_every_other_team_is_external() -> None:
     slack = BoltKeywordSlack(AuthClient({"team_id": "T0ACME"}, None))
     assert (await slack.person("U0ALEX")).external
+
+
+# Near misses (#80): only clear mistakes, never ordinary sentences
+
+
+@pytest.mark.parametrize(
+    ("text", "keyword"),
+    [
+        ("skip", "skip"),
+        ("Skip.", "skip"),
+        ("idea", "idea"),
+        ("Idea - dark mode", "idea"),
+        ("idea—dark mode", "idea"),
+        ("bug; login fails", "bug"),
+        ("skip, testing", "skip"),
+        ("BUG = crash", "bug"),
+        ("re 42", "re"),
+        ("re #42 keep the order", "re"),
+        ("Re web#42 same thing", "re"),
+        ("skpi - testing", "skip"),
+    ],
+)
+def test_clear_keyword_mistakes_are_near_misses(text: str, keyword: str) -> None:
+    from jotflow.orchestrator.keywords import near_miss
+
+    assert near_miss(text) == keyword
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Skip button is broken",
+        "Bug reports are slow to load",
+        "Idea for the dashboard: dark mode",
+        "Re the export, keep the order",
+        "re: 42 already right",
+        "skip: already right",
+        "ideas - a list",
+        "Ship - v2 on Friday",
+        "re-run the export",
+        "rebuild 42 times",
+        "bugs, everywhere",
+        "",
+        "   ",
+    ],
+)
+def test_ordinary_sentences_and_real_keywords_are_not_near_misses(text: str) -> None:
+    from jotflow.orchestrator.keywords import near_miss
+
+    assert near_miss(text) is None
