@@ -28,7 +28,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from jotflow import __version__, agent_setup, deploy
 from jotflow.envfile import EnvChange, read_env, write_envs
-from jotflow.github_cli import gh_visibility
+from jotflow.github_cli import ListedRepo, gh_login, gh_repos, gh_visibility
 from jotflow.models import RepoName, RepoVisibility
 from jotflow.policy import (
     ChannelId,
@@ -543,7 +543,12 @@ def _summary(policy: Policy) -> str:
     )
 
 
-def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]) -> RepoPolicy:
+def _ask_repo(
+    console: Console,
+    taken_repos: set[str],
+    taken_nicknames: set[str],
+    listed: ListedRepo | None = None,
+) -> RepoPolicy:
     def new_repo(value: str) -> str:
         repo = _repo(value)
         if repo.casefold() in taken_repos:
@@ -556,10 +561,18 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
             raise ValueError(f"The nickname {nickname!r} is already used in this channel.")
         return nickname
 
-    _explain(console, EXPLAIN_REPO, "  ")
-    repo = console.ask("  GitHub repo (owner/name or link)", validate=new_repo)
-    visibility = gh_visibility(repo)
-    if visibility is not None:
+    if listed is not None:
+        repo = listed.repo
+        console.say()
+        console.say(f"  {repo}")
+        visibility = listed.visibility
+    else:
+        _explain(console, EXPLAIN_REPO, "  ")
+        repo = console.ask("  GitHub repo (owner/name or link)", validate=new_repo)
+        visibility = gh_visibility(repo)
+    if listed is not None and visibility is not None:
+        pass  # the listing already said, so there is nothing to ask
+    elif visibility is not None:
         console.say(f"  GitHub says {repo} is {visibility}.")
     else:
         _explain(console, EXPLAIN_VISIBILITY, "  ")
@@ -568,7 +581,12 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
     _explain(console, EXPLAIN_NICKNAME, "  ")
     nickname = console.ask("  Nickname", _suggest_nickname(repo), new_nickname)
     _explain(console, EXPLAIN_DESCRIPTION, "  ")
-    description = console.ask("  What it covers", validate=_description)
+    suggested = listed.description if listed is not None else ""
+    try:
+        default = _description(suggested) if suggested else None
+    except ValueError:
+        default = None  # too long for a default: the person writes their own
+    description = console.ask("  What it covers", default, validate=_description)
     _explain(console, EXPLAIN_LABELS, "  ")
     labels = console.ask("  Labels", ANY_LABEL, _labels)
     # "any" is None: no labels line in jotflow.toml, which means any existing
@@ -583,8 +601,78 @@ def _ask_repo(console: Console, taken_repos: set[str], taken_nicknames: set[str]
     )
 
 
+EXPLAIN_PICK = (
+    "Your GitHub CLI is signed in, so setup can list repos to pick from. It only reads,",
+    "with your own login, and keeps nothing but the repos you pick.",
+)
+_SELECTION = re.compile(r"\s*\d+(\s*-\s*\d+)?\s*(,\s*\d+(\s*-\s*\d+)?\s*)*")
+
+
+def _selection(count: int) -> Callable[[str], str]:
+    def check(value: str) -> str:
+        if not value.strip():
+            return ""
+        if not _SELECTION.fullmatch(value):
+            raise ValueError("Type numbers from the list, such as 1,3 or 2-4, or press Enter.")
+        for part in value.split(","):
+            low, _, high = part.partition("-")
+            first, last = int(low), int(high or low)
+            if not 1 <= first <= last <= count:
+                raise ValueError(f"Pick numbers from 1 to {count}.")
+        return value
+
+    return check
+
+
+def _picked(value: str) -> list[int]:
+    chosen: list[int] = []
+    for part in value.split(","):
+        low, _, high = part.partition("-")
+        for number in range(int(low), int(high or low) + 1):
+            if number not in chosen:
+                chosen.append(number)
+    return chosen
+
+
+def _pick_repos(console: Console) -> list[ListedRepo]:
+    """Repos picked from the installer's own ``gh`` listing (#91), or none to type them."""
+    login = gh_login()
+    if login is None:
+        return []
+    _explain(console, EXPLAIN_PICK, "  ")
+    owner = console.ask("  GitHub organisation or user to list", login)
+    listed = gh_repos(owner)
+    if not listed:
+        console.say(f"  GitHub didn't list any repos for {owner}, so type them instead.")
+        return []
+    if len(listed) >= 200:
+        console.say("  Showing the first 200. Type any other repo after picking.")
+    width = len(str(len(listed)))
+    for number, item in enumerate(listed, 1):
+        about = item.description[:60] + ("…" if len(item.description) > 60 else "")
+        seen = f"  ({item.visibility})" if item.visibility else ""
+        console.say(f"  {number:>{width}}  {item.repo}{seen}  {about}".rstrip())
+    answer = console.ask(
+        "  Repos to add (such as 1,3 or 2-4; Enter to type one instead)",
+        "",
+        _selection(len(listed)),
+    )
+    return [listed[n - 1] for n in _picked(answer)] if answer else []
+
+
 def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:
     repos: list[RepoPolicy] = []
+    for listed in _pick_repos(console)[:MAX_REPOS_PER_CHANNEL]:
+        repos.append(
+            _ask_repo(
+                console, {r.repo.casefold() for r in repos}, {r.nickname for r in repos}, listed
+            )
+        )
+    if repos and (
+        len(repos) >= MAX_REPOS_PER_CHANNEL
+        or not console.confirm("  Type another repo for this channel?", default=False)
+    ):
+        return tuple(repos)
     while True:
         repos.append(
             _ask_repo(

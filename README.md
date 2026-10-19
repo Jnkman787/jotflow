@@ -175,6 +175,7 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
 
    Paste each token when asked. **Nothing appears as you paste**; that is expected, because tokens stay hidden. In some terminals you paste with a right-click. Then press Enter. Setup checks each token with Slack straight away. If a token is wrong, it says what's wrong and asks again. If a token ever leaks, [manifests/README.md](manifests/README.md) explains how to revoke it.
 5. **Channels and repos.** For each channel JotFlow should watch, such as `#ideas`, setup asks for:
+   - **the repos, from a list, if you have the [GitHub CLI](https://cli.github.com/) signed in.** Setup asks whose repos to list, shows them numbered, and you type the ones to add, such as `1,3` or `2-4`. Each one's nickname, "what it covers", and public or private come from GitHub, and you can change any of them. It uses your own `gh` login to read the list, and keeps nothing but the repos you pick. Press Enter at the list to type repos instead, as below.
    - **the channel id.** Open the channel, click its name at the top, and find the **Channel ID** at the bottom of the **About** tab. It starts with `C`, or `G` for some private channels, for example `C0IDEAS01`. The channel must already exist in Slack. Pasting the channel's link works too, from **Copy link** or from your browser's address bar. The name, such as `#ideas`, does not: setup says `That is the channel's name. Setup needs its id` and asks again. Anything else that isn't an id gets `not a Slack channel id`.
    - **each GitHub repo** that channel feeds, as `owner/name`: the part after `github.com/` in its URL. For example `https://github.com/acme-co/web` is `acme-co/web`. Pasting the link works too.
    - **a nickname**, a short word people type to point at the repo. Later, starting a Slack message with `re: web#42` points it at issue 42 in that repo.
@@ -437,6 +438,7 @@ Start a message with a keyword to steer JotFlow. The colon is required.
   skip:       not an idea; on a top-level message it keeps the whole thread out
 Or react instead: :no_entry_sign: for skip:, :bulb: for idea:, or :bug: for bug:. Remove your reaction to take it back.
 /jotflow link your-github-login lets proposals assign you; /jotflow unlink undoes it.
+/jotflow repos lists the repos this channel feeds.
 Most people never need these: just post, and JotFlow works out the rest.
 ```
 <!-- jotflow-help:end -->

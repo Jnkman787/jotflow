@@ -4,10 +4,10 @@
 
 - Issue: #91
 - Also serves: #7 (setup), #122 (visibility from `gh`), D2, D5, D7, D11
-- Draft PR: to be opened
-- Status: planning
-- Last verified: plan written on 2026-10-19, no code yet
-- Next safe action: `github_cli.gh_repos`, then the picker in `_ask_channel_repos`
+- Draft PR: #185
+- Status: implementing
+- Last verified: 2026-10-19, `make check` passes with the code below
+- Next safe action: the architect's call on part 2; CodeRabbit; ready for review
 
 ## Objective and done-when
 
@@ -15,13 +15,13 @@ Typing each repo's `owner/name` is error-prone, and slow for a channel that feed
 
 Done when:
 
-- [ ] With `gh` logged in, setup lists an owner's repos and lets the person pick several by number. Each picked repo's nickname comes from its name, "what it covers" from its GitHub description, and its visibility from the same listing. All are editable defaults
-- [ ] Without `gh`, or when it can't list, the typed flow is exactly today's
-- [ ] JotFlow calls only `gh repo list`, which only reads. It stores no GitHub credential and prints nothing `gh` says beyond the listing
-- [ ] No wildcard repo entry is accepted anywhere: setup, the policy loader, and any Slack command
-- [ ] `/jotflow repos` from Slack, per the decision under Risks
-- [ ] Tests use fakes for `gh` and Slack, with no network
-- [ ] `make check` passes
+- [x] With `gh` logged in, setup lists an owner's repos and lets the person pick several by number. Each picked repo's nickname comes from its name, "what it covers" from its GitHub description, and its visibility from the same listing. All are editable defaults
+- [x] Without `gh`, or when it can't list, the typed flow is exactly today's
+- [x] JotFlow calls only `gh repo list` and `gh api user`, which both only read. It stores no GitHub credential and prints nothing `gh` says beyond the listing
+- [x] No wildcard repo entry is accepted anywhere: setup, the policy loader, and any Slack command
+- [x] `/jotflow repos` from Slack, as the default (a) under Risks: it lists privately, and `add` and `remove` say how, with no write. Pending the architect's confirmation
+- [x] Tests use fakes for `gh` and Slack, with no network
+- [x] `make check` passes
 
 ## Design
 
@@ -49,19 +49,31 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: part 1 bounded and testable; part 2 pending the architect
-- [ ] Commit this plan and open the draft PR
-- [ ] `github_cli.gh_repos` and `gh_login`, with fakes
-- [ ] The picker in setup, with the typed fallback unchanged
-- [ ] The no-wildcard tests
-- [ ] `/jotflow repos`, per the decision
-- [ ] Docs: README setup step 5, `jotflow.example.toml` if needed
+- [x] Commit this plan and open the draft PR
+- [x] `github_cli.gh_repos` and `gh_login`, with fakes
+- [x] The picker in setup, with the typed fallback unchanged
+- [x] The no-wildcard tests
+- [x] `/jotflow repos`, per the decision
+- [x] Docs: README setup step 5, `jotflow.example.toml` if needed
 - [ ] CodeRabbit once, or skipped
 - [ ] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes.
+- `tests/test_github_cli.py` covers several things:
+  - the listing parsed from `gh`'s JSON, with descriptions on one line, PRIVATE and INTERNAL read as private, forks after sources, and entries without a name dropped
+  - the exact read-only `gh repo list` command, with the timeout
+  - every failure, including an exit code, bad JSON, a timeout, or no `gh`, meaning "type instead"
+  - an owner that isn't a GitHub name never running `gh`, and the login check
+- `tests/test_init.py` covers several things:
+  - two picked repos, with nicknames, descriptions, and visibility from GitHub, and no visibility question
+  - a description too long for a default, which is asked for, and a missing visibility, which is asked
+  - Enter at the list going back to typing, with the same answers as before
+  - a bad selection asked again, and an owner `gh` can't list falling back to typing
+  - wildcards refused by setup and by the policy loader
+- `tests/test_help.py` covers `/jotflow repos` listing, an unconfigured channel, `add` and `remove` changing nothing and saying how, and the slash-command routing.
 
 ## Handoff notes
 

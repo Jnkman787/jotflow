@@ -64,6 +64,8 @@ class Script:
 def _no_gh(monkeypatch: pytest.MonkeyPatch) -> None:
     # Setup asks gh for a repo's visibility; tests never reach a real one.
     monkeypatch.setattr(init, "gh_visibility", lambda repo: None)
+    monkeypatch.setattr(init, "gh_login", lambda: None)
+    monkeypatch.setattr(init, "gh_repos", lambda owner: None)
 
 
 POLICY = ["C0TEST1", "acme/web", "", "", "The web app", "", "", "", ""]
@@ -1213,3 +1215,122 @@ def test_outside_a_checkout_agent_files_start_from_the_packaged_examples(
 def test_a_checkout_is_told_by_its_project_name(tmp_path: Path, text: str, checkout: bool) -> None:
     (tmp_path / "pyproject.toml").write_text(text)
     assert init.in_checkout(tmp_path) is checkout
+
+
+# --- picking repos from a list (#91) -------------------------------------------------
+
+
+def _listing(monkeypatch: pytest.MonkeyPatch, owners: list[str] | None = None) -> None:
+    from jotflow.github_cli import ListedRepo
+
+    asked = owners if owners is not None else []
+
+    def repos(owner: str) -> list[ListedRepo] | None:
+        asked.append(owner)
+        return [
+            ListedRepo("acme/api", "The public API", "public"),
+            ListedRepo("acme/web", "The web app", "private"),
+            ListedRepo("acme/docs", "x" * 300, None),
+        ]
+
+    monkeypatch.setattr(init, "gh_login", lambda: "acme-alice")
+    monkeypatch.setattr(init, "gh_repos", repos)
+
+
+def test_picked_repos_get_their_details_from_github(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owners: list[str] = []
+    _listing(monkeypatch, owners)
+    answers = [
+        "",
+        "",  # app, bot name
+        "C0TEST1",  # channel
+        "acme",  # owner to list
+        "1-2",  # pick api and web
+        "",
+        "",
+        "",  # api: nickname, what it covers, labels
+        "",
+        "",
+        "",  # web: nickname, what it covers, labels
+        "",  # type another repo? no
+        "",
+        "",  # another channel? no; preset
+    ]
+    script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert owners == ["acme"]
+    channel = load_policy(options.config_file).channels["C0TEST1"]
+    assert [(r.repo, r.nickname, r.description, r.visibility) for r in channel.repos] == [
+        ("acme/api", "api", "The public API", "public"),
+        ("acme/web", "web", "The web app", "private"),
+    ]
+    assert any("1  acme/api  (public)  The public API" in line for line in script.text.splitlines())
+    assert not any("Public or private on GitHub" in p for p in script.prompts)
+    assert any("[acme-alice]" in p for p in script.prompts if "organisation or user" in p)
+
+
+def test_a_description_too_long_for_a_default_is_asked_for(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch)
+    # Its visibility isn't in the listing, so that question comes back, before the nickname.
+    answers = ["", "", "C0TEST1", "", "3", "", "", "Docs site", "", "", "", ""]
+    script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
+    assert (repo.repo, repo.description, repo.visibility) == ("acme/docs", "Docs site", None)
+    covers = [p for p in script.prompts if p.startswith("  What it covers")]
+    assert covers == ["  What it covers: "]  # no default offered
+    assert any("Public or private on GitHub" in p for p in script.prompts)
+
+
+def test_pressing_enter_at_the_list_types_repos_as_before(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch)
+    answers = ["", "", "C0TEST1", "", "", *POLICY[1:]]
+    script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
+    assert repo.repo == "acme/web" and repo.description == "The web app"
+
+
+def test_a_bad_selection_is_asked_again(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _listing(monkeypatch)
+    answers = ["", "", "C0TEST1", "", "9", "1,x", "2", "", "", "", "", "", ""]
+    script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "Pick numbers from 1 to 3." in script.text
+    assert "Type numbers from the list" in script.text
+    (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
+    assert repo.repo == "acme/web"
+
+
+def test_an_owner_gh_cannot_list_falls_back_to_typing(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(init, "gh_login", lambda: "acme-alice")
+    monkeypatch.setattr(init, "gh_repos", lambda owner: None)
+    answers = ["", "", "C0TEST1", "nobody", *POLICY[1:]]
+    script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "didn't list any repos for nobody" in script.text
+    (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
+    assert repo.repo == "acme/web"
+
+
+@pytest.mark.parametrize("wildcard", ["acme/*", "*", "acme/web*"])
+def test_no_wildcard_repo_is_ever_accepted(wildcard: str) -> None:
+    from jotflow.policy import PolicyError, parse_policy
+
+    with pytest.raises(ValueError):
+        init._repo(wildcard)
+    with pytest.raises(PolicyError):
+        parse_policy(
+            f'[channels.C0ONE1]\n[[channels.C0ONE1.repos]]\nrepo = "{wildcard}"\n'
+            'nickname = "web"\ndescription = "Web"\n'
+        )

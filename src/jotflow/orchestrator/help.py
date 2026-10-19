@@ -35,6 +35,7 @@ KEYWORD_LINES: dict[Keyword, tuple[str, str]] = {
 INTRO = "Start a message with a keyword to steer JotFlow. The colon is required."
 CLOSING = "Most people never need these: just post, and JotFlow works out the rest."
 LINK_LINE = "/jotflow link your-github-login lets proposals assign you; /jotflow unlink undoes it."
+REPOS_LINE = "/jotflow repos lists the repos this channel feeds."
 COMMAND = "/jotflow help"
 
 
@@ -53,7 +54,7 @@ def reaction_lines() -> list[str]:
 
 def help_text() -> str:
     """What ``/jotflow help`` shows, privately."""
-    return "\n".join([INTRO, *keyword_lines(), *reaction_lines(), LINK_LINE, CLOSING])
+    return "\n".join([INTRO, *keyword_lines(), *reaction_lines(), LINK_LINE, REPOS_LINE, CLOSING])
 
 
 def guide_text(bot: str = "JotFlow") -> str:
@@ -238,3 +239,26 @@ class BoltHelpSlack:
 
     async def pin(self, channel_id: str, ts: str) -> None:
         await self._client.pins_add(channel=channel_id, timestamp=ts)
+
+
+# /jotflow repos (#91): the channel's repos, read-only
+
+
+REPOS_CHANGE = (
+    "JotFlow's repos live in jotflow.toml, which a running JotFlow can't change. On the "
+    "machine that runs JotFlow, run `uvx jotflow init` from its folder, answer n to keeping "
+    "jotflow.toml, and add or remove the repo there. Then restart with `docker compose up -d`. "
+    "Also give the agents' GitHub tokens access to a repo you add, on GitHub: setup can't."
+)
+
+
+def channel_repos(policy: Policy, channel_id: str, argument: str) -> str:
+    """``/jotflow repos``: list this channel's repos, or say how to change them."""
+    if channel_id not in policy.channels:
+        return NOT_SET_UP
+    if argument.strip():
+        return REPOS_CHANGE
+    lines = ["This channel feeds:"]
+    for repo in policy.channels[channel_id].repos:
+        lines.append(f"  {repo.nickname}: {repo.repo}. {repo.description}")
+    return "\n".join(lines)

@@ -359,3 +359,40 @@ async def test_a_failed_pin_is_not_retried(store: Store, caplog: pytest.LogCaptu
     await HelpHandler(store, policy(), slack).ensure_guide(CH)
     assert len(slack.guides) == 1
     assert "could not pin it" in caplog.text
+
+
+# --- /jotflow repos, read-only (#91) ------------------------------------------------------
+
+
+def test_repos_lists_this_channels_repos() -> None:
+    from jotflow.orchestrator.help import channel_repos
+
+    text = channel_repos(policy(), CH, "")
+    assert text.splitlines() == [
+        "This channel feeds:",
+        "  web: acme-co/web. Web",
+        "  api: acme-co/api. API",
+    ]
+    assert channel_repos(policy(), "C0ELSEWHERE", "") == NOT_SET_UP
+
+
+@pytest.mark.parametrize("argument", ["add acme-co/mobile", "remove web", "anything"])
+def test_changing_repos_says_how_and_changes_nothing(argument: str) -> None:
+    from jotflow.orchestrator.help import REPOS_CHANGE, channel_repos
+
+    before = policy()
+    assert channel_repos(before, CH, argument) == REPOS_CHANGE
+    assert "uvx jotflow init" in REPOS_CHANGE and "GitHub tokens" in REPOS_CHANGE
+    assert [r.repo for r in before.channels[CH].repos] == ["acme-co/web", "acme-co/api"]
+
+
+async def test_the_slash_command_routes_repos() -> None:
+    app = FakeApp()
+    register_commands(cast(Any, app), policy())
+    answers: list[str] = []
+
+    async def ack(answer: str) -> None:
+        answers.append(answer)
+
+    await app.commands[SLASH_COMMAND](ack=ack, command={"text": "repos", "channel_id": CH})
+    assert answers[0].startswith("This channel feeds:")
