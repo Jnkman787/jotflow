@@ -70,7 +70,7 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 - Work packet: thread text fetched live from Slack plus the compact topic index and excerpts of likely-related threads, several topics per thread allowed, served by `get_work` (D9)
 - Generic command adapter: command template, MCP config injection, per-run token, timeout, environment allowlist
 - Agent container: separate from JotFlow, started by the same Compose file, with a runner on the internal network that starts runs; no Docker socket, no published ports, read and write GitHub tokens chosen per run kind (D6)
-- Presets for Claude Code and Codex CLI: read-only GitHub and no shell or write tools for drafting runs, transcripts off (D6)
+- Presets for Claude Code and Codex CLI: read-only GitHub and no shell or write tools for drafting runs, transcripts off (D6). Claude Code is supported, and Codex is experimental, for drafting and question runs only (#22)
 - Minimal end-to-end execution with one preset against the sandbox, to prove D5 before the gate is built
 - Agent prompt: classify messages, honour keyword hints, choose among the channel's repos, search duplicates with read-only GitHub access, propose, ask when unsure (D10, D11)
 - Proposal capture: tool calls recorded with `pending` state
@@ -102,19 +102,31 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 **Work**
 
 - `/jotflow link <github-login>`: self-service identity linking; cards mark unverified identities
-- Questions: `ask:` and @-mentions answered read-only in the thread (D12)
 - Operator token: admin-issued, read-only, revocable, for terminal queries (D12)
-- Presets for Gemini CLI and Copilot CLI
 - CI hardening: pin Actions to commit SHAs, add a workflow linter
-- Reuse before creating: the agent searches open and closed issues of any age across the channel's repos, plus JotFlow's full topic history, and proposes an update or asks instead of creating a duplicate; the best candidate is surfaced on the card with a one-click "same as" action
+- Reuse before creating: the agent searches open and closed issues of any age across the channel's repos, plus JotFlow's full topic history, and proposes an update or asks instead of creating a duplicate
 - Topic expiry: quiet window or linked issue closed; expiry removes a topic from the active index only, and its record is kept indefinitely for matching
-- Rebuild command: reconstruct the store from Slack thread replies
 - Container image published to GHCR on tagged releases
 - Python package published to PyPI with trusted publishing, from the same tag and version as the image; `jotflow init` writes a Compose file pinned to that image, so a team installs with `uvx jotflow init` then `docker compose up -d` and never clones the repo
 - Documentation: deployment guide, agent adapter guide, threat model
 - First tagged release
 
 **Done when** a fresh-eyes review (a new agent with no project context reading only the README and setup prompts as a non-engineer) passes under the three-pass cap in AGENTS.md, with no BLOCKER and no contradiction left and every deferred minor finding in #114 fixed or declined, and the maintainer, unguided, completes the no-clone install from an empty folder and files an issue through Slack. JotFlow has a single maintainer until v1, so outside testers are not a gate; feedback from the first real adopters is the first post-v1 task.
+
+## Milestone 6: After v0.1.0 `todo`
+
+**Goal.** The first follow-ups once v0.1.0 is out. None of these ship in v0.1.0.
+
+**Work**
+
+- #36: surface the best duplicate candidate on the card, with a one-click "same as" action
+- #38: `jotflow rebuild`, to reconstruct the store from Slack thread replies
+- #57: answer questions asked with `ask:` and @-mentions, read-only, in the thread (D12)
+- #59: presets for Gemini CLI and Copilot CLI
+- #181: per-run uids or sandboxes, so runs of the same kind can't read each other's environment
+- #195: verify a GitHub identity link with a one-time public code
+- #209: opt-in, path-limited reading of repo docs during drafting
+- #216: per-repo issue conventions, and an optional enforced title pattern
 
 ## Post-v1
 
