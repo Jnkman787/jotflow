@@ -57,13 +57,24 @@ FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2
 ARG AGENT_NPM_PACKAGES=""
 ARG AGENT_UID=10002
 
+# npm is needed only to install them. Debian's npm package brings its own old
+# copies of node modules, such as Babel 7.20, which scanners flag, so it is
+# purged once the install is done. nodejs stays: the CLIs run on it.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends nodejs npm ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
     && if [ -n "${AGENT_NPM_PACKAGES}" ]; then \
          npm install --global --no-fund --no-audit ${AGENT_NPM_PACKAGES} \
          && npm cache clean --force; \
-       fi
+       fi \
+    && apt-get purge --yes --auto-remove \
+         -o APT::AutoRemove::RecommendsImportant=false \
+         -o APT::AutoRemove::SuggestsImportant=false npm \
+    && rm -rf /var/lib/apt/lists/* /root/.npm \
+    && node --version \
+    && ! test -e /usr/bin/npm \
+    && ! test -e /usr/share/nodejs/@babel \
+    && ! test -e /usr/share/nodejs/http-cache-semantics \
+    && ! test -e /usr/share/nodejs/word-wrap
 
 RUN --mount=type=bind,from=github-mcp,source=/github-mcp-server.tar.gz,target=/tmp/github-mcp-server.tar.gz \
     tar -xzf /tmp/github-mcp-server.tar.gz -C /usr/local/bin github-mcp-server \

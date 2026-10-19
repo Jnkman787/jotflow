@@ -142,7 +142,7 @@ The team decides where both containers run. The only requirements are that JotFl
 
 **The JotFlow image.** The `Dockerfile` builds from `uv.lock` and ships only the virtual environment: no uv, no Node, no agent CLI. It runs as an unprivileged user (uid 10001). `docker-compose.yml` mounts a named volume at `/data` for the database, keeps the root filesystem read-only, drops all capabilities, and publishes no ports. JotFlow joins two networks: `egress` for Slack, and `agents`, which is internal and has no route out. The M3 agent service joins only `agents` plus whatever egress its model and GitHub access need.
 
-**The agent containers.** `Dockerfile.agent` builds one image for two Compose services, from the same pinned Python base plus Debian's Node and npm for the agent CLIs. The CLIs install through the `AGENT_NPM_PACKAGES` build argument, which `docker-compose.yml` sets to the versions the presets were verified with. The image also holds GitHub's MCP server, pinned by release and by a sha256 per architecture.
+**The agent containers.** `Dockerfile.agent` builds one image for two Compose services, from the same pinned Python base plus Debian's Node for the agent CLIs. Debian's npm installs them and is then purged, along with the old node modules it brings. The CLIs install through the `AGENT_NPM_PACKAGES` build argument, which `docker-compose.yml` sets to the versions the presets were verified with. The image also holds GitHub's MCP server, pinned by release and by a sha256 per architecture.
 
 | Service | Runs | Env file | GitHub token | Home volume |
 |---|---|---|---|---|
