@@ -490,6 +490,10 @@ class Store(Protocol):
 
     async def get_proposal(self, proposal_id: str) -> ProposalRecord | None: ...
 
+    async def proposal_for_card(self, channel_id: str, card_ts: str) -> ProposalRecord | None:
+        """The proposal whose card is the message ``card_ts`` in ``channel_id``, if any."""
+        ...
+
     async def thread_proposals(self, channel_id: str, thread_ts: str) -> list[ProposalRecord]:
         """Proposals from one thread, oldest first."""
         ...
