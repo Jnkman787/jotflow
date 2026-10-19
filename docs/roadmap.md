@@ -26,7 +26,7 @@ Settled questions that shape the implementation. Change one by editing it here i
 
 Smaller decisions deferred until their milestone: expiring a topic when its linked issue closes (#37; the activity window is settled as `topic_window_days`, default 14, in #12), and identity verification versus self-declaration (v1 self-declares and marks unverified identities on the card).
 
-## Milestone 1: Installable `todo`
+## Milestone 1: Installable `in progress`
 
 **Goal.** A team can deploy JotFlow and see it connect to Slack, even though it does nothing yet.
 
@@ -42,7 +42,7 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 
 **Done when** a fresh clone with valid credentials runs `jotflow run` and logs a redacted event for a message posted in a configured channel.
 
-## Milestone 2: Whiteboard `todo`
+## Milestone 2: Whiteboard `done`
 
 **Goal.** JotFlow holds the topic index and exposes it over MCP. Nothing calls an agent yet.
 
@@ -59,7 +59,7 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 
 **Done when** `jotflow replay` on a fixture produces a topic in the store, and a terminal agent pointed at the MCP server can list it.
 
-## Milestone 3: Agent loop `todo`
+## Milestone 3: Agent loop `in progress`
 
 **Goal.** A real agent reads a thread and produces proposals through the tools.
 
@@ -78,7 +78,7 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 
 **Done when** a fixture thread replayed with a real agent yields a pending `IssueProposal` with a plausible title and body, and chatter is classified as chatter.
 
-## Milestone 4: Gate `todo`
+## Milestone 4: Gate `in progress`
 
 **Goal.** Proposals become GitHub issues under human control.
 
@@ -95,7 +95,7 @@ Smaller decisions deferred until their milestone: expiring a topic when its link
 
 **Done when** a message in a `propose` channel yields a card, Approve triggers an execution run in which the agent creates the issue in the sandbox repo, the thread receives the issue link, and a follow-up reply yields an update proposal.
 
-## Milestone 5: Polish `todo`
+## Milestone 5: Polish `in progress`
 
 **Goal.** Ready for another team to adopt.
 

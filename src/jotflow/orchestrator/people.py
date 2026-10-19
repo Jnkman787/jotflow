@@ -98,12 +98,18 @@ class SlackPeople:
 
     async def person(self, user_id: str) -> Person:
         response = await self._client.users_info(user=user_id)
-        user = response.get("user") or {}
-        guest = bool(user.get("is_restricted") or user.get("is_ultra_restricted"))
-        team = user.get("team_id")
-        own = await self.own_team()
-        external = bool(user.get("is_stranger")) or (team is not None and team != own)
-        return Person(user_id, guest=guest, external=external)
+        return classify(user_id, response.get("user") or {}, await self.own_team())
+
+
+def classify(user_id: str, user: Mapping[str, Any], own_team: str | None) -> Person:
+    """A Slack user object, from ``users.info`` or ``users.list``, as a :class:`Person`.
+
+    With no known ``own_team``, anyone with a team counts as external.
+    """
+    guest = bool(user.get("is_restricted") or user.get("is_ultra_restricted"))
+    team = user.get("team_id")
+    external = bool(user.get("is_stranger")) or (team is not None and team != own_team)
+    return Person(user_id, guest=guest, external=external)
 
 
 class SlackAttribution:
