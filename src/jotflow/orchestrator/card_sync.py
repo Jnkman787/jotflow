@@ -24,7 +24,7 @@ from typing import Any, Protocol
 from jotflow.models import ProposalRecord, ProposalState
 from jotflow.orchestrator.cards import CardContext, CardPublisher
 from jotflow.policy import Policy, UnknownChannelError
-from jotflow.store.base import IdentityLink, Store, utc_now
+from jotflow.store.base import AUTO_APPROVER, IdentityLink, Store, utc_now
 
 log = logging.getLogger("jotflow.cards")
 
@@ -35,6 +35,9 @@ LAST_RETRY = timedelta(minutes=1)
 
 # A proposal that ended before anyone saw it needs no card.
 _NO_CARD_NEEDED = frozenset({ProposalState.SUPERSEDED, ProposalState.REJECTED})
+# Auto mode posts its summary card after the write (#28): not while it is under way.
+_WRITING = frozenset({ProposalState.APPROVED, ProposalState.EXECUTING, ProposalState.RECONCILING})
+AUTO = AUTO_APPROVER
 
 # Slack errors that retrying cannot fix: the card's message or its channel is gone.
 FINAL_SLACK_ERRORS = frozenset(
@@ -69,7 +72,7 @@ async def card_context(
 ) -> CardContext:
     """Everything the card shows besides the proposal: names, identities, the channel."""
     users = list(dict.fromkeys(record.participants))
-    if record.approved_by and record.approved_by != "auto":
+    if record.approved_by and record.approved_by != AUTO:
         users.append(record.approved_by)
     names: dict[str, str] = {}
     identities: dict[str, IdentityLink] = {}
@@ -138,6 +141,8 @@ class CardSync:
             if record.card_ts is None and record.state in _NO_CARD_NEEDED:
                 await self._store.mark_card_shown(record.id, record.revision)
                 return False
+            if record.card_ts is None and record.approved_by == AUTO and record.state in _WRITING:
+                return False  # stays due: posted once the write is applied or failed
             context = await card_context(self._policy, self._store, self._people, record)
             await self._publisher.show(record, context)
             await self._store.mark_card_shown(record.id, record.revision)

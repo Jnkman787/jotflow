@@ -1002,3 +1002,87 @@ async def test_a_reaction_reaches_the_approval_gate_after_keywords(
         await rig.orchestrator.stop()
     assert seen == [event, event]
     assert "could not handle a reaction on a card" in caplog.text
+
+
+# Channel modes (#28)
+
+
+async def test_a_paused_channel_reads_nothing() -> None:
+    from jotflow.models import ChannelMode
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+        event = {
+            "type": "message",
+            "channel": CH,
+            "ts": THREAD,
+            "user": "U0ALEX",
+            "text": "skip: x",
+        }
+        await rig.orchestrator.note(accepted(), event)
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+    finally:
+        await rig.orchestrator.stop()
+    assert await rig.store.get_message(CH, THREAD) is None  # the keyword was not read
+    assert rig.slack.reactions == [] and rig.help.whispers == []
+
+
+async def test_an_unreadable_mode_fails_closed(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+
+        async def broken(*_: Any, **__: Any) -> Any:
+            raise RuntimeError("store is down")
+
+        monkeypatch.setattr(rig.store, "get_channel_mode", broken)
+        event = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX", "text": "hi"}
+        with caplog.at_level(logging.ERROR, logger="jotflow.orchestrator"):
+            await rig.orchestrator.note(accepted(), event)
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+    finally:
+        monkeypatch.undo()
+        await rig.orchestrator.stop()
+    assert "could not read the channel's mode" in caplog.text
+
+
+async def test_auto_mode_approves_writes_and_posts_the_card_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jotflow.models import ChannelMode, ExecutionResult
+    from tests.test_card_sync import proposal
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        await rig.store.set_channel_mode(CH, ChannelMode.AUTO, changed_by="U0LEAD")
+        await rig.store.add_proposal(proposal())
+
+        async def launched() -> bool:
+            return ("POST", "agent-exec", "/runs") in rig.calls
+
+        await until(launched)
+        record = await rig.store.get_proposal("p1")
+        assert record is not None and record.approved_by == "auto"
+        assert record.state is ProposalState.EXECUTING
+        await asyncio.sleep(0.05)
+        assert rig.cards.posts == []  # no card while the write is under way
+        url = "https://github.com/acme-co/web/issues/7"
+        await rig.store.transition(
+            "p1", ProposalState.APPLIED, result=ExecutionResult(issue_url=url)
+        )
+
+        async def posted() -> bool:
+            return len(rig.cards.posts) == 1
+
+        await until(posted)
+    finally:
+        await rig.orchestrator.stop()
+    card = json.dumps(rig.cards.posts[0][2].blocks)
+    assert "Approved by auto mode" in card and "acme-co/web#7" in card

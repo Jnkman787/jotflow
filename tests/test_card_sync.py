@@ -177,15 +177,33 @@ async def test_a_proposal_that_ended_before_its_card_gets_none(store: Store) -> 
     assert await store.cards_due() == []
 
 
-async def test_an_auto_approved_proposal_is_posted_approved(store: Store) -> None:
+async def test_an_auto_approved_card_is_posted_after_the_write(store: Store) -> None:
+    from jotflow.models import ExecutionResult
+
     poster = FakeCardPoster()
     cards = sync_for(store, poster)
     await store.add_proposal(proposal())
     await approve(store, by="auto")
     await cards.sync()
+    await store.transition("p1", ProposalState.EXECUTING)
+    await cards.sync()
+    assert poster.posts == []  # not while the write is under way (#28)
+    url = "https://github.com/acme-co/web/issues/7"
+    await store.transition("p1", ProposalState.APPLIED, result=ExecutionResult(issue_url=url))
+    await cards.sync()
     ((_, _, card),) = poster.posts
     assert "Approved by auto mode" in text_of(card)
     assert "jotflow_approve" not in text_of(card)
+    assert await store.cards_due() == []
+
+
+async def test_a_person_approved_card_is_not_held(store: Store) -> None:
+    poster = FakeCardPoster()
+    cards = sync_for(store, poster)
+    await store.add_proposal(proposal())
+    await approve(store)  # e.g. execute-fixture, or approved before its card went up
+    await cards.sync()
+    assert len(poster.posts) == 1
 
 
 async def test_a_change_while_drawing_is_drawn_again(store: Store) -> None:

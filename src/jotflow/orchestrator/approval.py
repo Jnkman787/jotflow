@@ -27,7 +27,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from jotflow.models import MessageRef, ProposalRecord, ProposalState, RunKind
+from jotflow.models import ChannelMode, MessageRef, ProposalRecord, ProposalState, RunKind
 from jotflow.orchestrator.cards import (
     ACTION_APPROVE,
     ACTION_DISCARD,
@@ -78,6 +78,7 @@ CARD_UPDATING = "This card is being updated, so nothing was approved. React agai
 TOO_LONG_TO_REACT = (
     "This draft is too long to show in full on the card, so it can't be approved here."
 )
+PAUSED = "JotFlow is paused in this channel. Nothing is written until someone sets it back."
 
 
 def _already(state: ProposalState) -> str:
@@ -193,6 +194,7 @@ class ApprovalHandler:
             record = await self._store.get_proposal(proposal_id)
             if record is None:
                 raise Refused(NOT_THIS_CARD)
+            await self._check_not_paused(record.channel_id)
             if record.state is not ProposalState.PENDING:
                 raise Refused(_already(record.state))
             try:
@@ -292,11 +294,18 @@ class ApprovalHandler:
         try:
             await self._check_person(body, click.user_id)
             record = await self._card_proposal(click)
+            await self._check_not_paused(record.channel_id)
             return await action(click, record)
         except Refused as refused:
             log.info("card action refused for user %s", click.user_id)
             await self._tell(click.user_id, str(refused), channel=click.channel_id)
             return "refused"
+
+    async def _check_not_paused(self, channel_id: str) -> None:
+        """A paused channel reads nothing and writes nothing, its cards included (#28)."""
+        setting = await self._store.get_channel_mode(channel_id)
+        if setting is not None and setting.mode is ChannelMode.PAUSED:
+            raise Refused(PAUSED)
 
     async def _check_person(
         self, body: Mapping[str, Any], user_id: str, *, payload_teams: bool = True

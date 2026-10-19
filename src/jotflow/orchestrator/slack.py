@@ -14,6 +14,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from jotflow.models import ChannelMode
 from jotflow.orchestrator.help import channel_help, help_text
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
+from jotflow.orchestrator.modes import ModeCommand
 from jotflow.policy import Policy
 from jotflow.slack_manifest import SLASH_COMMAND
 
@@ -114,15 +115,24 @@ def register_commands(
     app: AsyncApp,
     policy: Policy | None = None,
     mode_for: Callable[[str], Awaitable[ChannelMode]] | None = None,
+    modes: ModeCommand | None = None,
 ) -> None:
-    """Answer ``/jotflow`` privately. Only ``help`` exists so far.
+    """Answer ``/jotflow`` privately: ``help`` and ``mode``.
 
     With ``policy``, help knows the channel it was asked in: its repos and how
-    approval works there, or that the channel is not set up (#80).
+    approval works there, or that the channel is not set up (#80). With
+    ``modes``, ``/jotflow mode`` shows or sets the channel's mode (#28).
     """
 
     async def on_command(ack: Any, command: dict[str, Any]) -> None:
         text = str(command.get("text") or "").strip().lower()
+        word, _, rest = text.partition(" ")
+        if word == "mode" and modes is not None:
+            channel = str(command.get("channel_id") or "")
+            user = str(command.get("user_id") or "")
+            reply = await modes.handle(channel, user, rest)
+            await ack(reply.text)
+            return
         if text in ("", "help"):
             channel = str(command.get("channel_id") or "")
             if policy is None:
@@ -133,7 +143,9 @@ def register_commands(
                 mode = await mode_for(channel)
             await ack(channel_help(policy, channel, mode))
         else:
-            await ack("Only /jotflow help exists so far. It lists the keywords.")
+            await ack(
+                "Try /jotflow help for the keywords, or /jotflow mode for this channel's mode."
+            )
 
     app.command(SLASH_COMMAND)(on_command)
 

@@ -193,7 +193,7 @@ async def serve(settings: Settings, policy: Policy) -> int:
         return EXIT_STORE
     try:
         register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
-        register_commands(app, policy, orchestrator.channel_mode)
+        register_commands(app, policy, orchestrator.channel_mode, orchestrator.modes)
         if orchestrator.approval is not None:
             register_actions(app, orchestrator.approval)
         await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
