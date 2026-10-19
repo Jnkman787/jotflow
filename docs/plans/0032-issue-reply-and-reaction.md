@@ -4,10 +4,10 @@
 
 - Issue: #32
 - Also serves: #38 (`jotflow rebuild` reads the URL in the thread), #6 (`issue_links`), #152 (the outbox pattern), D4
-- Draft PR: to be opened
-- Status: planning
-- Last verified: plan written on 2026-10-19, no code yet
-- Next safe action: the store's thread-told mark, once the architect confirms the policy key
+- Draft PR: #157, stacked on #155 (`feat/channel-modes`) for its paused-channel rule
+- Status: implementing
+- Last verified: 2026-10-19, `make check` passes with the code below
+- Next safe action: CodeRabbit, then ready; rebase onto main once #155 merges
 
 ## Objective and done-when
 
@@ -17,12 +17,12 @@ Per the lead's update on the issue, box 1, permalinks in the issue body, moved t
 
 Done when:
 
-- [ ] An applied proposal gets one thread reply holding the issue URL, for a new issue and for an update
-- [ ] Each of its source messages gets the configured reaction, and the reaction can be turned off
-- [ ] Both are driven by the proposal reaching `applied`, through the store's outbox, never by the agent and never inside an MCP tool's write
-- [ ] A Slack failure is retried without ever posting the reply twice, and a paused channel waits
-- [ ] With `issue_links = "none"` the reply still carries the URL, and nothing in it is agent-written
-- [ ] `make check` passes, including the coverage floor
+- [x] An applied proposal gets one thread reply holding the issue URL, for a new issue and for an update
+- [x] Each of its source messages gets the configured reaction, and the reaction can be turned off
+- [x] Both are driven by the proposal reaching `applied`, through the store's outbox, never by the agent and never inside an MCP tool's write
+- [x] A Slack failure is retried without ever posting the reply twice, and a paused channel waits
+- [x] With `issue_links = "none"` the reply still carries the URL, and nothing in it is agent-written
+- [x] `make check` passes, including the coverage floor
 
 **Out of scope:** the issue body itself, which is #31's, and `jotflow rebuild`, which is #38's.
 
@@ -35,7 +35,7 @@ Done when:
   - Both stores implement it, with contract and schema tests.
 - **`orchestrator/thread_notice.py`**, `ThreadNotice(store, policy, slack)`. `tell()` takes each due proposal:
   1. It reacts with the configured emoji on each source message. Slack's `already_reacted` counts as done, and `message_not_found` skips that message.
-  2. It replies in the thread: "Created web#7: https://github.com/acme-co/web/issues/7", or "Updated web#42: ...". The nickname comes from the channel's policy, and the URL is the one `record_result` validated against the approved repo. The reply is plain text that JotFlow builds itself, with links unfurled off.
+  2. It replies in the thread: "Created web#7: https://github.com/acme-co/web/issues/7", or "Updated web#42: ...". The nickname comes from the channel's policy, and the URL is the one `record_result` validated against the approved repo. The reply is mrkdwn built only by JotFlow: `<url|web#7>`, where the URL must match `https://github.com/owner/name/issues/N` again here, below the model's own check, and the nickname comes from policy. Links never unfurl.
   3. It records `thread_told_at`.
   - Reactions go first because they are idempotent, so a retry repeats them harmlessly but never repeats the reply. Only a failure of step 3 itself could double the reply.
   - Failures back off from 2 seconds to a minute, as `CardSync` does. Errors that retrying cannot fix, such as the thread or channel being gone, mark it told and log.
@@ -52,20 +52,30 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when; the policy key pending the architect
-- [ ] Commit this plan and open the draft PR
-- [ ] Store: migration 9, `threads_due`, `mark_thread_told`, both stores, contract and upgrade tests
-- [ ] Policy: `issue_reaction`, with the example file, the writer, and tests
-- [ ] `thread_notice.py`: reactions, reply, mark, backoff, final errors
-- [ ] Orchestrator: run it in the card loop
-- [ ] Tests through the real orchestrator: an applied proposal gets one reply and its reactions; a retry never doubles the reply; a paused channel waits
-- [ ] Docs: architecture's execution section, README
+- [x] Commit this plan and open the draft PR
+- [x] Store: migration 9, `threads_due`, `mark_thread_told`, both stores, contract and upgrade tests
+- [x] Policy: `issue_reaction`, with the example file, the writer, and tests
+- [x] `thread_notice.py`: reactions, reply, mark, backoff, final errors
+- [x] Orchestrator: run it in the card loop
+- [x] Tests through the real orchestrator: an applied proposal gets one reply and its reactions; a retry never doubles the reply; a paused channel waits
+- [x] Docs: architecture's execution section, README
 - [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
+- [x] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes.
+- `tests/test_thread_notice.py` runs on both stores. It covers:
+  - one reply and one reaction per distinct source message, with nothing on the next pass
+  - "Updated" for an update, the reaction turned off, and the URL kept under `issue_links = "none"`
+  - already-reacted and missing messages, and a failed reply retried and posted once
+  - a failed reaction retried before any reply, gone threads given up, and logs without error text
+  - a paused channel waiting
+  - only a GitHub issue URL ever linked, and the adapter's no-unfurl calls
+- The store's contract and upgrade tests cover `threads_due` and `mark_thread_told`, and show proposals applied before the upgrade are not told again.
+- The policy tests cover the default, `""`, a refused `white_check_mark`, bad names, and a round trip through the writer.
+- `tests/test_service.py` shows the running service telling an applied proposal's thread, with its reactions.
 
 ## Handoff notes
 

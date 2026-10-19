@@ -24,6 +24,10 @@ JOTFLOW_REACTIONS: frozenset[str] = frozenset({CONFIRM})
 # which people add casually.
 DEFAULT_APPROVAL = "heavy_check_mark"
 
+# What JotFlow adds to a proposal's source messages once its issue is written (#32).
+# Configurable as issue_reaction; policy keeps it apart from every name above.
+DEFAULT_ISSUE_REACTION = "ticket"
+
 
 def reserved() -> frozenset[str]:
     """Names the approval reaction may not take."""

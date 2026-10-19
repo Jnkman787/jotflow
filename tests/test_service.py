@@ -31,6 +31,7 @@ from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
 from tests.test_runner import ENVIRON, SECRET, _free_port, config
 from tests.test_runs import CH, ISSUE_URL, THREAD, _approved
+from tests.test_thread_notice import FakeThreadSlack
 
 IDENTITY = BotIdentity(user_id="U0BOT", bot_id="B0BOT")
 
@@ -95,6 +96,7 @@ class Rig:
         self.slack = FakeSlack()
         self.help = FakeHelpSlack()
         self.cards = FakeCardPoster()
+        self.threads = FakeThreadSlack()
         self.runner = RunnerClient(
             conversation=RunnerEndpoint("http://agent:8766", SECRET),
             execution=RunnerEndpoint("http://agent-exec:8766", EXEC_SECRET),
@@ -111,6 +113,7 @@ class Rig:
             keyword_slack=self.slack,
             help_slack=self.help,
             card_poster=self.cards,
+            thread_slack=self.threads,
             people=FakePeople(),
             card_seconds=0.01,
             flush_seconds=0.01,
@@ -1086,3 +1089,25 @@ async def test_auto_mode_approves_writes_and_posts_the_card_after(
         await rig.orchestrator.stop()
     card = json.dumps(rig.cards.posts[0][2].blocks)
     assert "Approved by auto mode" in card and "acme-co/web#7" in card
+
+
+# The issue link in the thread (#32)
+
+
+async def test_an_applied_issue_is_told_in_its_thread_by_the_running_service() -> None:
+    from tests.test_thread_notice import URL, applied
+
+    rig = Rig(runs=False)
+    await rig.orchestrator.start()
+    try:
+        await applied(rig.store)
+
+        async def told() -> bool:
+            return len(rig.threads.replies) == 1
+
+        await until(told)
+        await asyncio.sleep(0.05)
+    finally:
+        await rig.orchestrator.stop()
+    assert rig.threads.replies == [(CH, THREAD, f"Created <{URL}|web#7>")]
+    assert {name for _, _, name in rig.threads.reactions} == {"ticket"}
