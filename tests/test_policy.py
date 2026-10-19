@@ -394,6 +394,11 @@ def test_the_approval_reaction_is_an_emoji_name_that_is_no_keyword() -> None:
     assert default.approval.reactions is False and default.approval.reaction == "heavy_check_mark"
     on = Policy.model_validate({**base, "approval": {"reactions": True, "reaction": "+1"}})
     assert on.approval.reaction == "+1"
-    for bad in (":heavy_check_mark:", "White Check", "", "no_entry_sign", "white_check_mark"):
-        with pytest.raises(ValueError):
+    for bad in (":heavy_check_mark:", "White Check", "", "x" * 101):
+        with pytest.raises(ValueError, match="Slack emoji name"):
             Policy.model_validate({**base, "approval": {"reactions": True, "reaction": bad}})
+    with pytest.raises(ValueError, match="already stands for a keyword"):
+        Policy.model_validate({**base, "approval": {"reaction": "no_entry_sign"}})
+    with pytest.raises(ValueError, match="JotFlow adds white_check_mark itself"):
+        Policy.model_validate({**base, "approval": {"reaction": "white_check_mark"}})
+    assert Policy.model_validate({**base, "approval": {"reaction": "a" * 100}})
