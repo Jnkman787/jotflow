@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import tempfile
+import tomllib
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -832,10 +833,11 @@ def in_checkout(folder: Path) -> bool:
     if (folder / "Dockerfile").is_file():
         return True
     try:
-        project = (folder / "pyproject.toml").read_text(encoding="utf-8")
-    except OSError:
+        project = tomllib.loads((folder / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
         return False
-    return 'name = "jotflow"' in project
+    table = project.get("project")
+    return isinstance(table, dict) and table.get("name") == "jotflow"
 
 
 def _plan_compose(console: Console, options: InitOptions) -> list[tuple[Path, str]]:

@@ -1199,3 +1199,17 @@ def test_outside_a_checkout_agent_files_start_from_the_packaged_examples(
 ) -> None:
     _with_agent(options)
     assert options.agent_file.read_text().startswith("# agent.env:")
+
+
+@pytest.mark.parametrize(
+    ("text", "checkout"),
+    [
+        ('[project]\nname = "jotflow"\n', True),
+        ('[project]\nname = "other"\n# name = "jotflow"\n', False),
+        ("not [ valid toml", False),
+        ('[tool.x]\nname = "jotflow"\n', False),
+    ],
+)
+def test_a_checkout_is_told_by_its_project_name(tmp_path: Path, text: str, checkout: bool) -> None:
+    (tmp_path / "pyproject.toml").write_text(text)
+    assert init.in_checkout(tmp_path) is checkout

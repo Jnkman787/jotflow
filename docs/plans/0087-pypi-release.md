@@ -63,7 +63,7 @@ Done when:
 - [x] `release.yml`: the package and pypi jobs
 - [x] Packaging: force-include the templates, and test the built wheel has them
 - [x] Docs: README quickstart, CONTRIBUTING.md, architecture's Distribution section
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: one finding, fixed (checkout detection parses pyproject.toml)
 - [x] `make check` passes
 - [ ] Mark the PR ready for review
 
