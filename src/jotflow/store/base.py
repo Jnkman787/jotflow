@@ -294,6 +294,16 @@ def check_edit(
         raise ValueError("an edit keeps the proposal's kind and topic")
 
 
+def edited_draft(
+    record: ProposalRecord, draft: IssueProposal | UpdateProposal
+) -> IssueProposal | UpdateProposal:
+    """``draft`` as stored after an edit: a new repo drops the agent's visibility report,
+    which was about the old repo (#122), so the card re-derives it from policy."""
+    if draft.repo.casefold() != record.proposal.repo.casefold() and draft.repo_visibility:
+        return draft.model_copy(update={"repo_visibility": None})
+    return draft
+
+
 def check_notice(channel_id: str, user_id: str, kind: str) -> None:
     check_id(channel_id, "channel id")
     if kind not in ("guide", "tip", "nudge"):

@@ -52,6 +52,7 @@ from jotflow.store.base import (
     check_notice,
     check_run_request,
     cleared_draft,
+    edited_draft,
     plan_transition,
     to_text,
     utc_now,
@@ -270,6 +271,7 @@ class MemoryStore:
             if record is None:
                 raise NotFoundError(f"no proposal {proposal_id}")
             check_edit(record, draft, by, field)
+            draft = edited_draft(record, draft)
             updated = record.model_copy(
                 update={"proposal": draft, "revision": record.revision + 1}, deep=True
             )

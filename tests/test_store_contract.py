@@ -1023,3 +1023,16 @@ async def test_an_edit_keeps_the_kind_and_topic_and_names_a_known_field(store: S
         await store.edit_proposal("p1", draft(), by="U0BOB", field="title")  # type: ignore[arg-type]
     with pytest.raises(NotFoundError):
         await store.edit_proposal("nope", draft(), by="U0BOB", field="repo")
+
+
+async def test_a_repo_change_drops_the_agents_visibility_report(store: Store) -> None:
+    await store.add_proposal(record("p1", proposal=draft(repo_visibility="private")))
+    moved = await store.edit_proposal(
+        "p1", draft(repo="acme-co/api", repo_visibility="private"), by="U0BOB", field="repo"
+    )
+    assert moved.proposal.repo_visibility is None
+    await store.add_proposal(record("p2", proposal=draft(repo_visibility="private")))
+    kept = await store.edit_proposal(
+        "p2", draft(repo_visibility="private", assignees=["acme-alice"]), by="U0BOB", field="assign"
+    )
+    assert kept.proposal.repo_visibility == "private"

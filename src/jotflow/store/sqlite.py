@@ -62,6 +62,7 @@ from jotflow.store.base import (
     check_notice,
     check_run_request,
     cleared_draft,
+    edited_draft,
     from_text,
     plan_transition,
     to_text,
@@ -543,6 +544,7 @@ class SqliteStore:
             if record is None:
                 raise NotFoundError(f"no proposal {proposal_id}")
             check_edit(record, draft, by, field)
+            draft = edited_draft(record, draft)
             now = to_text(self._clock())
             await self._db.execute(
                 "UPDATE proposals SET draft_json = ?, repo = ?, updated_at = ?,"
