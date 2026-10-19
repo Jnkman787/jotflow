@@ -7,20 +7,25 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from slack_sdk.errors import SlackApiError
+from slack_sdk.web.async_slack_response import AsyncSlackResponse as SlackResponse
 
 from jotflow.models import ChannelMode, ProposalState, RunKind
 from jotflow.orchestrator.modes import (
     ALREADY,
     APPROVERS_ONLY,
     MAX_MEMBERS_CHECKED,
+    MAX_USER_PAGES,
     MEANING,
     NO_GUESTS,
     NOT_SET_UP,
     USAGE,
+    USERS_PAGE_SIZE,
     AutoApprover,
     BoltModeSlack,
     ModeCommand,
 )
+from jotflow.orchestrator.packet import SlackFetchError
 from jotflow.orchestrator.people import Person
 from jotflow.orchestrator.slack import register_commands
 from jotflow.policy import Policy
@@ -250,19 +255,58 @@ async def test_a_failed_member_check_still_announces_with_the_warning(store: Sto
 # --- the Bolt adapter ------------------------------------------------------------------------
 
 
+OWN_TEAM = "T0OURS"
+
+
+def member(user_id: str, **flags: Any) -> dict[str, Any]:
+    return {"id": user_id, "team_id": OWN_TEAM, **flags}
+
+
 class FakeClient:
-    def __init__(self, channel: dict[str, Any], pages: list[list[str]]) -> None:
+    """conversations.members and users.list, paged, counting calls; can rate limit."""
+
+    def __init__(
+        self,
+        channel: dict[str, Any],
+        pages: list[list[str]],
+        directory: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.channel = channel
         self.pages = pages
+        if directory is None:
+            directory = [member(m) for page in pages for m in page]
+        self.directory = directory
         self.posts: list[dict[str, Any]] = []
         self.member_calls = 0
+        self.list_calls = 0
+        self.info_calls = 0
+        self.limited: list[str] = []  # methods to answer 429 once each, in order
+        self.fail_list = False
+
+    def _maybe_limit(self, method: str) -> None:
+        if self.limited and self.limited[0] == method:
+            self.limited.pop(0)
+            raise SlackApiError(
+                "ratelimited",
+                SlackResponse(
+                    client=None,
+                    http_verb="POST",
+                    api_url=method,
+                    req_args={},
+                    data={"ok": False, "error": "ratelimited"},
+                    headers={"Retry-After": "1"},
+                    status_code=429,
+                ),
+            )
 
     async def conversations_info(self, *, channel: str) -> dict[str, Any]:
+        self._maybe_limit("conversations.info")
         return {"ok": True, "channel": self.channel}
 
     async def conversations_members(
         self, *, channel: str, limit: int, cursor: str | None
     ) -> dict[str, Any]:
+        self._maybe_limit("conversations.members")
         index = int(cursor or 0)
         self.member_calls += 1
         more = index + 1 < len(self.pages)
@@ -272,22 +316,67 @@ class FakeClient:
             "response_metadata": {"next_cursor": str(index + 1) if more else ""},
         }
 
+    async def users_list(self, *, limit: int, cursor: str | None) -> dict[str, Any]:
+        self._maybe_limit("users.list")
+        if self.fail_list:
+            raise SlackApiError(
+                "missing_scope",
+                SlackResponse(
+                    client=None,
+                    http_verb="POST",
+                    api_url="users.list",
+                    req_args={},
+                    data={"ok": False, "error": "missing_scope"},
+                    headers={},
+                    status_code=200,
+                ),
+            )
+        self.list_calls += 1
+        start = int(cursor or 0)
+        end = start + limit
+        more = end < len(self.directory)
+        return {
+            "ok": True,
+            "members": self.directory[start:end],
+            "response_metadata": {"next_cursor": str(end) if more else ""},
+        }
+
+    async def users_info(self, *, user: str) -> dict[str, Any]:  # pragma: no cover
+        self.info_calls += 1
+        raise AssertionError("the guest scan never calls users.info")
+
     async def chat_postMessage(self, **kwargs: Any) -> dict[str, Any]:
         self.posts.append(kwargs)
         return {"ok": True, "ts": "1.0"}
 
 
 class FakePeople:
-    def __init__(self, guests: set[str] = frozenset()) -> None:  # type: ignore[assignment]
+    def __init__(self, guests: set[str] = frozenset(), own: str | None = OWN_TEAM) -> None:  # type: ignore[assignment]
         self.guests = guests
+        self.own = own
 
     async def person(self, user_id: str) -> Person:
         return Person(user_id, guest=user_id in self.guests)
+
+    async def own_team(self) -> str | None:
+        return self.own
 
 
 class Names:
     async def name(self, user_id: str) -> str | None:
         return None
+
+
+class Sleeps:
+    def __init__(self) -> None:
+        self.waits: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+
+
+def adapter(client: FakeClient, people: FakePeople | None = None) -> BoltModeSlack:
+    return BoltModeSlack(client, people or FakePeople(), Names(), sleep=Sleeps())
 
 
 @pytest.mark.parametrize(
@@ -303,16 +392,97 @@ class Names:
 async def test_the_adapter_finds_guests_and_shared_channels(
     channel: dict[str, Any], pages: list[list[str]], guests: set[str], who: str | None
 ) -> None:
-    slack = BoltModeSlack(FakeClient(channel, pages), FakePeople(guests), Names())
+    directory = [member(m, is_restricted=m in guests) for page in pages for m in page]
+    slack = adapter(FakeClient(channel, pages, directory))
     assert await slack.outsiders(CH) == who
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        {"is_restricted": True},
+        {"is_ultra_restricted": True},
+        {"is_stranger": True},
+        {"team_id": "T0THEIRS"},
+    ],
+)
+async def test_each_kind_of_outsider_is_found_in_the_directory(flags: dict[str, Any]) -> None:
+    client = FakeClient({}, [["U1", "U2"]], [member("U1"), member("U2", **flags)])
+    assert await adapter(client).outsiders(CH) == "a guest"
+
+
+async def test_a_member_the_directory_does_not_list_counts_as_a_guest() -> None:
+    client = FakeClient({}, [["U1", "U2"]], [member("U1"), member("U9")])
+    assert await adapter(client).outsiders(CH) == "a guest"
+
+
+async def test_without_our_own_team_everyone_with_a_team_is_external() -> None:
+    client = FakeClient({}, [["U1"]])
+    assert await adapter(client, FakePeople(own=None)).outsiders(CH) == "a guest"
+
+
+async def test_a_thousand_members_take_a_handful_of_calls() -> None:
+    members = [f"U{n:05d}" for n in range(MAX_MEMBERS_CHECKED)]
+    pages = [members[i : i + 200] for i in range(0, len(members), 200)]
+    others = [member(f"W{n:05d}") for n in range(3000)]
+    client = FakeClient({}, pages, others + [member(m) for m in members])
+    assert await adapter(client).outsiders(CH) is None
+    assert client.member_calls == 5
+    assert client.list_calls == 8  # 4000 people, 500 a page
+    assert client.info_calls == 0
+
+
+async def test_the_directory_scan_stops_once_every_member_is_found() -> None:
+    directory = [member("U1"), member("U2")] + [member(f"W{n}") for n in range(5000)]
+    client = FakeClient({}, [["U1", "U2"]], directory)
+    assert await adapter(client).outsiders(CH) is None
+    assert client.list_calls == 1
+
+
+async def test_a_directory_too_large_for_one_scan_warns() -> None:
+    directory = [member(f"W{n}") for n in range(MAX_USER_PAGES * USERS_PAGE_SIZE)]
+    client = FakeClient({}, [["U1"]], [*directory, member("U1")])
+    assert await adapter(client).outsiders(CH) == "more members than JotFlow could check"
+    assert client.list_calls == MAX_USER_PAGES
 
 
 async def test_too_many_members_warns_anyway() -> None:
     members = [f"U{n:05d}" for n in range(MAX_MEMBERS_CHECKED + 5)]
     pages = [members[i : i + 200] for i in range(0, len(members), 200)]
     client = FakeClient({}, pages)
-    slack = BoltModeSlack(client, FakePeople(), Names())
-    assert await slack.outsiders(CH) == "more members than JotFlow could check"
+    assert await adapter(client).outsiders(CH) == "more members than JotFlow could check"
+
+
+async def test_rate_limits_are_waited_out() -> None:
+    client = FakeClient({}, [["U1"]], [member("U1")])
+    client.limited = ["conversations.info", "conversations.members", "users.list"]
+    sleeps = Sleeps()
+    slack = BoltModeSlack(client, FakePeople(), Names(), sleep=sleeps)
+    assert await slack.outsiders(CH) is None
+    assert sleeps.waits == [1.0, 1.0, 1.0]
+
+
+async def test_a_listing_rate_limited_past_its_budget_raises() -> None:
+    client = FakeClient({}, [["U1"]], [member("U1")])
+    client.limited = ["users.list"] * 50
+    with pytest.raises(SlackFetchError, match="rate limiting the workspace's people"):
+        await adapter(client).outsiders(CH)
+
+
+async def test_a_failed_listing_raises() -> None:
+    client = FakeClient({}, [["U1"]])
+    client.fail_list = True
+    with pytest.raises(SlackFetchError, match="missing_scope"):
+        await adapter(client).outsiders(CH)
+
+
+async def test_a_failed_listing_still_warns_through_the_command(store: Store) -> None:
+    client = FakeClient({}, [["U1"]])
+    client.fail_list = True
+    slack = adapter(client)
+    assert (await ModeCommand(store, policy(), slack).handle(CH, ALEX, "auto")).changed
+    (post,) = client.posts
+    assert "Warning: this channel has members JotFlow could not check." in post["text"]
 
 
 async def test_the_adapter_announces_plain_text_without_unfurling() -> None:
