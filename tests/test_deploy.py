@@ -62,9 +62,9 @@ def test_a_release_version_is_pinned_as_is() -> None:
     assert deploy.release_version("1.2.3") == "1.2.3"
 
 
-def test_the_wheel_force_includes_every_template() -> None:
-    import tomllib
-
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included == {name: f"jotflow/templates/{name}" for name in deploy.TEMPLATES}
+def test_the_packaged_templates_match_the_checkout() -> None:
+    for name in deploy.TEMPLATES:
+        packaged = ROOT / "src" / "jotflow" / "templates" / name
+        assert packaged.read_text(encoding="utf-8") == (ROOT / name).read_text(encoding="utf-8"), (
+            f"src/jotflow/templates/{name} is out of date; run `make templates`"
+        )

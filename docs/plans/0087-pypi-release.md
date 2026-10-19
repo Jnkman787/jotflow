@@ -36,7 +36,7 @@ Done when:
   - A `package` job runs on tags and on pull requests that touch packaging. It checks out the tagged commit and runs `uv build`, giving an sdist and a wheel. It checks that the wheel's version is the `version` job's, which already checks the tag against `pyproject.toml` and `__version__`. It installs the wheel into a fresh venv and smoke-tests it: `jotflow --version`, and rendering the published Compose files, which must parse with `docker compose config`. Then it uploads `dist/` as an artifact. Permissions: `contents: read`.
   - A `pypi` job runs on tags only, after the images are published, so a version on PyPI always has its images on GHCR. It uses the `pypi` environment and `pypa/gh-action-pypi-publish`, pinned by SHA, with trusted publishing and PEP 740 attestations. It also attests build provenance for `dist/*` with `actions/attest-build-provenance`. It alone has `id-token: write` and `attestations: write`.
   - The version cannot drift, because one `version` job's output names the images and the package, and the package job refuses a wheel whose version differs.
-- **Templates in the wheel.** Hatch force-includes the repo's own `docker-compose.yml`, `docker-compose.policy.yml`, `agent.env.example`, and `agent-exec.env.example` under `jotflow/templates/`, so they can't drift from the checkout. `jotflow.deploy.published_compose(text, version)` makes the base file runnable without the source:
+- **Templates in the package.** `src/jotflow/templates/` holds copies of the repo's own `docker-compose.yml`, `docker-compose.policy.yml`, `agent.env.example`, and `agent-exec.env.example`. A test fails if a copy ever differs from the root file, and `make templates` copies them again. A Hatch force-include was tried first, but it broke the image builds: `.dockerignore` sends only `src/` and the project files, so the forced files were missing there. `jotflow.deploy.published_compose(text, version)` makes the base file runnable without the source:
   - It removes each service's `build:` block.
   - It changes the image defaults `jotflow:local` and `jotflow-agent:local` to `ghcr.io/jnkman787/jotflow:X.Y.Z` and `...-agent:X.Y.Z`.
   - It keeps `${JOTFLOW_IMAGE_REF:-…}`, so a team can still override the image from `.env`, as #39 asks.
@@ -61,7 +61,7 @@ Done when:
 - [x] `jotflow.deploy`: the templates and `published_compose`, with tests
 - [x] `jotflow init`: write the Compose files outside a checkout, ask before overwriting, with tests
 - [x] `release.yml`: the package and pypi jobs
-- [x] Packaging: force-include the templates, and test the built wheel has them
+- [x] Packaging: the templates in the package, a drift test against the root files, and the release job checking the wheel has them
 - [x] Docs: README quickstart, CONTRIBUTING.md, architecture's Distribution section
 - [x] CodeRabbit once: one finding, fixed (checkout detection parses pyproject.toml)
 - [x] `make check` passes
@@ -76,7 +76,7 @@ Done when:
   - the templates are byte-for-byte the checkout's files
   - the published file has no `build:` and both images pinned, with everything else unchanged
   - a build block ends at its service's next key
-  - only a plain X.Y.Z release is pinned, and the wheel force-includes every template
+  - only a plain X.Y.Z release is pinned, and the packaged templates match the root files
 - `tests/test_init.py` shows, outside a checkout, both Compose files written at 0644, and an existing different file kept unless the person agrees, then backed up. An unchanged file isn't asked about. A checkout, by `Dockerfile` or `pyproject.toml`, keeps its own files. A development version pins nothing. Agent files start from the packaged examples.
 - Not provable before a tag: the PyPI upload and the clean-machine run (box 4). The package job's smoke test installs the wheel alone and renders the Compose files on every packaging PR.
 

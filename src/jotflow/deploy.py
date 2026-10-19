@@ -1,9 +1,11 @@
 """The deployment files a team gets without cloning the repository (#87).
 
-The wheel carries the repository's own ``docker-compose.yml``,
+The package carries copies of the repository's own ``docker-compose.yml``,
 ``docker-compose.policy.yml``, and agent env examples under
-``jotflow/templates``, force-included at build time, so they never drift from
-the checkout. :func:`published_compose` turns the base Compose file into one
+``jotflow/templates``. A test fails if a copy ever differs from the file at the
+repository's root; ``make templates`` copies them again. They live in the
+package, not force-included at build time, because the image builds see only
+``src/``. :func:`published_compose` turns the base Compose file into one
 that runs the published images: it drops each ``build:`` block and pins the
 image defaults to this release. The ``${JOTFLOW_IMAGE_REF:-…}`` overrides stay,
 so a team can still run another image from ``.env`` (#39).
@@ -13,7 +15,6 @@ from __future__ import annotations
 
 import re
 from importlib import resources
-from pathlib import Path
 
 from jotflow import __version__
 
@@ -26,7 +27,6 @@ TEMPLATES = (COMPOSE, COMPOSE_POLICY, *AGENT_EXAMPLES)
 # The image defaults in the checkout's Compose file, built locally.
 _LOCAL_IMAGES = {"jotflow:local": "jotflow", "jotflow-agent:local": "jotflow-agent"}
 _RELEASE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class NoPublishedImageError(RuntimeError):
@@ -34,13 +34,10 @@ class NoPublishedImageError(RuntimeError):
 
 
 def template(name: str) -> str:
-    """A deployment file's text: from the wheel, or from the checkout when run from source."""
+    """A deployment file's text, from the package."""
     if name not in TEMPLATES:
         raise ValueError(f"no deployment template {name!r}")
-    packaged = resources.files("jotflow").joinpath("templates", name)
-    if packaged.is_file():
-        return packaged.read_text(encoding="utf-8")
-    return (_REPO_ROOT / name).read_text(encoding="utf-8")
+    return resources.files("jotflow").joinpath("templates", name).read_text(encoding="utf-8")
 
 
 def release_version(version: str = __version__) -> str:

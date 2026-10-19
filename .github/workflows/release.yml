@@ -27,6 +27,7 @@ on:
       - pyproject.toml
       - src/jotflow/__init__.py
       - src/jotflow/deploy.py
+      - src/jotflow/templates/**
 
 permissions:
   contents: read
@@ -310,6 +311,10 @@ jobs:
           ls dist
           test -f "dist/jotflow-$VERSION-py3-none-any.whl"
           test -f "dist/jotflow-$VERSION.tar.gz"
+          # The deployment files jotflow init writes outside a checkout.
+          for name in docker-compose.yml docker-compose.policy.yml agent.env.example agent-exec.env.example; do
+            python3 -m zipfile -l "dist/jotflow-$VERSION-py3-none-any.whl" | grep -q "jotflow/templates/$name"
+          done
 
       - name: Install the wheel alone and render the published Compose files
         env:
