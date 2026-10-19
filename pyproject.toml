@@ -55,6 +55,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jotflow"]
 
+# The deployment files `jotflow init` writes outside a checkout (#87), taken from the
+# repository itself so the wheel and the checkout can never disagree.
+[tool.hatch.build.targets.wheel.force-include]
+"docker-compose.yml" = "jotflow/templates/docker-compose.yml"
+"docker-compose.policy.yml" = "jotflow/templates/docker-compose.policy.yml"
+"agent.env.example" = "jotflow/templates/agent.env.example"
+"agent-exec.env.example" = "jotflow/templates/agent-exec.env.example"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

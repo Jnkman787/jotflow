@@ -4,10 +4,10 @@
 
 - Issue: #87
 - Also serves: #39 (the images, already published by `release.yml` from #174), #41 (the first tagged release), #88 (the Distribution section)
-- Draft PR: to be opened
-- Status: planning
-- Last verified: plan written on 2026-10-19, no code yet
-- Next safe action: the package job in `release.yml`
+- Draft PR: #176
+- Status: implementing
+- Last verified: 2026-10-19, `make check` and actionlint pass, and the published Compose files pass `docker compose config` locally
+- Next safe action: CodeRabbit, then ready; the maintainer adds the PyPI pending publisher
 
 ## Objective and done-when
 
@@ -24,11 +24,11 @@ Done when:
 
 - [ ] The `jotflow` package is published to PyPI on each `vX.Y.Z` tag through PyPI trusted publishing (OIDC). No API token is stored anywhere, and only the publish job gets `id-token: write`
 - [ ] The sdist and wheel are built from the tagged commit, with build provenance attestations
-- [ ] Run outside a checkout, `jotflow init` also writes `docker-compose.yml` and `docker-compose.policy.yml`, pinned to `ghcr.io/jnkman787/jotflow:X.Y.Z` and `jotflow-agent:X.Y.Z`, and never overwrites an existing file without asking
+- [x] Run outside a checkout, `jotflow init` also writes `docker-compose.yml` and `docker-compose.policy.yml`, pinned to `ghcr.io/jnkman787/jotflow:X.Y.Z` and `jotflow-agent:X.Y.Z`, and never overwrites an existing file without asking
 - [ ] From an empty folder on a clean machine, `uvx jotflow init` then `docker compose up -d` reaches the connected state with no clone
-- [ ] The README quickstart leads with the no-clone install, and the clone path moves to CONTRIBUTING.md
-- [ ] The package version and the image tag cannot drift: the release job fails if they differ
-- [ ] `make check` passes, including the coverage floor
+- [x] The README quickstart leads with the no-clone install, and the clone path moves to CONTRIBUTING.md
+- [x] The package version and the image tag cannot drift: the release job fails if they differ
+- [x] `make check` passes, including the coverage floor
 
 ## Design
 
@@ -57,20 +57,32 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when; the maintainer's PyPI setup is outside the code
-- [ ] Commit this plan and open the draft PR
-- [ ] `jotflow.deploy`: the templates and `published_compose`, with tests
-- [ ] `jotflow init`: write the Compose files outside a checkout, ask before overwriting, with tests
-- [ ] `release.yml`: the package and pypi jobs
-- [ ] Packaging: force-include the templates, and test the built wheel has them
-- [ ] Docs: README quickstart, CONTRIBUTING.md, architecture's Distribution section
+- [x] Commit this plan and open the draft PR
+- [x] `jotflow.deploy`: the templates and `published_compose`, with tests
+- [x] `jotflow init`: write the Compose files outside a checkout, ask before overwriting, with tests
+- [x] `release.yml`: the package and pypi jobs
+- [x] Packaging: force-include the templates, and test the built wheel has them
+- [x] Docs: README quickstart, CONTRIBUTING.md, architecture's Distribution section
 - [ ] CodeRabbit once, or skipped
-- [ ] `make check` passes
+- [x] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-To be filled in.
+- `make check` passes, and actionlint 1.7.12, CI's pinned version, passes on every workflow.
+- `uv build` gives a wheel carrying the four templates under `jotflow/templates/`, built through the sdist.
+- The published Compose file, with the policy file and the `agent` profile, passes `docker compose config` locally.
+- `tests/test_deploy.py` shows:
+  - the templates are byte-for-byte the checkout's files
+  - the published file has no `build:` and both images pinned, with everything else unchanged
+  - a build block ends at its service's next key
+  - only a plain X.Y.Z release is pinned, and the wheel force-includes every template
+- `tests/test_init.py` shows, outside a checkout, both Compose files written at 0644, and an existing different file kept unless the person agrees, then backed up. An unchanged file isn't asked about. A checkout, by `Dockerfile` or `pyproject.toml`, keeps its own files. A development version pins nothing. Agent files start from the packaged examples.
+- Not provable before a tag: the PyPI upload and the clean-machine run (box 4). The package job's smoke test installs the wheel alone and renders the Compose files on every packaging PR.
 
 ## Handoff notes
 
-None yet.
+- **Before the first tag, the maintainer needs to:**
+  1. On PyPI, add a pending trusted publisher for `jotflow`: owner `Jnkman787`, repository `jotflow`, workflow `release.yml`, environment `pypi`. This also reserves the name.
+  2. On GitHub, create the `pypi` environment under Settings, Environments. Required reviewers are optional, but recommended.
+- After the first release, check box 4 on a clean machine: an empty folder, `uvx jotflow init`, then `docker compose up -d`.

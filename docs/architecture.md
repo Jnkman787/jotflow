@@ -185,9 +185,17 @@ A team never needs the source code. Each tagged release publishes two artifacts 
 | Artifact | Published to | Used for |
 |---|---|---|
 | Python package `jotflow` | PyPI | `uvx jotflow init`, the one-time interactive setup on the team's machine |
-| Container image `ghcr.io/jnkman787/jotflow` | GitHub's container registry | `jotflow run`, the always-on service |
+| Container images `ghcr.io/jnkman787/jotflow` and `jotflow-agent` | GitHub's container registry | `jotflow run`, the always-on service, and the team's agent containers |
 
 `jotflow init` writes `jotflow.toml`, `.env`, and a Compose file pinned to the matching image version, so the whole install is `uvx jotflow init` followed by `docker compose up -d`. The repository is where contributors work; cloning it is only needed to change JotFlow.
+
+How a release is made (#39, #87), from `.github/workflows/release.yml` on a `vX.Y.Z` tag:
+
+- One job checks that the tag, `pyproject.toml`, and `__version__` agree. Its version names both images and the package, so they cannot drift.
+- The images are built for amd64 and arm64, published as `:X.Y.Z` and `:latest`, and attested.
+- The package job builds the sdist and wheel from the tagged commit. It installs the wheel alone and renders the published Compose files from it, which must pass `docker compose config`.
+- Only after the images are published, the PyPI job publishes the package through PyPI's trusted publishing, with OIDC and no stored token, and attests the files' build provenance. It alone holds `id-token: write`.
+- The wheel carries the repository's own Compose files and agent env examples. Outside a checkout, `jotflow init` writes them with each `build:` removed and the images pinned to its own version. An existing file is replaced only if the person agrees.
 
 JotFlow is a running service rather than an MCP server listed in an agent's configuration, because it must be connected to Slack when no agent session is open, decides when to start the agent, holds state across days, and serves the whole channel. The MCP connection is how the agent talks to JotFlow while a run lasts.
 
