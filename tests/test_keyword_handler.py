@@ -447,7 +447,8 @@ async def test_slash_command_answers_privately(text: str, help_shown: bool) -> N
     assert (answers == [help_text()]) is help_shown
     if not help_shown:
         assert answers == [
-            "Try /jotflow help for the keywords, or /jotflow mode for this channel's mode."
+            "Try /jotflow help for the keywords, /jotflow mode for this channel's mode, "
+            "or /jotflow link your-github-login so proposals can assign you."
         ]
 
 

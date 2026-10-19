@@ -418,6 +418,7 @@ Start a message with a keyword to steer JotFlow. The colon is required.
   re: web#42  add this to an existing issue; re: 42 works when the channel has one repo
   skip:       not an idea; on a top-level message it keeps the whole thread out
 React with :no_entry_sign: to skip a message instead.
+/jotflow link your-github-login lets proposals assign you; /jotflow unlink undoes it.
 Most people never need these: just post, and JotFlow works out the rest.
 ```
 <!-- jotflow-help:end -->
