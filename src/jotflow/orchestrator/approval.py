@@ -433,32 +433,7 @@ class BoltApprovalSlack:
         await self._client.views_open(trigger_id=trigger_id, view=dict(view))
 
     async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
-        found: set[str] = set()
-        for ref in refs:
-            parent = ref.thread_ts or ref.ts
-            response = await self._client.conversations_replies(
-                channel=ref.channel_id,
-                ts=parent,
-                oldest=ref.ts,
-                latest=ref.ts,
-                inclusive=True,
-                limit=1,
-            )
-            messages = response.get("messages") or []
-            match = next(
-                (m for m in messages if isinstance(m, Mapping) and m.get("ts") == ref.ts), None
-            )
-            if match is None:
-                # Deleted, or never there: who wrote it cannot be confirmed.
-                raise LookupError(f"message {ref.ts} was not found")
-            user = match.get("user")
-            if isinstance(user, str):
-                found.add(user)
-            elif match.get("bot_id") or match.get("subtype") == "bot_message":
-                continue  # an integration's post has no person behind it to exclude
-            else:
-                raise LookupError(f"no author for message {ref.ts}")
-        return found
+        return await self._people.authors(refs)
 
     async def reply(self, channel_id: str, thread_ts: str, text: str) -> None:
         await self._client.chat_postMessage(

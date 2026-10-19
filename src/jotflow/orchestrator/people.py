@@ -5,12 +5,22 @@ Guests and external Slack Connect users may not skip someone else's message
 
 It fails closed: if JotFlow cannot learn its own workspace from ``auth.test``,
 every user from any team counts as external.
+
+The same ``auth.test`` gives the workspace URL that issue-body permalinks are
+built from (#31), and :meth:`SlackPeople.authors` finds who wrote a message,
+for approval (#151) and for an issue's "Raised in Slack by" line (#31).
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from jotflow.models import MessageRef
+
+_WORKSPACE_URL = re.compile(r"https://[a-z0-9-]+\.slack\.com/")
 
 
 @dataclass(frozen=True)
@@ -28,14 +38,73 @@ class SlackPeople:
     def __init__(self, client: Any, team_id: str | None = None) -> None:
         self._client = client
         self._team_id = team_id
+        self._url: str | None = None
+        self._asked = False
+
+    async def _auth(self) -> None:
+        if self._asked:
+            return
+        response = await self._client.auth_test()
+        self._asked = True
+        team = response.get("team_id")
+        if self._team_id is None:
+            self._team_id = team if isinstance(team, str) else None
+        url = response.get("url")
+        self._url = url if isinstance(url, str) and _WORKSPACE_URL.fullmatch(url) else None
 
     async def own_team(self) -> str | None:
         """This workspace's id, from ``auth.test`` once, unless it was given."""
         if self._team_id is None:
-            response = await self._client.auth_test()
-            team = response.get("team_id")
-            self._team_id = team if isinstance(team, str) else None
+            await self._auth()
         return self._team_id
+
+    async def workspace_url(self) -> str | None:
+        """``https://<name>.slack.com/``, from the same ``auth.test``; None if unusable."""
+        await self._auth()
+        return self._url
+
+    async def display_name(self, user_id: str) -> str | None:
+        """The person's display name, or real name; None if Slack does not say."""
+        response = await self._client.users_info(user=user_id)
+        profile = (response.get("user") or {}).get("profile") or {}
+        for key in ("display_name", "real_name"):
+            name = profile.get(key)
+            if isinstance(name, str) and name.strip():
+                return name
+        return None
+
+    async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
+        """The people who wrote these messages, from Slack. A bot's post adds no one.
+
+        Raises :class:`LookupError` if a message cannot be found, so its author is
+        never assumed.
+        """
+        found: set[str] = set()
+        for ref in refs:
+            parent = ref.thread_ts or ref.ts
+            response = await self._client.conversations_replies(
+                channel=ref.channel_id,
+                ts=parent,
+                oldest=ref.ts,
+                latest=ref.ts,
+                inclusive=True,
+                limit=1,
+            )
+            messages = response.get("messages") or []
+            match = next(
+                (m for m in messages if isinstance(m, Mapping) and m.get("ts") == ref.ts), None
+            )
+            if match is None:
+                # Deleted, or never there: who wrote it cannot be confirmed.
+                raise LookupError(f"message {ref.ts} was not found")
+            user = match.get("user")
+            if isinstance(user, str):
+                found.add(user)
+            elif match.get("bot_id") or match.get("subtype") == "bot_message":
+                continue  # an integration's post has no person behind it
+            else:
+                raise LookupError(f"no author for message {ref.ts}")
+        return found
 
     async def person(self, user_id: str) -> Person:
         response = await self._client.users_info(user=user_id)
