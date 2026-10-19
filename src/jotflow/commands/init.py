@@ -877,7 +877,7 @@ def _model_answer(value: str) -> str:
     if answer and not _MODEL.fullmatch(answer):
         raise ValueError(
             "A model name is letters, digits, and . _ : [ ] -, up to 100 characters, "
-            "for example sonnet."
+            "for example claude-sonnet-5-5."
         )
     return answer
 

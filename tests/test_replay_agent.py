@@ -162,7 +162,7 @@ def test_a_real_agent_needs_yes_and_shows_the_cost_first(
     assert code == replay_command.EXIT_USAGE
     err = capsys.readouterr().err
     runs = sum(len(builtin_thread(p.stem).agent) for p in builtin_paths()) * 3
-    assert f"{runs} claude-code drafting run(s) on sonnet" in err
+    assert f"{runs} claude-code drafting run(s) on claude-sonnet-5-5" in err
     assert "add --yes" in err
     assert replay_command.estimate([], "scripted", 1, None) == "0 scripted agent run(s); no model"
     one = [("chatter", builtin_thread("chatter"))]

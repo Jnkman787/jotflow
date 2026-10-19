@@ -116,7 +116,8 @@ def test_execute_estimates_execution_runs_and_needs_yes(
     code = replay_command.run(args(all=True, agent="claude-code", execute=True))
     assert code == replay_command.EXIT_USAGE
     proposals = sum(len(builtin_thread(p.stem).expected.proposals) for p in builtin_paths())
-    assert f"{proposals * 2} claude-code execution run(s) on haiku" in capsys.readouterr().err
+    expected = f"{proposals * 2} claude-code execution run(s) on claude-haiku-5-5"
+    assert expected in capsys.readouterr().err
 
 
 def test_execute_with_the_stand_in_from_the_command_line(
