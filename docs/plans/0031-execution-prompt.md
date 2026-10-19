@@ -22,11 +22,11 @@ Each one is a chance to drift from the approved content. In this work, JotFlow c
 From the issue, refined:
 
 - [x] Each preset executes a fixture proposal. For Claude Code, CI uses the fake GitHub server from #144, now with write tools, and the maintainer's #55 run is the live check against a real repo. Other presets follow as they land.
-- [ ] The agent doesn't deviate from the approved content in tests. The fake server records every write, and the comparison requires each write to equal JotFlow's computed one exactly.
-- [ ] The body names the poster and the people looped in, by display name only, with the Slack permalinks unless `issue_links = "none"`.
-- [ ] Before writing, the run checks that every approved label exists. If any is missing, it calls `record_result` with an error naming them and writes nothing.
-- [ ] A second run of the same proposal finds the marker and writes nothing new.
-- [ ] Docs, per preset, say how the agent reaches GitHub and what the team must configure. Claude Code uses the pinned github-mcp-server with the write token, as #137 and #146 describe.
+- [x] The agent doesn't deviate from the approved content in tests. The fake server records every write, and the comparison requires each write to equal JotFlow's computed one exactly.
+- [x] The body names the poster and the people looped in, by display name only, with the Slack permalinks unless `issue_links = "none"`.
+- [x] Before writing, the run checks that every approved label exists. If any is missing, it calls `record_result` with an error naming them and writes nothing.
+- [x] A second run of the same proposal finds the marker and writes nothing new.
+- [x] Docs, per preset, say how the agent reaches GitHub and what the team must configure. Claude Code uses the pinned github-mcp-server with the write token, as #137 and #146 describe.
 
 **Out of scope:**
 
