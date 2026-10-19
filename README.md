@@ -122,7 +122,7 @@ The pieces:
 
 ## Quickstart
 
-You need Docker with Compose 2.24 or newer, [uv](https://docs.astral.sh/uv/getting-started/installation/), and permission to create apps in your Slack workspace. Turning the agent on also needs an Anthropic API key or a Claude account login, and two fine-grained GitHub tokens. Setup takes ten to fifteen minutes, and the agent about ten more. **[docs/install.md](https://github.com/Jnkman787/jotflow/blob/main/docs/install.md) has every step in full**, with sample sessions, and [docs/troubleshooting.md](https://github.com/Jnkman787/jotflow/blob/main/docs/troubleshooting.md) covers errors.
+You need Docker with Compose 2.24 or newer, [uv](https://docs.astral.sh/uv/getting-started/installation/), and permission to create apps in your Slack workspace. Turning the agent on also needs an Anthropic API key or a Claude account login (and an OpenAI API key for codex), and two fine-grained GitHub tokens. Setup takes ten to fifteen minutes, and the agent about ten more. **[docs/install.md](https://github.com/Jnkman787/jotflow/blob/main/docs/install.md) has every step in full**, with sample sessions, and [docs/troubleshooting.md](https://github.com/Jnkman787/jotflow/blob/main/docs/troubleshooting.md) covers errors.
 
 1. **[Prerequisites](https://github.com/Jnkman787/jotflow/blob/main/docs/install.md#1-prerequisites).** Install Docker and uv. Check with `docker compose version`.
 2. **[Make a folder for JotFlow](https://github.com/Jnkman787/jotflow/blob/main/docs/install.md#2-make-a-folder-for-jotflow).** Run `mkdir jotflow` and `cd jotflow`. On a server, use `/srv/jotflow`.

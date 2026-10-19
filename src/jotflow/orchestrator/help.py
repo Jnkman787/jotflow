@@ -108,7 +108,10 @@ MODE_LINES = {
         "Here, JotFlow posts each proposal as a card and waits for a person to approve it."
     ),
     ChannelMode.AUTO: "Here, JotFlow writes each issue straight away and then posts it as a card.",
-    ChannelMode.PAUSED: "JotFlow is paused here: it reads nothing and writes nothing.",
+    ChannelMode.PAUSED: (
+        "JotFlow is paused here: it reads nothing, starts nothing new, and posts nothing. "
+        "A run that was already going may still finish its GitHub write."
+    ),
 }
 NOT_SET_UP = (
     "This channel isn't set up for JotFlow yet, so it watches nothing here. "

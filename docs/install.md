@@ -293,7 +293,7 @@ When a channel later feeds a new repo, add it to both tokens on GitHub too. [doc
 
 1. Make the two GitHub tokens and get the model login, as above.
 2. In `agent.env`, fill in `JOTFLOW_GITHUB_READ_TOKEN` and `ANTHROPIC_API_KEY`. In `agent-exec.env`, fill in `JOTFLOW_GITHUB_WRITE_TOKEN` and `ANTHROPIC_API_KEY`. With a Claude account login instead, remove `ANTHROPIC_API_KEY` and its `JOTFLOW_AGENT_ENV_ALLOW` entry from both files, as above, and run the two login commands after step 3. With `codex`, `agent.env` takes `CODEX_API_KEY` instead of `ANTHROPIC_API_KEY`, unless you pasted it during setup.
-3. Run `uvx jotflow init` again, and answer:
+3. Run `uvx jotflow init` again. With working tokens in `.env`, setup skips the `Have you already created a Slack app for JotFlow?` question; if it does ask, answer `y`, so you don't make a second app. Then answer:
    - `Keep it? [Y/n]` for the app-level token, then again for the bot token: press Enter for yes
    - `Keep its channels and repos? [Y/n]`: press Enter for yes
    - `Agent preset`, which shows your choice, such as `[claude-code]` or `[codex]`: press Enter. With `claude-code`, press Enter at `Agent model` too.
