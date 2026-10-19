@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #40 (this is its third document; deployment.md came in #183 and threat-model.md in #178)
-- Draft PR: to be opened with this plan
+- Draft PR: #187
 - Status: planning
 - Last verified: plan written against main at 5e659f3, 2026-10-19
 - Next safe action: commit this plan and open the draft PR
@@ -48,16 +48,16 @@ The guide has these sections:
 
 ## Progress checklist
 
-- [ ] Commit this plan and open the draft PR
-- [ ] Write `docs/agent-adapters.md`
-- [ ] Add links from the README, presets.md, and threat-model.md
-- [ ] Check every command and name against the code
+- [x] Commit this plan and open the draft PR
+- [x] Write `docs/agent-adapters.md`
+- [x] Add links from the README, presets.md, and threat-model.md
+- [x] Check every command and name against the code
 - [ ] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
 
-None yet.
+I checked every function, field, constant, test name, environment flag, and CI job name the guide uses against the code on #172's branch. All exist. The guide relies on #172's `RunPlan.files`, `check_install`, `verified_models`, `fake_responses_api`, and the Codex gate, so **#187 merges after #172**.
 
 ## Handoff notes
 

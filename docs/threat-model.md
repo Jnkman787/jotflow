@@ -133,7 +133,7 @@ Each gap is deliberate, visible to the people it affects, and tracked.
 | **The Codex preset is experimental** | A read-only sandbox may not neutralise every built-in, and a shell would let a drafting run read its own service's secrets | Not a default. Gating tests are required before it's supported: an `apply_patch` refusal per kind, no shell or exec tool, and failing closed on a version mismatch | #172 |
 | **Runs of the same kind can read each other's environment and run directory** | One uid per service, and Linux allows same-uid `/proc` reads | They hold the same token. The other kind's token never exists in that container, and the Claude preset has no built-in tools | #181, following #54 |
 | **Open approval mode by default:** anyone in the channel, including the poster, may approve | Many teams are small groups of equals | It's documented plainly. Turn approvers on for wide or external membership. JotFlow warns when `auto` is set in such a channel | D7 |
-| **A team's custom agent command** | JotFlow can't vet an arbitrary CLI | The shipped presets are locked down. A custom command keeps the environment allowlist and the 0600 config, but its tools are the team's responsibility | [presets.md](presets.md) |
+| **A team's custom agent command** | JotFlow can't vet an arbitrary CLI | The shipped presets are locked down. A custom command keeps the environment allowlist and the 0600 config, but its tools are the team's responsibility. [agent-adapters.md](agent-adapters.md) says what a preset must guarantee and how to prove it | [presets.md](presets.md), [agent-adapters.md](agent-adapters.md) |
 
 ## Traceability to architecture.md's Security posture
 
