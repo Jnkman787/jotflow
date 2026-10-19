@@ -109,10 +109,10 @@ def test_the_report_never_contains_message_text() -> None:
             assert message.text not in rendered
 
 
-def test_report_ok_ignores_checks_not_run() -> None:
+def test_report_ok_needs_every_check() -> None:
     from jotflow.replay import Check
 
-    report = ReplayReport("x", "y", [Check("a", True, ""), Check("b", None, "")])
+    report = ReplayReport("x", "y", [Check("a", True, "")])
     assert report.ok
     report.checks.append(Check("c", False, ""))
     assert not report.ok
@@ -290,3 +290,54 @@ async def test_the_fixture_reader_speaks_slacks_shapes() -> None:
     user = await reader.user(root.user or "")
     assert user["user"]["profile"]["display_name"] == thread.users[root.user or ""].name
     assert (await reader.user("U0NOBODY"))["user"]["profile"]["display_name"] == "U0NOBODY"
+
+
+# --- re: and skip:, through the live keyword handler (#56) --------------------
+
+
+async def test_replay_applies_re_and_skip_as_a_persons_decisions(tmp_path: Path) -> None:
+    store = await SqliteStore.open(tmp_path / "replay.db")
+    try:
+        report = await replay(builtin_thread("keywords"), store=store)
+        assert report.ok, report.render()
+        attached = await store.get_message("C0EXAMPLE1", "1792315320.000100")
+        assert attached is not None and attached.linked_by == "person"
+        topic = await store.get_topic(attached.topic_id or "")
+        assert topic is not None and topic.topic.issue_number == 42
+        skipped = await store.get_message("C0EXAMPLE1", "1792315440.000100")
+        assert skipped is not None and skipped.chatter and skipped.linked_by == "person"
+    finally:
+        await store.close()
+
+
+async def test_an_re_message_is_no_longer_set_aside() -> None:
+    def elsewhere(data: dict[str, Any]) -> None:
+        # Now it names the api repo's #42, so it cannot join topic-csv-export.
+        event = next(e for e in data["events"] if e.get("ts") == "1792315320.000100")
+        event["text"] = event["text"].replace("web#42", "api#42")
+
+    report = await replay(parse_thread(_broken("keywords", elsewhere), source="test"))
+    (topics,) = [c for c in report.checks if c.name == "topics"]
+    assert topics.ok is False
+    assert "topic-csv-export" in topics.detail
+
+
+async def test_replay_applies_skip_reactions_and_ignores_guests() -> None:
+    def react(data: dict[str, Any]) -> None:
+        item = {"type": "message", "channel": "C0EXAMPLE1", "ts": "1792315200.000100"}
+        for user in ("U0DAVE", "U0ALICE"):
+            data["events"].append(
+                {"type": "reaction_added", "user": user, "reaction": "no_entry_sign", "item": item}
+            )
+
+    thread = parse_thread(_broken("keywords", react), source="test")
+    state = _state("keywords")
+    key = "1792315200.000100:no_entry_sign"
+    # Dave is a guest, so that reaction alone changes nothing.
+    state.thread = thread.model_copy(update={"events": thread.events[:-1]})
+    await module._apply_keywords(state, [key])
+    assert await state.store.get_message("C0EXAMPLE1", "1792315200.000100") is None
+    state.thread = thread
+    await module._apply_keywords(state, [key])
+    link = await state.store.get_message("C0EXAMPLE1", "1792315200.000100")
+    assert link is not None and link.chatter and link.linked_by == "person"

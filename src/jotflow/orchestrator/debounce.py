@@ -67,12 +67,28 @@ class Debouncer:
         if not isinstance(decision, Accepted) or decision.kind != "message":
             return None
         ref = decision.ref
+        if await self._skipped(ref):
+            return None
         thread = thread_of(ref)
         window = timedelta(seconds=self._policy.debounce_for(ref.channel_id))
         self._due[thread] = self._clock() + window
         if ref.thread_ts and ref.thread_ts != ref.ts:
             await self._join_parents_topic(ref)
         return thread
+
+    async def _skipped(self, ref: MessageRef) -> bool:
+        """A person said skip: for this message, or for the first message of its thread.
+
+        Such a message never arms the thread, so ``skip:`` costs no agent run.
+        The keyword handler runs first, so its mark is already stored (#56).
+        """
+        link = await self._store.get_message(ref.channel_id, ref.ts)
+        if link is not None and link.chatter and link.linked_by == "person":
+            return True
+        if ref.thread_ts and ref.thread_ts != ref.ts:
+            parent = await self._store.get_message(ref.channel_id, ref.thread_ts)
+            return parent is not None and parent.chatter and parent.linked_by == "person"
+        return False
 
     async def _join_parents_topic(self, reply: MessageRef) -> None:
         parent = await self._store.get_message(reply.channel_id, reply.thread_ts or "")

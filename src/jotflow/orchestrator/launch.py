@@ -289,6 +289,7 @@ class RunSupervisor:
         return list(self._live)
 
     async def tick(self) -> None:
+        await self._lifecycle.queue_due_retries()
         await self._expire()
         await self._poll()
         await self._launch()

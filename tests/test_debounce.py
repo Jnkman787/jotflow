@@ -215,3 +215,26 @@ async def test_a_reply_to_an_unplaced_post_links_nothing(
     await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT))
     await debouncer.note(message("1760781700.000300", thread=ROOT))
     assert await store.get_message(CH, "1760781700.000300") is None
+
+
+# A person's skip: never arms the thread (#56)
+
+
+async def test_a_persons_skip_never_arms_the_thread(debouncer: Debouncer, store: Store) -> None:
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT), by="person")
+    assert await debouncer.note(message(ROOT)) is None
+    assert await debouncer.note(message("1760781660.000100", thread=ROOT)) is None
+    assert debouncer.pending() == {}
+
+
+async def test_a_skipped_reply_leaves_its_thread_alone(debouncer: Debouncer, store: Store) -> None:
+    reply = "1760781660.000100"
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=reply, thread_ts=ROOT), by="person")
+    assert await debouncer.note(message(reply, thread=ROOT)) is None
+    assert debouncer.pending() == {}
+    assert await debouncer.note(message("1760781720.000100", thread=ROOT)) is not None
+
+
+async def test_the_agents_chatter_still_arms_the_thread(debouncer: Debouncer, store: Store) -> None:
+    await store.mark_chatter(MessageRef(channel_id=CH, ts=ROOT))
+    assert await debouncer.note(message(ROOT)) is not None
