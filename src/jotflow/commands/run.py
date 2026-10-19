@@ -36,6 +36,7 @@ from jotflow.logs import (
     configure_logging,
 )
 from jotflow.orchestrator.approval import register_actions
+from jotflow.orchestrator.card_edits import register_edits
 from jotflow.orchestrator.health import ConnectionWatch, Heartbeat, Watched, heartbeat_path
 from jotflow.orchestrator.ingest import EventFilter
 from jotflow.orchestrator.service import Orchestrator
@@ -229,6 +230,8 @@ async def serve(settings: Settings, policy: Policy) -> int:
         register_commands(app, policy, orchestrator.channel_mode, orchestrator.modes)
         if orchestrator.approval is not None:
             register_actions(app, orchestrator.approval)
+        if orchestrator.edits is not None:
+            register_edits(app, orchestrator.edits)
         await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
     except BaseException:
         # Started is stopped, whatever fails after it.
