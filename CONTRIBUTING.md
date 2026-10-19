@@ -11,6 +11,22 @@ The full working rules, for people and coding agents alike, are in [AGENTS.md](A
 3. **Open a draft PR early.** Link the issue with `Fixes #N` if the PR completes it, or `Refs #N` if it is partial work.
 4. **Keep the plan current** as you go, then mark the PR ready for review.
 
+## Run from a checkout
+
+The README's quickstart installs JotFlow's published package and images, with no clone. To change JotFlow, or to run a commit that isn't released yet, work from a checkout instead.
+
+- **Git**, from <https://git-scm.com/downloads>, and **uv**, from [uv's installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+- **Docker with BuildKit**, which builds JotFlow's images from source. Docker Desktop and Docker's own packages include it. On Ubuntu with the `docker.io` package, also install `docker-buildx` and `docker-compose-v2` with `sudo apt install docker-buildx docker-compose-v2`. Check with `docker buildx version`.
+
+```
+git clone https://github.com/Jnkman787/jotflow.git
+cd jotflow
+uv run jotflow init
+docker compose up -d
+```
+
+In a checkout, setup leaves the checkout's own Compose files alone, and `docker compose up -d` builds both images from this source. Set `JOTFLOW_IMAGE_REF` and `JOTFLOW_AGENT_IMAGE_REF` in `.env` to run other images, such as a published release or your own per-commit tag. `make check` runs every check CI runs.
+
 ## Ground rules
 
 - All changes land through pull requests. Direct pushes and force pushes to `main` are blocked, and only maintainers listed in `.github/CODEOWNERS` can merge.

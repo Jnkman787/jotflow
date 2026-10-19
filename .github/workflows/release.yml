@@ -2,7 +2,8 @@ name: Release
 
 # A version tag vX.Y.Z publishes both images to GHCR, for amd64 and arm64,
 # as :X.Y.Z, and :latest when it is the highest release, each with a signed build provenance attestation
-# (#39). A pull request that touches this file or a Dockerfile runs the same
+# (#39), and then the Python package to PyPI through trusted publishing, with
+# the same version (#87). A pull request that touches this file or a Dockerfile runs the same
 # builds and pushes nothing, so a release is proven before its tag exists.
 #
 # No secrets beyond GITHUB_TOKEN, no third-party build actions (the runner's
@@ -19,6 +20,14 @@ on:
       - Dockerfile
       - Dockerfile.agent
       - docker-compose.yml
+      # The package and the deployment files it carries (#87).
+      - docker-compose.policy.yml
+      - agent.env.example
+      - agent-exec.env.example
+      - pyproject.toml
+      - src/jotflow/__init__.py
+      - src/jotflow/deploy.py
+      - src/jotflow/templates/**
 
 permissions:
   contents: read
@@ -274,3 +283,98 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
           subject-digest: ${{ steps.index.outputs.digest }}
           push-to-registry: true
+
+  package:
+    name: Build the Python package
+    needs: version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          # A release builds from a clean slate: no cache another run could have poisoned.
+          enable-cache: false
+
+      - name: Build the sdist and wheel from this commit
+        run: uv build --out-dir dist
+
+      - name: Check the wheel is the version the images get
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls dist
+          test -f "dist/jotflow-$VERSION-py3-none-any.whl"
+          test -f "dist/jotflow-$VERSION.tar.gz"
+          # The deployment files jotflow init writes outside a checkout.
+          for name in docker-compose.yml docker-compose.policy.yml agent.env.example agent-exec.env.example; do
+            python3 -m zipfile -l "dist/jotflow-$VERSION-py3-none-any.whl" | grep -q "jotflow/templates/$name"
+          done
+
+      - name: Install the wheel alone and render the published Compose files
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv venv --python 3.12 /tmp/smoke
+          uv pip install --python /tmp/smoke/bin/python "dist/jotflow-$VERSION-py3-none-any.whl"
+          /tmp/smoke/bin/jotflow --version | tee /tmp/version
+          grep -qx "jotflow $VERSION" /tmp/version
+          mkdir -p /tmp/deploy && cd /tmp/deploy
+          /tmp/smoke/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          from jotflow import deploy
+
+          # From the wheel only: this folder is no checkout.
+          version = os.environ["VERSION"]
+          Path("docker-compose.yml").write_text(
+              deploy.published_compose(deploy.template(deploy.COMPOSE), version)
+          )
+          Path("docker-compose.policy.yml").write_text(deploy.template(deploy.COMPOSE_POLICY))
+          Path("jotflow.toml").touch()
+          PY
+          docker compose -f docker-compose.yml -f docker-compose.policy.yml --profile agent config --quiet
+          if grep -q "build:" docker-compose.yml; then echo "::error::the published Compose file builds"; exit 1; fi
+          grep -q "ghcr.io/jnkman787/jotflow:$VERSION" docker-compose.yml
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-package
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  pypi:
+    name: Publish to PyPI
+    # After the images, so a version on PyPI always has its images on GHCR.
+    needs: [version, package, publish]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/jotflow/${{ needs.version.outputs.version }}/
+    permissions:
+      contents: read
+      id-token: write # PyPI trusted publishing, and signing the attestations
+      attestations: write # store the build provenance
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: python-package
+          path: dist
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Publish with trusted publishing, no token stored
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist

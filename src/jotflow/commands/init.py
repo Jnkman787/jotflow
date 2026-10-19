@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import tempfile
+import tomllib
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -25,7 +26,7 @@ from typing import Any, TextIO, cast
 
 from pydantic import TypeAdapter, ValidationError
 
-from jotflow import agent_setup
+from jotflow import __version__, agent_setup, deploy
 from jotflow.envfile import EnvChange, read_env, write_envs
 from jotflow.github_cli import gh_visibility
 from jotflow.models import RepoName, RepoVisibility
@@ -305,6 +306,8 @@ class InitOptions:
     windows: bool = os.name == "nt"
     rotate_runner_secret: bool = False
     rotate_exec_secret: bool = False
+    # The release whose images the Compose files pin outside a checkout (#87).
+    version: str = __version__
 
     @property
     def agent_file(self) -> Path:
@@ -810,11 +813,79 @@ _HOW = {
 
 
 def _example(path: Path) -> str:
-    """The shipped example's text for a new agent env file, so its comments come along."""
+    """The shipped example's text for a new agent env file, so its comments come along.
+
+    From beside the file in a checkout, or from the package outside one (#87).
+    """
+    name = path.name + ".example"
     try:
-        return path.with_name(path.name + ".example").read_text(encoding="utf-8")
+        return path.with_name(name).read_text(encoding="utf-8")
     except OSError:
+        pass
+    try:
+        return deploy.template(name)
+    except (ValueError, OSError):
         return ""
+
+
+def in_checkout(folder: Path) -> bool:
+    """Whether ``folder`` is a JotFlow source checkout, whose Compose files build from source."""
+    if (folder / "Dockerfile").is_file():
+        return True
+    try:
+        project = tomllib.loads((folder / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    table = project.get("project")
+    return isinstance(table, dict) and table.get("name") == "jotflow"
+
+
+def _plan_compose(console: Console, options: InitOptions) -> list[tuple[Path, str]]:
+    """The Compose files to write outside a checkout (#87): pinned to this release, and
+    an existing one replaced only if the person agrees. Asked before anything is written."""
+    folder = options.env_file.parent if str(options.env_file.parent) else Path(".")
+    if in_checkout(folder):
+        return []
+    try:
+        version = deploy.release_version(options.version)
+    except deploy.NoPublishedImageError as exc:
+        console.say(f"  {exc}. Setup writes no Compose file; build from a checkout instead.")
+        return []
+    wanted = [
+        (
+            folder / deploy.COMPOSE,
+            deploy.published_compose(deploy.template(deploy.COMPOSE), version),
+        ),
+        (folder / deploy.COMPOSE_POLICY, deploy.template(deploy.COMPOSE_POLICY)),
+    ]
+    planned: list[tuple[Path, str]] = []
+    for path, text in wanted:
+        try:
+            current = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            planned.append((path, text))
+            continue
+        if current == text:
+            continue
+        console.say()
+        if console.confirm(
+            f"{path} is already here and differs from JotFlow {version}'s. Replace it? "
+            f"The old one is kept as {path.name}.bak",
+            default=False,
+        ):
+            planned.append((path, text))
+        else:
+            console.say(f"  Keeping your {path}.")
+    return planned
+
+
+def _write_compose(console: Console, planned: list[tuple[Path, str]]) -> None:
+    for path, text in planned:
+        if path.exists():
+            backup = path.with_name(path.name + ".bak")
+            _write_text_atomic(backup, path.read_text(encoding="utf-8"))
+        _write_text_atomic(path, text)
+        console.say(f"Wrote {path}.")
 
 
 @dataclass
@@ -947,6 +1018,7 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
 
     policy = _policy_step(console, options)
     agent_choice = _ask_agent(console, options, _chosen_preset(options, policy))
+    compose_plan = _plan_compose(console, options)
 
     console.say()
     updates = {BOT_TOKEN_KEY: bot_token, APP_TOKEN_KEY: app_token}
@@ -985,6 +1057,7 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
         )
     if policy is not None:
         _save_policy(console, options.config_file, policy)
+    _write_compose(console, compose_plan)
     console.say(f"Connected to Slack as {_describe(identity)}.")
     console.say()
     bot = f"@{identity.bot_user}" if identity.bot_user else "the bot"

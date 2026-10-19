@@ -94,12 +94,12 @@ The pieces:
 
 **What works today:** JotFlow connects to Slack and logs each message in the channels you choose. With `[agent] preset` set in `jotflow.toml` and the agent containers set up, it also starts an agent run on each thread once the thread goes quiet. The agent can ask a clarifying question in the thread, and a run that fails posts a short notice there. Proposal cards and GitHub issues arrive in later milestones. Without a preset, JotFlow posts nothing.
 
-Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages. It can take longer the first time Docker builds JotFlow, or if your workspace needs an admin to approve new apps. Every name and id below is made up; use your own.
+Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages. It can take longer the first time Docker downloads JotFlow, or if your workspace needs an admin to approve new apps. Every name and id below is made up; use your own.
 
 ### Words used here
 
 - **Terminal**: the window where you type commands. On macOS it is called Terminal. On Windows, use PowerShell, or a WSL terminal if you use WSL.
-- **The repository folder**: the `jotflow` folder that `git clone` creates. Run every command below from inside it.
+- **Your JotFlow folder**: the folder you make in step 2, where setup writes its files. Run every command below from inside it.
 - **Token**: a long secret string Slack gives your app, like a password for it. Setup asks for two.
 - **Scope**: one permission a Slack app has, such as reading messages in channels it was invited to.
 - **Socket Mode**: how JotFlow talks to Slack. It connects out to Slack, so your machine needs no public address or open ports.
@@ -117,38 +117,42 @@ Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages
 
 ### 1. Prerequisites
 
-- **Git**, to download JotFlow. Install it from <https://git-scm.com/downloads>.
 - **Docker**, to run JotFlow, with Docker Compose version 2.24 or newer. Docker Desktop includes it: install it from <https://docs.docker.com/get-started/get-docker/>, then start it. On Linux you can use Docker Engine instead: <https://docs.docker.com/engine/install/>. Check with `docker compose version`; a good answer looks like `Docker Compose version v2.29.7`.
   - **On Windows with WSL**, also open Docker Desktop, then **Settings**, **Resources**, **WSL integration**, and switch it on for your Linux distribution, such as Ubuntu. Click **Apply & restart**. Without it, the WSL terminal says `docker` is not found.
-  - **On Linux, Docker must also have BuildKit**, which builds JotFlow's images. Docker Desktop and Docker's own packages include it. Some Linux distributions package it separately: on Ubuntu with the `docker.io` package, also install `docker-buildx` and `docker-compose-v2`, using `sudo apt install docker-buildx docker-compose-v2`. On Debian, use Docker's own packages from the Docker Engine link above. Check with `docker buildx version`.
   - **On Linux with Docker Engine** instead of Docker Desktop, start Docker with `sudo systemctl start docker`, and let your user run it without `sudo` (which runs one command as the administrator): `sudo usermod -aG docker $USER`, then log out and back in. Otherwise Docker says `permission denied` about `docker.sock`.
-- **uv**, which runs setup and fetches Python 3.12 or newer for you. See [uv's installation guide](https://docs.astral.sh/uv/getting-started/installation/). After installing it, open a new terminal so the `uv` command is found. Without uv, you need Python 3.12 or newer; the `python3` built into macOS is often older, so get Python from <https://www.python.org/downloads/>. See step 3.
+- **uv**, which fetches and runs JotFlow's setup, and Python 3.12 or newer, for you. See [uv's installation guide](https://docs.astral.sh/uv/getting-started/installation/). After installing it, open a new terminal so the `uv` command is found. Without uv, you need Python 3.12 or newer; the `python3` built into macOS is often older, so get Python from <https://www.python.org/downloads/>. See step 3.
 - Permission to **create apps in your Slack workspace**. If **Create New App** is greyed out at <https://api.slack.com/apps>, ask a workspace admin to allow app creation. Some workspaces also need an admin to approve each new app; see [If your workspace needs admin approval](#if-your-workspace-needs-admin-approval).
 
-### 2. Clone
+### 2. Make a folder for JotFlow
 
-On Windows with WSL, open a WSL terminal and type `cd ~` first, so you clone into your Linux home directory, not under `/mnt/c`. Files on a Windows drive cannot be kept private from other Windows users, and `.env` holds your tokens.
+JotFlow needs no copy of its source. Setup writes everything it needs into one folder: your tokens, your channels, and the two Docker Compose files that run JotFlow's published images. Make that folder and go into it.
+
+On Windows with WSL, open a WSL terminal and type `cd ~` first, so the folder is in your Linux home directory, not under `/mnt/c`. Files on a Windows drive cannot be kept private from other Windows users, and `.env` holds your tokens.
 
 On Windows in PowerShell, first go to a folder outside OneDrive and Documents, which sync to the cloud, for example `mkdir C:\src; cd C:\src`. Setup later warns that `.env` is on a Windows drive; that is expected there, and the warning says how to keep it private.
 
 ```
-git clone https://github.com/Jnkman787/jotflow.git
+mkdir jotflow
 cd jotflow
 ```
+
+To run JotFlow from its source instead, for example to change it, see [Run from a checkout](CONTRIBUTING.md#run-from-a-checkout) in CONTRIBUTING.md.
 
 ### 3. Run the guided setup
 
 ```
-uv run jotflow init
+uvx jotflow init
 ```
 
-The first `uv run` downloads Python and JotFlow's packages, so it can sit quietly for a minute before setup starts.
+This works from JotFlow's first published release (#41). Before that, use [Run from a checkout](CONTRIBUTING.md#run-from-a-checkout).
+
+The first `uvx` downloads Python and JotFlow, so it can sit quietly for a minute before setup starts. Setup also writes `docker-compose.yml` and `docker-compose.policy.yml` into this folder, pinned to the JotFlow release you ran. It never replaces one you already have without asking, and keeps the old one as a `.bak` file if you say yes.
 
 Without uv, create a private Python environment for JotFlow, a `.venv` folder, and install it there. On macOS, Linux, or WSL:
 
 ```
 python3 -m venv .venv
-.venv/bin/pip install .
+.venv/bin/pip install jotflow
 .venv/bin/jotflow init
 ```
 
@@ -156,11 +160,11 @@ Without uv, on Windows in PowerShell:
 
 ```
 py -3.12 -m venv .venv
-.venv\Scripts\pip install .
+.venv\Scripts\pip install jotflow
 .venv\Scripts\jotflow init
 ```
 
-Setup starts by saying what it will do, and explains every question just before it asks. `uv run jotflow init --help` shows the same overview. Press Enter to accept the default in brackets, or Ctrl-C to stop. Each question allows five tries; after that setup stops without changing anything, and you can run it again. `.env` and `jotflow.toml` are written only after the last question, so stopping part-way leaves them unchanged. Only the Slack manifest, `slack-app-manifest.json`, is saved earlier, so you can paste it if the link fails.
+Setup starts by saying what it will do, and explains every question just before it asks. `uvx jotflow init --help` shows the same overview. Press Enter to accept the default in brackets, or Ctrl-C to stop. Each question allows five tries; after that setup stops without changing anything, and you can run it again. `.env` and `jotflow.toml` are written only after the last question, so stopping part-way leaves them unchanged. Only the Slack manifest, `slack-app-manifest.json`, is saved earlier, so you can paste it if the link fails.
 
 First, setup asks whether you already created a Slack app for JotFlow. Answer `n` the first time. Then it walks through six setup steps, and prints "Setup step 1 of 6" and so on to match this list:
 
@@ -231,7 +235,7 @@ Setup writes two files next to `docker-compose.yml`. Neither is committed to git
 - **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that is not enforced: the folder's Windows permissions decide who can read it, and setup says so instead of "Only your user can read that file". Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
 - **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option. Each repo can say whether it's public or private on GitHub. Setup fills that in from your own `gh` login if you have one, and asks otherwise. Cards for a public repo carry a warning.
 
-Running `uv run jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`, and it keeps the agent containers' secrets.
+Running `uvx jotflow init` again is safe. It offers to keep tokens that still work and your existing `jotflow.toml`, and it keeps the agent containers' secrets.
 
 #### If your workspace needs admin approval
 
@@ -239,7 +243,7 @@ If Slack shows **Request to Install** instead of **Install to Workspace**, an ad
 
 1. Click **Request to Install**, then press Ctrl-C in the terminal to stop setup. `.env` and `jotflow.toml` are not written yet, so this is safe. Only `slack-app-manifest.json` was saved, and it is fine to leave.
 2. Wait for the admin to approve the app. Slack usually notifies you when they do.
-3. Run `uv run jotflow init` again. When it asks `Have you already created a Slack app for JotFlow?`, answer `y`. It then skips the create link, so you don't make a second app. Open your existing app at <https://api.slack.com/apps>, under **Your Apps**, and continue from setup step 3. You can copy the app-level token again from **Basic Information**.
+3. Run `uvx jotflow init` again. When it asks `Have you already created a Slack app for JotFlow?`, answer `y`. It then skips the create link, so you don't make a second app. Open your existing app at <https://api.slack.com/apps>, under **Your Apps**, and continue from setup step 3. You can copy the app-level token again from **Basic Information**.
 
 ### 4. Invite the bot
 
@@ -270,13 +274,13 @@ There are two agent containers, so the GitHub token that can write never sits wh
 - **`agent.env`** is for drafting and questions. Fill in a read-only GitHub token and the model login, as its comments describe.
 - **`agent-exec.env`** is for writing approved issues. Fill in a GitHub token that can write issues and the model login. That token can create, edit, or close any issue in any repo it reaches, so make it a fine-grained token limited to exactly the repos your channels feed, with Issues read and write and nothing else. See [docs/presets.md](docs/presets.md).
 
-Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Once both GitHub tokens are filled in, run `uv run jotflow init` again: it keeps the secrets and adds `COMPOSE_PROFILES=agent` to `.env`, so `docker compose up -d` starts both agent containers too. Neither file holds Slack tokens, and neither agent sees `.env`.
+Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Once both GitHub tokens are filled in, run `uvx jotflow init` again: it keeps the secrets and adds `COMPOSE_PROFILES=agent` to `.env`, so `docker compose up -d` starts both agent containers too. Neither file holds Slack tokens, and neither agent sees `.env`.
 
 To replace a secret, for example after it leaked, run setup with `--rotate-runner-secret` for drafting, `--rotate-exec-secret` for execution, or both. Then run `docker compose up -d` so every container picks up the new value. Setup writes `.env` and both agent files as one step: if one cannot be written, none of them changes. If `.env` and an agent file ever hold different secrets, for example after you replaced one by hand, setup makes a new secret for both rather than guessing which is right, and asks you to restart. With the `command` preset, setup writes each file's secret but no preset or model, since the runner refuses those next to a command.
 
 Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 
-The first start builds JotFlow's image, which takes a minute or two.
+The first start downloads JotFlow's image, which takes a minute or two.
 
 **Run a published release instead of building.** Each release tag `vX.Y.Z` publishes `ghcr.io/jnkman787/jotflow:X.Y.Z` and `ghcr.io/jnkman787/jotflow-agent:X.Y.Z` for amd64 and arm64, plus `:latest`. To use them, add these to `.env` and run `docker compose pull` before `docker compose up -d`:
 
@@ -307,15 +311,15 @@ Post a message in one of your channels. In this release the bot posts nothing ba
 
 In each `message` line, `ts` is the message's id in Slack, which is also the time it was posted, and `thread_ts` is the thread it is a reply in, or `None` for a new message. The log shows where a message was posted and when, never what it says, and never a token. It does show channel ids and your bot and workspace names, so remove those before pasting logs into a public issue. Adding a reaction logs a `reaction` line in the same way. Press Ctrl-C to stop following the log; JotFlow keeps running. Stop it with `docker compose down`.
 
-To run JotFlow without Docker, use `uv run jotflow run` from the same folder instead of steps 5 and 6. It prints the same lines in that terminal, rather than to `docker compose logs`; press Ctrl-C to stop it.
+To run JotFlow without Docker, use `uvx jotflow run` from the same folder instead of steps 5 and 6. It prints the same lines in that terminal, rather than to `docker compose logs`; press Ctrl-C to stop it.
 
 ### See it work without Slack
 
 `jotflow replay` runs one of JotFlow's saved example conversations through the same steps a real channel goes through: reading messages, grouping them into topics, and drafting proposals. A scripted stand-in plays the agent. Nothing connects to Slack, GitHub, or the internet.
 
 ```
-uv run jotflow replay --list
-uv run jotflow replay feature-request
+uvx jotflow replay --list
+uvx jotflow replay feature-request
 ```
 
 It prints what happened at each step, `ok` or `FAIL`, and whether the result matches what the example expects. The examples, and the format for saving your own, are described in [src/jotflow/testing/threads/README.md](src/jotflow/testing/threads/README.md).
@@ -364,20 +368,20 @@ The command refuses in CI, refuses without `--confirm`, and checks the repo and 
 
 ## Troubleshooting
 
-**Is JotFlow still connected?** `docker compose ps` shows `healthy` while JotFlow is connected to Slack, and `unhealthy` within about three minutes of losing it: 90 seconds for the heartbeat to go stale, then three failed checks 30 seconds apart. JotFlow rewrites a small heartbeat file every 30 seconds while connected, and `jotflow health` checks its age, without the network or any token. Its log shows `socket mode disconnected`, then `socket mode reconnecting (attempt N)` every 30 seconds, then `socket mode reconnected after Ns`. Slack's client reconnects by itself; the attempt count is JotFlow's own checks. To alert, watch for the container turning `unhealthy`: for example, `docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q jotflow)"` from cron, or your monitor's Docker health integration. Outside Docker, run `uv run jotflow health` on the same machine. It exits 0 when healthy and 1 otherwise, and `--max-age 120` changes how old the heartbeat may be.
+**Is JotFlow still connected?** `docker compose ps` shows `healthy` while JotFlow is connected to Slack, and `unhealthy` within about three minutes of losing it: 90 seconds for the heartbeat to go stale, then three failed checks 30 seconds apart. JotFlow rewrites a small heartbeat file every 30 seconds while connected, and `jotflow health` checks its age, without the network or any token. Its log shows `socket mode disconnected`, then `socket mode reconnecting (attempt N)` every 30 seconds, then `socket mode reconnected after Ns`. Slack's client reconnects by itself; the attempt count is JotFlow's own checks. To alert, watch for the container turning `unhealthy`: for example, `docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q jotflow)"` from cron, or your monitor's Docker health integration. Outside Docker, run `uvx jotflow health` on the same machine. It exits 0 when healthy and 1 otherwise, and `--max-age 120` changes how old the heartbeat may be.
 
 **Check a fresh install** with the live check. It posts one marked test message to a channel in `jotflow.toml`, checks that JotFlow receives it without logging its text, then deletes it.
 
-1. Stop JotFlow, because Slack gives each message to only one connection, so a running JotFlow would take the test message: `docker compose stop jotflow`, or press Ctrl-C in its terminal if you started it with `uv run jotflow run`.
+1. Stop JotFlow, because Slack gives each message to only one connection, so a running JotFlow would take the test message: `docker compose stop jotflow`, or press Ctrl-C in its terminal if you started it with `uvx jotflow run`.
 2. Run the check. It asks before posting; answer `y`.
-   - macOS, Linux, or WSL: `JOTFLOW_LIVE_CHECK=1 uv run jotflow check --live`
-   - PowerShell: `$env:JOTFLOW_LIVE_CHECK = "1"; uv run jotflow check --live; Remove-Item Env:JOTFLOW_LIVE_CHECK`
+   - macOS, Linux, or WSL: `JOTFLOW_LIVE_CHECK=1 uvx jotflow check --live`
+   - PowerShell: `$env:JOTFLOW_LIVE_CHECK = "1"; uvx jotflow check --live; Remove-Item Env:JOTFLOW_LIVE_CHECK`
 3. Read the result. Each line says `ok` or `FAIL`, and a `FAIL` says what to fix.
 4. Start JotFlow again: `docker compose start jotflow`
 
-`JOTFLOW_LIVE_CHECK=1` is how you say yes to posting, for that one command only. Never put it in `.env`; the check refuses if it's there. If several channels are listed, pick one with `--channel C0IDEAS01`. Without uv, use `.venv/bin/jotflow`, or `.venv\Scripts\jotflow` on Windows, in place of `uv run jotflow`. In PowerShell, if you stop the check with Ctrl-C, close the window afterwards so the setting does not linger. `uv run jotflow check`, without `--live`, only checks `.env` and `jotflow.toml` and posts nothing.
+`JOTFLOW_LIVE_CHECK=1` is how you say yes to posting, for that one command only. Never put it in `.env`; the check refuses if it's there. If several channels are listed, pick one with `--channel C0IDEAS01`. Without uv, use `.venv/bin/jotflow`, or `.venv\Scripts\jotflow` on Windows, in place of `uvx jotflow`. In PowerShell, if you stop the check with Ctrl-C, close the window afterwards so the setting does not linger. `uvx jotflow check`, without `--live`, only checks `.env` and `jotflow.toml` and posts nothing.
 
-Every error names what to fix. The common ones are below. Wherever it says `uv run jotflow init`, use `.venv/bin/jotflow init` if you set up without uv.
+Every error names what to fix. The common ones are below. Wherever it says `uvx jotflow init`, use `.venv/bin/jotflow init` if you set up without uv.
 
 | You see | What to do |
 |---|---|
@@ -387,7 +391,7 @@ Every error names what to fix. The common ones are below. Wherever it says `uv r
 | In WSL, `The command 'docker' could not be found` | In Docker Desktop, open **Settings**, **Resources**, **WSL integration**, switch it on for your distribution, and click **Apply & restart**. |
 | `permission denied while trying to connect to the Docker daemon socket` | On Linux, your user isn't allowed to run Docker yet. Run `sudo usermod -aG docker $USER`, then log out and back in. |
 | `That is an app-level token (xapp-).` or `That is a bot token (xoxb-).` | The two tokens were swapped. Paste the other one. |
-| `The bot token is missing these scopes: ...` or `missing this scope` | The app wasn't created from JotFlow's manifest, or the manifest changed. In the app's settings, open **OAuth & Permissions**, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Setup asks for the bot token again straight away, so copy the new **Bot User OAuth Token** and paste it; you have five tries. If setup has already stopped, run `uv run jotflow init` again. |
+| `The bot token is missing these scopes: ...` or `missing this scope` | The app wasn't created from JotFlow's manifest, or the manifest changed. In the app's settings, open **OAuth & Permissions**, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Setup asks for the bot token again straight away, so copy the new **Bot User OAuth Token** and paste it; you have five tries. If setup has already stopped, run `uvx jotflow init` again. |
 | `The app-level token is missing the connections:write scope.` | Generate a new app-level token under **Basic Information**, with the `connections:write` scope. |
 | `This token has expired, which means token rotation is on for the app.` | Token rotation is Slack's option to replace tokens every few hours, and JotFlow needs tokens that last. Slack does not let you turn it off once it is on, so create the app again from the link setup prints, run setup again, and delete the old app under **Basic Information**. [manifests/README.md](manifests/README.md) has the details. |
 | `Slack does not recognise this token.` | The token was copied incompletely. Copy it again with the **Copy** button. |
@@ -395,20 +399,20 @@ Every error names what to fix. The common ones are below. Wherever it says `uv r
 | `... is not a Slack channel id such as C0123ABCD` | The id was mistyped. It is a capital `C` or `G` followed by capital letters and digits, such as `C0IDEAS01`. Setup refuses an id typed in lowercase and shows the capitalised form to check, but never guesses. Copy the id exactly as Slack shows it, or paste the channel's link. |
 | `could not reach Slack` | Check your network. If your workplace requires a proxy, a server all web traffic goes through, ask your IT team for its address and set it in the terminal before running setup: `export HTTPS_PROXY=http://proxy.acme-co.example:8080`, or in PowerShell `$env:HTTPS_PROXY = "http://proxy.acme-co.example:8080"`. That covers setup only. For JotFlow running in Docker, also add the same line, `HTTPS_PROXY=http://proxy.acme-co.example:8080`, to `.env`, which Docker passes to JotFlow, then run `docker compose up -d` again. |
 | `jotflow.toml has problems:` followed by setting names | A hand edit broke the file. Each line names the setting at fault. Fix it, or let setup write a new one. The old file is kept as `jotflow.toml.bak`. |
-| `configuration problem in environment or .env:` `JOTFLOW_SLACK_BOT_TOKEN: not set` | `.env` is missing or isn't next to `docker-compose.yml`. Run `uv run jotflow init` in the repository folder. |
+| `configuration problem in environment or .env:` `JOTFLOW_SLACK_BOT_TOKEN: not set` | `.env` is missing or isn't next to `docker-compose.yml`. Run `uvx jotflow init` in the repository folder. |
 | `configuration problem in jotflow.toml:` ``file not found; run `jotflow init` to create it`` | The container didn't get your `jotflow.toml`. Check that `.env` has the `COMPOSE_FILE` line. If you removed it, start with `docker compose -f docker-compose.yml -f docker-compose.policy.yml up -d`. |
 | `the --mount option requires BuildKit`, or `unknown flag: --mount` | Docker is missing BuildKit, which builds JotFlow's images. On Ubuntu with the `docker.io` package, run `sudo apt install docker-buildx`, then build again. Elsewhere, including Debian, install Docker's own packages or Docker Desktop, which include it. |
 | `Cannot connect to the Docker daemon` | Docker isn't running; the daemon is its background service. Start Docker Desktop, or on Linux `sudo systemctl start docker`, wait until it is running, and try again. |
-| Compose says the bind source path for `jotflow.toml` does not exist | The bind source path is the file on your machine that Docker hands to JotFlow. Docker was asked to hand `jotflow.toml` to JotFlow, but the file isn't there yet. Run `uv run jotflow init` before `docker compose up -d`. |
-| `jotflow.toml` is a directory, or JotFlow reports `Is a directory` | Compose ran before setup, and Docker Desktop created an empty directory in place of the missing file. Stop JotFlow with `docker compose down`. Then remove the directory: `rm -r jotflow.toml`, or `sudo rm -r jotflow.toml` if that is refused, because Docker created it as root, the administrator account. In PowerShell: `Remove-Item -Recurse jotflow.toml`. Then run `uv run jotflow init` and start again with `docker compose up -d`. |
+| Compose says the bind source path for `jotflow.toml` does not exist | The bind source path is the file on your machine that Docker hands to JotFlow. Docker was asked to hand `jotflow.toml` to JotFlow, but the file isn't there yet. Run `uvx jotflow init` before `docker compose up -d`. |
+| `jotflow.toml` is a directory, or JotFlow reports `Is a directory` | Compose ran before setup, and Docker Desktop created an empty directory in place of the missing file. Stop JotFlow with `docker compose down`. Then remove the directory: `rm -r jotflow.toml`, or `sudo rm -r jotflow.toml` if that is refused, because Docker created it as root, the administrator account. In PowerShell: `Remove-Item -Recurse jotflow.toml`. Then run `uvx jotflow init` and start again with `docker compose up -d`. |
 | `Permission denied` on `/etc/jotflow/jotflow.toml` | JotFlow's container runs as its own user and must be able to read the file. Make it readable with `chmod 644 jotflow.toml`; `chmod` changes a file's permissions, and `644` lets everyone read it and only you change it. |
 | `not a member of channel C0IDEAS01; invite the bot there with /invite @idea_bot` | Invite the bot to that channel. JotFlow keeps running and watches the channels it is in. |
-| `could not look up channel ... the app needs the channels:read and groups:read scopes` | The app was created from an older manifest. Add the two scopes as described for missing scopes above, reinstall the app, and run `uv run jotflow init` again to save the new bot token. |
+| `could not look up channel ... the app needs the channels:read and groups:read scopes` | The app was created from an older manifest. Add the two scopes as described for missing scopes above, reinstall the app, and run `uvx jotflow init` again to save the new bot token. |
 | `could not listen on 127.0.0.1:8765; is the port in use?`, and `jotflow run` stops | A port is a numbered connection point on your machine. JotFlow uses port 8765 for your agent to connect to, and something else, often a second JotFlow, already holds it. Stop the other one, or pick another port by adding a line such as `JOTFLOW_MCP_PORT=8766` to `.env`. |
-| `Slack rejected the bot token (...)` or `Slack refused the Socket Mode connection (...)` | A token was revoked or the app was reinstalled. Run `uv run jotflow init` again to save fresh tokens. |
+| `Slack rejected the bot token (...)` or `Slack refused the Socket Mode connection (...)` | A token was revoked or the app was reinstalled. Run `uvx jotflow init` again to save fresh tokens. |
 | `FAIL  receive: no event for the test message` from the live check | First make sure JotFlow is stopped, since a running JotFlow can take the event. Otherwise the app is not getting message events. Check the app's **Event Subscriptions** page, which lists the Slack events it receives, for `message.channels` and `message.groups`, and that Socket Mode is on, then reinstall the app. |
 | No `message` lines appear | Check that the channel's id is in `jotflow.toml` and that the bot is in the channel. JotFlow ignores channels it isn't configured for and its own messages. |
-| On Windows, Compose ignores the `COMPOSE_FILE` line | `.env` lacks `COMPOSE_PATH_SEPARATOR=:`, which setup adds on Windows. Run `uv run jotflow init` again, or add the line yourself. |
+| On Windows, Compose ignores the `COMPOSE_FILE` line | `.env` lacks `COMPOSE_PATH_SEPARATOR=:`, which setup adds on Windows. Run `uvx jotflow init` again, or add the line yourself. |
 
 ## Using it
 
