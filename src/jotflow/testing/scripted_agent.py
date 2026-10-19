@@ -32,6 +32,8 @@ from jotflow.testing.threads import (
 )
 
 EXIT_REFUSED = 3
+# Where a failed run's error is left for replay to report.
+ERROR_FILE = "scripted-agent-error.txt"
 
 
 def _thread(name: str) -> SavedThread:
@@ -90,7 +92,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--run", type=int, required=True, help="which scripted run to play")
     parser.add_argument("config", type=Path, help="the MCP config the runner wrote")
     args = parser.parse_args(argv)
-    return asyncio.run(play(_thread(args.thread), args.run, args.config))
+    try:
+        return asyncio.run(play(_thread(args.thread), args.run, args.config))
+    except Exception as exc:
+        # The runner discards an agent's output, so leave the error's type and
+        # message next to the run directory, where replay reports it (#184).
+        note = args.config.parent.parent / ERROR_FILE
+        note.write_text(f"run {args.run}: {type(exc).__name__}: {exc}"[:500], encoding="utf-8")
+        raise
 
 
 if __name__ == "__main__":  # pragma: no cover - started by the runner
