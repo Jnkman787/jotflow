@@ -4,7 +4,7 @@
 
 - Issue: #31
 - Also serves: #55 (the maintainer's live execution run uses these instructions)
-- Draft PR: to be opened with this plan
+- Draft PR: #156
 - Status: planning (implementation starts once #144 merges, since it builds on #144's harness)
 - Last verified: plan written against main at 6503610, 2026-10-19
 - Next safe action: commit this plan and open the draft PR
@@ -117,7 +117,7 @@ A fixture with a missing label checks the error path. CI does all of this with a
 ## Progress checklist
 
 - [ ] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
+- [x] Commit this plan and open the draft PR
 - [ ] `execution/writes.py`: the planned writes, the checks, and the footer, with tests
 - [ ] `instructions/execution.md` and the new `ExecutionWork` fields
 - [ ] The fake server's write tools, write log, and `list_issues` default
