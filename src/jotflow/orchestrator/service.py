@@ -44,10 +44,12 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
 from jotflow.models import RunKind
+from jotflow.orchestrator.cards import CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
+from jotflow.orchestrator.notices import GiveUpNotice
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
@@ -242,13 +244,18 @@ class Orchestrator:
 
     async def _start(self) -> None:
         self._store = await self._open_store(self._settings.database_path)
-        lifecycle = RunLifecycle(self._store, self.registry)
+        poster = SlackThreadPoster(self._client)
+        cards = CardPublisher(self._store, SlackCardPoster(self._client))
+        lifecycle = RunLifecycle(
+            self._store,
+            self.registry,
+            on_gave_up=GiveUpNotice(poster, self._policy, cards=cards),
+        )
         await lifecycle.recover()
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
             self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
         )
-        poster = SlackThreadPoster(self._client)
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
         tools = (
             *read_tools(self._store, self._policy, source),
