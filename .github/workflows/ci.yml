@@ -23,11 +23,11 @@ jobs:
       matrix:
         python: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
@@ -54,11 +54,42 @@ jobs:
       - name: Coverage floor
         run: uv run coverage report --format=total
 
+  workflows:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      # Every action pinned by commit SHA, least permissions, no template
+      # injection, no persisted credentials (#60). Online audits also catch a
+      # SHA that isn't really in the action's repo.
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uvx zizmor@1.31.1 --format=github .github/workflows
+
+      # Workflow syntax, expressions, and every run: script through shellcheck,
+      # which the runner image already has. The binary is pinned by checksum.
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$archive"
+          echo "$ACTIONLINT_SHA256  $archive" | sha256sum -c -
+          tar xzf "$archive" actionlint
+          ./actionlint -color
+
   eol:
     name: Line endings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -75,7 +106,7 @@ jobs:
     name: Build container image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -114,10 +145,11 @@ jobs:
       - name: Policy file mount
         run: |
           install -m 0644 jotflow.example.toml jotflow.toml
-          compose="docker compose -f docker-compose.yml -f docker-compose.policy.yml"
-          $compose run --rm jotflow python -c \
+          compose=(docker compose -f docker-compose.yml -f docker-compose.policy.yml)
+          "${compose[@]}" run --rm jotflow python -c \
             'import os; from jotflow.policy import load_policy; load_policy(os.environ["JOTFLOW_CONFIG"]); print("policy loaded")'
-          if $compose run --rm jotflow sh -c 'echo x >> "$JOTFLOW_CONFIG"' 2>/dev/null; then
+          # shellcheck disable=SC2016 # expanded inside the container, not here
+          if "${compose[@]}" run --rm jotflow sh -c 'echo x >> "$JOTFLOW_CONFIG"' 2>/dev/null; then
             echo "::error::The policy file must be mounted read-only"
             exit 1
           fi
@@ -126,10 +158,10 @@ jobs:
       # on the host. The offline check still works here. Dummy tokens only.
       - name: Live check refuses in the image
         run: |
-          compose="docker compose -f docker-compose.yml -f docker-compose.policy.yml"
-          tokens="-e JOTFLOW_SLACK_BOT_TOKEN=xoxb-ci -e JOTFLOW_SLACK_APP_TOKEN=xapp-ci"
-          $compose run --rm $tokens jotflow jotflow check
-          if $compose run --rm $tokens -e JOTFLOW_LIVE_CHECK=1 jotflow jotflow check --live > live.out 2>&1; then
+          compose=(docker compose -f docker-compose.yml -f docker-compose.policy.yml)
+          tokens=(-e JOTFLOW_SLACK_BOT_TOKEN=xoxb-ci -e JOTFLOW_SLACK_APP_TOKEN=xapp-ci)
+          "${compose[@]}" run --rm "${tokens[@]}" jotflow jotflow check
+          if "${compose[@]}" run --rm "${tokens[@]}" -e JOTFLOW_LIVE_CHECK=1 jotflow jotflow check --live > live.out 2>&1; then
             cat live.out
             echo "::error::jotflow check --live must refuse inside the JotFlow image"
             exit 1
@@ -141,7 +173,7 @@ jobs:
     name: Build agent image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -156,8 +188,9 @@ jobs:
           printf 'JOTFLOW_RUNNER_SECRET=ci-runner-secret\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' > agent.env
           printf 'JOTFLOW_RUNNER_SECRET=ci-exec-secret\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' > agent-exec.env
           for files in "-f docker-compose.yml" "-f docker-compose.yml -f docker-compose.policy.yml"; do
+            read -ra file_args <<< "$files"
             touch jotflow.toml
-            docker compose $files --profile agent config --format json > compose.json
+            docker compose "${file_args[@]}" --profile agent config --format json > compose.json
             python3 - <<'PY'
           import json
           services = json.load(open("compose.json"))["services"]
@@ -317,7 +350,7 @@ jobs:
     name: Cross-container runs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 

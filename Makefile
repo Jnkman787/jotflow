@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format format-check typecheck test cov eol check run live-check eval-agent manifest clean
+.PHONY: help install lint format format-check typecheck test cov eol check run live-check eval-agent eval-execute manifest clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -42,6 +42,9 @@ live-check: ## Post and delete one test message in your workspace; needs JOTFLOW
 
 eval-agent: ## Claude Code against every fixture, 3 times each; costs model tokens. Prints the run count; start with YES=1
 	uv run jotflow replay --all --agent claude-code --repeat 3 $(if $(YES),--yes,)
+
+eval-execute: ## Claude Code executing every fixture's proposals; costs model tokens. Prints the run count; start with YES=1
+	uv run jotflow replay --all --agent claude-code --execute $(if $(YES),--yes,)
 
 manifest: ## Regenerate manifests/slack-app.json from the renderer
 	uv run python -m jotflow.slack_manifest > manifests/slack-app.json.tmp \
