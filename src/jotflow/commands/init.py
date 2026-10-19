@@ -986,7 +986,8 @@ _HOW = {
 def _example(path: Path) -> str:
     """The shipped example's text for a new agent env file, so its comments come along.
 
-    From beside the file in a checkout, or from the package outside one (#87).
+    From beside the file if one is there, or from the package, whose copies a test
+    keeps identical to a checkout's ``examples/`` (#87).
     """
     name = path.name + ".example"
     try:
@@ -1001,7 +1002,7 @@ def _example(path: Path) -> str:
 
 def in_checkout(folder: Path) -> bool:
     """Whether ``folder`` is a JotFlow source checkout, whose Compose files build from source."""
-    if (folder / "Dockerfile").is_file():
+    if (folder / "docker" / "Dockerfile").is_file():
         return True
     try:
         project = tomllib.loads((folder / "pyproject.toml").read_text(encoding="utf-8"))
@@ -1276,7 +1277,10 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
         updates |= agent_files.env_updates
         changes += agent_files.changes
     compose_file = existing.get(COMPOSE_FILE_KEY)
-    if compose_file is None:
+    # A checkout keeps its Compose files in docker/ and starts with `make up`,
+    # so a COMPOSE_FILE naming files beside .env would point at nothing there.
+    checkout = in_checkout(options.env_file.parent if str(options.env_file.parent) else Path("."))
+    if compose_file is None and not checkout:
         updates[COMPOSE_FILE_KEY] = COMPOSE_FILE_VALUE
     if options.windows and COMPOSE_SEPARATOR_KEY not in existing:
         updates[COMPOSE_SEPARATOR_KEY] = COMPOSE_SEPARATOR_VALUE
@@ -1296,7 +1300,7 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
             f"  And {COMPOSE_SEPARATOR_KEY}={COMPOSE_SEPARATOR_VALUE}, which Docker needs on "
             "Windows to read that line."
         )
-    if compose_file is not None and compose_file != COMPOSE_FILE_VALUE:
+    if compose_file is not None and compose_file != COMPOSE_FILE_VALUE and not checkout:
         console.say(
             f"  Left your {COMPOSE_FILE_KEY}={compose_file} as it is. For Docker to mount "
             f"jotflow.toml it should include docker-compose.policy.yml."
@@ -1313,7 +1317,8 @@ def run_init(console: Console, api: SlackApi, options: InitOptions) -> int:
         "It never joins channels by itself."
     )
     console.say(f"  2. Check the setup with: {launch_command()} check")
-    console.say("  3. Start JotFlow with: docker compose up -d")
+    start = "make up, from this checkout's root" if checkout else "docker compose up -d"
+    console.say(f"  3. Start JotFlow with: {start}")
     return 0
 
 

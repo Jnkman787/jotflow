@@ -67,7 +67,7 @@ The likeliest attacker: the agent reads untrusted text, and might do what it say
 
 | Threat | Defence | Enforced in |
 |---|---|---|
-| Use GitHub write access | The drafting service holds only the read PAT. The write PAT exists only in `agent-exec`, a separate service and network the drafting container can't reach | [docker-compose.yml](../docker-compose.yml), CI's Compose policy and reach checks in [ci.yml](../.github/workflows/ci.yml), D6 |
+| Use GitHub write access | The drafting service holds only the read PAT. The write PAT exists only in `agent-exec`, a separate service and network the drafting container can't reach | [docker-compose.yml](../docker/docker-compose.yml), CI's Compose policy and reach checks in [ci.yml](../.github/workflows/ci.yml), D6 |
 | Act beyond its run | Its MCP token is bound to its run, kind, channel and thread. It's revoked the moment the run ends, and kept only as a digest | [tokens.py](../src/jotflow/whiteboard/tokens.py), [runs.py](../src/jotflow/orchestrator/runs.py), D13 |
 | Link or propose for another thread | `link_message` and `propose_*` accept only messages the run's own packet served | [write_tools.py](../src/jotflow/whiteboard/write_tools.py), [store](../src/jotflow/store/) `packet_ref` |
 | Read Slack or JotFlow secrets | The agent's environment is an allowlist: Slack, JotFlow and GitHub variable names can't be added. It never sees `.env`. The token reaches it only in a 0600 file, never in argv or the environment | [runner.py](../src/jotflow/adapters/runner.py) `child_env`, CI's "No Slack variable inside the agent container" |
@@ -94,13 +94,13 @@ Issue bodies, comments, and public repo files, through Codex's resource tools, a
 | Threat | Defence | Enforced in |
 |---|---|---|
 | Instructions in an existing issue or a public search result | The same as Slack text: the drafting rules treat everything read as data, writes are planned by JotFlow and approved by a person, and the read PAT can't write | [drafting.md](../src/jotflow/whiteboard/instructions/drafting.md), [presets.py](../src/jotflow/adapters/presets.py) |
-| Shadow JotFlow's tools through another MCP server | Presets load only JotFlow and the pinned GitHub server, with strict MCP config | [presets.py](../src/jotflow/adapters/presets.py), [Dockerfile.agent](../Dockerfile.agent) |
+| Shadow JotFlow's tools through another MCP server | Presets load only JotFlow and the pinned GitHub server, with strict MCP config | [presets.py](../src/jotflow/adapters/presets.py), [Dockerfile.agent](../docker/Dockerfile.agent) |
 
 ### A compromised dependency or image
 
 | Threat | Defence | Enforced in |
 |---|---|---|
-| A changed base image or tool | Base images are pinned by digest, the GitHub MCP server by version and sha256 per architecture, and Python packages by `uv.lock` | [Dockerfile](../Dockerfile), [Dockerfile.agent](../Dockerfile.agent), `uv.lock` |
+| A changed base image or tool | Base images are pinned by digest, the GitHub MCP server by version and sha256 per architecture, and Python packages by `uv.lock` | [Dockerfile](../docker/Dockerfile), [Dockerfile.agent](../docker/Dockerfile.agent), `uv.lock` |
 | A moved Action tag | Every Action is pinned to a commit SHA, Dependabot proposes updates, and zizmor checks each SHA against its repo | [ci.yml](../.github/workflows/ci.yml) "Workflow lint", `.github/dependabot.yml` |
 | A tampered release | Release images carry signed build provenance. `gh attestation verify` checks it | [release.yml](../.github/workflows/release.yml), README |
 | Fork code with secrets | CI runs fork PRs with a read-only token and never uses `pull_request_target` | [ci.yml](../.github/workflows/ci.yml) |

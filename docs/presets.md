@@ -89,7 +89,7 @@ After those runs:
 
 Asking github-mcp-server 2.0.2 for its tools with `--read-only` and a tool list that named `issue_write` still listed only read tools.
 
-**Repeat the check after upgrading the CLI or the GitHub server.** First change the pinned versions in `docker-compose.yml` and `Dockerfile.agent`, and the checksums from the GitHub server release's checksums file. Then rebuild:
+**Repeat the check after upgrading the CLI or the GitHub server.** First change the pinned versions in `docker/docker-compose.yml` and `docker/Dockerfile.agent`, and the checksums from the GitHub server release's checksums file. Then rebuild:
 
 ```
 docker compose build agent
@@ -136,7 +136,7 @@ The command carries no run data. `CODEX_HOME` points at `<run dir>/codex` (0700)
 
 Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so the runner removes them with the run. Neither token is in the command line or the environment.
 
-**The security gate.** `tests/test_codex_gate.py` runs in CI's "Codex preset gate" job, with Codex 0.163.0 from `ci/codex`'s lockfile. Codex runs this preset's own config, and for every run kind it checks four things:
+**The security gate.** `tests/test_codex_gate.py` runs in CI's "Codex preset gate" job, with Codex 0.163.0 from `.github/ci/codex`'s lockfile. Codex runs this preset's own config, and for every run kind it checks four things:
 - for drafting and question runs, the model is offered exactly the five built-ins below, and no shell, `exec`, or `local_shell` tool
 - a scripted `apply_patch` call is refused ("writing is blocked by read-only sandbox; rejected by user approval settings"), no file is written, and no prompt holds the run
 - JotFlow's MCP server is reached

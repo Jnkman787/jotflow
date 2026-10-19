@@ -17,13 +17,10 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
-      - Dockerfile
-      - Dockerfile.agent
-      - docker-compose.yml
+      - docker/**
       # The package and the deployment files it carries (#87).
-      - docker-compose.policy.yml
-      - agent.env.example
-      - agent-exec.env.example
+      - examples/agent.env.example
+      - examples/agent-exec.env.example
       - pyproject.toml
       - src/jotflow/__init__.py
       - src/jotflow/deploy.py
@@ -78,10 +75,10 @@ jobs:
           project = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
           init = re.search(r'^__version__ = "([^"]+)"$', Path("src/jotflow/__init__.py").read_text(), re.M)
           module = init.group(1) if init else None
-          compose = Path("docker-compose.yml").read_text()
+          compose = Path("docker/docker-compose.yml").read_text()
           pin = re.search(r'AGENT_NPM_PACKAGES: "([^"]+)"', compose)
           if not pin:
-              raise SystemExit("::error::no AGENT_NPM_PACKAGES pin in docker-compose.yml")
+              raise SystemExit("::error::no AGENT_NPM_PACKAGES pin in docker/docker-compose.yml")
           publish = os.environ["REF_TYPE"] == "tag"
           if publish:
               tag = os.environ["REF_NAME"]
@@ -136,9 +133,9 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
           - image: jotflow
-            dockerfile: Dockerfile
+            dockerfile: docker/Dockerfile
           - image: jotflow-agent
-            dockerfile: Dockerfile.agent
+            dockerfile: docker/Dockerfile.agent
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,7 +162,7 @@ jobs:
             --label "org.opencontainers.image.licenses=Apache-2.0"
             --metadata-file metadata.json
           )
-          if [ "$DOCKERFILE" = Dockerfile.agent ]; then
+          if [ "$DOCKERFILE" = docker/Dockerfile.agent ]; then
             args+=(--build-arg "AGENT_NPM_PACKAGES=$AGENT_PACKAGES")
           fi
           docker buildx build "${args[@]}" --output type=cacheonly .
@@ -189,9 +186,9 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
           - image: jotflow
-            dockerfile: Dockerfile
+            dockerfile: docker/Dockerfile
           - image: jotflow-agent
-            dockerfile: Dockerfile.agent
+            dockerfile: docker/Dockerfile.agent
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -225,7 +222,7 @@ jobs:
             --label "org.opencontainers.image.licenses=Apache-2.0"
             --metadata-file metadata.json
           )
-          if [ "$DOCKERFILE" = Dockerfile.agent ]; then
+          if [ "$DOCKERFILE" = docker/Dockerfile.agent ]; then
             args+=(--build-arg "AGENT_NPM_PACKAGES=$AGENT_PACKAGES")
           fi
           args+=(--output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true")

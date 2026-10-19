@@ -45,6 +45,9 @@ src/jotflow/
   execution/      execution runs: hands approved proposals back to the agent, checks results
 tests/            pytest suite
 docs/             architecture, roadmap, plans
+docker/           the two Dockerfiles and the Compose files; run them from the root with `make up`
+examples/         jotflow.example.toml and the agent env examples
+.github/ci/       pinned tool lockfiles for CI jobs, such as the Codex gate's
 ```
 
 ## Commands
@@ -58,6 +61,7 @@ docs/             architecture, roadmap, plans
 | `make cov` | Tests with the coverage report; fails below the floor |
 | `make format` | Apply ruff formatting and safe fixes |
 | `make run` | Run the `jotflow` CLI |
+| `make up` | Build and start JotFlow from this checkout, with `docker/`'s Compose files |
 | `make live-check` | Opt-in live round trip against your own workspace: `JOTFLOW_LIVE_CHECK=1 make live-check`. Never in CI |
 | `make manifest` | Regenerate `manifests/slack-app.json` from the renderer |
 

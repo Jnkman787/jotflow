@@ -113,7 +113,7 @@ class Settings(BaseSettings):
             raise ValueError("JOTFLOW_RUNNER_SECRET and JOTFLOW_RUNNER_EXEC_SECRET must differ")
         return self
 
-    # Admin policy file; see jotflow.example.toml
+    # Admin policy file; see examples/jotflow.example.toml
     config_path: str = Field(
         default="jotflow.toml",
         validation_alias="JOTFLOW_CONFIG",

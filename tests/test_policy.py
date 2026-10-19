@@ -14,7 +14,7 @@ from jotflow.policy import (
     parse_policy,
 )
 
-EXAMPLE = Path(__file__).resolve().parent.parent / "jotflow.example.toml"
+EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "jotflow.example.toml"
 
 MINIMAL = """
 [channels.C0TEST1]

@@ -14,7 +14,7 @@ from jotflow.policy import Policy, parse_policy
 
 HEADER = (
     "# jotflow.toml: admin policy for JotFlow, written by `jotflow init`.\n"
-    "# Edit freely; jotflow.example.toml explains every option.\n"
+    "# Edit freely; examples/jotflow.example.toml in JotFlow's repo explains every option.\n"
     "# Secrets never go here: the Slack tokens live in .env.\n"
 )
 

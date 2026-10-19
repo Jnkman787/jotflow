@@ -26,7 +26,7 @@ from typing import Any, Protocol
 
 from jotflow.models import PARTIAL_PRESET_KINDS, RunKind
 
-# Where Dockerfile.agent installs the pinned GitHub MCP server.
+# Where docker/Dockerfile.agent installs the pinned GitHub MCP server.
 DEFAULT_GITHUB_MCP = "/usr/local/bin/github-mcp-server"
 
 # A model id or alias as the CLIs take it, such as "claude-sonnet-5-5" or
@@ -200,7 +200,7 @@ CLAUDE_PROMPTS: Mapping[RunKind, str] = {
 }
 
 
-# The Claude Code release this preset was verified with; docker-compose.yml pins it.
+# The Claude Code release this preset was verified with; docker/docker-compose.yml pins it.
 CLAUDE_CODE_VERSION = "2.1.303"
 
 
