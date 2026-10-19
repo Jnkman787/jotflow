@@ -1297,6 +1297,23 @@ def test_pressing_enter_at_the_list_types_repos_as_before(
     assert repo.repo == "acme/web" and repo.description == "The web app"
 
 
+def test_a_picked_repo_that_isnt_owner_name_is_typed_instead(
+    options: InitOptions, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jotflow.github_cli import ListedRepo
+
+    strange = "acme/web\x1b[31m/../x"
+    monkeypatch.setattr(init, "gh_login", lambda: "acme-alice")
+    monkeypatch.setattr(init, "gh_repos", lambda owner: [ListedRepo(strange, "", "public")])
+    answers = ["", "", "C0TEST1", "", "1", *POLICY[1:]]
+    script = Script(answers=answers, secrets=[GOOD_APP, GOOD_BOT])
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    (repo,) = load_policy(options.config_file).channels["C0TEST1"].repos
+    assert (repo.repo, repo.description) == ("acme/web", "The web app")
+    assert "isn't a usable owner/name" in script.text
+    assert "\x1b" not in script.text.split("isn't a usable")[1]
+
+
 def test_a_bad_selection_is_asked_again(
     options: InitOptions, monkeypatch: pytest.MonkeyPatch
 ) -> None:

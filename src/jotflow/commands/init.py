@@ -562,7 +562,14 @@ def _ask_repo(
         return nickname
 
     if listed is not None:
-        repo = listed.repo
+        try:
+            # The same check as a typed repo, so a strange listing fails closed.
+            repo = new_repo(listed.repo)
+        except ValueError:
+            # Don't echo the listing: it's GitHub's text, not the person's.
+            console.say("  One picked repo isn't a usable owner/name, so type it instead.")
+            listed = None
+    if listed is not None:
         console.say()
         console.say(f"  {repo}")
         visibility = listed.visibility
