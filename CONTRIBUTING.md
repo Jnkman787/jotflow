@@ -25,7 +25,9 @@ uv run jotflow init
 docker compose up -d
 ```
 
-In a checkout, setup leaves the checkout's own Compose files alone, and `docker compose up -d` builds both images from this source. Set `JOTFLOW_IMAGE_REF` and `JOTFLOW_AGENT_IMAGE_REF` in `.env` to run other images, such as a published release or your own per-commit tag. `make check` runs every check CI runs.
+In a checkout, setup leaves the checkout's own Compose files alone, and `docker compose up -d` builds both images from this source. Set `JOTFLOW_IMAGE_REF` and `JOTFLOW_AGENT_IMAGE_REF` in `.env` to run other images, such as a published `ghcr.io/jnkman787/jotflow:X.Y.Z` release. Pin an exact version rather than `latest`. A source build can also tag itself per commit through the same lines, which keeps older builds around for a quick rollback.
+
+If a build fails with `the --mount option requires BuildKit` or `unknown flag: --mount`, Docker is missing BuildKit. On Ubuntu with the `docker.io` package, run `sudo apt install docker-buildx`, then build again. Elsewhere, including Debian, install Docker's own packages or Docker Desktop, which include it. `make check` runs every check CI runs.
 
 ## Releasing
 
