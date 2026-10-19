@@ -539,3 +539,29 @@ def test_a_huge_body_with_nobody_involved() -> None:
     card = render_card(record(issue(body=body, assignees=[]), participants=[]), context())
     assert len(card.blocks) <= MAX_BLOCKS
     assert not any(t.startswith(("Involved", "Assignee")) for t in texts(card, "plain_text"))
+
+
+def test_a_failed_card_offers_retry_with_the_hash_and_discard() -> None:
+    from jotflow.orchestrator.cards import ACTION_DISCARD, ACTION_RETRY
+
+    failed = record(state=ProposalState.FAILED, approved_by="U0CAROL", approved_at=NOW)
+    found = actions(render_card(failed, context()))
+    assert [b["value"] for b in found[ACTION_RETRY]] == [f"p1:{content_hash(failed.proposal)}"]
+    assert [b["value"] for b in found[ACTION_DISCARD]] == ["p1"]
+    assert found[ACTION_DISCARD][0]["style"] == "danger"
+    # Once discarded, the draft is gone and so are both buttons.
+    cleared = failed.model_copy(update={"draft_cleared_at": NOW})
+    gone = actions(render_card(cleared, context()))
+    assert ACTION_RETRY not in gone and ACTION_DISCARD not in gone
+
+
+def test_a_failed_card_too_long_to_show_offers_only_discard() -> None:
+    from jotflow.orchestrator.cards import ACTION_DISCARD, ACTION_RETRY
+
+    long = record(
+        issue(body="y" * (MAX_SECTION_TEXT * MAX_BLOCKS)),
+        state=ProposalState.FAILED,
+        approved_by="U0C",
+    )
+    found = actions(render_card(long, context()))
+    assert ACTION_RETRY not in found and ACTION_DISCARD in found

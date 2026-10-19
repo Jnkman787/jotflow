@@ -950,3 +950,22 @@ async def test_a_drafting_runs_propose_issue_yields_one_card() -> None:
     assert "Add a dark mode" in json.dumps(card.blocks)
     (stored,) = await rig.store.thread_proposals(CH, THREAD)
     assert stored.card_ts is not None and not stored.card_due
+
+
+async def test_the_approval_gate_is_built_and_arms_through_the_debouncer() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        assert rig.orchestrator.approval is not None
+        await rig.orchestrator._arm_thread(CH, "1760781800.000100")
+        assert [p.thread_ts for p in await rig.store.pending_threads()] == ["1760781800.000100"]
+    finally:
+        await rig.orchestrator.stop()
+    off = Rig(runs=False)
+    await off.orchestrator.start()
+    try:
+        assert off.orchestrator.approval is not None
+        await off.orchestrator._arm_thread(CH, "1760781800.000100")  # no debouncer: no-op
+        assert await off.store.pending_threads() == []
+    finally:
+        await off.orchestrator.stop()

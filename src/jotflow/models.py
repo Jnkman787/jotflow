@@ -259,8 +259,8 @@ class ProposalRecord(BaseModel):
     participants: list[str] = Field(
         default_factory=list,
         description=(
-            "Slack user ids whose messages the proposal was drawn from; with approvers on, "
-            "none of them may approve it (D7)"
+            "Slack user ids the agent named: the poster and anyone mentioned. Informational; "
+            "self-approval is checked against the source messages' authors from Slack (D7)"
         ),
     )
     created_at: AwareDatetime

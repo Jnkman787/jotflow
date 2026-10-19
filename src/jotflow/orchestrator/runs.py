@@ -181,7 +181,12 @@ class RunLifecycle:
         return ended
 
     async def _attempts(self, record: ProposalRecord) -> int:
-        """Execution runs for the proposal that have ended, by any status."""
+        """Execution runs for the proposal that have ended since it was last approved.
+
+        A person approving again, such as Retry on a failed card (#27), starts
+        a fresh count. A retry while reconciling keeps the approval, and the count.
+        """
+        since = record.approved_at
         runs = await self._store.thread_runs(record.channel_id, record.thread_ts)
         return sum(
             1
@@ -189,6 +194,7 @@ class RunLifecycle:
             if r.kind is RunKind.EXECUTION
             and r.proposal_id == record.id
             and r.status not in ACTIVE_RUN_STATUSES
+            and (since is None or r.created_at >= since)
         )
 
     async def _retry_or_give_up(self, ended: Run) -> None:

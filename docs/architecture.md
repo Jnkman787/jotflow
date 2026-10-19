@@ -246,7 +246,17 @@ The mode applies uniformly to creation, description edits, comments, assignment,
 
 Every mode change is announced in the channel. Approval by reaction is off by default and can be turned on.
 
-**Request Changes** opens a dialog whose text JotFlow posts as a thread reply attributed to the person, so the next drafting run treats it like any other message (D9).
+**Request Changes** opens a dialog whose text JotFlow posts as a thread reply attributed to the person, so the next drafting run treats it like any other message (D9). The reply reads `Change request from @person:` followed by the text, cleaned as `ask_channel` text is, with broadcast mentions removed, Slack markup escaped, and nothing unfurled. Ingest never sees JotFlow's own messages, so JotFlow starts the thread's quiet window itself.
+
+**How a click is checked** (`src/jotflow/orchestrator/approval.py`, #27). JotFlow runs in Socket Mode, so there is no request signature to verify: Bolt receives interactions over the websocket it opened with the app-level token, and only Slack can send on it. On top of that, every Approve, Retry, Discard, or Request Changes click is checked in this order, and any refusal is a fixed reply only the person sees, writing nothing:
+
+1. The payload's team, and the person's own team, are this workspace.
+2. The person is not a guest and not an external Slack Connect user.
+3. The proposal exists in the card's channel, and the clicked message is its stored card.
+4. With approvers on, the person is a listed approver. For Approve or Retry, they must also not have written the thread's first message or any message the proposal cites, as Slack reports them at the moment of the click. Someone who was only mentioned may approve. If Slack can't confirm an author, the approval is refused.
+5. Approve and Retry lock the content hash the button carries. A stale card approves nothing and is redrawn.
+
+An approval records who and when, queues one execution run, and redraws the card. A failed card offers **Retry**, which approves again and starts a fresh count of execution attempts (#30), and **Discard**, which clears the draft, after which Retry is refused.
 
 **What the gate is and is not.** JotFlow enforces the gate in its own flow: it never hands the agent a proposal to execute until the mode or a person allows it, and it validates proposals against the configured repos, and against a repo's label list where one is set, before posting a card. It is not a credential boundary: the agent holds the team's GitHub access, so a misbehaving agent could still write on its own. D6 narrows this: drafting runs, the ones exposed to raw Slack text, get read-only GitHub access. Teams should still scope the agent's write token to the repositories JotFlow is meant to touch.
 

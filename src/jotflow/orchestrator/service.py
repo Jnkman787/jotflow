@@ -45,6 +45,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
 from jotflow.models import ChannelMode, RunKind
+from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
 from jotflow.orchestrator.card_sync import SYNC_SECONDS, BoltPeople, CardSync, People
 from jotflow.orchestrator.cards import CardPoster, CardPublisher, SlackCardPoster
 from jotflow.orchestrator.debounce import Debouncer
@@ -204,6 +205,7 @@ class Orchestrator:
         card_poster: CardPoster | None = None,
         people: People | None = None,
         card_seconds: float = SYNC_SECONDS,
+        approval_slack: ApprovalSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -225,6 +227,8 @@ class Orchestrator:
         self._people = people
         self._card_seconds = card_seconds
         self.cards: CardSync | None = None
+        self._approval_slack = approval_slack
+        self.approval: ApprovalHandler | None = None
         self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
         self._tick_seconds = tick_seconds
@@ -270,6 +274,15 @@ class Orchestrator:
             self._people or BoltPeople(self._client),
         )
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
+        # The approval gate answers the card's buttons whether or not runs are on;
+        # an approved proposal's execution run waits in the queue until they are.
+        self.approval = ApprovalHandler(
+            self._store,
+            self._policy,
+            self._approval_slack or BoltApprovalSlack(self._client),
+            refresh=self.cards.refresh,
+            arm_thread=self._arm_thread,
+        )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
             self._store, self._policy, self._keyword_slack or BoltKeywordSlack(self._client)
@@ -392,6 +405,11 @@ class Orchestrator:
                 log.exception("card sync failed")
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=self._card_seconds)
+
+    async def _arm_thread(self, channel_id: str, thread_ts: str) -> None:
+        """Start a thread's quiet window for a message JotFlow posted for a person."""
+        if self._debouncer is not None:
+            await self._debouncer.arm(channel_id, thread_ts)
 
     async def _flush_loop(self, debouncer: Debouncer) -> None:
         while not self._stop.is_set():
