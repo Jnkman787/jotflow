@@ -187,7 +187,7 @@ async def _runner_mismatch(
             if attempt + 1 < attempts:
                 await asyncio.sleep(delay)
             continue
-        expected = expected_runner_preset(preset, group)
+        expected = expected_runner_preset(group, preset)
         if info.preset != expected:
             if expected == preset:
                 return (

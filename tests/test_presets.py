@@ -206,17 +206,19 @@ def test_the_orchestrator_knows_each_presets_run_kinds() -> None:
         kinds = getattr(preset, "run_kinds", RUN_KINDS)
         assert PARTIAL_PRESET_KINDS.get(name, RUN_KINDS) == kinds, name
     assert set(PARTIAL_PRESET_KINDS) <= set(PRESETS)
+    with pytest.raises(TypeError):
+        PARTIAL_PRESET_KINDS["command"] = RUN_KINDS  # type: ignore[index]
 
 
 def test_only_a_known_preset_without_execution_hands_it_to_claude_code() -> None:
     execution = frozenset({RunKind.EXECUTION})
     conversation = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
-    assert expected_runner_preset("codex", execution) == "claude-code"
-    assert expected_runner_preset("codex", conversation) == "codex"
-    assert expected_runner_preset("codex", RUN_KINDS) == "codex"
+    assert expected_runner_preset(execution, "codex") == "claude-code"
+    assert expected_runner_preset(conversation, "codex") == "codex"
+    assert expected_runner_preset(RUN_KINDS, "codex") == "codex"
     for preset in ("claude-code", "command", "unknown"):
-        assert expected_runner_preset(preset, execution) == preset
-        assert expected_runner_preset(preset, conversation) == preset
+        assert expected_runner_preset(execution, preset) == preset
+        assert expected_runner_preset(conversation, preset) == preset
 
 
 def preset_config(**overrides: Any) -> RunnerConfig:
