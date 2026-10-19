@@ -553,3 +553,47 @@ async def test_queue_pending_skips_a_thread_a_person_skipped_while_it_waited(
     await store.arm_thread(CH, T2, clock.now)
     await store.mark_chatter(MessageRef(channel_id=CH, ts=T2), by="agent")
     assert await store.queue_pending(CH, T2) is not None
+
+
+# --- paused channels (#28) -----------------------------------------------------------
+
+
+async def test_a_paused_channel_starts_no_run_until_it_is_unpaused(store: Store) -> None:
+    from jotflow.models import ChannelMode
+
+    await store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+    paused = await store.enqueue_run(RunKind.DRAFTING, CH, "1760781600.000100")
+    elsewhere = await store.enqueue_run(RunKind.DRAFTING, OTHER, "1760781600.000100")
+    claimed = await store.claim_next_run(max_running=5)
+    assert claimed is not None and claimed.id == elsewhere.id
+    assert await store.claim_next_run(max_running=5) is None
+    await store.set_channel_mode(CH, ChannelMode.AUTO, changed_by="U0LEAD")
+    unpaused = await store.claim_next_run(max_running=5)
+    assert unpaused is not None and unpaused.id == paused.id
+
+
+async def test_a_paused_channels_cards_wait_until_it_is_unpaused(store: Store) -> None:
+    from jotflow.models import ChannelMode
+
+    await store.add_proposal(record("p1"))
+    await store.add_proposal(record("p2", channel=OTHER))
+    await store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+    assert [p.id for p in await store.cards_due()] == ["p2"]
+    await store.set_channel_mode(CH, ChannelMode.PROPOSE, changed_by="U0LEAD")
+    assert [p.id for p in await store.cards_due()] == ["p1", "p2"]
+
+
+async def test_an_auto_write_under_way_is_not_due_for_a_card(store: Store) -> None:
+    from jotflow.store.hashing import content_hash
+
+    await store.add_proposal(record("p1"))
+    added = await store.get_proposal("p1")
+    assert added is not None
+    await store.transition(
+        "p1", ProposalState.APPROVED, approved_by="auto", expected_hash=content_hash(added.proposal)
+    )
+    assert await store.cards_due() == []
+    await store.transition("p1", ProposalState.EXECUTING)
+    assert await store.cards_due() == []
+    await store.transition("p1", ProposalState.FAILED)
+    assert [p.id for p in await store.cards_due()] == ["p1"]

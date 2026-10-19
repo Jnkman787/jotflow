@@ -19,6 +19,12 @@ debounce_seconds = 120
 # can still find its issue.
 topic_window_days = 14
 
+# The reaction JotFlow adds to the messages an issue came from, once the issue
+# is written, next to its reply in the thread with the issue's link. A Slack
+# emoji name without colons; "" for none. It cannot be white_check_mark, which
+# confirms a keyword.
+issue_reaction = "ticket"
+
 [agent]
 # Which agent program drafts issues. Agent runs arrive in milestone 3; until
 # then leave this out, as setup does, and JotFlow connects to Slack without

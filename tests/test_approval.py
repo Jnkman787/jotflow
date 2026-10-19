@@ -975,3 +975,35 @@ async def test_the_keyword_confirmation_emoji_does_not_approve_by_default() -> N
     await _shown(rig, pid)
     await _react(_reacting_app(rig), name="white_check_mark")
     assert await rig.state(pid) is ProposalState.PENDING and rig.slack.ephemerals == []
+
+
+# A paused channel (#28)
+
+
+async def test_nothing_on_a_card_works_in_a_paused_channel() -> None:
+    from jotflow.models import ChannelMode
+    from jotflow.orchestrator.approval import PAUSED
+
+    rig = Rig()
+    pid = await rig.proposal()
+    await rig.store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by=ALICE)
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "refused"
+    assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0
+    assert rig.slack.ephemerals == [(CH, BOB, PAUSED)]
+    assert await rig.handler.on_changes_submitted(submission(pid, "shorter please")) == PAUSED
+    await rig.store.set_channel_mode(CH, ChannelMode.PROPOSE, changed_by=ALICE)
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "approved"
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_reaction_in_a_paused_channel_approves_nothing() -> None:
+    from jotflow.models import ChannelMode
+    from jotflow.orchestrator.approval import PAUSED
+
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    await rig.store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by=ALICE)
+    await _react(_reacting_app(rig))
+    assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0
+    assert rig.slack.ephemerals == [(CH, CAROL, PAUSED)]

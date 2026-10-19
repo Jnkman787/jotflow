@@ -140,3 +140,11 @@ def test_a_custom_approval_reaction_round_trips() -> None:
     text = render_policy(policy)
     assert 'reaction = "+1"' in text
     assert parse_policy(text) == policy
+
+
+@pytest.mark.parametrize("reaction", ["", "ticket", "tada"])
+def test_the_issue_reaction_round_trips(reaction: str) -> None:
+    policy = _policy(issue_reaction=reaction, approval={"reactions": True, "reaction": "+1"})
+    text = render_policy(policy)
+    assert f'issue_reaction = "{reaction}"' in text
+    assert parse_policy(text) == policy

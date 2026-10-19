@@ -255,6 +255,18 @@ MIGRATIONS: tuple[Migration, ...] = (
             " WHERE card_revision IS NULL OR card_revision < revision",
         ),
     ),
+    # The thread is told the issue URL once its proposal is applied (#32).
+    Migration(
+        9,
+        (
+            "ALTER TABLE proposals ADD COLUMN thread_told_at TEXT"
+            " /* UTC, ISO 8601: when the thread was told the issue URL (#32) */",
+            # Nothing told threads before #32: an old applied proposal stays quiet.
+            "UPDATE proposals SET thread_told_at = updated_at WHERE state = 'applied'",
+            "CREATE INDEX proposals_thread_due ON proposals (created_at)"
+            " WHERE state = 'applied' AND thread_told_at IS NULL",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

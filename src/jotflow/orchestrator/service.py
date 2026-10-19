@@ -59,11 +59,13 @@ from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
 from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
+from jotflow.orchestrator.modes import AutoApprover, BoltModeSlack, ModeCommand, ModeSlack
 from jotflow.orchestrator.notices import GiveUpNotice
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
 from jotflow.orchestrator.people import SlackAttribution, SlackPeople
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
+from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.policy import Policy
 from jotflow.store import SqliteStore, Store
 from jotflow.whiteboard.read_tools import read_tools
@@ -213,6 +215,8 @@ class Orchestrator:
         people: People | None = None,
         card_seconds: float = SYNC_SECONDS,
         approval_slack: ApprovalSlack | None = None,
+        mode_slack: ModeSlack | None = None,
+        thread_slack: ThreadSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -236,6 +240,11 @@ class Orchestrator:
         self.cards: CardSync | None = None
         self._approval_slack = approval_slack
         self.approval: ApprovalHandler | None = None
+        self._mode_slack = mode_slack
+        self._thread_slack = thread_slack
+        self.threads: ThreadNotice | None = None
+        self.modes: ModeCommand | None = None
+        self.auto: AutoApprover | None = None
         self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
         self._tick_seconds = tick_seconds
@@ -282,6 +291,17 @@ class Orchestrator:
             self._policy,
             CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
             people,
+        )
+        # Auto mode approves before each card pass, so its card waits for the write (#28).
+        self.auto = AutoApprover(self._store, self.channel_mode)
+        # Once an issue is written, its thread hears where it went (#32).
+        self.threads = ThreadNotice(
+            self._store, self._policy, self._thread_slack or BoltThreadSlack(self._client)
+        )
+        self.modes = ModeCommand(
+            self._store,
+            self._policy,
+            self._mode_slack or BoltModeSlack(self._client, slack_people, people),
         )
         store, policy = self._store, self._policy
 
@@ -376,7 +396,17 @@ class Orchestrator:
         The debouncer then leaves a ``skip:`` message, and any reply under a
         ``skip:`` first message, out: no drafting run, and no restarted wait. It
         does nothing while runs are off.
+
+        In a paused channel JotFlow reads nothing, so none of this happens (#28).
         """
+        if isinstance(decision, Accepted) and self._store is not None:
+            try:
+                paused = await self.channel_mode(decision.ref.channel_id) is ChannelMode.PAUSED
+            except Exception:
+                log.exception("could not read the channel's mode")
+                paused = True  # fail closed: read nothing rather than act in a paused channel
+            if paused:
+                return
         if isinstance(decision, Accepted) and event is not None and self._keywords is not None:
             try:
                 if decision.kind == "message":
@@ -429,7 +459,11 @@ class Orchestrator:
     async def _card_loop(self, cards: CardSync) -> None:
         while not self._stop.is_set():
             try:
+                if self.auto is not None:
+                    await self.auto.approve_due()
                 await cards.sync()
+                if self.threads is not None:
+                    await self.threads.tell()
             except Exception:
                 log.exception("card sync failed")
             with contextlib.suppress(TimeoutError):

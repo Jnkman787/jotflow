@@ -402,3 +402,51 @@ def test_the_approval_reaction_is_an_emoji_name_that_is_no_keyword() -> None:
     with pytest.raises(ValueError, match="JotFlow adds white_check_mark itself"):
         Policy.model_validate({**base, "approval": {"reaction": "white_check_mark"}})
     assert Policy.model_validate({**base, "approval": {"reaction": "a" * 100}})
+
+
+# The issue reaction (#32)
+
+
+def _with_reaction(value: str) -> str:
+    return (
+        f"issue_reaction = {value}\n[channels.C0ONE1]\n[[channels.C0ONE1.repos]]\n"
+        'repo = "acme-co/web"\nnickname = "web"\ndescription = "Web"\n'
+    )
+
+
+def test_the_issue_reaction_defaults_to_ticket_and_can_be_turned_off() -> None:
+    from jotflow.policy import parse_policy
+
+    assert parse_policy(_with_reaction('"ticket"')).issue_reaction == "ticket"
+    assert parse_policy(_with_reaction('""')).issue_reaction == ""
+    assert parse_policy(_with_reaction('"+1"')).issue_reaction == "+1"
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ('"white_check_mark"', "is JotFlow's keyword confirmation"),
+        ('"no_entry_sign"', "already stands for a keyword"),
+        ('"heavy_check_mark"', "is also the approval reaction"),
+        ('":ticket:"', "Slack emoji name"),
+        ('"Ticket"', "Slack emoji name"),
+        ('"a b"', "Slack emoji name"),
+        ('"' + "x" * 101 + '"', "Slack emoji name"),
+    ],
+)
+def test_a_bad_or_colliding_issue_reaction_is_refused(value: str, reason: str) -> None:
+    from jotflow.policy import PolicyError, parse_policy
+
+    with pytest.raises(PolicyError, match=reason):
+        parse_policy(_with_reaction(value))
+
+
+def test_the_issue_reaction_must_differ_from_a_custom_approval_reaction() -> None:
+    from jotflow.policy import PolicyError, parse_policy
+
+    text = _with_reaction('"+1"').replace(
+        "[channels.C0ONE1]", '[approval]\nreaction = "+1"\n[channels.C0ONE1]'
+    )
+    with pytest.raises(PolicyError, match="also the approval reaction"):
+        parse_policy(text)
+    assert parse_policy(_with_reaction('"+1"')).issue_reaction == "+1"

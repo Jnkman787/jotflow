@@ -446,7 +446,9 @@ async def test_slash_command_answers_privately(text: str, help_shown: bool) -> N
     await app.commands[SLASH_COMMAND](ack=ack, command={"text": text})
     assert (answers == [help_text()]) is help_shown
     if not help_shown:
-        assert answers == ["Only /jotflow help exists so far. It lists the keywords."]
+        assert answers == [
+            "Try /jotflow help for the keywords, or /jotflow mode for this channel's mode."
+        ]
 
 
 # The Bolt adapter

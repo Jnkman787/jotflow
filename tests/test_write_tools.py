@@ -868,3 +868,41 @@ async def test_over_the_wire_a_proposal_outside_the_policy_never_becomes_a_card(
 class _NoNames:
     async def name(self, user_id: str) -> str | None:
         return None
+
+
+# A channel paused mid-run (#28)
+
+
+async def test_a_run_in_a_channel_paused_mid_run_writes_nothing_but_its_result(
+    tools: WriteTools, store: MemoryStore, poster: Poster
+) -> None:
+    from jotflow.models import ChannelMode
+    from jotflow.whiteboard.write_tools import PAUSED_REASON
+
+    topic_id = await new_topic(tools)  # the run started before the pause
+    _, _, exec_grant = await executing(tools, store)
+    await store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+    with pytest.raises(ToolError, match="this channel is paused"):
+        await tools.ask_channel(DRAFT, AskChannelArgs(text="Which repo?"))
+    with pytest.raises(ToolError, match="this channel is paused"):
+        await tools.propose_issue(DRAFT, issue(topic_id, title="Something else"))
+    with pytest.raises(ToolError, match="this channel is paused"):
+        await tools.link_message(DRAFT, link(REPLY, decision="chatter", title=None))
+    assert poster.posts == []
+    assert "paused" in PAUSED_REASON
+    # The write the agent already made on GitHub, approved before the pause, is recorded.
+    result: Any = await tools.record_result(exec_grant, RecordResultArgs(issue_url=URL))
+    assert result.state is ProposalState.APPLIED
+
+
+async def test_a_paused_refusal_reaches_the_agent_as_a_tool_error() -> None:
+    from jotflow.models import ChannelMode
+    from jotflow.whiteboard.tools import ToolError as Refusal
+
+    store = LiveStore(Clock())
+    await store.set_channel_mode(CH, ChannelMode.PAUSED, changed_by="U0LEAD")
+    await store.record_packet("run-1", [MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT)])
+    tools = WriteTools(store, POLICY, Poster(), clock=Clock(), new_id=Ids())
+    with pytest.raises(Refusal) as refused:
+        await tools.ask_channel(DRAFT, AskChannelArgs(text="Which repo?"))
+    assert refused.value.reason.startswith("this channel is paused")
