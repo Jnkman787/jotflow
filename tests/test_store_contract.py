@@ -958,3 +958,68 @@ def test_clearing_an_update_removes_its_hint_reason_too() -> None:
     cleared = cleared_draft(update)
     assert isinstance(cleared, UpdateProposal)
     assert cleared.hint_overruled is None and cleared.changes.comment is None
+
+
+# --- edits from the card (#160) ---------------------------------------------------
+
+
+async def test_an_edit_replaces_the_draft_and_redraws_the_card(store: Store) -> None:
+    await store.add_proposal(record("p1"))
+    await store.mark_card_shown("p1", 1)
+    edited = draft(repo="acme-co/api", assignees=["acme-alice"])
+    updated = await store.edit_proposal("p1", edited, by="U0BOB", field="repo")
+    assert updated.proposal.repo == "acme-co/api" and updated.revision == 2
+    assert [p.id for p in await store.cards_due()] == ["p1"]
+    stored = await store.get_proposal("p1")
+    assert stored is not None and stored.proposal == edited
+    (audit,) = await store.proposal_edits("p1")
+    assert (audit.proposal_id, audit.edited_by, audit.field) == ("p1", "U0BOB", "repo")
+
+
+async def test_an_edit_makes_the_old_cards_hash_stale(store: Store) -> None:
+    from jotflow.store.base import ContentChangedError
+
+    await store.add_proposal(record("p1"))
+    await store.edit_proposal("p1", draft(assignees=["acme-alice"]), by="U0BOB", field="assign")
+    with pytest.raises(ContentChangedError):
+        await store.transition("p1", S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
+
+
+async def test_a_failed_proposal_can_be_edited_and_retried(store: Store) -> None:
+    await store.add_proposal(record("p1"))
+    await store.transition("p1", S.APPROVED, approved_by="U0CAROL", expected_hash=SHOWN)
+    await store.transition("p1", S.EXECUTING)
+    await store.transition("p1", S.FAILED)
+    edited = draft(assignees=["acme-alice"])
+    await store.edit_proposal("p1", edited, by="U0BOB", field="assign")
+    retried = await store.transition(
+        "p1", S.APPROVED, approved_by="U0CAROL", expected_hash=content_hash(edited)
+    )
+    assert retried.content_hash == content_hash(edited)
+
+
+@pytest.mark.parametrize("to", [S.APPROVED, S.REJECTED, S.SUPERSEDED])
+async def test_only_a_pending_or_failed_proposal_can_be_edited(store: Store, to: S) -> None:
+    from jotflow.store.base import TransitionError
+
+    await store.add_proposal(record("p1"))
+    if to is S.APPROVED:
+        await store.transition("p1", to, approved_by="U0CAROL", expected_hash=SHOWN)
+    elif to is S.SUPERSEDED:
+        await store.add_proposal(record("p2"))
+        await store.supersede_pending(CH, "1760781600.000100", keep_id="p2")
+    else:
+        await store.transition("p1", to)
+    with pytest.raises(TransitionError, match="can't be edited"):
+        await store.edit_proposal("p1", draft(), by="U0BOB", field="repo")
+    assert await store.proposal_edits("p1") == []
+
+
+async def test_an_edit_keeps_the_kind_and_topic_and_names_a_known_field(store: Store) -> None:
+    await store.add_proposal(record("p1"))
+    with pytest.raises(ValueError, match="kind and topic"):
+        await store.edit_proposal("p1", draft(topic_id="other"), by="U0BOB", field="repo")
+    with pytest.raises(ValueError, match="unknown edit"):
+        await store.edit_proposal("p1", draft(), by="U0BOB", field="title")  # type: ignore[arg-type]
+    with pytest.raises(NotFoundError):
+        await store.edit_proposal("nope", draft(), by="U0BOB", field="repo")

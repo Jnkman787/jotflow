@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from jotflow.models import (
     ChannelMode,
     ExecutionResult,
+    IssueProposal,
     MessageRef,
     ProposalRecord,
     ProposalState,
@@ -22,6 +23,7 @@ from jotflow.models import (
     RunKind,
     RunStatus,
     Topic,
+    UpdateProposal,
 )
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
@@ -30,16 +32,19 @@ from jotflow.store.base import (
     ChannelModeSetting,
     Clock,
     ConflictError,
+    EditField,
     IdentityLink,
     LinkSource,
     MessageLink,
     NotFoundError,
     NoticeKind,
     PendingThread,
+    ProposalEdit,
     Recovery,
     ToolCallRecord,
     TopicRecord,
     check_clearable,
+    check_edit,
     check_finish,
     check_github_login,
     check_id,
@@ -73,6 +78,7 @@ class MemoryStore:
         self._identities: dict[str, IdentityLink] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
         self._notices: set[tuple[str, str, str]] = set()
+        self._edits: list[ProposalEdit] = []
         self._runs: dict[str, Run] = {}
         self._pending: dict[tuple[str, str], datetime] = {}
         self._calls: list[ToolCallRecord] = []
@@ -250,6 +256,29 @@ class MemoryStore:
 
     def _cleared(self, record: ProposalRecord) -> dict[str, object]:
         return {"proposal": cleared_draft(record.proposal), "draft_cleared_at": self._clock()}
+
+    async def edit_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        by: str,
+        field: EditField,
+    ) -> ProposalRecord:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            check_edit(record, draft, by, field)
+            updated = record.model_copy(
+                update={"proposal": draft, "revision": record.revision + 1}, deep=True
+            )
+            self._proposals[proposal_id] = updated
+            self._edits.append(ProposalEdit(proposal_id, by, field, self._clock()))
+            return updated.model_copy(deep=True)
+
+    async def proposal_edits(self, proposal_id: str) -> list[ProposalEdit]:
+        return [e for e in self._edits if e.proposal_id == proposal_id]
 
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
         check_id(ts, "card ts")
