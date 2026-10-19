@@ -957,3 +957,12 @@ async def test_without_its_own_team_no_one_approves(monkeypatch: pytest.MonkeyPa
     assert await rig.handler.on_reaction(event) == "refused"
     assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "refused"
     assert [e[2] for e in rig.slack.ephemerals] == [NOT_ALLOWED, NOT_ALLOWED]
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_skin_tone_is_the_same_reaction() -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    await _react(_reacting_app(rig), name="white_check_mark::skin-tone-3")
+    assert await rig.state(pid) is ProposalState.APPROVED

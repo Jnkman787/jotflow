@@ -238,7 +238,9 @@ class ApprovalHandler:
         ignored without a word.
         """
         approval = self._policy.approval
-        if not approval.reactions or event.get("reaction") != approval.reaction:
+        # Slack names a toned emoji "thumbsup::skin-tone-2"; the tone is the same reaction.
+        name = str(event.get("reaction") or "").split("::", 1)[0]
+        if not approval.reactions or name != approval.reaction:
             return "ignored"
         item = _map(event.get("item"))
         user_id = _str(event.get("user"))
