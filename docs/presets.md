@@ -108,7 +108,7 @@ Update the table above with the new versions and date.
 
 **Drafting and question runs only.** Codex keeps its MCP resource tools (`read_mcp_resource`, `list_mcp_resource_templates`), which can pull any repository text into the agent's context. That's acceptable for drafting, whose input is untrusted anyway. An execution run holds the write token and must see only the approved fields, so the codex preset refuses execution: an `agent-exec` runner set to `codex` won't start. Use `claude-code` in `agent-exec.env`.
 
-**Install it.** Both agent services use one image, and the execution runner still runs claude-code, so build the agent image with both CLIs: `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @openai/codex@0.163.0"`, the versions these presets were checked against. Set `JOTFLOW_AGENT_PRESET=codex` in `agent.env` only, and keep `JOTFLOW_AGENT_PRESET=claude-code` in `agent-exec.env`.
+**Install it.** Both agent services use one image, and the execution runner still runs claude-code, so build the agent image with both CLIs: `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @openai/codex@0.163.0"`, the versions these presets were checked against. A runner set to either preset won't start if its CLI is missing. Set `JOTFLOW_AGENT_PRESET=codex` in `agent.env` only, and keep `JOTFLOW_AGENT_PRESET=claude-code` in `agent-exec.env`.
 
 **The model login is an API key only.** Put `CODEX_API_KEY` or `OPENAI_API_KEY` in `agent.env`, and list it in its `JOTFLOW_AGENT_ENV_ALLOW`. `agent-exec.env` keeps claude-code's login, `ANTHROPIC_API_KEY` or a Claude account login. Each run gets its own `CODEX_HOME`, so a ChatGPT login saved by `codex login` in the home volume isn't seen.
 

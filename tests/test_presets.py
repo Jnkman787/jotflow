@@ -344,6 +344,48 @@ async def test_a_claude_code_run_end_to_end(tmp_path: Path, execution: bool) -> 
     assert [p.name for p in work.iterdir()] == ["out.json"]
 
 
+@pytest.fixture
+def claude_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about settings, so they don't depend on the host's PATH."""
+    monkeypatch.setattr(presets.ClaudeCodePreset, "check_install", lambda self, **kw: None)
+
+
+def test_claude_code_needs_its_cli_installed() -> None:
+    problem = CLAUDE_CODE.check_install(which=lambda _: None)
+    assert problem == (
+        "the claude CLI is not installed; add @anthropic-ai/claude-code@"
+        f"{presets.CLAUDE_CODE_VERSION} to AGENT_NPM_PACKAGES"
+    )
+    assert CLAUDE_CODE.check_install(which=lambda name: f"/usr/bin/{name}") is None
+
+
+def test_the_claude_code_pin_matches_docker_compose() -> None:
+    root = SRC.parent.parent
+    for compose in (root / "docker-compose.yml", SRC / "templates" / "docker-compose.yml"):
+        pin = f"@anthropic-ai/claude-code@{presets.CLAUDE_CODE_VERSION}"
+        assert pin in compose.read_text(encoding="utf-8"), compose
+
+
+def test_a_claude_code_runner_without_the_cli_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = presets.ClaudeCodePreset.check_install
+    monkeypatch.setattr(
+        presets.ClaudeCodePreset, "check_install", lambda self: missing(self, which=lambda _: None)
+    )
+    monkeypatch.delenv("JOTFLOW_AGENT_COMMAND", raising=False)
+    for name, value in {
+        "JOTFLOW_RUNNER_SECRET": SECRET,
+        "JOTFLOW_AGENT_PRESET": "claude-code",
+        "JOTFLOW_GITHUB_READ_TOKEN": READ,
+        "JOTFLOW_GITHUB_MCP_COMMAND": sys.executable,
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert runner_command.run(runner_command.argparse.Namespace()) == runner_command.EXIT_CONFIG
+    assert "the claude CLI is not installed" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("claude_installed")
 def test_settings_select_a_preset_and_models(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -367,6 +409,7 @@ def test_settings_select_a_preset_and_models(
     assert config.github_mcp == str(binary)
 
 
+@pytest.mark.usefixtures("claude_installed")
 @pytest.mark.parametrize(
     ("env", "problem"),
     [
