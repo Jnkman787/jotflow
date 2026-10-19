@@ -35,6 +35,17 @@ def test_names_cannot_mention_link_or_format() -> None:
         "sam click https x.example code U1 line"
     )
     assert clean_name("Sam www.evil.example") == "Sam www evil.example"
+    # HTML entities GitHub would render as a mention, an issue link, or a URL.
+    for entity in ("&#64;torvalds", "&#x40;torvalds", "&commat;torvalds"):
+        assert "&" not in clean_name(entity) and ";" not in clean_name(entity)
+    assert clean_name("&#64;torvalds") == "64 torvalds"
+    assert clean_name("&commat;torvalds") == "commat torvalds"
+    assert clean_name("issue &#35;12") == "issue 35 12"
+    assert clean_name("https&#58;&#47;&#47;evil.example") == "https 58 47 47 evil.example"
+    # Bidi overrides and zero-width characters cannot reorder or hide a name.
+    assert clean_name("Sam\u202eevil") == "Samevil"
+    assert clean_name("S\u200bam") == "Sam"
+    assert clean_name("Sam\x07Lee") == "Sam Lee"
     assert clean_name("A" * 60) == "A" * 40
     assert clean_name("  Dana   Lee ") == "Dana Lee"
 

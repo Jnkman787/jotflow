@@ -18,13 +18,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from jotflow.models import IssueProposal, ProposalRecord, UpdateProposal
+from jotflow.text import without_unsafe_chars
 
 MARKER_PREFIX = "jotflow:proposal:"
 MAX_NAME = 40
 MAX_NAMES = 10
 # Anything that could mention, link, format, or break a line in GitHub markdown.
 # ":" and "/" too, so a name cannot hold a URL GitHub would autolink.
-_UNSAFE = re.compile(r"[@`\[\]<>#*_~|\\!():/\r\n\t]")
+# "&" and ";" too, so an HTML entity such as &#64; or &commat; cannot become a
+# mention, an issue link, or a URL once GitHub renders the text.
+_UNSAFE = re.compile(r"[@`\[\]<>#*_~|\\!():/&;\r\n\t]")
 _SPACES = re.compile(r"\s+")
 _WWW = re.compile(r"(?i)\bwww\.")
 
@@ -36,7 +39,8 @@ def marker(proposal_id: str) -> str:
 
 def clean_name(name: str) -> str:
     """A Slack display name made safe as plain text in a GitHub body."""
-    text = _SPACES.sub(" ", _WWW.sub("www ", _UNSAFE.sub(" ", name))).strip()
+    visible = without_unsafe_chars(name)  # no bidi overrides or zero-width characters
+    text = _SPACES.sub(" ", _WWW.sub("www ", _UNSAFE.sub(" ", visible))).strip()
     return text[:MAX_NAME].rstrip()
 
 

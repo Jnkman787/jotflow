@@ -48,17 +48,24 @@ def record(*sources: MessageRef) -> ProposalRecord:
 
 
 class Fake:
-    def __init__(self, authors: set[str] | Exception = frozenset({"U0SAM"})) -> None:  # type: ignore[assignment]
-        self._authors = authors
+    """Slack, as the fake knows it: who wrote each message, and their names."""
+
+    def __init__(self, authors: dict[str, set[str]] | Exception | None = None) -> None:
+        self._authors = authors if authors is not None else {ROOT: {"U0SAM"}, REPLY: {"U0ALEX"}}
         self.url: str | None = "https://acme-co.slack.com/"
 
     async def authors(self, refs: Any) -> set[str]:
         if isinstance(self._authors, Exception):
             raise self._authors
-        return set(self._authors)
+        found: set[str] = set()
+        for ref in refs:
+            if ref.ts not in self._authors:
+                raise LookupError(f"message {ref.ts} was not found")
+            found |= self._authors[ref.ts]
+        return found
 
     async def name(self, user_id: str) -> str | None:
-        return {"U0SAM": "Sam", "U0ALEX": "Alex @here"}.get(user_id)
+        return {"U0SAM": "Sam", "U0ALEX": "Alex @here", "U0BOB": "Bob"}.get(user_id)
 
     async def workspace_url(self) -> str | None:
         return self.url
@@ -82,14 +89,25 @@ async def test_the_footer_names_the_poster_and_links_each_source() -> None:
 
 
 async def test_a_bot_root_has_no_poster_and_no_url_means_no_links() -> None:
-    fake = Fake(authors=set())
+    fake = Fake(authors={ROOT: set(), REPLY: {"U0ALEX"}})
     fake.url = None
     tail = await execution_footer(record(*SOURCES), policy(), fake)
-    assert tail.splitlines() == ["Raised in Slack, with Alex here and Sam looped in.", marker("p1")]
+    assert tail.splitlines() == ["Raised in Slack, with Alex here looped in.", marker("p1")]
+
+
+async def test_looped_in_names_only_confirmed_source_authors() -> None:
+    # The agent listed U0BOB as a participant, but Bob wrote none of the cited
+    # sources, so his name never reaches GitHub. A source Slack cannot find adds no one.
+    gone = MessageRef(channel_id=CH, ts="1792310999.000100", thread_ts=ROOT)
+    tail = await execution_footer(record(*SOURCES, gone), policy(), Fake())
+    assert "Bob" not in tail
+    assert tail.splitlines()[0] == "Raised in Slack by Sam, with Alex here looped in."
+    only_root = await execution_footer(record(SOURCES[0]), policy(), Fake())
+    assert only_root.splitlines()[0] == "Raised in Slack by Sam."
 
 
 async def test_a_failed_lookup_leaves_people_out_and_still_marks() -> None:
-    tail = await execution_footer(record(*SOURCES), policy(), Fake(authors=LookupError("gone")))
+    tail = await execution_footer(record(*SOURCES), policy(), Fake(LookupError("gone")))
     assert tail.splitlines() == ["Raised in Slack.", marker("p1")]
 
 

@@ -156,3 +156,10 @@ A fixture with a missing label checks the error path. CI does all of this with a
 ## Handoff notes
 
 This is built on #144: `replay_agent.py`, `fake_github_mcp.py`, and the instructions directory. Rebase onto main once #144 merges.
+
+
+## Review fixes before merge (security, 2026-10-19)
+
+- **Entities.** `clean_name` also drops `&` and `;`, so an HTML entity such as `&#64;someone`, `&#x40;someone`, `&commat;someone`, `&#35;12`, or `&#58;` can't become a mention, an issue link, or a URL when GitHub renders it.
+- **Characters.** `clean_name` also removes control, format, and bidi characters, through `text.without_unsafe_chars`, the same rule as `unsafe_text_problem`. U+202E and U+200B are tested.
+- **Who is looped in.** "Looped in" names now come from the Slack-confirmed authors of the proposal's cited sources, through `SlackPeople.authors`, one source at a time. They no longer come from the agent-written `participants`. A participant who wrote no cited source never reaches the footer, and a source Slack can't find adds no one.

@@ -33,6 +33,18 @@ class Attribution(Protocol):
     async def workspace_url(self) -> str | None: ...
 
 
+async def _source_authors(attribution: Attribution, record: ProposalRecord) -> list[str]:
+    """Who wrote each cited source, in order, skipping any Slack cannot confirm."""
+    found: list[str] = []
+    for source in record.proposal.sources:
+        try:
+            authors = await attribution.authors([source])
+        except LookupError:
+            continue  # deleted or never there: nobody is named for it
+        found += sorted(a for a in authors if a not in found)
+    return found
+
+
 async def execution_footer(
     record: ProposalRecord, policy: Policy, attribution: Attribution | None
 ) -> str:
@@ -51,7 +63,9 @@ async def execution_footer(
                 poster_id = next(iter(authors), None)  # a bot's root has no person
                 if poster_id is not None:
                     poster = await attribution.name(poster_id)
-                for user in record.participants:
+                # "Looped in" names only people Slack confirms wrote a cited source,
+                # never the agent-written participants list (#156 review).
+                for user in await _source_authors(attribution, record):
                     if user != poster_id and (name := await attribution.name(user)):
                         others.append(name)
                 base = await attribution.workspace_url()
