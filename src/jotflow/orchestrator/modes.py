@@ -52,8 +52,8 @@ MEANING = {
         "posts it as a card."
     ),
     ChannelMode.PAUSED: (
-        "JotFlow reads nothing, starts nothing new, and posts nothing here until someone sets "
-        "another mode. A run that was already going may still finish its GitHub write."
+        "JotFlow starts nothing new and posts nothing here until someone sets another mode. "
+        "A run already in progress may finish."
     ),
 }
 AUTO_WARNING = (

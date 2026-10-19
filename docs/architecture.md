@@ -238,7 +238,7 @@ Each channel has a mode:
 
 - `propose`: the bot posts a card with Approve and Request Changes. Nothing is written until approved.
 - `auto`: the write happens immediately and the same card follows, so anyone can see what was created and adjust.
-- `paused`: the bot reads nothing, starts nothing new, posts nothing, and refuses every card action. Queued runs are held. The one exception is an execution run that was already running when the channel was paused: it may still finish its GitHub write and call `record_result` (#155).
+- `paused`: the bot reads nothing, starts nothing new, posts nothing, and refuses every card action. The one exception: an execution run already running when the channel is paused may still finish its GitHub write; approved runs not yet started wait until it's unpaused. A running one may still call `record_result` (#155).
 
 The mode applies uniformly to creation, description edits, comments, assignment, and labels.
 

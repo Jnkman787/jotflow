@@ -494,3 +494,11 @@ async def test_the_adapter_announces_plain_text_without_unfurling() -> None:
     assert post["unfurl_links"] is False and post["unfurl_media"] is False
     assert await slack.name(ALEX) is None
     assert (await slack.person(ALEX)).guest is False
+
+
+def test_the_paused_announcement_says_a_running_write_may_finish() -> None:
+    # Queued runs wait, but one already running may finish its write (#155).
+    text = MEANING[ChannelMode.PAUSED]
+    assert "starts nothing new" in text
+    assert "A run already in progress may finish." in text
+    assert "writes nothing" not in text

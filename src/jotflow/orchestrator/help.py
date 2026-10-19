@@ -109,8 +109,8 @@ MODE_LINES = {
     ),
     ChannelMode.AUTO: "Here, JotFlow writes each issue straight away and then posts it as a card.",
     ChannelMode.PAUSED: (
-        "JotFlow is paused here: it reads nothing, starts nothing new, and posts nothing. "
-        "A run that was already going may still finish its GitHub write."
+        "JotFlow is paused here: it starts nothing new and posts nothing. "
+        "A run already in progress may finish."
     ),
 }
 NOT_SET_UP = (
