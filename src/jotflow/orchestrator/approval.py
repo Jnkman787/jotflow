@@ -263,6 +263,7 @@ class ApprovalHandler:
         try:
             # A reaction event has no payload teams; users.info decides external.
             await self._check_person(event, user_id, payload_teams=False)
+            await self._check_not_paused(record.channel_id)
             if record.state is not ProposalState.PENDING:
                 raise Refused(_already(record.state))
             if record.card_due:

@@ -5,7 +5,7 @@
 - Issue: #28
 - Also serves: D2 (the mode is runtime state), D7 (who may change it, and the auto warning), #51's update to #28, #152 (the card), #27 (approval)
 - Draft PR: #155
-- Status: ready for review
+- Status: ready for review, after the review fixes
 - Last verified: 2026-10-19, `make check` passes with the code below
 - Next safe action: review; then #32
 
@@ -40,9 +40,9 @@ Done when:
 - **Paused, in the store.** The rules go where every caller passes:
   - `claim_next_run` never claims a run in a channel whose stored mode is `paused`. That covers drafting, questions, execution, and the execute-fixture command. Both stores get it, with a contract test.
   - `cards_due` leaves out paused channels.
-  - A run that is already running when the channel is paused is left to finish. Its writes are store writes, and the execution it might lead to cannot start.
+  - A run that is already running when the channel is paused keeps going, but its write tools refuse: `ask_channel`, `link_message`, `propose_issue`, and `propose_update` raise "this channel is paused" (review). `record_result` is allowed, since it only records a GitHub write the agent already made, and refusing it would strand the proposal. So an execution run approved before the pause may still finish its write and report it. The docs say so.
 - **Paused, at ingest.** `Orchestrator.note` returns before the keyword handler, the help handler, and the debouncer when the channel is paused. Reactions are dropped the same way. If the mode cannot be read, it fails closed and reads nothing.
-- **Paused, on the card.** `ApprovalHandler` refuses any card action in a paused channel with "JotFlow is paused in this channel. Nothing is written until someone sets it back." This is #27's module. The change is one guard and its test, agreed with security.
+- **Paused, on the card.** `ApprovalHandler._check_not_paused` refuses any card action in a paused channel with "JotFlow is paused in this channel. Nothing is written until someone sets it back." It covers the buttons in `_guarded`, the Request Changes dialog in `check_changes`, and #154's approval reaction in `on_reaction`, each after the person check, as agreed with security.
 - **Auto.** A new `AutoApprover` runs in the card loop, before `CardSync.sync`.
   - For each due proposal that is pending in an `auto` channel, it transitions it to approved, with `approved_by="auto"` and the stored content hash, and queues its execution run.
   - Proposals that were already pending when the channel switched to `auto`, and whose card is posted, are left for a person. Switching the mode never approves something someone was looking at.
@@ -59,7 +59,7 @@ Done when:
 ## Risks and open questions
 
 - **#27's file.** The paused guard in `approval.py` is security's module. I'll keep it to one guard and tell security.
-- **The member scan** costs one `users.info` per member the first time. It runs only when someone sets `auto`, and it is cached.
+- **The member scan** costs one `users.info` per member the first time, up to 1000. That is a tier 4 method, so a big channel can take minutes or hit the limit, and either way it warns, failing closed. It runs only when someone sets `auto`, and it is cached. A follow-up can page `users.list` once instead (reviewer's nit, accepted as is by the lead).
 - **A paused channel's queued runs** stay queued, so a long pause leaves stale drafting runs. They start when the channel is unpaused and read the thread as it is then, which is what the team wants.
 
 ## Progress checklist
@@ -87,7 +87,8 @@ Done when:
   - routing `/jotflow mode`
   - the Bolt adapter's shared-channel and guest scan across pages, the 1000-member cap, and a plain announcement
 - `tests/test_store_runs.py` shows a paused channel starts no run and draws no card until it is unpaused, on both stores.
-- `tests/test_approval.py` shows every card action refused in a paused channel, then working again.
+- `tests/test_approval.py` shows every card action refused in a paused channel, then working again, and a reaction through a real Bolt app approving nothing there.
+- `tests/test_write_tools.py` shows a run whose channel is paused mid-run refused for `ask_channel`, `propose_issue`, and `link_message`, with nothing posted, while `record_result` still applies the proposal.
 - `tests/test_card_sync.py` shows an auto-approved card posted only after the write, saying "Approved by auto mode", and a person-approved one not held.
 - `tests/test_service.py` runs the real orchestrator. It shows a paused channel reads nothing, an unreadable mode fails closed, and auto mode approves, launches the execution run on the exec runner, holds the card, and posts it after the write.
 
