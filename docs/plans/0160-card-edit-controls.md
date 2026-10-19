@@ -5,9 +5,9 @@
 - Issue: #160
 - Also serves: #26 and #120 (the card renders the controls), #27 and #151 (who may click), #122 (repo visibility), #152 (the card redraws), D7, D11
 - Draft PR: #163, stacked on security's #164 (`feat/approval-guard-public`) for the public `guarded` entry point
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` passes with the code below
-- Next safe action: CodeRabbit, then ready; rebase onto main once #164 merges
+- Next safe action: review; rebase onto main once #164 merges
 
 ## Objective and done-when
 
@@ -56,9 +56,9 @@ Done when:
 - [x] Registration and ack-first, wired in `jotflow run`
 - [x] Tests through the real Bolt app, for every refusal, staleness, and the redraw
 - [x] Docs: architecture's card section
-- [ ] CodeRabbit once, or skipped
+- [x] CodeRabbit once: skipped, the free CLI allowance was rate-limited
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
