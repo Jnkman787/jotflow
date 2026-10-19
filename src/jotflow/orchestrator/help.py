@@ -1,7 +1,7 @@
 """Every word JotFlow says to help people in a channel (#80, D10).
 
 ``/jotflow help``, the pinned guide, the newcomer tip, the near-miss nudge, and
-the README's "Using it" keyword list all come from here, so they never
+the keyword list in docs/usage.md all come from here, so they never
 disagree. Each line is built from the keyword module's own lists, so a new
 keyword or reaction cannot be missing from one of them: a test checks that.
 

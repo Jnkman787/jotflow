@@ -4,9 +4,9 @@
 
 - Issue: #41 (Refs)
 - Draft PR: #225
-- Status: plan only. The build waits for the architect's root reorganisation, which moves the Docker files to `docker/` and the example configs to `examples/`, so every link points at a final path
+- Status: ready for review, built on main after #226 (d004814)
 - Last verified: 2026-10-19, against main
-- Next safe action: review this plan. Build once the reorganisation merges
+- Next safe action: review
 
 ## Objective and done-when
 
@@ -14,28 +14,28 @@ The README is 649 lines. A newcomer has to scroll past the full setup walkthroug
 
 Done when:
 
-- [ ] `README.md` is about 200 lines and keeps:
+- [x] `README.md` is about 200 lines and keeps:
   - the summary and status banner
   - Why
   - How it works, with both diagrams and "The pieces"
   - What a team needs
   - a short Quickstart: the seven steps, one or two lines each, with their commands, linking to the full guide
   - Principles, Roadmap, Contributing, and License
-- [ ] `docs/install.md` has the full setup walkthrough, from today's Quickstart: Words used here, steps 1 to 7 in full, the admin-approval note, both sample sessions, the agent containers, "Turn the agent on", "Other agents and models", "See it work without Slack", and "Check that the agent can write an issue"
-- [ ] `docs/troubleshooting.md` has today's Troubleshooting section, including the health check and the live check
-- [ ] `docs/usage.md` has "Using it", with the generated help block, and "Ask from a terminal (admins)"
-- [ ] **No fact is lost.** A script lists every block of the old README, normalised for whitespace and heading level, and finds each one in the new README or one of the three guides. The PR lists every moved block and where it went
-- [ ] **Every link resolves.**
+- [x] `docs/install.md` has the full setup walkthrough, from today's Quickstart: Words used here, steps 1 to 7 in full, the admin-approval note, both sample sessions, the agent containers, "Turn the agent on", "Other agents and models", "See it work without Slack", and "Check that the agent can write an issue"
+- [x] `docs/troubleshooting.md` has today's Troubleshooting section, including the health check and the live check
+- [x] `docs/usage.md` has "Using it", with the generated help block, and "Ask from a terminal (admins)"
+- [x] **No fact is lost.** A script lists every block of the old README, normalised for whitespace and heading level, and finds each one in the new README or one of the three guides. The PR lists every moved block and where it went
+- [x] **Every link resolves.**
   - The README's in-page anchors (`#the-agent-containers`, `#if-your-workspace-needs-admin-approval`, `#troubleshooting`) point at the new file and anchor.
   - Relative links in the moved text are rewritten for `docs/`, such as `docs/deployment.md` to `deployment.md` and `manifests/README.md` to `../manifests/README.md`.
   - The release notes' "README explains each step" points at `docs/install.md`.
   - A link checker over README.md, docs/, CONTRIBUTING.md, CHANGELOG.md, and manifests/README.md finds no broken relative link or anchor
-- [ ] **The sync tests follow their blocks.**
+- [x] **The sync tests follow their blocks.**
   - `test_help.py`'s help-block check reads `docs/usage.md`, since the `jotflow-help` markers move there.
   - `test_init.py`'s "steps are numbered like the README" check reads `docs/install.md`, where the numbered step list moves.
   - The docstrings in `orchestrator/help.py` and `commands/init.py` name the new files.
   - Every README test passes
-- [ ] `make check` passes
+- [x] `make check` passes
 
 ## Design
 
@@ -55,13 +55,13 @@ Done when:
 
 - [x] Map the README's sections, the generated block, the tests that read it, and every inbound link
 - [x] Commit this plan and open the draft PR
-- [ ] Wait for the reorganisation to merge, then rebase
-- [ ] Move the blocks, rewrite the links, and shorten the Quickstart
-- [ ] Point the two tests and two docstrings at the new files
-- [ ] Make the README's docs/ links absolute, and add the pin-to-tag note to docs/releasing.md
-- [ ] In CONTRIBUTING and docs/install.md's checkout notes, after #226, say: an older checkout's .env may hold `COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml`; remove that line, then use `make up`. Also use #226's checkout commands, `make up` or `docker compose --project-directory . -f docker/...`, and drop the claim that setup writes COMPOSE_FILE in a checkout
-- [ ] Run the no-fact-lost script and the link checker, and list every moved block in the PR
-- [ ] CodeRabbit once, `make check`, then mark ready
+- [x] Wait for the reorganisation to merge, then rebase
+- [x] Move the blocks, rewrite the links, and shorten the Quickstart
+- [x] Point the two tests and two docstrings at the new files
+- [x] Make the README's docs/ links absolute, and add the pin-to-tag note to docs/releasing.md
+- [x] In CONTRIBUTING and docs/install.md's checkout notes, after #226, say: an older checkout's .env may hold `COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml`; remove that line, then use `make up`. Also use #226's checkout commands, `make up` or `docker compose --project-directory . -f docker/...`, and drop the claim that setup writes COMPOSE_FILE in a checkout
+- [x] Run the no-fact-lost script and the link checker, and list every moved block in the PR
+- [x] CodeRabbit once, `make check`, then mark ready
 
 ## Validation
 
@@ -71,4 +71,7 @@ Done when:
 
 ## Handoff notes
 
-None yet.
+- **Sizes after the split:** README 157 lines, install.md 391, troubleshooting.md 50, usage.md 68.
+- **The no-fact-lost script** checked all 422 blocks of the old README. Two are missing by design: "**Turn the agent on:**" is now a heading, so it can be linked, and the "Using it" heading became usage.md's title.
+- **The link checker** found no broken relative link or anchor, in README.md, CONTRIBUTING.md, CHANGELOG.md, manifests/README.md, docs/*.md, and docs/releases/*.md.
+- **One fact corrected while moving.** The README's Roadmap line said five milestones, and M6 is now a sixth.

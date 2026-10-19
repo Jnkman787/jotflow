@@ -102,7 +102,7 @@ Issue bodies, comments, and public repo files, through Codex's resource tools, a
 |---|---|---|
 | A changed base image or tool | Base images are pinned by digest, the GitHub MCP server by version and sha256 per architecture, and Python packages by `uv.lock` | [Dockerfile](../docker/Dockerfile), [Dockerfile.agent](../docker/Dockerfile.agent), `uv.lock` |
 | A moved Action tag | Every Action is pinned to a commit SHA, Dependabot proposes updates, and zizmor checks each SHA against its repo | [ci.yml](../.github/workflows/ci.yml) "Workflow lint", `.github/dependabot.yml` |
-| A tampered release | Release images carry signed build provenance. `gh attestation verify` checks it | [release.yml](../.github/workflows/release.yml), README |
+| A tampered release | Release images carry signed build provenance. `gh attestation verify` checks it | [release.yml](../.github/workflows/release.yml), [install.md](install.md) |
 | Fork code with secrets | CI runs fork PRs with a read-only token and never uses `pull_request_target` | [ci.yml](../.github/workflows/ci.yml) |
 
 ### A person with an operator token, or their terminal agent
