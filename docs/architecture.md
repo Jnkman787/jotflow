@@ -420,6 +420,8 @@ Assignment requires a Slack user to GitHub handle mapping. A self-service slash 
 
 ## Security posture
 
+The full picture, by adversary and with the accepted v1 gaps, is in [threat-model.md](threat-model.md).
+
 - Slack content is untrusted input. It reaches only drafting runs. The shipped presets configure drafting runs with read-only GitHub access and no shell or write tools, and execution runs, which can write, receive only the approved structured fields, never the thread itself; because the approved body was drafted from Slack, the execution prompt treats it as content to write, never as instructions. This holds only when the team gives the agent separate read and write GitHub tokens, and only for the shipped presets; a custom command template is the team's responsibility.
 - The agent runs in its own container with an environment allowlist and no access to JotFlow's secrets.
 - Proposals are validated against the configured repos, and against a repo's label list where one is set, before they can be approved, and a reported issue URL must point at the approved repo.
