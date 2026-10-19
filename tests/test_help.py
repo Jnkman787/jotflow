@@ -53,14 +53,19 @@ class FakeHelpSlack:
     def __init__(self) -> None:
         self.whispers: list[tuple[str, str, str | None, str]] = []
         self.guides: list[tuple[str, str]] = []
+        self.pins: list[tuple[str, str]] = []
 
     async def whisper(
         self, channel_id: str, user_id: str, thread_ts: str | None, text: str
     ) -> None:
         self.whispers.append((channel_id, user_id, thread_ts, text))
 
-    async def pin_guide(self, channel_id: str, text: str) -> None:
+    async def post_guide(self, channel_id: str, text: str) -> str:
         self.guides.append((channel_id, text))
+        return "1760781900.000100"
+
+    async def pin(self, channel_id: str, ts: str) -> None:
+        self.pins.append((channel_id, ts))
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -309,9 +314,48 @@ async def test_the_adapter_whispers_plain_text_only_to_that_person() -> None:
 
 async def test_the_adapter_posts_and_pins_the_guide_without_unfurling() -> None:
     client = FakeClient()
-    await BoltHelpSlack(client).pin_guide(CH, guide_text())
+    slack = BoltHelpSlack(client)
+    assert await slack.post_guide(CH, guide_text()) == "1760781900.000100"
+    await slack.pin(CH, "1760781900.000100")
     (post_name, post), (pin_name, pin) = client.calls
     assert post_name == "chat_postMessage" and pin_name == "pins_add"
     assert post["blocks"] == _plain(guide_text())
     assert post["unfurl_links"] is False and post["unfurl_media"] is False
     assert pin == {"channel": CH, "timestamp": "1760781900.000100"}
+
+
+async def test_a_failed_guide_post_is_retried_with_a_later_message(store: Store) -> None:
+    slack = FakeHelpSlack()
+    real_post = slack.post_guide
+    failures = [RuntimeError("ratelimited")]
+
+    async def flaky(channel_id: str, text: str) -> str:
+        if failures:
+            raise failures.pop()
+        return await real_post(channel_id, text)
+
+    slack.post_guide = flaky  # type: ignore[method-assign]
+    handler = HelpHandler(store, policy(), slack)
+    with pytest.raises(RuntimeError):
+        await handler.on_message(msg("first"))
+    assert slack.guides == []
+    await handler.on_message(msg("second", ts="1760781700.000100"))
+    assert slack.guides == [(CH, guide_text())]
+    assert slack.pins == [(CH, "1760781900.000100")]
+    await handler.on_message(msg("third", ts="1760781800.000100"))
+    assert len(slack.guides) == 1
+
+
+async def test_a_failed_pin_is_not_retried(store: Store, caplog: pytest.LogCaptureFixture) -> None:
+    slack = FakeHelpSlack()
+
+    async def broken(channel_id: str, ts: str) -> None:
+        raise RuntimeError("not_pinnable")
+
+    slack.pin = broken  # type: ignore[method-assign]
+    handler = HelpHandler(store, policy(), slack)
+    with caplog.at_level("WARNING", logger="jotflow.help"):
+        await handler.ensure_guide(CH)
+    await HelpHandler(store, policy(), slack).ensure_guide(CH)
+    assert len(slack.guides) == 1
+    assert "could not pin it" in caplog.text

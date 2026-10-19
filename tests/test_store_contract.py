@@ -791,6 +791,13 @@ async def test_a_notice_must_fit_its_kind(store: Store, user: str, kind: str) ->
         await store.claim_notice("C0IDEAS01", user, kind)  # type: ignore[arg-type]
 
 
+async def test_a_released_notice_can_be_claimed_again(store: Store) -> None:
+    assert await store.claim_notice("C0IDEAS01", "", "guide")
+    await store.release_notice("C0IDEAS01", "", "guide")
+    assert await store.claim_notice("C0IDEAS01", "", "guide")
+    await store.release_notice("C0IDEAS01", "U0ALEX", "tip")  # never claimed: no error
+
+
 async def test_notices_survive_a_restart(tmp_path: Path) -> None:
     first = await SqliteStore.open(tmp_path / "j.db")
     assert await first.claim_notice("C0IDEAS01", "", "guide")

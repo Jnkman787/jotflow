@@ -630,6 +630,14 @@ class SqliteStore:
             )
             return cursor.rowcount == 1
 
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        check_notice(channel_id, user_id, kind)
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM help_notices WHERE channel_id = ? AND user_id = ? AND kind = ?",
+                (channel_id, user_id, kind),
+            )
+
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         async with self._lock:
             row = await self._one("SELECT * FROM channel_modes WHERE channel_id = ?", (channel_id,))

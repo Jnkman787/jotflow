@@ -128,9 +128,11 @@ class HelpSlack(Protocol):
         """An ephemeral message only ``user_id`` sees."""
         ...
 
-    async def pin_guide(self, channel_id: str, text: str) -> None:
-        """Post ``text`` in the channel and pin it."""
+    async def post_guide(self, channel_id: str, text: str) -> str:
+        """Post ``text`` in the channel. Returns the message's ts."""
         ...
+
+    async def pin(self, channel_id: str, ts: str) -> None: ...
 
 
 class HelpHandler:
@@ -154,9 +156,22 @@ class HelpHandler:
         self._guided.add(channel_id)
         if not self._policy.help_for(channel_id).guide:
             return
-        if await self._store.claim_notice(channel_id, "", "guide"):
-            await self._slack.pin_guide(channel_id, guide_text())
-            log.info("pinned the help guide in %s", channel_id)
+        if not await self._store.claim_notice(channel_id, "", "guide"):
+            return
+        try:
+            ts = await self._slack.post_guide(channel_id, guide_text())
+        except Exception:
+            # Nothing was posted, so free the claim: the next message tries again.
+            await self._store.release_notice(channel_id, "", "guide")
+            self._guided.discard(channel_id)
+            raise
+        try:
+            await self._slack.pin(channel_id, ts)
+        except Exception:
+            # The guide is posted; pinning it again later could only duplicate it.
+            log.warning("posted the help guide in %s but could not pin it", channel_id)
+            return
+        log.info("pinned the help guide in %s", channel_id)
 
     async def on_message(self, event: Mapping[str, Any]) -> str | None:
         """Maybe help the person who posted ``event``. Returns the notice sent, if any."""
@@ -210,7 +225,7 @@ class BoltHelpSlack:
             arguments["thread_ts"] = thread_ts
         await self._client.chat_postEphemeral(**arguments)
 
-    async def pin_guide(self, channel_id: str, text: str) -> None:
+    async def post_guide(self, channel_id: str, text: str) -> str:
         response = await self._client.chat_postMessage(
             channel=channel_id,
             text=text,
@@ -218,4 +233,7 @@ class BoltHelpSlack:
             unfurl_links=False,
             unfurl_media=False,
         )
-        await self._client.pins_add(channel=channel_id, timestamp=response["ts"])
+        return str(response["ts"])
+
+    async def pin(self, channel_id: str, ts: str) -> None:
+        await self._client.pins_add(channel=channel_id, timestamp=ts)

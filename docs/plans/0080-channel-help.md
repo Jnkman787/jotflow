@@ -39,7 +39,7 @@ Done when:
   - All of them are built from `KEYWORDS` and `REACTIONS` in `keywords.py`, so adding a keyword updates every surface.
 - **Near misses**, as `near_miss(text) -> Keyword | None` in `keywords.py`, next to `split_keyword`, so there is still one keyword module. A near miss is any of these:
   - a whole message that is just a keyword, such as `skip`
-  - a keyword followed by `-`, `–`, `—`, `;`, `,`, `.`, or `=`, such as `Idea - dark mode` or `skip; testing`
+  - a keyword followed by `-` with a space beside it, `–`, `—`, `;`, or `=`, such as `Idea - dark mode` or `skip; testing`. A comma or full stop is prose, as in "Idea, maybe..." or "Bug. The login..." (review)
   - `re` followed by an issue reference, such as `re 42` or `re web#42`
   - Not: a keyword followed by an ordinary word, such as "Skip button is broken" or "Bug reports are slow", and not anything `split_keyword` already accepts
 - **`HelpHandler(store, policy, slack)`**, called from `Orchestrator.note` after the keyword handler, for accepted human messages:
@@ -49,7 +49,7 @@ Done when:
   - At most one notice per message. The tip and the nudge are each once per person, so someone who got the tip can still get one nudge later.
   - Nothing is sent in a paused channel, by the orchestrator's check of the channel's mode.
   - `ensure_guide(channel)` posts the guide and pins it, then records it. It runs at startup for each configured channel the bot is in, and on the first accepted event from a channel without one. So a channel the bot is invited to later gets its guide with its first message, without the manifest change.
-- **Once only, across restarts**: a new table, `help_notices (channel_id, user_id, kind, sent_at)`, with a primary key across the first three. The guide uses `user_id = ''`. `Store.claim_notice(channel_id, user_id, kind) -> bool` is an insert-or-ignore, true only for the first claim. A notice is claimed before it is sent, so two quick messages never both get one. If the send fails, the notice is not retried, which errs on the side of quiet. Memory and SQLite stores both get it, plus a contract test.
+- **Once only, across restarts**: a new table, `help_notices (channel_id, user_id, kind, sent_at)`, with a primary key across the first three. The guide uses `user_id = ''`. `Store.claim_notice(channel_id, user_id, kind) -> bool` is an insert-or-ignore, true only for the first claim. A notice is claimed before it is sent, so two quick messages never both get one. If a tip or nudge fails to send, it is not retried, which errs on the side of quiet. If the guide's post fails, its claim is released so the next message retries. A pin that fails after a successful post is only logged, because retrying could post a second guide (review). Memory and SQLite stores both get it, plus a contract test.
 - **Posting**: blocks with one `plain_text` section, plus a fallback `text`, and `unfurl_links` off. Ephemerals use `chat.postEphemeral` with `thread_ts` for a reply. The guide uses `chat.postMessage` and `pins.add`. All of them fit the existing scopes: `chat:write` and `pins:write`.
 - **`/jotflow help`** reads the command's `channel_id`. In a configured channel it shows `HELP_TEXT`, the channel's repo nicknames, and its approval mode, from the store's channel mode or the policy default. Elsewhere it says "This channel isn't set up for JotFlow yet. An admin adds it to jotflow.toml."
 - **README**: the "Using it" keyword bullets are replaced by a block between `<!-- jotflow-help -->` markers, and a test checks it matches `HELP_TEXT` line for line.
@@ -58,7 +58,7 @@ Done when:
 ## Risks and open questions
 
 - **The policy key** (asked of the architect). Default: a top-level `[help]` table with `guide`, `newcomer_tip`, and `near_miss_nudge`, each true by default. A channel can override any of them in `[channels.<id>.help]`, the same way `debounce_seconds` overrides per channel.
-- **Migration numbers.** #145 adds migration 6. This PR's table takes the next free number when it is rebased.
+- **Migration numbers.** #145 merged with migration 6, so `help_notices` is migration 7.
 - **Noise on an existing channel.** When JotFlow first runs in a busy channel, everyone's first message gets the tip once. It is private and one line. A team that finds it noisy turns `newcomer_tip` off.
 - A guide someone unpins is not posted again, which respects that choice.
 

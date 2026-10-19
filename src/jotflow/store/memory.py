@@ -321,6 +321,11 @@ class MemoryStore:
             self._notices.add(key)
             return True
 
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        check_notice(channel_id, user_id, kind)
+        async with self._lock:
+            self._notices.discard((channel_id, user_id, kind))
+
     # Runs (D8, #53): the same rules the SQLite indexes enforce, checked by hand.
 
     def _active_run_for(

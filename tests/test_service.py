@@ -815,7 +815,7 @@ async def test_a_help_failure_is_logged_and_the_debouncer_still_runs(
         raise RuntimeError("slack is down")
 
     rig.help.whisper = broken  # type: ignore[method-assign]
-    rig.help.pin_guide = broken  # type: ignore[method-assign]
+    rig.help.post_guide = broken  # type: ignore[method-assign]
     await rig.orchestrator.start()
     try:
         event = {"type": "message", "channel": CH, "ts": THREAD, "user": "U0ALEX", "text": "hi"}

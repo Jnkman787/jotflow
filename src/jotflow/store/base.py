@@ -548,6 +548,10 @@ class Store(Protocol):
         """
         ...
 
+    async def release_notice(self, channel_id: str, user_id: str, kind: NoticeKind) -> None:
+        """Undo a claim whose notice could not be sent, so a later message tries again."""
+        ...
+
     # Runs (D8, #53)
     async def enqueue_run(
         self,
