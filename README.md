@@ -193,7 +193,7 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
 
 - **Your own agent.** Setup also accepts `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent. When your agent files already set a command, the default is `command`. Any other name is refused for now.
 - **The model.** A model name you type at the model question applies to both drafting and execution. For a different model per run kind, set `JOTFLOW_AGENT_MODEL_DRAFTING`, `JOTFLOW_AGENT_MODEL_QUESTION`, or `JOTFLOW_AGENT_MODEL_EXECUTION` in the agent env files by hand, and setup keeps them.
-- **Codex's two limits.** `codex` serves drafting and question runs only, so approved issues are still written by Claude Code, from `agent-exec.env` with its Anthropic login. Setup keeps that file on `claude-code`. Codex also runs only `gpt-5.5`, so setup asks no model question for it. [docs/presets.md](docs/presets.md) explains why.
+- **Codex's two limits.** `codex` serves drafting and question runs only, so approved issues are still written by Claude Code, from `agent-exec.env` with its Anthropic login. Setup keeps that file on `claude-code`. Codex also refuses models other than `gpt-5.5`, as a safety check: newer models add a code-execution tool. So setup asks no model question for it. A startup check of each model's tools is planned to replace that list (#220). [docs/presets.md](docs/presets.md) explains both limits.
 
 A session looks like this, shortened. Your answers are on the right of each prompt; a hidden token shows nothing.
 
