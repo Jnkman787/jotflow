@@ -915,3 +915,26 @@ async def test_the_agents_visibility_report_is_kept_with_the_proposal(
     result: Any = await tools.propose_issue(DRAFT, issue(topic_id, repo_visibility="public"))
     record = await store.get_proposal(result.proposal_id)
     assert record is not None and record.proposal.repo_visibility == "public"
+
+
+async def test_linking_through_the_command_is_what_makes_someone_assignable(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    from jotflow.orchestrator.identity import LinkCommand
+    from jotflow.orchestrator.people import Person
+
+    class People:
+        async def person(self, user_id: str) -> Person:
+            return Person(user_id)
+
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match="not the linked GitHub login of a participant"):
+        await tools.propose_issue(
+            DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["acme-bob"])
+        )
+    await LinkCommand(store, People()).handle("U0BOB", "link", "acme-bob")
+    result: Any = await tools.propose_issue(
+        DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["Acme-Bob"])
+    )
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.assignees == ["Acme-Bob"]  # as proposed

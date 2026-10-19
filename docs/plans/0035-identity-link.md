@@ -3,22 +3,22 @@
 ## Links and status
 
 - Issue: #35
-- Draft PR: pending
-- Status: implementing
-- Last verified: plan only
-- Next safe action: implement, then mark ready
+- Draft PR: #166
+- Status: ready for review
+- Last verified: `make check` green, 2312 tests, on 2026-10-19
+- Next safe action: reviewer reviews #166
 
 ## Objective and done-when
 
 Assignees work only for linked participants (#15), so until people can link themselves, nobody can be assigned. The store already holds links: `link_identity`, `get_identity` and `unlink_identity`, self-declared and stored unverified, with a login claimed by one person. The card already marks such logins "(unverified)". This adds the command.
 
-- [ ] `/jotflow link <github-login>` links the caller's own Slack account. `/jotflow link`, with nothing after it, shows the current link. `/jotflow unlink` removes it. Every reply is private.
-- [ ] The login is validated against GitHub's username rule: 1 to 39 characters, alphanumerics or single hyphens, and not starting or ending with a hyphen. A leading `@`, or a pasted `https://github.com/<login>`, is accepted and stripped.
-- [ ] Guests and external Slack Connect users are refused, through the shared `SlackPeople` check (#151), which fails closed.
-- [ ] Anyone may link only themselves: the command takes no Slack user argument. A login someone else already claimed is refused without naming who.
-- [ ] No message text is recorded. The store keeps the Slack id, the login, `verified=false` and the time, and the log keeps the Slack id and the action.
-- [ ] Assignees resolve through the link table. #15's `_check_assignees` already does this, and an end-to-end test proves it: link, then propose with that login as an assignee, and the proposal is accepted.
-- [ ] Approvers see "unverified": the card's assignee line and people block already say so for every viewer. The link reply says so too.
+- [x] `/jotflow link <github-login>` links the caller's own Slack account. `/jotflow link`, with nothing after it, shows the current link. `/jotflow unlink` removes it. Every reply is private.
+- [x] The login is validated against GitHub's username rule: 1 to 39 characters, alphanumerics or single hyphens, and not starting or ending with a hyphen. A leading `@`, or a pasted `https://github.com/<login>`, is accepted and stripped.
+- [x] Guests and external Slack Connect users are refused, through the shared `SlackPeople` check (#151), which fails closed.
+- [x] Anyone may link only themselves: the command takes no Slack user argument. A login someone else already claimed is refused without naming who.
+- [x] No message text is recorded. The store keeps the Slack id, the login, `verified=false` and the time, and the log keeps the Slack id and the action.
+- [x] Assignees resolve through the link table. #15's `_check_assignees` already does this, and an end-to-end test proves it: link, then propose with that login as an assignee, and the proposal is accepted.
+- [x] Approvers see "unverified": the card's assignee line and people block already say so for every viewer. The link reply says so too.
 
 ## Design
 
@@ -35,12 +35,25 @@ Assignees work only for linked participants (#15), so until people can link them
 
 ## Progress checklist
 
-- [ ] `LinkCommand`, with tests for link, view, unlink, a bad login, a guest, an external user, a claimed login, and relinking
-- [ ] Command routing and help text
-- [ ] End-to-end assignee test
-- [ ] Docs: README and architecture
-- [ ] `make check` passes
+- [x] `LinkCommand`, with tests for link, view, unlink, a bad login, a guest, an external user, a claimed login, and relinking
+- [x] Command routing and help text
+- [x] End-to-end assignee test
+- [x] Docs: README and architecture
+- [x] `make check` passes
 
 ## Validation
 
-Pending.
+`make check` is green, with 2312 tests. `tests/test_identity.py` covers:
+
+- what people type, cleaned: a bare login, `@`, and profile links;
+- what isn't a login: leading or trailing hyphens, double hyphens, 40 characters, spaces, mentions, deeper paths, and underscores;
+- link, view, unlink, and unlinking twice, with the log holding no login;
+- relinking replacing the old login;
+- a held login refused without naming its holder;
+- a bad login;
+- guests and external users refused for link, view and unlink, with their old link untouched;
+- a failed lookup refusing;
+- routing through `/jotflow`, which acks first, answers privately, keeps case, treats `<@U…>` as not a login, and is case-insensitive for `UNLINK`;
+- the fallback hint without links.
+
+`tests/test_write_tools.py` covers the end-to-end path: an unlinked participant can't be assigned, and after `/jotflow link` they can.
