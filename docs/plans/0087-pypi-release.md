@@ -5,9 +5,9 @@
 - Issue: #87
 - Also serves: #39 (the images, already published by `release.yml` from #174), #41 (the first tagged release), #88 (the Distribution section)
 - Draft PR: #176
-- Status: implementing
+- Status: ready for review
 - Last verified: 2026-10-19, `make check` and actionlint pass, and the published Compose files pass `docker compose config` locally
-- Next safe action: CodeRabbit, then ready; the maintainer adds the PyPI pending publisher
+- Next safe action: review; the maintainer adds the PyPI pending publisher before the first tag
 
 ## Objective and done-when
 
@@ -65,7 +65,7 @@ Done when:
 - [x] Docs: README quickstart, CONTRIBUTING.md, architecture's Distribution section
 - [x] CodeRabbit once: one finding, fixed (checkout detection parses pyproject.toml)
 - [x] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Mark the PR ready for review
 
 ## Validation
 
