@@ -28,7 +28,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from jotflow import agent_setup
-from jotflow.adapters.presets import CLAUDE_CODE, PRESETS
+from jotflow.adapters.presets import PRESETS
+from jotflow.adapters.runner import CONVERSATION_KINDS, EXECUTION_KINDS
 from jotflow.commands.run import (
     SettingsError,
     load_settings,
@@ -37,6 +38,7 @@ from jotflow.config import Settings
 from jotflow.envfile import read_env
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
 from jotflow.logs import configure_logging
+from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
 
 EXIT_OK = 0
@@ -145,8 +147,8 @@ def confirm(
 
 
 AGENT_FILES = (
-    ("agent.env", agent_setup.READ_TOKEN_KEY),
-    ("agent-exec.env", agent_setup.WRITE_TOKEN_KEY),
+    ("agent.env", agent_setup.READ_TOKEN_KEY, CONVERSATION_KINDS),
+    ("agent-exec.env", agent_setup.WRITE_TOKEN_KEY, EXECUTION_KINDS),
 )
 ENV_ALLOW_KEY = "JOTFLOW_AGENT_ENV_ALLOW"
 
@@ -184,7 +186,7 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
             f"{agent_setup.PROFILES_KEY} in .env does not include {agent_setup.AGENT_PROFILE}, "
             "so docker compose up -d will not start the agent containers"
         )
-    for name, token_key in AGENT_FILES:
+    for name, token_key, kinds in AGENT_FILES:
         path = folder / name
         if not path.exists():
             found.append(f"{name} is missing; run {_jotflow()} init again to write it")
@@ -202,12 +204,13 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
                 found.append(f"{agent_setup.COMMAND_KEY} is blank in {name}")
         else:
             named = env.get(agent_setup.PRESET_KEY, "").strip()
-            if preset == "codex" and name == "agent-exec.env":
+            expected = expected_runner_preset(preset, kinds)
+            if expected != preset:
                 # Codex never serves execution (#172): the exec runner must run claude-code.
-                if named != CLAUDE_CODE.name:
+                if named != expected:
                     found.append(
-                        f"{name} names {_shown(named)}, but execution runs need claude-code: "
-                        "the codex preset does not serve them"
+                        f"{name} names {_shown(named)}, but execution runs need {expected}: "
+                        f"the {preset} preset does not serve them"
                     )
             elif named != preset:
                 found.append(

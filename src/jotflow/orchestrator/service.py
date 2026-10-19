@@ -44,7 +44,7 @@ from typing import Any, Protocol
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
-from jotflow.models import PARTIAL_PRESET_KINDS, ChannelMode, ProposalRecord, RunKind
+from jotflow.models import ChannelMode, ProposalRecord, RunKind, expected_runner_preset
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
 from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
@@ -165,19 +165,6 @@ async def check_runners(
     return RunKinds(frozenset(on), tuple(off))
 
 
-def _expected_preset(group: frozenset[RunKind], preset: str) -> str:
-    """The preset a runner serving this group should start.
-
-    A preset that does not serve some of the group's kinds, such as codex for
-    execution (#172), hands them to claude-code, the way check.py expects
-    agent-exec.env to name it. Every other group must match jotflow.toml exactly.
-    """
-    served = PARTIAL_PRESET_KINDS.get(preset)
-    if served is not None and not group <= served:
-        return "claude-code"
-    return preset
-
-
 async def _runner_mismatch(
     client: RunnerClient,
     group: frozenset[RunKind],
@@ -200,7 +187,7 @@ async def _runner_mismatch(
             if attempt + 1 < attempts:
                 await asyncio.sleep(delay)
             continue
-        expected = _expected_preset(group, preset)
+        expected = expected_runner_preset(preset, group)
         if info.preset != expected:
             if expected == preset:
                 return (

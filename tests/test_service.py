@@ -502,6 +502,36 @@ async def test_a_codex_policy_refuses_a_codex_execution_runner(
     await rig.orchestrator.stop()
 
 
+async def test_a_claude_code_policy_refuses_a_codex_execution_runner(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig()
+    rig.exec_preset = "codex"
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert rig.orchestrator.kinds.on == RUN_KINDS - {RunKind.EXECUTION}
+    assert (
+        "execution runs are off: the runner at http://agent-exec:8766 starts preset codex, "
+        "but jotflow.toml's [agent] preset is claude-code"
+    ) in caplog.text
+    await rig.orchestrator.stop()
+
+
+async def test_a_command_policy_never_hands_execution_to_claude_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Only a known preset that leaves out execution gets the claude-code exception.
+    rig = Rig(preset="command")
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert RunKind.EXECUTION not in rig.orchestrator.kinds.on
+    assert (
+        "execution runs are off: the runner at http://agent-exec:8766 starts preset "
+        "claude-code, but jotflow.toml's [agent] preset is command"
+    ) in caplog.text
+    await rig.orchestrator.stop()
+
+
 async def test_a_codex_policy_still_needs_codex_for_drafting(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
