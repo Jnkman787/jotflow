@@ -44,7 +44,7 @@ from typing import Any, Protocol
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
-from jotflow.models import ChannelMode, ProposalRecord, RunKind
+from jotflow.models import PARTIAL_PRESET_KINDS, ChannelMode, ProposalRecord, RunKind
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
 from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
@@ -165,6 +165,19 @@ async def check_runners(
     return RunKinds(frozenset(on), tuple(off))
 
 
+def _expected_preset(group: frozenset[RunKind], preset: str) -> str:
+    """The preset a runner serving this group should start.
+
+    A preset that does not serve some of the group's kinds, such as codex for
+    execution (#172), hands them to claude-code, the way check.py expects
+    agent-exec.env to name it. Every other group must match jotflow.toml exactly.
+    """
+    served = PARTIAL_PRESET_KINDS.get(preset)
+    if served is not None and not group <= served:
+        return "claude-code"
+    return preset
+
+
 async def _runner_mismatch(
     client: RunnerClient,
     group: frozenset[RunKind],
@@ -187,10 +200,17 @@ async def _runner_mismatch(
             if attempt + 1 < attempts:
                 await asyncio.sleep(delay)
             continue
-        if info.preset != preset:
+        expected = _expected_preset(group, preset)
+        if info.preset != expected:
+            if expected == preset:
+                return (
+                    f"the runner at {where} starts preset {info.preset}, "
+                    f"but jotflow.toml's [agent] preset is {preset}"
+                )
             return (
-                f"the runner at {where} starts preset {info.preset}, "
-                f"but jotflow.toml's [agent] preset is {preset}"
+                f"the runner at {where} starts preset {info.preset}, but jotflow.toml's "
+                f"[agent] preset {preset} does not serve {kind.value} runs; "
+                f"that runner must start {expected}"
             )
         if frozenset(info.kinds) != group:
             served = ", ".join(k.value for k in info.kinds) or "nothing"

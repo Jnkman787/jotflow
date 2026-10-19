@@ -93,13 +93,21 @@ class FakeServer:
 
 
 class Rig:
-    def __init__(self, *, runs: bool = True, fail_server: bool = False, **overrides: Any) -> None:
+    def __init__(
+        self,
+        *,
+        runs: bool = True,
+        fail_server: bool = False,
+        preset: str = "claude-code",
+        **overrides: Any,
+    ) -> None:
         self.events: list[str] = []
         self.store = MemoryStore()
         self.server: FakeServer | None = None
         self.calls: list[tuple[str, str, str]] = []
         self.fail_server = fail_server
         self.info_preset = "claude-code"
+        self.exec_preset: str | None = None  # None: the exec runner starts info_preset too
         self.info_status = 200
         self.slack = FakeSlack()
         self.help = FakeHelpSlack()
@@ -112,7 +120,7 @@ class Rig:
         )
         self.orchestrator = Orchestrator(
             settings(**overrides),
-            policy(preset="claude-code" if runs else None),
+            policy(preset=preset if runs else None),
             AsyncWebClient(token="xoxb-test"),
             IDENTITY,
             make_server=self._server,
@@ -139,7 +147,10 @@ class Rig:
             if self.info_status != 200:
                 return httpx2.Response(self.info_status, json={})
             kinds = ["execution"] if host == "agent-exec" else ["drafting", "question"]
-            return httpx2.Response(200, json={"preset": self.info_preset, "kinds": kinds})
+            started = self.info_preset
+            if host == "agent-exec" and self.exec_preset is not None:
+                started = self.exec_preset
+            return httpx2.Response(200, json={"preset": started, "kinds": kinds})
         if request.method == "POST":
             return httpx2.Response(202, json={})
         run_id = request.url.path.rsplit("/", 1)[1]
@@ -462,6 +473,46 @@ async def test_a_runner_with_another_preset_turns_its_kinds_off(
     assert not [c for c in rig.calls if c[0] == "POST"]
     proposal = await rig.store.get_proposal("p1")
     assert proposal is not None and proposal.state is ProposalState.APPROVED
+    await rig.orchestrator.stop()
+
+
+async def test_a_codex_policy_hands_execution_to_a_claude_code_runner() -> None:
+    # The documented codex setup (#172): agent.env runs codex, agent-exec.env claude-code.
+    rig = Rig(preset="codex")
+    rig.info_preset = "codex"
+    rig.exec_preset = "claude-code"
+    await rig.orchestrator.start()
+    assert rig.orchestrator.kinds.on == RUN_KINDS
+    await rig.orchestrator.stop()
+
+
+async def test_a_codex_policy_refuses_a_codex_execution_runner(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig(preset="codex")
+    rig.info_preset = "codex"
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert rig.orchestrator.kinds.on == RUN_KINDS - {RunKind.EXECUTION}
+    assert (
+        "execution runs are off: the runner at http://agent-exec:8766 starts preset codex, "
+        "but jotflow.toml's [agent] preset codex does not serve execution runs; "
+        "that runner must start claude-code"
+    ) in caplog.text
+    await rig.orchestrator.stop()
+
+
+async def test_a_codex_policy_still_needs_codex_for_drafting(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig(preset="codex")
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await rig.orchestrator.start()
+    assert rig.orchestrator.kinds.on == frozenset({RunKind.EXECUTION})
+    assert (
+        "the runner at http://agent:8766 starts preset claude-code, "
+        "but jotflow.toml's [agent] preset is codex"
+    ) in caplog.text
     await rig.orchestrator.stop()
 
 

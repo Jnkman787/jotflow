@@ -102,6 +102,14 @@ class RunKind(StrEnum):
 # The kinds that are agent runs. OPERATOR is a token kind only, never queued or launched.
 RUN_KINDS = frozenset({RunKind.DRAFTING, RunKind.EXECUTION, RunKind.QUESTION})
 
+# Built-in presets that serve only some run kinds, and which ones. The other kinds run
+# under claude-code on their own runner. It lives here so the orchestrator, which never
+# imports the adapters, can check the runners; presets.py takes its run_kinds from it.
+# Codex never serves execution (#172).
+PARTIAL_PRESET_KINDS: dict[str, frozenset[RunKind]] = {
+    "codex": frozenset({RunKind.DRAFTING, RunKind.QUESTION}),
+}
+
 
 # The longest a run may run, and so the longest its MCP token lives: a run must
 # not outlive its token. whiteboard.tokens and the store both read it from here.
