@@ -70,3 +70,10 @@ Stays open on #10, because it needs the live sandbox workspace:
 - The sample session was re-captured by running init against the fake Slack client, with `claude-code`. It now has the model question, the agent-file lines, the Compose files, and the closing "Next:" line.
 - A new step 5, between inviting the bot and starting JotFlow, runs `jotflow check` and points to the optional live check. That matches setup's new closing list from #198, and the sample output and closing lines are the architect's exact wording from #198. The old steps 5 and 6 are now 6 and 7.
 - Leftovers: step 7 no longer says the bot posts nothing, and the write-side check no longer says approval in Slack doesn't exist.
+
+2026-10-19, #41 fresh-eyes pass 1, on main at c063833:
+
+- **The blocker.** The prerequisites and "What a team needs" now name the model login and the two GitHub tokens. The agent containers section gives GitHub's click-path for both fine-grained tokens, the two model logins (an API key, or a Claude account login in each container), and a numbered procedure to turn the agent on.
+- **The token permissions follow presets.md and agent.env.example:** Contents and Issues read for the read token, Issues read and write for the write token, and Metadata added by GitHub. No read tool in presets.py reads repository contents, so Contents read may be unneeded. That's flagged to security rather than changed here.
+- **Consistency.** "Your JotFlow folder" and `uvx jotflow init` are used throughout. Checkout-only commands are marked for contributors. The build and BuildKit text moved to CONTRIBUTING, the `:latest` suggestion is gone, and the manifest's Messages tab row is corrected. Step 2 points servers to /srv/jotflow.
+- **MINORs 8 to 15,** as the lead listed them.

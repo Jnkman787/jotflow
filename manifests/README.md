@@ -2,7 +2,7 @@
 
 A manifest is a file describing a Slack app: its name, permissions, and settings, so Slack can build the app from it. `slack-app.json` is the default manifest for creating a team's own JotFlow app, rendered with the bot name JotFlow. The app stays internal to your workspace and is never distributed.
 
-**Which file to use.** If you run `uv run jotflow init`, use the link it prints, or the `slack-app-manifest.json` it saves in the repository folder: both carry the bot name you chose. Use `manifests/slack-app.json` only to create the app without setup, and then the bot is called JotFlow until you rename it, or render your own as described under [Use a different bot name](#use-a-different-bot-name). See the Permissions section of [docs/architecture.md](../docs/architecture.md) for why JotFlow needs its own app.
+**Which file to use.** If you run `uvx jotflow init`, use the link it prints, or the `slack-app-manifest.json` it saves in your JotFlow folder: both carry the bot name you chose. Use `manifests/slack-app.json` only to create the app without setup, and then the bot is called JotFlow until you rename it, or render your own as described under [Use a different bot name](#use-a-different-bot-name). See the Permissions section of [docs/architecture.md](../docs/architecture.md) for why JotFlow needs its own app.
 
 ## Create the app
 
@@ -19,15 +19,17 @@ JotFlow needs both tokens. Keep them secret and out of the repository. Token rot
 
 **Updating an app created from an older manifest.** The manifest now subscribes to `reaction_removed` (#138), so removing a keyword's reaction can take it back. It also turns on a read-only Messages tab (#173), where JotFlow tells a person their GitHub link was removed. It needs no new scope, people can't write to the app there, and JotFlow reads no DMs. An app made from the older manifest keeps working, but removing a reaction then does nothing, and the removal note can't be delivered, so the person who removed the link is asked to pass it on. To pick both up, open the app's **App Manifest** page, paste `manifests/slack-app.json` (or `slack-app-manifest.json` from setup), save, and click **Reinstall to Workspace** if Slack asks.
 
-If JotFlow or setup reports a missing scope, open the app's **OAuth & Permissions** page, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Reinstalling can issue a new bot token. If setup is still asking for the bot token, paste the new one there. If setup has already stopped, run `uv run jotflow init` again and paste it.
+If JotFlow or setup reports a missing scope, open the app's **OAuth & Permissions** page, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Reinstalling can issue a new bot token. If setup is still asking for the bot token, paste the new one there. If setup has already stopped, run `uvx jotflow init` again and paste it.
 
 ## Use a different bot name
 
-Render the manifest with your own name instead of editing the file by hand:
+`uvx jotflow init` already renders the manifest with the name you choose. To render one without setup, for example to update an existing app, run:
 
 ```
-uv run python -m jotflow.slack_manifest "Idea Bot"
+uvx --from jotflow python -m jotflow.slack_manifest "Idea Bot"
 ```
+
+From a checkout, contributors can run `uv run python -m jotflow.slack_manifest "Idea Bot"` instead.
 
 A name has at most 35 characters: letters, digits, spaces, `.`, `-` and `_`, starting with a letter or digit.
 
@@ -47,14 +49,14 @@ Each permission below is used in this release. JotFlow asks for nothing it doesn
 | Events | `message.channels`, `message.groups`, `reaction_added`, `reaction_removed` | Wake JotFlow when someone posts, reacts, or takes a reaction back |
 | Socket Mode | on | No public URL is needed for a self-hosted install |
 | Interactivity | on | The card's buttons, repo menu, and dialogs |
-| App Home tabs | off | The app has no DM scopes, so messages sent to it would never be read |
+| App Home | Messages tab on, read-only; Home tab off | JotFlow tells a person there when their GitHub link was removed. People can't write to the app, and it has no DM scopes, so it reads no DMs |
 | Org-wide deploy | off | The app is internal to one workspace |
 
 There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Answering questions by @-mention isn't built yet (#57). When it is, the manifest will add `app_mentions:read`, and the release notes will say to update the app.
 
 ## Changing the manifest
 
-Edit `src/jotflow/slack_manifest.py`, then regenerate this file:
+This is for contributors, in a checkout. Edit `src/jotflow/slack_manifest.py`, then regenerate this file:
 
 ```
 make manifest

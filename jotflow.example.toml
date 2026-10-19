@@ -1,7 +1,8 @@
 # jotflow.toml: which channels JotFlow watches, which repos they feed, and who
-# may approve. `uv run jotflow init` writes your jotflow.toml for you; this
-# example shows every option. To write one by hand instead, copy this file to
-# jotflow.toml and replace every value. All ids, repos, and names below are
+# may approve. `uvx jotflow init` writes your jotflow.toml for you, in your
+# JotFlow folder; this example shows every option. To write one by hand
+# instead, save this file there as jotflow.toml and replace every value. After
+# editing it, run `docker compose restart jotflow` so JotFlow reads it again. All ids, repos, and names below are
 # made up. Secrets never go here; the Slack tokens live in .env. Unknown keys
 # are rejected, so typos fail loudly.
 

@@ -87,14 +87,14 @@ The pieces:
 | Component | Needs | Does not need |
 |---|---|---|
 | JotFlow | A Slack app in your workspace, created from the included manifest. Over Socket Mode, it reads messages, reactions and channel details in the channels you invite it to, and looks up user names. It posts proposal cards and replies, adds reactions, pins a short help message, and answers the `/jotflow` slash command. [manifests/README.md](manifests/README.md) explains each permission. | Any GitHub access |
-| Your agent | Whatever GitHub access you already gave it, for example GitHub's MCP server or the `gh` command-line tool | Any Slack access |
+| Your agent | A model login, such as an Anthropic API key for the `claude-code` preset, and two fine-grained GitHub tokens: one that reads issues, and one that can write them. [The agent containers](#the-agent-containers) says how to make them | Any Slack access |
 | Your machine | Docker to run JotFlow, and uv or Python 3.12 or newer to run the setup once | A public URL or open ports: Socket Mode connects out to Slack |
 
 ## Quickstart
 
 **What works today:** With `[agent] preset` set in `jotflow.toml` and the agent containers set up, JotFlow starts an agent run on each thread in the channels you choose, once the thread goes quiet. The agent drafts a proposal, which JotFlow posts as a card for the team to approve, or asks a clarifying question in the thread. An approved card becomes a GitHub issue or comment, written by the agent's execution container, and JotFlow replies in the thread with its link. Without a preset, JotFlow connects and answers `/jotflow`, but drafts nothing.
 
-Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages. It can take longer the first time Docker downloads JotFlow, or if your workspace needs an admin to approve new apps. Every name and id below is made up; use your own.
+Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages. Turning the agent on afterwards, with two GitHub tokens and a model login, takes about ten more. It can take longer the first time Docker downloads JotFlow, or if your workspace needs an admin to approve new apps. Every name and id below is made up; use your own.
 
 ### Words used here
 
@@ -121,6 +121,9 @@ Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages
   - **On Windows with WSL**, also open Docker Desktop, then **Settings**, **Resources**, **WSL integration**, and switch it on for your Linux distribution, such as Ubuntu. Click **Apply & restart**. Without it, the WSL terminal says `docker` is not found.
   - **On Linux with Docker Engine** instead of Docker Desktop, start Docker with `sudo systemctl start docker`, and let your user run it without `sudo` (which runs one command as the administrator): `sudo usermod -aG docker $USER`, then log out and back in. Otherwise Docker says `permission denied` about `docker.sock`.
 - **uv**, which fetches and runs JotFlow's setup, and Python 3.12 or newer, for you. See [uv's installation guide](https://docs.astral.sh/uv/getting-started/installation/). After installing it, open a new terminal so the `uv` command is found. Without uv, you need Python 3.12 or newer; the `python3` built into macOS is often older, so get Python from <https://www.python.org/downloads/>. See step 3.
+- **To turn the agent on**, which you can do after the rest:
+  - **an Anthropic API key**, from <https://console.anthropic.com/settings/keys>, or a Claude account to log in with instead
+  - **two GitHub tokens** for the repos your channels feed, one read-only and one that can write issues. You make them on GitHub during [the agent containers](#the-agent-containers) step
 - Permission to **create apps in your Slack workspace**. If **Create New App** is greyed out at <https://api.slack.com/apps>, ask a workspace admin to allow app creation. Some workspaces also need an admin to approve each new app; see [If your workspace needs admin approval](#if-your-workspace-needs-admin-approval).
 
 ### 2. Make a folder for JotFlow
@@ -136,6 +139,8 @@ mkdir jotflow
 cd jotflow
 ```
 
+On a server, use `/srv/jotflow` instead, as [docs/deployment.md](docs/deployment.md) describes.
+
 To run JotFlow from its source instead, for example to change it, see [Run from a checkout](CONTRIBUTING.md#run-from-a-checkout) in CONTRIBUTING.md.
 
 ### 3. Run the guided setup
@@ -148,7 +153,7 @@ This works from JotFlow's first published release (#41). Before that, use [Run f
 
 The first `uvx` downloads Python and JotFlow, so it can sit quietly for a minute before setup starts. Setup also writes `docker-compose.yml` and `docker-compose.policy.yml` into this folder, pinned to the JotFlow release you ran. It never replaces one you already have without asking, and keeps the old one as a `.bak` file if you say yes.
 
-Without uv, create a private Python environment for JotFlow, a `.venv` folder, and install it there. On macOS, Linux, or WSL:
+Without uv, create a private Python environment for JotFlow, a `.venv` folder, and install it there. On Ubuntu and Debian, use uv instead, because their `python3 -m venv` fails until the `python3-venv` package is installed. On macOS, Linux, or WSL:
 
 ```
 python3 -m venv .venv
@@ -169,7 +174,7 @@ Setup starts by saying what it will do, and explains every question just before 
 First, setup asks whether you already created a Slack app for JotFlow. Answer `n` the first time. Then it walks through six setup steps, and prints "Setup step 1 of 6" and so on to match this list:
 
 1. **The bot's name.** This is how the bot appears in Slack, for example `Idea Bot`. It can be up to 35 characters: letters, digits, spaces, `.`, `-` and `_`, starting with a letter or digit. You can change it later in Slack.
-2. **Create the Slack app.** Sign in to Slack in your browser first. Setup prints a long link. Open it, pick your workspace, click **Next** if Slack shows it, then click **Create**: the manifest is already filled in. If the link is cut off, doesn't open, or Slack shows an error page, which can happen when a long link wraps across lines in the terminal, go to <https://api.slack.com/apps>, choose **Create New App**, then **From a manifest**, and paste the contents of `slack-app-manifest.json`. To see that file, type `cat slack-app-manifest.json`, or in PowerShell `Get-Content slack-app-manifest.json`, and copy all of it. Setup saved it with your bot name, so use it rather than `manifests/slack-app.json`, which is the default with the name JotFlow.
+2. **Create the Slack app.** Sign in to Slack in your browser first. Setup prints a long link. On a server with no browser, copy the link into a browser on your own computer, or paste `slack-app-manifest.json` as described below. Open it, pick your workspace, click **Next** if Slack shows it, then click **Create**: the manifest is already filled in. If the link is cut off, doesn't open, or Slack shows an error page, which can happen when a long link wraps across lines in the terminal, go to <https://api.slack.com/apps>, choose **Create New App**, then **From a manifest**, and paste the contents of `slack-app-manifest.json`. To see that file, type `cat slack-app-manifest.json`, or in PowerShell `Get-Content slack-app-manifest.json`, and copy all of it. Setup saved it with your bot name, so use it rather than `manifests/slack-app.json`, which is the default with the name JotFlow.
 3. **The app-level token**, which lets JotFlow connect to Slack without a public URL. In the new app's settings, open **Basic Information**, scroll to **App-Level Tokens**, and click **Generate Token and Scopes**. Type any name, for example `socket-mode`; the name is only a label. Click **Add Scope**, choose `connections:write`, click **Generate**, then click **Copy**. It starts with `xapp-`. To see it again later, open **Basic Information**, scroll to **App-Level Tokens**, and click the token's name.
 4. **The bot token.** Open **Install App**, click **Install to Workspace**, then **Allow**. Copy the **Bot User OAuth Token** shown on that page; it also appears under **OAuth & Permissions**, which is Slack's page for the app's permissions. It starts with `xoxb-`. If Slack shows **Request to Install** instead, see [If your workspace needs admin approval](#if-your-workspace-needs-admin-approval).
 
@@ -255,8 +260,8 @@ With `none` as the preset, setup skips the model question and the agent files, a
 
 Setup writes two files next to `docker-compose.yml`. Neither is committed to git.
 
-- **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that is not enforced: the folder's Windows permissions decide who can read it, and setup says so instead of "Only your user can read that file". Keep the checkout somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
-- **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](jotflow.example.toml) explains every option. Each repo can say whether it's public or private on GitHub. Setup fills that in from your own `gh` login if you have one, and asks otherwise. Cards for a public repo carry a warning.
+- **`.env`** holds the two Slack tokens. Only you can read it, on a Linux or macOS filesystem. On a Windows drive, such as `C:\` or `/mnt/c` in WSL, that is not enforced: the folder's Windows permissions decide who can read it, and setup says so instead of "Only your user can read that file". Keep your JotFlow folder somewhere private, and in WSL prefer your Linux home directory. Setup also adds a `COMPOSE_FILE` line here, so Docker picks up your `jotflow.toml`.
+- **`jotflow.toml`** lists your channels and repos. It holds no secrets. Edit it freely: [jotflow.example.toml](https://github.com/Jnkman787/jotflow/blob/main/jotflow.example.toml) explains every option. After editing it, run `docker compose restart jotflow` so JotFlow reads it again. Each repo can say whether it's public or private on GitHub. Setup fills that in from your own `gh` login if you have one, and asks otherwise. Cards for a public repo carry a warning.
 
 Running `uvx jotflow init` again is safe. It offers to keep tokens that still work, and it keeps the agent containers' secrets. For an existing `jotflow.toml`, it asks `Keep its channels and repos? [Y/n]`. Answer `y` to keep them and go straight to the agent preset, which is how you turn the agent on or change it later. Answer `n` to go through the channels again, where each one's repos can be kept.
 
@@ -322,25 +327,51 @@ This starts JotFlow. The agent containers, where your team's agent will draft is
 
 There are two agent containers, so the GitHub token that can write never sits where drafting happens. When you choose a preset, setup writes their files next to `.env`, from `agent.env.example` and `agent-exec.env.example`, readable only by you:
 
-- **`agent.env`** is for drafting and questions. Fill in a read-only GitHub token and the model login, as its comments describe.
-- **`agent-exec.env`** is for writing approved issues. Fill in a GitHub token that can write issues and the model login. That token can create, edit, or close any issue in any repo it reaches, so make it a fine-grained token limited to exactly the repos your channels feed, with Issues read and write and nothing else. See [docs/presets.md](docs/presets.md).
+- **`agent.env`** is for drafting and questions. It gets the read-only GitHub token, `JOTFLOW_GITHUB_READ_TOKEN`, and the model login.
+- **`agent-exec.env`** is for writing approved issues. It gets the token that can write issues, `JOTFLOW_GITHUB_WRITE_TOKEN`, and the model login. That token can create, edit, or close any issue in any repo it reaches, so limit it to exactly the repos your channels feed.
 
-Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Once both GitHub tokens are filled in, run `uvx jotflow init` again: it keeps the secrets and adds `COMPOSE_PROFILES=agent` to `.env`, so `docker compose up -d` starts both agent containers too. Neither file holds Slack tokens, and neither agent sees `.env`.
+**Make the two GitHub tokens.** Make each one the same way, on GitHub:
+
+1. Click your profile picture, then **Settings**, then **Developer settings** at the bottom of the left menu. Open **Personal access tokens**, then **Fine-grained tokens**, then click **Generate new token**.
+2. Name it, for example `jotflow-read` or `jotflow-write`, and pick an expiration. Under **Resource owner**, choose the user or organisation that owns the repos. An organisation may need an owner to approve the token before it works.
+3. Under **Repository access**, choose **Only select repositories**, and pick exactly the repos in `jotflow.toml`.
+4. Under **Permissions**, then **Repository permissions**:
+   - for the read token, set **Contents** and **Issues** to **Read-only**
+   - for the write token, set **Issues** to **Read and write**, and nothing else
+
+   GitHub adds **Metadata: Read-only** to both by itself.
+5. Click **Generate token**, and copy it. It starts with `github_pat_`, and GitHub shows it only once.
+
+When a channel later feeds a new repo, add it to both tokens on GitHub too. [docs/presets.md](docs/presets.md) explains what each token can reach.
+
+**The model login**, for `claude-code`, is either of these:
+
+- **An Anthropic API key**, from <https://console.anthropic.com/settings/keys>. Put it in both files as `ANTHROPIC_API_KEY`. Separate keys let you track spend per run kind.
+- **A Claude account login**, such as a Claude subscription, done once inside each container instead of a key. Remove the `ANTHROPIC_API_KEY` line, and that name from `JOTFLOW_AGENT_ENV_ALLOW`, in both files. Then run:
+
+  ```
+  docker compose run --rm --no-deps agent claude auth login
+  docker compose run --rm --no-deps agent-exec claude auth login
+  ```
+
+  The login is kept in each container's own volume. A `CLAUDE_CODE_OAUTH_TOKEN` can't be passed in instead. The experimental `codex` preset takes an API key only.
+
+**Turn the agent on:**
+
+1. Make the two GitHub tokens and get the model login, as above.
+2. In `agent.env`, fill in `JOTFLOW_GITHUB_READ_TOKEN` and `ANTHROPIC_API_KEY`. In `agent-exec.env`, fill in `JOTFLOW_GITHUB_WRITE_TOKEN` and `ANTHROPIC_API_KEY`.
+3. Run `uvx jotflow init` again. Keep the tokens and the channels, and press Enter at the preset. It adds `COMPOSE_PROFILES=agent` to `.env`.
+4. Run `uvx jotflow check`. Every line should say `ok`, including `ok    agent: claude-code, both agent files filled in`.
+5. Run `docker compose up -d`, which now starts both agent containers too.
+6. Run `docker compose logs agent agent-exec`. Each runner logs what it serves, such as `runner serving drafting, question with preset claude-code` and `runner serving execution with preset claude-code`.
+
+Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW_RUNNER_SECRET` and `JOTFLOW_RUNNER_EXEC_SECRET`. It never shows them. It also names the preset, and the model if you chose one. Neither file holds Slack tokens, and neither agent sees `.env`.
 
 To replace a secret, for example after it leaked, run setup with `--rotate-runner-secret` for drafting, `--rotate-exec-secret` for execution, or both. Then run `docker compose up -d` so every container picks up the new value. Setup writes `.env` and both agent files as one step: if one cannot be written, none of them changes. If `.env` and an agent file ever hold different secrets, for example after you replaced one by hand, setup makes a new secret for both rather than guessing which is right, and asks you to restart. With the `command` preset, setup writes each file's secret but no preset or model, since the runner refuses those next to a command.
 
-Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. Each runner logs what it serves when it starts, such as `runner serving drafting, question with preset claude-code`. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
+Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 
-The first start downloads JotFlow's image, which takes a minute or two.
-
-**Run a published release instead of building.** Each release tag `vX.Y.Z` publishes `ghcr.io/jnkman787/jotflow:X.Y.Z` and `ghcr.io/jnkman787/jotflow-agent:X.Y.Z` for amd64 and arm64, plus `:latest`. To use them, add these to `.env` and run `docker compose pull` before `docker compose up -d`:
-
-```
-JOTFLOW_IMAGE_REF=ghcr.io/jnkman787/jotflow:X.Y.Z
-JOTFLOW_AGENT_IMAGE_REF=ghcr.io/jnkman787/jotflow-agent:X.Y.Z
-```
-
-Pin the exact version rather than `latest`, so an upgrade happens only when you change it. A source build can also tag itself per commit through the same lines, which keeps older builds around for a quick rollback. Each published image carries a signed build provenance attestation, which GitHub's CLI checks:
+The first start downloads JotFlow's images, which takes about two minutes. Setup pinned them to the release you ran, `ghcr.io/jnkman787/jotflow:X.Y.Z` and `ghcr.io/jnkman787/jotflow-agent:X.Y.Z`, so nothing is built and an upgrade happens only when you change the version. [docs/deployment.md](docs/deployment.md) covers upgrades and rollback. Each published image carries a signed build provenance attestation, which GitHub's CLI checks:
 
 ```
 gh attestation verify oci://ghcr.io/jnkman787/jotflow:X.Y.Z --owner Jnkman787
@@ -351,6 +382,8 @@ gh attestation verify oci://ghcr.io/jnkman787/jotflow:X.Y.Z --owner Jnkman787
 ```
 docker compose logs -f jotflow
 ```
+
+This keeps following the log, so open a second terminal in your JotFlow folder for any other command.
 
 When JotFlow starts, it pins a short guide in each channel it watches. Post a message in one of them: your first message gets a one-time tip that only you can see. With an agent preset, a card with the proposed issue appears in the thread once the conversation goes quiet. The log shows each step either way. A line like the last one below appears:
 
@@ -398,6 +431,8 @@ Write `fixture.json`:
   "approved_by": "U0YOURID"
 }
 ```
+
+`approved_by` is your Slack member ID. In Slack, open your profile, click the **⋮** menu, and choose **Copy member ID**. It starts with `U`.
 
 Then queue it while JotFlow runs:
 
@@ -452,9 +487,8 @@ Every error names what to fix. The common ones are below. Wherever it says `uvx 
 | `... is not a Slack channel id such as C0123ABCD` | The id was mistyped. It is a capital `C` or `G` followed by capital letters and digits, such as `C0IDEAS01`. Setup refuses an id typed in lowercase and shows the capitalised form to check, but never guesses. Copy the id exactly as Slack shows it, or paste the channel's link. |
 | `could not reach Slack` | Check your network. If your workplace requires a proxy, a server all web traffic goes through, ask your IT team for its address and set it in the terminal before running setup: `export HTTPS_PROXY=http://proxy.acme-co.example:8080`, or in PowerShell `$env:HTTPS_PROXY = "http://proxy.acme-co.example:8080"`. That covers setup only. For JotFlow running in Docker, also add the same line, `HTTPS_PROXY=http://proxy.acme-co.example:8080`, to `.env`, which Docker passes to JotFlow, then run `docker compose up -d` again. |
 | `jotflow.toml has problems:` followed by setting names | A hand edit broke the file. Each line names the setting at fault. Fix it, or let setup write a new one. The old file is kept as `jotflow.toml.bak`. |
-| `configuration problem in environment or .env:` `JOTFLOW_SLACK_BOT_TOKEN: not set` | `.env` is missing or isn't next to `docker-compose.yml`. Run `uvx jotflow init` in the repository folder. |
+| `configuration problem in environment or .env:` `JOTFLOW_SLACK_BOT_TOKEN: not set` | `.env` is missing or isn't next to `docker-compose.yml`. Run `uvx jotflow init` in your JotFlow folder. |
 | `configuration problem in jotflow.toml:` ``file not found; run `jotflow init` to create it`` | The container didn't get your `jotflow.toml`. Check that `.env` has the `COMPOSE_FILE` line. If you removed it, start with `docker compose -f docker-compose.yml -f docker-compose.policy.yml up -d`. |
-| `the --mount option requires BuildKit`, or `unknown flag: --mount` | Docker is missing BuildKit, which builds JotFlow's images. On Ubuntu with the `docker.io` package, run `sudo apt install docker-buildx`, then build again. Elsewhere, including Debian, install Docker's own packages or Docker Desktop, which include it. |
 | `Cannot connect to the Docker daemon` | Docker isn't running; the daemon is its background service. Start Docker Desktop, or on Linux `sudo systemctl start docker`, wait until it is running, and try again. |
 | Compose says the bind source path for `jotflow.toml` does not exist | The bind source path is the file on your machine that Docker hands to JotFlow. Docker was asked to hand `jotflow.toml` to JotFlow, but the file isn't there yet. Run `uvx jotflow init` before `docker compose up -d`. |
 | `jotflow.toml` is a directory, or JotFlow reports `Is a directory` | Compose ran before setup, and Docker Desktop created an empty directory in place of the missing file. Stop JotFlow with `docker compose down`. Then remove the directory: `rm -r jotflow.toml`, or `sudo rm -r jotflow.toml` if that is refused, because Docker created it as root, the administrator account. In PowerShell: `Remove-Item -Recurse jotflow.toml`. Then run `uvx jotflow init` and start again with `docker compose up -d`. |
