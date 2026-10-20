@@ -146,6 +146,18 @@ DUPLICATE_MOVED_ON = (
 )
 
 
+# A proposal in one of these states relies on its topic's issue binding (#36).
+BOUND_STATES = frozenset(
+    {
+        ProposalState.PENDING,
+        ProposalState.APPROVED,
+        ProposalState.EXECUTING,
+        ProposalState.RECONCILING,
+        ProposalState.APPLIED,
+    }
+)
+
+
 def plan_duplicate(record: ProposalRecord, index: int, expected_hash: str) -> RelatedIssue:
     """The related issue a "same as" binds to, from the *stored* draft (#36).
 
@@ -741,7 +753,8 @@ class Store(Protocol):
         """Take back a "same as": unbind the topic and record who undid it (#36).
 
         Refused, changing nothing, if the topic now points at another issue, or a
-        proposal on the topic was applied after the "same as".
+        proposal on the topic drafted after the "same as" is still live or was written
+        (:data:`BOUND_STATES`): it relies on the binding.
         """
         ...
 

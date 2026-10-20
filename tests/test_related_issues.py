@@ -358,3 +358,37 @@ async def test_card_sync_edits_a_same_as_card_it_already_posted(store: Store) ->
     assert await sync.sync() == 1
     ((_, _, card),) = poster.updates
     assert "Same as" in str(card.blocks) and ACTION_NOT_DUPLICATE in str(card.blocks)
+
+
+async def test_undo_refuses_while_a_later_proposal_relies_on_the_binding(store: Store) -> None:
+    record = await pending(store)
+    await store.mark_duplicate(PID, index=0, expected_hash=content_hash(record.proposal), by=BOB)
+    # A follow-up in the thread became an update to the bound issue, and was approved.
+    topic_id = record.proposal.topic_id or ""
+    update = UpdateProposal(
+        topic_id=topic_id,
+        repo="acme-co/web",
+        issue_number=42,
+        changes={"comment": "also"},
+        confidence=0.9,
+    )
+    later = await store.add_proposal(
+        ProposalRecord(
+            id="fedcba9876543210",
+            channel_id=CH,
+            thread_ts=THREAD,
+            run_id="r2",
+            proposal=update,
+            created_at=START.replace(year=2030),
+        )
+    )
+    await store.transition(
+        later.id,
+        ProposalState.APPROVED,
+        approved_by=ALICE,
+        expected_hash=content_hash(later.proposal),
+    )
+    with pytest.raises(DuplicateRefusedError, match="moved on"):
+        await store.undo_duplicate(PID, by=ALICE)
+    topic = await store.get_topic(topic_id)
+    assert topic is not None and topic.topic.issue_number == 42

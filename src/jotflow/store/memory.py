@@ -29,6 +29,7 @@ from jotflow.models import (
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
     AUTO_APPROVER,
+    BOUND_STATES,
     DEFAULT_RUN_TIMEOUTS,
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
@@ -412,10 +413,11 @@ class MemoryStore:
             )
             if topic is None or not bound:
                 raise DuplicateRefusedError(DUPLICATE_MOVED_ON)
-            # Drafted after the "same as" and written: it relies on the binding.
+            # Drafted after the "same as" and still live or written: it relies on
+            # the binding, so unbinding would strand it or contradict its write.
             if any(
                 p.proposal.topic_id == topic.topic.id
-                and p.state is ProposalState.APPLIED
+                and p.state in BOUND_STATES
                 and p.created_at > duplicate.at
                 for p in self._proposals.values()
             ):

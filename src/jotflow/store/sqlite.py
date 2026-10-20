@@ -738,9 +738,10 @@ class SqliteStore:
             if topic is None or not _bound_to(topic.topic, duplicate):
                 raise DuplicateRefusedError(DUPLICATE_MOVED_ON)
             written = await self._one(
-                # Drafted after the "same as" and written: it relies on the binding.
-                "SELECT 1 FROM proposals WHERE topic_id = ? AND state = 'applied'"
-                " AND created_at > ?",
+                # Drafted after the "same as" and still live or written: it relies on
+                # the binding, so unbinding would strand it or contradict its write.
+                "SELECT 1 FROM proposals WHERE topic_id = ? AND created_at > ?"
+                " AND state IN ('pending', 'approved', 'executing', 'reconciling', 'applied')",
                 (topic.topic.id, to_text(duplicate.at)),
             )
             if written is not None:
