@@ -24,7 +24,6 @@ import asyncio
 import json
 import os
 import shutil
-import socket
 import stat
 import sys
 import tempfile
@@ -39,7 +38,7 @@ from jotflow.replay import Check, Prepared, ReplayError, ReplayReport, finish, p
 from jotflow.store import Store
 from jotflow.testing.scripted_agent import ERROR_FILE
 from jotflow.testing.threads import TOPIC_KEY_PREFIX, SavedThread
-from jotflow.whiteboard.server import PATH, McpServer, build_app
+from jotflow.whiteboard.server import PATH, McpServer, bound_socket, build_app
 
 SCRIPTED = "scripted"
 AGENTS = (SCRIPTED, *sorted(PRESETS))
@@ -114,12 +113,6 @@ def _preset(options: AgentOptions, index: int) -> Preset:
         return PRESETS[options.agent]
     except KeyError:
         raise ReplayError(f"no agent {options.agent}; choose one of {', '.join(AGENTS)}") from None
-
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
 
 
 def _fake_github(thread: SavedThread, root: Path, *, log: Path | None = None) -> Path:
@@ -256,10 +249,12 @@ async def replay_with_agent(
 ) -> ReplayReport:
     """Run ``thread``'s drafting runs with a real agent and compare the outcome."""
     prepared = await prepare(thread, store=store)
-    port = _free_port()
+    # Bound before the port is known, so no other process can take it (#184).
+    sock = bound_socket()
+    port = int(sock.getsockname()[1])
     specs = list(prepared.state.specs.values())
     server = McpServer(
-        build_app(port=port, tokens=prepared.registry, tools=specs), "127.0.0.1", port
+        build_app(port=port, tokens=prepared.registry, tools=specs), "127.0.0.1", port, sock=sock
     )
     await server.start()
     try:

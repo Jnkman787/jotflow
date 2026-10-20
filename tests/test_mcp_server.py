@@ -31,6 +31,7 @@ from jotflow.whiteboard.server import (
     McpServer,
     McpStartError,
     allowed_hosts,
+    bound_socket,
     build_app,
 )
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, Grant, RejectAllTokens, TokenRegistry
@@ -518,16 +519,11 @@ def test_settings_parse_extra_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
 # Lifecycle, on loopback.
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
 async def test_the_server_starts_answers_and_stops_without_touching_signals() -> None:
-    port = _free_port()
+    sock = bound_socket()  # never released, so no other process can take the port (#184)
+    port = int(sock.getsockname()[1])
     before = signal.getsignal(signal.SIGTERM)
-    server = McpServer(build_app(port=port, tokens=OneToken()), "127.0.0.1", port)
+    server = McpServer(build_app(port=port, tokens=OneToken()), "127.0.0.1", port, sock=sock)
     await server.start()
     try:
         assert signal.getsignal(signal.SIGTERM) == before
@@ -561,8 +557,9 @@ async def test_a_startup_that_hangs_is_a_clear_start_error() -> None:
             await receive()  # lifespan.startup arrives, and is never answered
             await asyncio.sleep(10)
 
-    port = _free_port()
-    server = McpServer(hangs, "127.0.0.1", port, startup_timeout=0.2)
+    sock = bound_socket()  # never released, so no other process can take the port (#184)
+    port = int(sock.getsockname()[1])
+    server = McpServer(hangs, "127.0.0.1", port, startup_timeout=0.2, sock=sock)
     with pytest.raises(McpStartError, match=r"did not start within 0\.2 seconds"):
         await server.start()
 
@@ -676,3 +673,29 @@ async def test_an_output_model_is_advertised_as_the_output_schema() -> None:
     tools = {t["name"]: t for t in response.json()["result"]["tools"]}
     assert tools["typed"]["outputSchema"] == EchoOut.model_json_schema()
     assert "outputSchema" not in tools["echo"] or tools["echo"]["outputSchema"] is None
+
+
+# The server's port is never released between choosing it and serving (#184)
+
+
+def test_a_bound_socket_holds_its_port_and_refuses_connections() -> None:
+    with bound_socket() as sock:
+        port = int(sock.getsockname()[1])
+        with socket.socket() as rival, pytest.raises(OSError):
+            rival.bind(("127.0.0.1", port))
+        with socket.socket() as client, pytest.raises(ConnectionRefusedError):
+            client.connect(("127.0.0.1", port))
+
+
+async def test_the_server_serves_on_the_socket_it_was_given() -> None:
+    sock = bound_socket()
+    port = int(sock.getsockname()[1])
+    server = McpServer(build_app(port=port, tokens=OneToken()), "127.0.0.1", port, sock=sock)
+    await server.start()
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=5):
+            pass
+    finally:
+        await server.stop()
+    # The server owned the socket and closed it, so the port is free again.
+    assert sock.fileno() == -1

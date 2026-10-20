@@ -10,10 +10,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import socket
 import sys
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -38,7 +37,7 @@ from jotflow.whiteboard.operator_tokens import (
     grant_for,
 )
 from jotflow.whiteboard.read_tools import GetTopicInput, ListTopicsInput, read_tools
-from jotflow.whiteboard.server import PATH, PINNED_VERSIONS, McpServer, build_app
+from jotflow.whiteboard.server import PATH, PINNED_VERSIONS, McpServer, bound_socket, build_app
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolError, ToolSpec, checked_registry
 from jotflow.whiteboard.write_tools import write_tools
@@ -349,23 +348,25 @@ async def test_a_runs_calls_are_not_in_the_operator_log(caplog: pytest.LogCaptur
 # Over the real server: tools/list, and a walk of every registered tool
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
+@contextmanager
+def _refused_port() -> Iterator[int]:
+    """A port nothing can listen on while the test runs: bound, never listening (#184)."""
+    with bound_socket() as sock:
+        yield int(sock.getsockname()[1])
 
 
 @asynccontextmanager
 async def real_server(
     store: MemoryStore, clock: Clock
 ) -> AsyncIterator[tuple[int, OperatorTokens]]:
-    port = _free_port()
+    sock = bound_socket()  # never released, so no other process can take the port (#184)
+    port = int(sock.getsockname()[1])
     operators = OperatorTokens(store, clock=clock)
     await operators.reload()
     app = build_app(
         port=port, tokens=GateTokens(TokenRegistry(), operators), tools=all_tools(store, clock)
     )
-    server = McpServer(app, "127.0.0.1", port)
+    server = McpServer(app, "127.0.0.1", port, sock=sock)
     await server.start()
     try:
         yield port, operators
@@ -637,22 +638,23 @@ async def test_the_bridge_exits_clearly_on_a_refused_token() -> None:
 
 
 async def test_the_bridge_exits_clearly_when_jotflow_is_down() -> None:
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "jotflow.cli",
-        "operator",
-        "connect",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={
-            **os.environ,
-            command.TOKEN_ENV: OPERATOR_PREFIX + "x" * 43,
-            command.PORT_ENV: str(_free_port()),
-        },
-    )
-    out, err = await asyncio.wait_for(process.communicate(b""), timeout=30)
+    with _refused_port() as port:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "jotflow.cli",
+            "operator",
+            "connect",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={
+                **os.environ,
+                command.TOKEN_ENV: OPERATOR_PREFIX + "x" * 43,
+                command.PORT_ENV: str(port),
+            },
+        )
+        out, err = await asyncio.wait_for(process.communicate(b""), timeout=30)
     assert process.returncode == command.EXIT_BRIDGE
     assert out == b""
     assert b"could not reach JotFlow's MCP endpoint" in err
@@ -746,8 +748,9 @@ def test_connect_reports_a_down_server(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv(command.TOKEN_ENV, OPERATOR_PREFIX + "x" * 43)
-    monkeypatch.setenv(command.PORT_ENV, str(_free_port()))
-    assert main(["operator", "connect"]) == command.EXIT_BRIDGE
+    with _refused_port() as port:
+        monkeypatch.setenv(command.PORT_ENV, str(port))
+        assert main(["operator", "connect"]) == command.EXIT_BRIDGE
     assert "could not reach JotFlow's MCP endpoint" in capsys.readouterr().err
 
 

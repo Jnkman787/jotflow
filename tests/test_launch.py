@@ -37,10 +37,10 @@ from jotflow.orchestrator.launch import (
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.store import MemoryStore
 from jotflow.store.base import MAX_RUN_TIMEOUT_SECONDS
-from jotflow.whiteboard.server import McpServer, build_app
+from jotflow.whiteboard.server import McpServer, bound_socket, build_app
 from jotflow.whiteboard.tokens import TokenRegistry
 from jotflow.whiteboard.write_tools import PostError, RecordResultArgs, WriteTools
-from tests.test_runner import ENVIRON, SECRET, _free_port, config, recorded
+from tests.test_runner import ENVIRON, SECRET, config, recorded
 from tests.test_runs import CH, ISSUE_URL, POLICY, THREAD, Clock, _approved
 
 EXEC_SECRET = "e" * 40
@@ -694,11 +694,12 @@ async def test_a_token_failure_at_start_stops_launching_for_the_tick(
 
 
 async def test_a_supervised_run_reaches_mcp_and_succeeds(tmp_path: Path) -> None:
-    port = _free_port()
+    sock = bound_socket()  # never released, so no other process can take the port (#184)
+    port = int(sock.getsockname()[1])
     store = MemoryStore()
     registry = TokenRegistry()
     lifecycle = RunLifecycle(store, registry)
-    server = McpServer(build_app(port=port, tokens=registry), "127.0.0.1", port)
+    server = McpServer(build_app(port=port, tokens=registry), "127.0.0.1", port, sock=sock)
     convo_cfg = config(tmp_path, "mcp", mcp_url=f"http://127.0.0.1:{port}/mcp")
     convo = Runner(convo_cfg, environ=ENVIRON)
     client = RunnerClient(
