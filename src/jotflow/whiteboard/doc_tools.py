@@ -79,11 +79,22 @@ TOO_MANY_BYTES = (
 )
 UNAVAILABLE = "repo docs can't be read right now; draft without them"
 NOT_RUNNING = "run {run} is not running"
-CODEX_READS_ALL = (
-    "the codex preset keeps Codex's MCP resource tools, which read files through GitHub's "
-    "server with the read token, so with Contents: Read its runs can read any file in the "
-    "token's repos, not only read_paths. Use claude-code, or limit the read token"
+# Codex keeps MCP resource tools that read files through GitHub's server with the
+# read token. With Contents: Read they reach every file the token does, so
+# read_paths can't bound them: the two are refused together, failing closed.
+# Lifted when Codex can drop those tools (#274, with #220).
+CODEX_CONFLICT = (
+    "drafting and question runs are off: jotflow.toml sets read_paths and the preset is "
+    "codex, whose MCP resource tools would read any file the read token reaches once it "
+    "has Contents: Read, not only read_paths. Use claude-code, or remove read_paths"
 )
+
+
+def docs_conflict(policy: Policy) -> str | None:
+    """Why this policy's doc reads can't run safely with its preset, or None (#209)."""
+    if policy.reads_docs and policy.agent.preset == "codex":
+        return CODEX_CONFLICT
+    return None
 
 
 class ListedDocs(Protocol):
@@ -417,8 +428,6 @@ async def probe_docs(source: DocSource, policy: Policy) -> list[str]:
                 )
             else:
                 log.info("%s: %d docs match read_paths", entry.repo, count)
-    if policy.agent.preset == "codex":
-        warnings.append(CODEX_READS_ALL)
     for warning in warnings:
         log.warning("%s", warning)
     return warnings

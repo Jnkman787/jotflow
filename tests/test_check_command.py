@@ -608,11 +608,14 @@ def test_check_names_what_read_paths_needs_from_the_read_token() -> None:
     assert "covers every repo the token reaches" in note
 
 
-def test_check_warns_that_codex_can_read_past_read_paths() -> None:
-    from tests.test_doc_tools import with_read_paths
-    from tests.test_write_tools import POLICY
-
-    policy = with_read_paths(POLICY)
-    codex = policy.model_copy(update={"agent": policy.agent.model_copy(update={"preset": "codex"})})
-    _, warning = check_command.doc_notes(codex)
-    assert warning.startswith("The codex preset keeps Codex's MCP resource tools")
+def test_codex_with_read_paths_fails_check(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Codex's resource tools would read past read_paths, so it's refused, not warned (#209).
+    _with_preset(workspace, "codex")
+    toml = workspace / "jotflow.toml"
+    toml.write_text(toml.read_text() + 'read_paths = ["docs/*.md"]\n')
+    assert main(["check"]) == check_command.EXIT_FAILED
+    out = capsys.readouterr().out
+    assert "fail  policy: drafting and question runs are off" in out
+    assert "codex, whose MCP resource tools would read any file" in out

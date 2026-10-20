@@ -41,7 +41,7 @@ from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.title_pattern import times_out
-from jotflow.whiteboard.doc_tools import CODEX_READS_ALL
+from jotflow.whiteboard.doc_tools import docs_conflict
 
 EXIT_OK = 0
 # Something JotFlow needs is wrong in a file check can name, such as an agent
@@ -294,8 +294,6 @@ def doc_notes(policy: Policy) -> list[str]:
         "covers every repo the token reaches, not only these paths: limit the token to repos "
         "where that's fine. JotFlow checks it can list each repo's files when it starts."
     ]
-    if policy.agent.preset == "codex":
-        notes.append(CODEX_READS_ALL[0].upper() + CODEX_READS_ALL[1:])
     return notes
 
 
@@ -330,14 +328,18 @@ def run(args: argparse.Namespace) -> int:
     for note in doc_notes(policy):
         print(f"note  docs: {note}")
     failures: list[str] = []
+    if (conflict := docs_conflict(policy)) is not None:
+        print(f"fail  policy: {conflict}")
+        failures.append(conflict)
     if policy.agent.preset:
-        failures = agent_failures(policy, Path("."))
+        agent = agent_failures(policy, Path("."))
+        failures += agent
         warnings = agent_readiness(policy, Path("."))
-        for failure in failures:
+        for failure in agent:
             print(f"fail  agent: {failure}")
         for warning in warnings:
             print(f"warn  agent: {warning}")
-        if not warnings and not failures:
+        if not warnings and not agent:
             print(f"ok    agent: {policy.agent.preset}, both agent files filled in")
     done = EXIT_FAILED if failures else EXIT_OK
     if not getattr(args, "live", False):

@@ -280,7 +280,7 @@ There are two agent containers, so the GitHub token that can write never sits wh
 
    GitHub adds **Metadata: Read-only** to both by itself.
 
-   **Only if a repo sets `read_paths`** in `jotflow.toml`, so drafting can read its design docs (#209), also set **Contents** to **Read-only** on the read token. GitHub grants that for every repo the token selects, and for every file in them. `read_paths` limits only what JotFlow's own doc tools read: a custom agent command with a shell, or the `codex` preset's resource tools, could read any file the token reaches. So select only repos where that's fine. `jotflow check` prints this as a note whenever `read_paths` is set, and JotFlow warns at startup if the token can't list a repo's files.
+   **Only if a repo sets `read_paths`** in `jotflow.toml`, so drafting can read its design docs (#209), also set **Contents** to **Read-only** on the read token. GitHub grants that for every repo the token selects, and for every file in them. `read_paths` limits only what JotFlow's own doc tools read: a custom agent command with a shell could read any file the token reaches. So select only repos where that's fine. The `codex` preset can't be used with `read_paths` at all, because its resource tools would read past it: `jotflow check` fails, and JotFlow turns drafting and question runs off (#274). `jotflow check` prints this as a note whenever `read_paths` is set, and JotFlow warns at startup if the token can't list a repo's files.
 5. Click **Generate token**, and copy it. It starts with `github_pat_`, and GitHub shows it only once.
 
 When a channel later feeds a new repo, add it to both tokens on GitHub too. [docs/presets.md](presets.md) explains what each token can reach.

@@ -1377,3 +1377,14 @@ async def test_a_question_queues_a_question_run_and_never_a_draft() -> None:
     assert asked is not None and asked.chatter and asked.linked_by == "agent"
     # Neither the keyword handler nor the help offered anything for a question.
     assert rig.slack.reactions == [] and rig.help.whispers == []
+
+
+def test_codex_with_read_paths_turns_drafting_and_questions_off() -> None:
+    # Fail closed (#209): Codex's resource tools would read past read_paths.
+    from jotflow.whiteboard.doc_tools import CODEX_CONFLICT
+    from tests.test_doc_tools import with_read_paths
+
+    kinds = decide_run_kinds(settings(), with_read_paths(policy(preset="codex")))
+    assert kinds.on == {RunKind.EXECUTION}
+    assert kinds.off == (CODEX_CONFLICT,)
+    assert decide_run_kinds(settings(), policy(preset="codex")).on == RUN_KINDS

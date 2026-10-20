@@ -84,7 +84,13 @@ from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import SqliteStore, Store
-from jotflow.whiteboard.doc_tools import DocReads, DocSource, doc_tools, probe_docs
+from jotflow.whiteboard.doc_tools import (
+    DocReads,
+    DocSource,
+    doc_tools,
+    docs_conflict,
+    probe_docs,
+)
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.tokens import TokenCheck, TokenRegistry
@@ -134,7 +140,10 @@ def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
         )
     on: set[RunKind] = set()
     off: list[str] = []
-    if settings.runner_secret is None:
+    if (conflict := docs_conflict(policy)) is not None:
+        # Fail closed (#209): the read token would reach past read_paths.
+        off.append(conflict)
+    elif settings.runner_secret is None:
         off.append("drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set")
     else:
         on |= CONVERSATION_KINDS
