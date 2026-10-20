@@ -63,6 +63,11 @@ class Settings(BaseSettings):
         default=None,
         description="Shared secret of the execution runner; matches agent-exec.env",
     )
+    runner_allow_public: bool = Field(
+        default=False,
+        description="Send runner secrets to runners at public addresses too (#234). Off, a "
+        "runner name must resolve only to private, loopback or link-local addresses",
+    )
 
     # Local state. Pointers only; see docs/architecture.md.
     database_path: str = "jotflow.db"

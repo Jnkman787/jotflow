@@ -32,6 +32,7 @@ from jotflow.adapters.runner import (
 )
 from jotflow.logs import configure_logging
 from jotflow.models import RunKind
+from jotflow.netcheck import AddressRefused
 
 EXIT_CONFIG = 2
 
@@ -61,6 +62,10 @@ class RunnerSettings(BaseSettings):
     github_write_token: SecretStr | None = None
     agent_env_allow: str = Field(default="", description="Comma-separated names to pass on")
     mcp_url: str = "http://jotflow:8765/mcp"
+    mcp_allow_public: bool = Field(
+        default=False,
+        description="Allow an MCP URL whose host resolves to a public address (#234)",
+    )
     runner_host: str = "0.0.0.0"  # the internal Compose network only; no port is published
     runner_port: int = Field(default=RUNNER_PORT, ge=1, le=65535)
     runner_allowed_hosts: str = Field(default="agent", description="Comma-separated Host names")
@@ -108,6 +113,7 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
     return RunnerConfig(
         secret=settings.runner_secret.get_secret_value(),
         mcp_url=settings.mcp_url,
+        mcp_allow_public=settings.mcp_allow_public,
         command=() if settings.agent_command is None else parse_command(settings.agent_command),
         preset=preset,
         models=_models(settings, kinds),
@@ -152,6 +158,14 @@ async def serve(settings: RunnerSettings, config: RunnerConfig) -> int:
         print(f"jotflow runner: removed {removed} leftover run directories", file=sys.stderr)
     log.info("%s", startup_line(config))
     runner = Runner(config)
+    try:
+        await runner.check_mcp_host()
+    except AddressRefused as refused:
+        if not refused.unresolved:
+            print(f"jotflow runner: configuration problem: {refused}", file=sys.stderr)
+            return EXIT_CONFIG
+        # JotFlow may still be starting; each launch checks again.
+        log.warning("%s", refused)
     server = uvicorn.Server(
         uvicorn.Config(
             build_runner_app(runner, config),

@@ -11,7 +11,11 @@ stops it with ``DELETE``. Runs are routed by kind, with no fallback:
 
 A secret is only ever sent to its own runner. The client never follows a
 redirect and ignores proxy settings from the environment, so neither the secret
-nor the token can be carried to another host.
+nor the token can be carried to another host. It resolves each runner's name
+once, refuses unless every address is private (#234, :mod:`jotflow.netcheck`),
+and connects to the address it checked, keeping the name in the Host header. A
+runner that isn't running can't send the secret to a public host that a DNS
+search domain points the name at.
 
 :class:`RunSupervisor` drives runs from start to end through
 :class:`~jotflow.orchestrator.runs.RunLifecycle`, so every run loses its token
@@ -36,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from jotflow.config import Settings
 from jotflow.models import Run, RunKind, RunStatus
+from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.store.base import Store
 from jotflow.whiteboard.write_tools import PostError, ThreadPoster
@@ -43,6 +48,10 @@ from jotflow.whiteboard.write_tools import PostError, ThreadPoster
 log = logging.getLogger("jotflow.launch")
 
 REQUEST_TIMEOUT_SECONDS = 10.0
+# A runner on the Compose network answers a connect at once; a dead one shouldn't
+# hold a call for the full request timeout (#234).
+CONNECT_TIMEOUT_SECONDS = 3.0
+ALLOW_PUBLIC_ENV = "JOTFLOW_RUNNER_ALLOW_PUBLIC"
 TICK_SECONDS = 2.0
 _RUN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -67,13 +76,24 @@ _REFUSALS = {
     403: "the runner does not serve this run kind (403)",
     409: "the runner already has this run (409)",
     413: "the runner refused the request as too large (413)",
+    502: "the runner won't hand the agent JotFlow's MCP URL: it doesn't resolve to a private "
+    "address (502)",
     429: "the runner is at its limit of live runs (429)",
     503: "the runner has no GitHub token for this run kind (503)",
 }
 
 
 class RunnerError(Exception):
-    """A runner call did not succeed. The message is one of the fixed reasons."""
+    """A runner call did not succeed. The message is one of the fixed reasons.
+
+    ``retry`` says whether trying again could help: ``"unreachable"`` for a
+    runner that may still be starting, ``"unresolved"`` for a name that doesn't
+    resolve yet, or None for a refusal that won't fix itself.
+    """
+
+    def __init__(self, reason: str, *, retry: str | None = None) -> None:
+        super().__init__(reason)
+        self.retry = retry
 
 
 def _refused(status: int) -> RunnerError:
@@ -135,19 +155,27 @@ class RunnerClient:
         conversation: RunnerEndpoint | None,
         execution: RunnerEndpoint | None,
         transport: httpx2.AsyncBaseTransport | None = None,
+        resolver: Resolver | None = None,
+        allow_public: bool = False,
     ) -> None:
         self._conversation = conversation
         self._execution = execution
+        self._resolver: Resolver = resolver or SystemResolver()
+        self._allow_public = allow_public
         self._http = httpx2.AsyncClient(
             transport=transport,
-            timeout=REQUEST_TIMEOUT_SECONDS,
+            timeout=httpx2.Timeout(REQUEST_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
             follow_redirects=False,
             trust_env=False,
         )
 
     @classmethod
     def from_settings(
-        cls, settings: Settings, *, transport: httpx2.AsyncBaseTransport | None = None
+        cls,
+        settings: Settings,
+        *,
+        transport: httpx2.AsyncBaseTransport | None = None,
+        resolver: Resolver | None = None,
     ) -> RunnerClient:
         def endpoint(url: str, secret: SecretStr | None) -> RunnerEndpoint | None:
             return RunnerEndpoint(url, secret.get_secret_value()) if secret is not None else None
@@ -156,6 +184,8 @@ class RunnerClient:
             conversation=endpoint(settings.runner_url, settings.runner_secret),
             execution=endpoint(settings.runner_exec_url, settings.runner_exec_secret),
             transport=transport,
+            resolver=resolver,
+            allow_public=settings.runner_allow_public,
         )
 
     def endpoint_for(self, kind: RunKind) -> RunnerEndpoint | None:
@@ -218,16 +248,35 @@ class RunnerClient:
         endpoint = self.endpoint_for(kind)
         if endpoint is None:
             raise RunnerError(NO_RUNNER)
+        url = httpx2.URL(endpoint.url + path)
+        host, port = url.host, url.port or (443 if url.scheme == "https" else 80)
         try:
+            address = await checked_address(
+                self._resolver, host, port, allow_public=self._allow_public, opt_in=ALLOW_PUBLIC_ENV
+            )
+        except AddressRefused as refused:
+            reason = str(refused)
+            log.warning("not calling the %s runner: %s", kind.value, reason)
+            raise RunnerError(reason, retry="unresolved" if refused.unresolved else None) from None
+        try:
+            # Dial the address that was checked, never a second lookup, and keep the
+            # name in Host for the runner's allowlist.
             return await self._http.request(
                 method,
-                endpoint.url + path,
+                url.copy_with(host=address),
                 json=json,
-                headers={"Authorization": f"Bearer {endpoint.secret}"},
+                headers={"Authorization": f"Bearer {endpoint.secret}", "Host": url.netloc.decode()},
             )
         except httpx2.HTTPError:
             # Never the exception text: it can name the request.
-            raise RunnerError(UNREACHABLE) from None
+            raise RunnerError(UNREACHABLE, retry="unreachable") from None
+
+    def public_hosts(self) -> list[str]:
+        """Runner hosts JotFlow may send secrets to although they could be public."""
+        if not self._allow_public:
+            return []
+        hosts = [httpx2.URL(e.url).host for e in (self._conversation, self._execution) if e]
+        return sorted(set(hosts))
 
 
 def _checked(run_id: str) -> str:
