@@ -86,7 +86,41 @@ docker compose up -d
 
 The old database's WAL files are removed first, so none of their pages are replayed onto the restored file. The restored file is owned by the container's user with mode 0600, as JotFlow writes it.
 
-A restore loses whatever happened after the backup was taken. Rebuilding the store from Slack (#38) isn't built yet.
+A restore loses whatever happened after the backup was taken.
+
+### Rebuild from Slack, without a backup
+
+`jotflow rebuild` restores the part of the store that routes new messages: which threads and messages belong to which GitHub issue. It reads JotFlow's own replies in each configured channel, the `Created` and `Updated` messages with an issue link, and writes only pointers. It never writes message text, and it doesn't touch GitHub. Run it with JotFlow stopped:
+
+```
+docker compose stop jotflow
+docker compose run --rm --no-deps jotflow jotflow rebuild
+docker compose start jotflow
+```
+
+It restores:
+- **a topic per issue**, titled by its nickname and number, such as `web#42`
+- **the people's messages** in each such thread, linked to their topic, or marked as not an idea when they start with `skip:`
+- **each channel's mode,** from JotFlow's latest mode announcement
+- **whether the channel's guide was already posted,** so it isn't posted and pinned twice
+
+It prints progress per channel, then counts. A big channel takes minutes, because Slack limits how fast history can be read, and rebuild waits out each limit.
+
+**Options.**
+- `--dry-run` reads Slack and prints what it would restore, writing nothing.
+- `--since 90d` reads only the last 90 days. The default is all history.
+- `--channel C0IDEAS01` rebuilds one channel, and can be repeated.
+- `--merge` adds to a store that already has topics, never overwriting what's there. Without it, rebuild refuses a store with topics in a configured channel.
+
+**What it can't restore.** These are by design:
+- proposals still pending, approved or failed. Their drafts are gone, and the next message in the thread drafts again.
+- applied proposals' history: who approved, and the run records
+- identity links, operator tokens and identity unlinks, which Slack only showed privately. People run `/jotflow link` again, and admins reissue tokens.
+- old reaction marks
+- real topic titles
+- messages deleted in Slack, threads older than the workspace's history retention or `--since`, and threads JotFlow never wrote an issue for
+
+**The running check.** Rebuild refuses when it sees JotFlow's heartbeat, but a separate `docker compose run` container can't see the running one's, so stop JotFlow first.
 
 ## Upgrading, and rolling back
 

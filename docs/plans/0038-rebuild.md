@@ -4,7 +4,7 @@
 
 - Issue: #38 (M6: After v0.1.0)
 - Draft PR: to be opened
-- Status: plan only, for the lead before any code
+- Status: approved by the lead on 2026-10-20, being built
 - Last verified: 2026-10-20, against main
 - Next safe action: the lead's review, then the open questions
 
@@ -55,7 +55,7 @@ These are documented in deployment.md:
 
   ```
   docker compose stop jotflow
-  docker compose run --rm jotflow jotflow rebuild
+  docker compose run --rm --no-deps jotflow jotflow rebuild
   docker compose start jotflow
   ```
 
@@ -77,13 +77,21 @@ These are documented in deployment.md:
 3. **Several issues in one thread** happen when a thread got a create, then an update, or two topics. Each reply's issue becomes its own topic only if no topic already links that issue. Messages are linked to the topic of the nearest preceding reply.
 4. **`--since all`** on a big, old channel is slow. Should the default be `topic_window_days`, with `all` opt-in? I'd default to all, since a restore is rare and should be complete.
 
+## Decisions, 2026-10-20 (the lead)
+
+- **Question 1: no GitHub reads.** #38 is Slack-only, because JotFlow holds no GitHub token. #256 is the optional `--from-github` follow-up through the read-only runner.
+- **Question 4: `--since` defaults to all history.** It respects Slack's rate limits through the client's retry handling, and prints progress per channel, so a big channel doesn't look stuck.
+- **No migration.** The architect is told. #36 takes migration 14.
+- **Box 1 needs a real round-trip test:** build a store, delete it, rebuild from the fake Slack, and compare the index.
+
 ## Progress checklist
 
-- [ ] The lead reviews this plan, and the architect answers questions 1 and 2
-- [ ] The command, the Slack walk, and the store writes
-- [ ] Refusals: running JotFlow, non-empty store without `--merge`
-- [ ] Tests with a fake Slack: round trip, deleted reply, two issues in one thread, rate limits, `--dry-run`
-- [ ] Docs: deployment.md restore, install.md, threat model data table if anything changes
+- [x] The lead approves this plan, and decides questions 1 and 4
+- [ ] Security looks at the transient text handling
+- [x] The command, the Slack walk, and the store writes
+- [x] Refusals: running JotFlow, non-empty store without `--merge`
+- [x] Tests with a fake Slack: round trip, deleted reply, two issues in one thread, rate limits, `--dry-run`
+- [x] Docs: deployment.md's new "Rebuild from Slack, without a backup", the README Principles line, and the CHANGELOG's Unreleased section. The threat model waits on security's answer
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
@@ -93,4 +101,9 @@ These are documented in deployment.md:
 
 ## Handoff notes
 
-None yet.
+- **Built as planned,** with two changes found while coding:
+  - Ingest stores no permalink, since issue bodies build links from the workspace URL at write time, so rebuild stores none either.
+  - The store API has no multi-call transaction, so a crash can leave a thread half-restored. Rebuilding again with `--merge` completes it, because every write is skipped if its row already exists.
+- **Message assignment:** each person's message goes to the issue of the first JotFlow reply at or after it. Later follow-ups go to the thread's last issue.
+- **The mode** is recorded with the bot's own user id as `changed_by`, so `/jotflow mode` says it was set by the bot.
+- **The running check** only sees a heartbeat in the same environment. The docs say to stop JotFlow first.

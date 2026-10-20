@@ -19,6 +19,7 @@ from jotflow.commands import health as health_command
 from jotflow.commands import identity as identity_command
 from jotflow.commands import init as init_command
 from jotflow.commands import operator as operator_command
+from jotflow.commands import rebuild as rebuild_command
 from jotflow.commands import replay as replay_command
 from jotflow.commands import run as run_command
 from jotflow.commands import runner as runner_command
@@ -46,6 +47,10 @@ COMMANDS: dict[str, tuple[ModuleType, str]] = {
     "identity": (
         identity_command,
         "Remove someone's GitHub link from the host, and tell them privately",
+    ),
+    "rebuild": (
+        rebuild_command,
+        "With JotFlow stopped: restore topics and message links from JotFlow's Slack replies",
     ),
     "execute-fixture": (
         fixture_command,

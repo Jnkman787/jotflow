@@ -4,6 +4,10 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- **`jotflow rebuild`** restores topics, message links, channel modes and the guide flag from JotFlow's own Slack replies, after the database is lost without a backup. It stores pointers only, never message text, and doesn't touch GitHub. [docs/deployment.md](docs/deployment.md#rebuild-from-slack-without-a-backup) lists what it can't restore (#38).
+
 ### Changed
 
 - **`/jotflow help` and `/jotflow repos` are easier to read (#257).** Each reply has short headed sections, for keywords, reactions, repos, approval and commands. Repos are a bulleted list with the nickname and `owner/name` in code. They still can't ping or link: Slack is told to show the text verbatim, and every name and description from `jotflow.toml` is escaped. A long list still fits Slack's limits, and ends "and N more" when it doesn't.
@@ -113,6 +117,7 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
+[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.1
