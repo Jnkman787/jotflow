@@ -400,6 +400,8 @@ async def test_an_answer_may_name_a_repo_found_by_a_channels_scope(clock: Clock)
         ("https://evil.example/app.js", "[link removed]"),
         ("www.app.js", "[link removed]"),
         ("ops@node.js", "[link removed]"),
+        ("evil.com.js and example.co.uk.txt", "[link removed] and [link removed]"),
+        ("jquery.min.js", "[link removed]"),  # more than one dot: the safe side
     ],
 )
 def test_a_file_name_stays_but_never_a_tld(text: str, posted: str) -> None:

@@ -357,8 +357,14 @@ def safe_text(text: str, repos: Collection[str]) -> tuple[str, int]:
     def link(match: re.Match[str]) -> str:
         nonlocal removed
         last = match.group("last")
-        if last is not None and match.group("path") is None and last.lower() in FILE_EXTENSIONS:
-            return match.group(0)  # a file name, which Slack can't make a link of
+        name = match.group(0)
+        if (
+            last is not None
+            and match.group("path") is None
+            and name.count(".") == 1  # "evil.com.js" could still hide "evil.com"
+            and last.lower() in FILE_EXTENSIONS
+        ):
+            return name  # a file name, which Slack can't make a link of
         removed += 1
         return LINK_REMOVED
 
