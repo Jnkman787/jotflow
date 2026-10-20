@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 
 from jotflow.models import DiscoveredRepo
-from jotflow.orchestrator.repo_catalog import (
+from jotflow.policy import Policy, RepoNotAllowedError
+from jotflow.repo_catalog import (
     ACCESS_FOR,
     RENAME_GRACE,
     STALE_AFTER,
@@ -17,7 +18,6 @@ from jotflow.orchestrator.repo_catalog import (
     RepoRefused,
     default_nickname,
 )
-from jotflow.policy import Policy, RepoNotAllowedError
 
 CH = "C0TEST1"
 

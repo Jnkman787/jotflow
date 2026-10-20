@@ -49,6 +49,9 @@ RENAME_GRACE = timedelta(days=7)
 # A positive write-access answer is kept this long; a negative one never is.
 ACCESS_FOR = timedelta(minutes=15)
 DESCRIPTION_LIMIT = 200
+# How many found repos a drafting packet shows, beside the listed ones.
+PACKET_DISCOVERED = 30
+_WORD = re.compile(r"[a-z0-9]{3,}")
 MAX_TOPICS = 10
 _TOPIC = re.compile(r"[a-z0-9][a-z0-9-]{0,49}")
 _NICKNAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
@@ -278,6 +281,28 @@ class RepoCatalog:
             if entry.repo.casefold() == repo.casefold():
                 return details
         return RepoDetails()
+
+    def listed(
+        self, channel_id: str, text: str, limit: int = PACKET_DISCOVERED
+    ) -> list[tuple[RepoPolicy, RepoDetails]]:
+        """What a drafting packet shows: every listed repo, then up to ``limit`` found ones.
+
+        Found repos are ranked by words they share with ``text``, the thread, then by
+        last push. This only decides what is shown; any repo in scope may be proposed.
+        """
+        channel = self._channel(channel_id)
+        words = set(_WORD.findall(text.casefold()))
+
+        def overlap(pair: tuple[RepoPolicy, RepoDetails]) -> int:
+            entry, details = pair
+            theirs = set(_WORD.findall(entry.repo.partition("/")[2].casefold()))
+            theirs |= set(_WORD.findall((details.description or "").casefold()))
+            theirs |= set(details.topics)
+            return len(words & theirs)
+
+        found = self._discovered(channel_id)  # newest push first
+        ranked = sorted(found, key=overlap, reverse=True)  # stable: ties keep push order
+        return [(entry, RepoDetails()) for entry in channel.repos] + ranked[:limit]
 
     def scope_total(self, channel_id: str) -> int:
         """How many repos the channel's scopes reach right now."""

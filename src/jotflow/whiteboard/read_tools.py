@@ -50,6 +50,7 @@ from jotflow.models import (
 )
 from jotflow.orchestrator.topics import list_topics as build_topic_list
 from jotflow.policy import IssueLinks, Policy, UnknownChannelError
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import Store, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
@@ -193,6 +194,16 @@ class RepoBrief(BaseModel):
             "the title and body and take precedence over recent issues' style"
         ),
     )
+    discovered: bool = Field(
+        default=False,
+        description="Found in GitHub by the channel's scope, not listed in its policy (#236)",
+    )
+    github_description: UntrustedText | None = Field(
+        default=None,
+        description="A found repo's description on GitHub, cleaned; untrusted, like Slack text",
+    )
+    topics: list[str] = Field(default_factory=list, description="A found repo's GitHub topics")
+    pushed_at: str | None = Field(default=None, description="A found repo's last push")
     title_pattern: str | None = Field(
         default=None,
         description="A regular expression the title must fully match; propose_issue refuses others",
@@ -205,6 +216,13 @@ class ChannelBrief(BaseModel):
     repos: list[RepoBrief]
     issue_links: IssueLinks = Field(
         description="'none' keeps people's names, the channel, and Slack links out of bodies"
+    )
+    scope_total: int = Field(
+        default=0,
+        description="How many repos the channel's scopes reach; more may be in scope than listed",
+    )
+    scopes: list[str] = Field(
+        default_factory=list, description="What each of the channel's scopes reaches, in words"
     )
 
 
@@ -300,9 +318,11 @@ def read_tools(
     *,
     clock: Clock = utc_now,
     attribution: Attribution | None = None,
+    repos: RepoCatalog | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The three read tools, bound to their dependencies. Built once at startup."""
     work_source: WorkSource = source or NoWorkSource()
+    catalog = repos if repos is not None else RepoCatalog.static(policy)
 
     def _audit(grant: Grant, tool: str, channel: str) -> None:
         """One line per operator call: who, which tool, which channel, when. No content."""
@@ -415,7 +435,7 @@ def read_tools(
             instructions=DRAFTING_INSTRUCTIONS if grant.kind is RunKind.DRAFTING else "",
             run_id=run.id,
             channel_id=grant.channel_id,
-            channel=_brief(grant.channel_id),
+            channel=_brief(grant.channel_id, thread),
             thread=thread,
             people=await _people(thread),
             topics=index,
@@ -423,8 +443,8 @@ def read_tools(
         )
         return Work(kind=grant.kind, conversation=conversation)
 
-    def _brief(channel_id: str) -> ChannelBrief:
-        channel = policy.channel(channel_id)  # list_topics already refused an unknown one
+    def _brief(channel_id: str, thread: WorkThread) -> ChannelBrief:
+        text = " ".join(m.text.text for m in thread.messages)
         return ChannelBrief(
             repos=[
                 RepoBrief(
@@ -434,10 +454,18 @@ def read_tools(
                     labels=None if r.labels is None else list(r.labels),
                     conventions=r.conventions,
                     title_pattern=r.title_pattern,
+                    discovered=found.discovered,
+                    github_description=(
+                        UntrustedText(text=found.description) if found.description else None
+                    ),
+                    topics=list(found.topics),
+                    pushed_at=found.pushed_at,
                 )
-                for r in channel.repos
+                for r, found in catalog.listed(channel_id, text)
             ],
             issue_links=policy.issue_links,
+            scope_total=catalog.scope_total(channel_id),
+            scopes=catalog.summaries(channel_id),
         )
 
     async def _people(thread: WorkThread) -> list[Person]:
