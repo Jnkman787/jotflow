@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 from jotflow.models import (
     ChannelMode,
+    Duplicate,
     ExecutionResult,
     IssueProposal,
     MessageRef,
@@ -29,9 +30,13 @@ from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
     AUTO_APPROVER,
     DEFAULT_RUN_TIMEOUTS,
+    DUPLICATE_MOVED_ON,
+    DUPLICATE_NOT_NEW,
+    DUPLICATE_TOPIC_LINKED,
     ChannelModeSetting,
     Clock,
     ConflictError,
+    DuplicateRefusedError,
     EditField,
     IdentityLink,
     IdentityUnlink,
@@ -58,7 +63,9 @@ from jotflow.store.base import (
     check_run_request,
     cleared_draft,
     edited_draft,
+    plan_duplicate,
     plan_transition,
+    plan_undo,
     to_text,
     utc_now,
 )
@@ -353,6 +360,76 @@ class MemoryStore:
                 record = record.model_copy(update=update, deep=True)
                 self._proposals[proposal_id] = record
             return record.model_copy(deep=True)
+
+    async def mark_duplicate(
+        self, proposal_id: str, *, index: int, expected_hash: str, by: str
+    ) -> ProposalRecord:
+        check_id(by, "Slack user id")
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            related = plan_duplicate(record, index, expected_hash)
+            topic_id = record.proposal.topic_id
+            topic = None if topic_id is None else self._topics.get(topic_id)
+            if topic is None or topic.topic.channel_id != record.channel_id:
+                raise DuplicateRefusedError(DUPLICATE_NOT_NEW)
+            if topic.topic.issue_number is not None:
+                raise DuplicateRefusedError(DUPLICATE_TOPIC_LINKED)
+            now = self._clock()
+            self._topics[topic.topic.id] = replace(
+                topic,
+                topic=topic.topic.model_copy(
+                    update={"repo": related.repo, "issue_number": related.number}
+                ),
+                last_activity_at=now,
+            )
+            duplicate = Duplicate(repo=related.repo, number=related.number, by=by, at=now)
+            update = {
+                **self._cleared(record),
+                "state": ProposalState.REJECTED,
+                "duplicate": duplicate,
+                "revision": record.revision + 1,
+            }
+            updated = record.model_copy(update=update, deep=True)
+            self._proposals[proposal_id] = updated
+            return updated.model_copy(deep=True)
+
+    async def undo_duplicate(self, proposal_id: str, *, by: str) -> ProposalRecord:
+        check_id(by, "Slack user id")
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            duplicate = plan_undo(record)
+            topic_id = record.proposal.topic_id
+            topic = None if topic_id is None else self._topics.get(topic_id)
+            bound = (
+                topic is not None
+                and topic.topic.repo is not None
+                and topic.topic.repo.casefold() == duplicate.repo.casefold()
+                and topic.topic.issue_number == duplicate.number
+            )
+            if topic is None or not bound:
+                raise DuplicateRefusedError(DUPLICATE_MOVED_ON)
+            # Drafted after the "same as" and written: it relies on the binding.
+            if any(
+                p.proposal.topic_id == topic.topic.id
+                and p.state is ProposalState.APPLIED
+                and p.created_at > duplicate.at
+                for p in self._proposals.values()
+            ):
+                raise DuplicateRefusedError(DUPLICATE_MOVED_ON)
+            now = self._clock()
+            self._topics[topic.topic.id] = replace(
+                topic, topic=topic.topic.model_copy(update={"repo": None, "issue_number": None})
+            )
+            undone = duplicate.model_copy(update={"undone_by": by, "undone_at": now})
+            updated = record.model_copy(
+                update={"duplicate": undone, "revision": record.revision + 1}, deep=True
+            )
+            self._proposals[proposal_id] = updated
+            return updated.model_copy(deep=True)
 
     async def supersede_pending(
         self, channel_id: str, thread_ts: str, *, keep_id: str

@@ -331,6 +331,22 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),
     Migration(12, (_OPERATOR_TOKENS,)),
     Migration(13, (_IDENTITY_UNLINKS,)),
+    # "Same as" (#36): the issue a person said the proposal duplicates, who said so,
+    # and who undid it. Pointers and Slack ids only. The store keeps them consistent:
+    # all four set together, only on a rejected proposal (SQLite can't add that CHECK).
+    Migration(
+        14,
+        (
+            "ALTER TABLE proposals ADD COLUMN duplicate_repo TEXT"
+            " /* owner/name of the issue a person marked it the same as */",
+            "ALTER TABLE proposals ADD COLUMN duplicate_number INTEGER /* that issue's number */",
+            "ALTER TABLE proposals ADD COLUMN duplicate_by TEXT /* Slack user id who marked it */",
+            "ALTER TABLE proposals ADD COLUMN duplicate_at TEXT /* UTC, ISO 8601 */",
+            "ALTER TABLE proposals ADD COLUMN duplicate_undone_by TEXT"
+            " /* Slack user id who undid it, if anyone */",
+            "ALTER TABLE proposals ADD COLUMN duplicate_undone_at TEXT /* UTC, ISO 8601 */",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

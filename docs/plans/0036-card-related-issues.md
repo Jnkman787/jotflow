@@ -4,7 +4,7 @@
 
 - Issue: #36 (M6: After v0.1.0)
 - Draft PR: to be opened
-- Status: plan, with the lead's, the architect's and security's calls recorded on 2026-10-20. Ready to build
+- Status: built, ready for review
 - Last verified: 2026-10-20, against main
 - Next safe action: review the open questions below
 
@@ -72,7 +72,6 @@ Done when:
   - It refuses if the topic now points at another issue, or if any proposal on the topic was applied after the same-as click, since a write may already rely on the binding.
   - Otherwise it clears the topic's issue link, through a new store call `clear_topic_issue(topic_id, expected=(repo, number))` that does nothing if the topic has moved on. It records the undo on the proposal: duplicate_of is kept for the record, and `duplicate_undone_by` and `_at` are added in the same migration 14. It then queues a drafting run for the thread, so a fresh proposal appears.
   - The card shows "Same as acme-co/web#42, undone by @x".
-  - An operator path, documented in deployment.md, does the same from the host.
 - **4. The state is the agent's claim:** "(agent says closed)". JotFlow has no GitHub access to check it.
 - **5. A threat-model row:** "Suppress a real issue by steering a wrong 'same as'". The defences are:
   - a person clicks, under Approve's rules
@@ -86,13 +85,13 @@ Done when:
 
 - [x] Plan reviewed by the lead and the architect
 - [x] Security answers question 3
-- [ ] Model, validation, and tool schema
-- [ ] Card rendering
-- [ ] "Same as" action, store transition, migration 14 with duplicate_of, duplicate_by and the undo columns
-- [ ] "Not a duplicate" undo, `clear_topic_issue`, and the redraft
-- [ ] Threat model row
-- [ ] Drafting instructions
-- [ ] Docs: usage.md, architecture.md's state diagram, threat model row if security asks
+- [x] Model, validation, and tool schema
+- [x] Card rendering
+- [x] "Same as" action, store transition, migration 14 with duplicate_of, duplicate_by and the undo columns
+- [x] "Not a duplicate" undo, the topic unbind inside `undo_duplicate`, and the redraft
+- [x] Threat model row
+- [x] Drafting instructions
+- [x] Docs: usage.md, architecture.md's state diagram, threat model row if security asks
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
@@ -107,8 +106,14 @@ Done when:
   - a topic that already has an issue is refused
   - the reply and reaction on success
   - migration 14, upgrading 13 with existing rows
-- A replay fixture where the stand-in agent fills `related`.
+- A replay fixture where the stand-in agent fills `related`: bug-report.json, related to acme-co/web#17, closed.
 
 ## Handoff notes
 
-None yet.
+- **Built,** with two simplifications:
+  - The thread hears about a "same as" from the card itself. The card is edited in place in the thread, to "Same as acme-co/web#42, marked by @x", with the link, so there's no separate reply or reaction.
+  - The undo is the card's **Not a duplicate** button, with no host CLI. Security asked for the button, or at least an operator path.
+- **Who may click** is Approve's own check, factored out as `_check_may_approve` and shared by Approve, Same as and Not a duplicate. That includes `require_second_approver`, as the lead and the architect said. Security had said authorship needn't apply, so this is the stricter reading.
+- **The undo's "since" test.** A proposal on the topic created after the "same as" and applied refuses the undo. The memory store keeps no updated_at, so both stores use created_at.
+- **The hash.** `related` is in `LATER_FIELDS`, so a draft without it hashes as before, and approvals in flight survive the upgrade.
+- **`RelatedIssue` forbids extra fields,** so no title or note can ride along.

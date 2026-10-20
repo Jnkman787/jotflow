@@ -182,7 +182,14 @@
                 "thread_ts": "1792311000.000100"
               }
             ],
-            "confidence": 0.85
+            "confidence": 0.85,
+            "related": [
+              {
+                "repo": "acme-co/web",
+                "number": 17,
+                "state": "closed"
+              }
+            ]
           }
         }
       ]

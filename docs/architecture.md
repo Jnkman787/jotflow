@@ -350,7 +350,7 @@ stateDiagram-v2
 stateDiagram-v2
     [*] --> pending: drafting run proposes
     pending --> approved: Approve, or automatically in auto mode
-    pending --> rejected: rejected or skipped
+    pending --> rejected: rejected or skipped, or Same as an existing issue (#36)
     pending --> superseded: newer proposal on same thread
     approved --> executing: execution run starts
     executing --> applied: record_result with matching URL
@@ -364,6 +364,8 @@ stateDiagram-v2
 ```
 
 In `auto` mode a validated proposal moves from pending to approved without a person, and the card records "approved by auto mode".
+
+**`rejected` with `duplicate` set means "same as an existing issue", not "people said no" (#36).** A drafting run may list up to three `related` issues, as pointers: repo, number, and the open or closed state its search reported. They must be in the channel's repos. The card shows them, labelling the state as the agent's claim, and offers **Same as** for the first one on a pending new issue. A click under Approve's who-may rules then does three things in one store write. The proposal becomes `rejected`, with `duplicate` recording the issue, who clicked and when. The topic is bound to that issue. The draft is cleared. There's no execution run and no GitHub write. Later messages in the thread become `propose_update` on that issue, which may be closed. **Not a duplicate** takes it back under the same rules: it unbinds the topic, records who undid it, and queues a fresh drafting run. It's refused if the topic now points elsewhere, or if a proposal drafted after the click has been applied. The store keeps the four duplicate columns consistent, all set together and only on `rejected`, because SQLite can't add that CHECK to an existing table.
 
 ## Data and privacy
 

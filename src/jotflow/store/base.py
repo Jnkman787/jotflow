@@ -28,11 +28,13 @@ from typing import Literal, Protocol
 from jotflow.models import (
     MAX_RUN_SECONDS,
     ChannelMode,
+    Duplicate,
     ExecutionResult,
     IssueProposal,
     MessageRef,
     ProposalRecord,
     ProposalState,
+    RelatedIssue,
     Run,
     RunKind,
     RunStatus,
@@ -123,6 +125,54 @@ class DraftClearedError(TransitionError):
 
 class ContentChangedError(StoreError):
     """Approval named a content hash that no longer matches the draft."""
+
+
+class DuplicateRefusedError(ConflictError):
+    """A "same as" or its undo can't apply; ``str()`` is the fixed reason (#36)."""
+
+
+# The fixed reasons a person sees. None quotes the draft, the issue, or the person.
+DUPLICATE_NOT_PENDING = "This proposal is no longer waiting, so it can't be marked the same."
+DUPLICATE_NOT_NEW = "Only a proposed new issue can be marked the same as an existing one."
+DUPLICATE_NO_CANDIDATE = "That related issue isn't on this proposal any more."
+DUPLICATE_TOPIC_LINKED = (
+    "This conversation is already linked to an issue, so it can't be marked the same as another."
+)
+DUPLICATE_NOT_MARKED = "This proposal wasn't marked the same as an existing issue."
+DUPLICATE_UNDONE = "That was already undone."
+DUPLICATE_MOVED_ON = (
+    "This conversation has moved on since: it points at another issue, or something was "
+    "written to the issue after it was marked. Nothing changed."
+)
+
+
+def plan_duplicate(record: ProposalRecord, index: int, expected_hash: str) -> RelatedIssue:
+    """The related issue a "same as" binds to, from the *stored* draft (#36).
+
+    Never from the click's own value: the click names only the index and the
+    hash of the draft the card showed, so a stale or forged click is refused.
+    """
+    if record.state is not ProposalState.PENDING:
+        raise DuplicateRefusedError(DUPLICATE_NOT_PENDING)
+    draft = record.proposal
+    if not isinstance(draft, IssueProposal) or draft.topic_id is None:
+        raise DuplicateRefusedError(DUPLICATE_NOT_NEW)
+    if record.draft_cleared_at is not None:
+        raise DraftClearedError(record.id, record.state, ProposalState.REJECTED)
+    if content_hash(draft) != expected_hash:
+        raise ContentChangedError(f"proposal {record.id} changed since the card was drawn")
+    if not 0 <= index < len(draft.related):
+        raise DuplicateRefusedError(DUPLICATE_NO_CANDIDATE)
+    return draft.related[index]
+
+
+def plan_undo(record: ProposalRecord) -> Duplicate:
+    """The "same as" an undo takes back. The store also checks the topic hasn't moved on."""
+    if record.state is not ProposalState.REJECTED or record.duplicate is None:
+        raise DuplicateRefusedError(DUPLICATE_NOT_MARKED)
+    if record.duplicate.undone_at is not None:
+        raise DuplicateRefusedError(DUPLICATE_UNDONE)
+    return record.duplicate
 
 
 @dataclass(frozen=True)
@@ -672,6 +722,26 @@ class Store(Protocol):
         """Remove a failed or final proposal's drafted text; a no-op if already cleared.
 
         After this a failed proposal can no longer be retried.
+        """
+        ...
+
+    async def mark_duplicate(
+        self, proposal_id: str, *, index: int, expected_hash: str, by: str
+    ) -> ProposalRecord:
+        """A person said the proposal is the same as its draft's ``related[index]`` (#36).
+
+        In one step: the proposal becomes ``rejected`` with :attr:`~ProposalRecord.duplicate`
+        set, its topic is bound to that issue, and the draft is cleared. Refused, changing
+        nothing, unless the proposal is a pending new issue whose draft still hashes to
+        ``expected_hash``, and its topic is in the proposal's channel with no issue yet.
+        """
+        ...
+
+    async def undo_duplicate(self, proposal_id: str, *, by: str) -> ProposalRecord:
+        """Take back a "same as": unbind the topic and record who undid it (#36).
+
+        Refused, changing nothing, if the topic now points at another issue, or a
+        proposal on the topic was applied after the "same as".
         """
         ...
 
