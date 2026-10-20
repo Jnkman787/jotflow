@@ -12,7 +12,7 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.models import ChannelMode
-from jotflow.orchestrator.help import channel_help, channel_repos, help_text, plain_sections
+from jotflow.orchestrator.help_blocks import help_reply, repos_reply
 from jotflow.orchestrator.identity import LinkCommand
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
 from jotflow.orchestrator.modes import ModeCommand
@@ -128,10 +128,11 @@ def register_commands(
     ``links``, ``/jotflow link`` links the caller's own GitHub login (#35).
     """
 
-    async def plain(ack: Any, text: str) -> None:
-        # plain_text sections, so nothing in it can ping or link, each within
-        # Slack's 3,000 characters; text is the notification fallback (#231).
-        await ack(text=text, blocks=plain_sections(text))
+    async def formatted(ack: Any, answer: tuple[str, list[dict[str, Any]]]) -> None:
+        # Verbatim mrkdwn with every admin field escaped, so nothing can ping or
+        # link, within Slack's limits; text is the plain fallback (#231, #257).
+        text, blocks = answer
+        await ack(text=text, blocks=blocks)
 
     async def on_command(ack: Any, command: dict[str, Any], respond: Any = None) -> None:
         raw = str(command.get("text") or "").strip()
@@ -154,17 +155,17 @@ def register_commands(
             await respond(reply.text)
             return
         if word == "repos" and policy is not None:
-            await plain(ack, channel_repos(policy, str(command.get("channel_id") or ""), rest))
+            await formatted(ack, repos_reply(policy, str(command.get("channel_id") or ""), rest))
             return
         if text in ("", "help"):
             channel = str(command.get("channel_id") or "")
             if policy is None:
-                await plain(ack, help_text())
+                await formatted(ack, help_reply(None, channel))
                 return
             mode = ChannelMode.PROPOSE
             if mode_for is not None and channel in policy.channels:
                 mode = await mode_for(channel)
-            await plain(ack, channel_help(policy, channel, mode))
+            await formatted(ack, help_reply(policy, channel, mode))
         else:
             await ack(
                 "Try /jotflow help for the keywords, /jotflow mode for this channel's mode, "
