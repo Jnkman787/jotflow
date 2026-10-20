@@ -196,3 +196,17 @@ def test_conventions_and_title_pattern_survive_a_rewrite() -> None:
     [back] = parse_policy(render_policy(policy)).channels["C0WEB"].repos
     assert back.title_pattern == repo["title_pattern"]
     assert back.conventions == repo["conventions"]
+
+
+def test_scopes_survive_a_rewrite() -> None:
+    scope = {
+        "owner": "example-org",
+        "match": ["web-*"],
+        "exclude": ["*-demo"],
+        "include_forks": True,
+        "labels": ["bug"],
+        "aliases": {"site": "web-frontend"},
+        "description": "Front-end repos",
+    }
+    policy = _policy(channels={"C0WEB": {"scopes": [scope]}})
+    assert parse_policy(render_policy(policy)) == policy

@@ -126,6 +126,25 @@ repo = "example-org/handbook"
 nickname = "handbook"
 description = "Team handbook and process docs"
 
+# A scope finds repos live instead of listing them, for an org whose repos come
+# and go (#236). owner is one GitHub org or user, never a pattern; match and
+# exclude are globs on the repo name. JotFlow asks GitHub, through the drafting
+# agent container's read token, every 15 minutes, so new and renamed repos
+# appear without a restart. Forks and archived repos are left out unless
+# include_forks or include_archived is true. A repo listed above always wins,
+# with its own nickname, description and labels. A found repo's nickname is its
+# name in lower case; aliases pins one. description is your own words for the
+# scope, shown to the agent before each repo's description on GitHub.
+# The write token must also reach a found repo: approval refuses one it can't.
+[[channels.G0EXAMPLE2.scopes]]
+owner = "example-org"
+match = ["service-*", "lib-*"]
+exclude = ["*-sandbox"]
+include_forks = false
+include_archived = false
+description = "Backend services and shared libraries"
+aliases = { auth = "service-authentication" }
+
 # This channel keeps its own help quieter: no pinned guide.
 [channels.G0EXAMPLE2.help]
 guide = false

@@ -100,9 +100,9 @@ def test_channels_are_required() -> None:
     assert problems("") == ["channels: missing required key"]
 
 
-def test_channel_needs_a_repo() -> None:
+def test_channel_needs_a_repo_or_a_scope() -> None:
     [problem] = problems("[channels.C0TEST1]\nrepos = []\n")
-    assert problem.startswith("channels.C0TEST1.repos: ")
+    assert problem.startswith("channels.C0TEST1") and "one repo or one scope" in problem
 
 
 def test_duplicate_nickname_is_rejected() -> None:
@@ -513,3 +513,59 @@ def test_the_example_title_pattern_loads() -> None:
     text = ONE_REPO + "title_pattern = '^(feat|fix|docs)(\\([a-z-]+\\))?: .+$'\n"
     [repo] = parse_policy(text).channels["C0TEST1"].repos
     assert repo.title_pattern == r"^(feat|fix|docs)(\([a-z-]+\))?: .+$"
+
+
+# Pattern scopes (#236)
+
+SCOPED = """
+[channels.C0TEST1]
+
+[[channels.C0TEST1.scopes]]
+owner = "example-org"
+match = ["web-*", "api"]
+exclude = ["*-demo"]
+aliases = { site = "web-frontend" }
+"""
+
+
+def test_a_channel_may_have_only_a_scope() -> None:
+    [scope] = parse_policy(SCOPED).channels["C0TEST1"].scopes
+    assert scope.owner == "example-org" and not scope.include_forks and not scope.include_archived
+    assert scope.covers("web-frontend") and scope.covers("api")
+    assert not scope.covers("web-demo") and not scope.covers("apiary")
+    assert "except *-demo, forks, archived repos" in scope.summary()
+
+
+@pytest.mark.parametrize(
+    ("change", "where"),
+    [
+        ('owner = "example-*"', "owner"),
+        ('owner = "-bad"', "owner"),
+        ("match = []", "match"),
+        ('match = ["web/*"]', "match"),
+        ("labels = []", "labels"),
+        ('description = "  padded  "', "description"),
+    ],
+)
+def test_a_scope_is_written_out_and_bounded(change: str, where: str) -> None:
+    key = change.split(" =", 1)[0]
+    lines = [line for line in SCOPED.splitlines() if not line.startswith(f"{key} =")]
+    found = problems("\n".join(lines) + "\n" + change + "\n")
+    assert any(f"scopes[0].{where}" in p for p in found), found
+
+
+def test_scope_owners_and_nicknames_are_unique() -> None:
+    twice = SCOPED + '\n[[channels.C0TEST1.scopes]]\nowner = "example-org"\n'
+    assert any("scopes given more than once" in p for p in problems(twice))
+    clash = SCOPED + (
+        '\n[[channels.C0TEST1.repos]]\nrepo = "example-org/x"\nnickname = "site"\n'
+        'description = "X"\n'
+    )
+    assert any("nicknames used more than once: site" in p for p in problems(clash))
+
+
+def test_at_most_five_scopes() -> None:
+    text = "[channels.C0TEST1]\n" + "".join(
+        f'\n[[channels.C0TEST1.scopes]]\nowner = "org{i}"\n' for i in range(6)
+    )
+    assert any("scopes" in p for p in problems(text))
