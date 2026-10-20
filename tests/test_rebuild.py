@@ -377,7 +377,7 @@ def test_rebuild_refuses_while_jotflow_runs_here(
     beat = tmp_path / "heartbeat"
     beat.write_text(str(time.time()))
     monkeypatch.setenv("JOTFLOW_HEARTBEAT_FILE", str(beat))
-    args = argparse.Namespace(since="all", channel=None, merge=False, dry_run=False)
+    args = argparse.Namespace(since="all", channel=None, merge=False, dry_run=False, no_lock=False)
     assert rebuild_command.run(args) == rebuild_command.EXIT_REFUSED
     assert "docker compose stop jotflow" in capsys.readouterr().err
 
@@ -527,3 +527,106 @@ async def test_only_one_process_holds_the_store(tmp_path: Path) -> None:
     # Closing releases it, so a rebuild can now take it.
     rebuilding = await SqliteStore.open(path, exclusive=True)
     await rebuilding.close()
+
+
+# --- the lock on filesystems that refuse flock, symlinks, and crashes -------------------------
+
+
+def _no_flock(monkeypatch: pytest.MonkeyPatch) -> None:
+    import errno
+
+    from jotflow.store import lock
+
+    def refuse(fd: int, operation: int) -> None:
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(lock.fcntl, "flock", refuse)
+
+
+async def test_jotflow_run_warns_and_carries_on_where_flock_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import os
+
+    from jotflow.orchestrator.service import open_sqlite
+    from jotflow.store.lock import UNSUPPORTED
+
+    _no_flock(monkeypatch)
+    before = len(os.listdir("/proc/self/fd"))
+    store = await open_sqlite(str(tmp_path / "jotflow.db"))
+    try:
+        assert UNSUPPORTED in caplog.text
+        assert await store.channel_topics(CH) == []
+    finally:
+        await store.close()
+    assert len(os.listdir("/proc/self/fd")) == before  # the lock's descriptor was closed
+
+
+async def test_rebuild_refuses_where_flock_is_refused_unless_no_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jotflow.store.lock import LockUnsupportedError
+
+    _no_flock(monkeypatch)
+    path = str(tmp_path / "jotflow.db")
+    with pytest.raises(LockUnsupportedError):
+        await SqliteStore.open(path, exclusive=True)
+    store = await SqliteStore.open(path, exclusive=False)  # what --no-lock opens
+    await store.close()
+
+
+def test_the_no_lock_flag_says_it_skips_the_safety_check() -> None:
+    parser = argparse.ArgumentParser()
+    rebuild_command.add_arguments(parser)
+    assert "Skip the safety check" in parser.format_help()
+    assert parser.parse_args(["--no-lock"]).no_lock is True
+
+
+def test_a_symlinked_lock_file_is_refused_and_its_target_untouched(tmp_path: Path) -> None:
+    from jotflow.store import StoreError
+    from jotflow.store.lock import acquire, lock_path
+
+    target = tmp_path / "elsewhere"
+    lock_path(tmp_path / "jotflow.db").symlink_to(target)
+    with pytest.raises(StoreError, match="the lock file is a symlink"):
+        acquire(tmp_path / "jotflow.db")
+    assert not target.exists()
+
+
+def test_a_lock_held_by_a_killed_process_is_free_again(tmp_path: Path) -> None:
+    import os
+    import signal
+    import subprocess
+    import sys
+
+    from jotflow.store.lock import acquire
+
+    db = tmp_path / "jotflow.db"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys, time\n"
+            "from jotflow.store.lock import acquire\n"
+            "held = acquire(sys.argv[1])\n"
+            "print('held', flush=True)\n"
+            "time.sleep(60)\n",
+            str(db),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout is not None and child.stdout.readline().strip() == "held"
+        from jotflow.store.lock import StoreBusyError
+
+        with pytest.raises(StoreBusyError):
+            acquire(db)
+        os.kill(child.pid, signal.SIGKILL)
+        child.wait(timeout=10)
+        held = acquire(db)
+        assert held is not None
+        held.release()
+    finally:
+        if child.poll() is None:
+            child.kill()

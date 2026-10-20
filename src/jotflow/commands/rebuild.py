@@ -33,7 +33,7 @@ from jotflow.orchestrator.packet import SlackFetchError
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.rebuild import ChannelPlan, RebuildSlack, Restored, apply, collect
 from jotflow.store import SqliteStore, Store, StoreError
-from jotflow.store.lock import StoreBusyError
+from jotflow.store.lock import UNSUPPORTED, LockUnsupportedError, StoreBusyError
 
 EXIT_OK = 0
 EXIT_REFUSED = 2
@@ -59,6 +59,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--merge",
         action="store_true",
         help="Add to a store that already has topics, never overwriting what's there",
+    )
+    parser.add_argument(
+        "--no-lock",
+        action="store_true",
+        help="Skip the safety check that JotFlow isn't running, for a filesystem that "
+        "can't lock. Stop JotFlow yourself first",
     )
     parser.add_argument(
         "--dry-run",
@@ -185,10 +191,23 @@ async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) ->
         )
         return EXIT_SLACK
     bot = BotIdentity(user_id=str(auth.get("user_id") or ""), bot_id=auth.get("bot_id"))
+    if args.no_lock:
+        print(
+            f"jotflow rebuild: --no-lock skips the safety check: {UNSUPPORTED}",
+            file=sys.stderr,
+        )
     try:
-        store = await SqliteStore.open(settings.database_path, exclusive=True)
+        store = await SqliteStore.open(settings.database_path, exclusive=not args.no_lock)
     except StoreBusyError as exc:
         print(f"jotflow rebuild: refusing: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+    except LockUnsupportedError:
+        print(
+            "jotflow rebuild: refusing: the database's filesystem doesn't support locking, "
+            "so rebuild can't check that JotFlow is stopped. Stop it first "
+            "(docker compose stop jotflow), then rerun with --no-lock",
+            file=sys.stderr,
+        )
         return EXIT_REFUSED
     try:
         await rebuild(
