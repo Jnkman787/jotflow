@@ -5,7 +5,7 @@
 - Issue: #181, in M6
 - Also serves: #54 (the agent containers) and #172 (Codex, a preset whose built-ins we can't remove)
 - Builds on: the architect's earlier draft in #200, closed without merging, with security's input folded in
-- Status: planning. Nothing is built until the lead approves the decisions below.
+- Status: planning. Decisions 1 to 4, 6 and 7 are approved by the lead. Decision 5 waits on the maintainer, and the plan follows the lead's opt-in shape for it. No code until the lead confirms.
 - Last verified: a throwaway spike in the pinned `python:3.14-slim-trixie` base on 2026-10-20, under Compose's hardening: a read-only root, `cap_drop: ALL`, `no-new-privileges`, and Docker's default seccomp. Results are under Validation.
 
 These are Linux user ids inside the agent containers, not GitHub or Slack accounts.
@@ -30,7 +30,8 @@ From the issue, refined:
   - another live run's `/proc/<pid>/environ`, run directory or MCP config;
   - the runner's `/proc/<pid>/environ`, or its secret or GitHub token by any path a run can reach.
 - [ ] **A run can't start another run,** because it never sees the runner secret.
-- [ ] **Model logins work with an API key in the environment.** A CLI login kept in the home is documented as unsupported in this mode.
+- [ ] **Isolation is opt-in for now:** `JOTFLOW_RUNNER_ISOLATION=uid` in an agent env file turns it on for that service. Off by default, today's single-uid behaviour is unchanged, so a CLI login kept in `agent-home` keeps working.
+- [ ] **With isolation on, model logins work with an API key in the environment.** A CLI login kept in the home is refused at runner startup, with a reason naming the setting.
 - [ ] **The container stays hardened:** a read-only root, `no-new-privileges`, and only the two capabilities this design needs, named and justified.
 - [ ] **docs/threat-model.md** narrows the "Runs of the same kind can read each other's environment" row to what's left.
 
@@ -56,7 +57,13 @@ From the issue, refined:
 
 4. **No chown: a group per run.** The runner is in every run group. A run's directory is `0770 root:runN` and its config `0640 root:runN`, and the run's uid is in `runN` only. As root, the runner may chgrp its own files to its own groups without CAP_CHOWN. The `/tmp` tmpfs becomes the runner's 0711 directory, with run directories below it, so a run can't leave files in a shared world-writable place. The sweep also clears `/dev/shm` of the uid's files before reuse.
 
-5. **API keys only in this mode.** Per-run homes inside the run directory. A copied CLI login can't stay read-only, because CLIs such as Claude Code refresh OAuth tokens and rewrite their credentials file, and every run would get the long-lived credential. So the docs say a CLI login kept in `agent-home` doesn't work with per-run uids. Setup already writes API keys.
+5. **Opt-in first, with API keys required only when it's on** (the lead's proposed shape, pending the maintainer). A copied CLI login can't stay read-only, because CLIs such as Claude Code refresh OAuth tokens and rewrite their credentials file, and every run would get the long-lived credential. So per-run uids break teams that sign the CLI in with a subscription login. Therefore:
+   - `JOTFLOW_RUNNER_ISOLATION` in each agent env file takes `none`, the default, or `uid`. The runner reads it at startup, and its startup line says which mode is on.
+   - With `none`, nothing changes from today: one uid, the shared `agent-home`, and CLI logins work.
+   - With `uid`, each run gets a per-run home inside its run directory, and the runner refuses to start if the preset's model login isn't an API key in the environment. That's `ANTHROPIC_API_KEY` for claude-code, and `CODEX_API_KEY` or `OPENAI_API_KEY` for codex. The reason names the setting and the key.
+   - Compose has to allow both modes, so the agent services always run the runner as uid 0 with only SETUID and SETGID. In `none` mode, the runner drops itself and every run to uid 10002 at startup, right after the checks. It doesn't keep the capabilities, so `none` is no more privileged than today once started.
+   - `jotflow init` asks nothing new yet, and writes `none`. `jotflow check` reports the mode, and warns in `uid` mode if the login isn't an API key.
+   - Making `uid` the default is left for a later minor release, and the CHANGELOG will say so ahead of time.
 
 6. **Fail closed.** At startup, and for each run, the runner checks that the child's uid is the pool uid and that its CapEff is zero. If the drop didn't take, it refuses, as on an odd runtime. The runner's code after the drop is only `exec`.
 
@@ -91,13 +98,14 @@ From the issue, refined:
 
 - **A CLI that refuses to run as a uid with no passwd home,** or that needs a writable home outside the run directory. The per-run `HOME` covers the known presets, and the stand-in test catches a regression.
 - **Root in the container,** even with two capabilities, is a change from today's non-root user. That's why decision 6 checks the drop every time, and the runner stays as small as it is today.
-- **A deployment that already uses a CLI login** in `agent-home` stops working. That's documented, and setup already writes API keys.
+- **A CLI login in `agent-home`** keeps working, because isolation is off by default. A team that turns `uid` on must switch to an API key first, and the runner refuses to start until it has.
+- **`none` mode starts as uid 0 too,** so Compose is the same for both modes. The runner drops to 10002 for good before serving. The cross-container test covers both modes: in `none`, CapEff is 0 after startup and runs share 10002, as today.
 
 ## Progress checklist
 
 - [ ] The lead approves the decisions
 - [ ] The image and Compose changes
-- [ ] The runner: the pool, group-owned directories, the drop, the same-uid stop helper, the sweep, and the fail-closed checks
+- [ ] The runner: `JOTFLOW_RUNNER_ISOLATION` (`none` or `uid`), the startup drop in `none` mode, and in `uid` mode the pool, group-owned directories, the drop, the same-uid stop helper, the sweep, the API-key requirement, and the fail-closed checks
 - [ ] Unit tests for the pool and sweep, and the cross-container test above
 - [ ] Docs and the threat model
 - [ ] `make check` and the agent-image CI pass
