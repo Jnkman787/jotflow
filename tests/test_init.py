@@ -1589,3 +1589,67 @@ def test_switching_back_to_claude_code_says_the_openai_key_is_still_passed(
 def test_a_codex_key_never_shows_in_the_choice() -> None:
     choice = init.AgentChoice("codex", codex_key=OPENAI_KEY)
     assert OPENAI_KEY not in repr(choice)
+
+
+# --- #239: a kept file's login, and the model prompt's default -----------------------
+
+
+def _without_allow(path: Path, model_key: str = "sk-ant-kept") -> None:
+    lines = [
+        x
+        for x in path.read_text().splitlines()
+        if not x.startswith(("JOTFLOW_AGENT_ENV_ALLOW=", "ANTHROPIC_API_KEY="))
+    ]
+    path.write_text("\n".join([*lines, f"ANTHROPIC_API_KEY={model_key}"]) + "\n")
+
+
+def test_a_kept_file_with_the_key_but_not_the_line_gets_the_line(options: InitOptions) -> None:
+    _with_agent(options)
+    _without_allow(options.agent_file)
+    _without_allow(options.agent_exec_file)
+    text = options.agent_exec_file.read_text() + "JOTFLOW_AGENT_ENV_ALLOW=HTTPS_PROXY\n"
+    options.agent_exec_file.write_text(text)
+    script = _kept_session(options)
+    assert read_env(options.agent_file)[ALLOW] == "ANTHROPIC_API_KEY"
+    assert read_env(options.agent_exec_file)[ALLOW] == "HTTPS_PROXY,ANTHROPIC_API_KEY"
+    for path in (options.agent_file, options.agent_exec_file):
+        assert (
+            f"  {path} sets ANTHROPIC_API_KEY but didn't pass it to the agent, so setup added "
+            "it to JOTFLOW_AGENT_ENV_ALLOW."
+        ) in script.text
+        assert read_env(path)["ANTHROPIC_API_KEY"] == "sk-ant-kept"
+    assert "sk-ant-kept" not in script.text
+    # Once it's there, a rerun says nothing more.
+    assert "so setup added it" not in _kept_session(options).text
+
+
+def test_a_claude_account_login_keeps_its_file_as_it_is(options: InitOptions) -> None:
+    _with_agent(options)
+    for path in (options.agent_file, options.agent_exec_file):
+        kept = [
+            x
+            for x in path.read_text().splitlines()
+            if not x.startswith(("JOTFLOW_AGENT_ENV_ALLOW=", "ANTHROPIC_API_KEY="))
+        ]
+        path.write_text("\n".join(kept) + "\n")
+    script = _kept_session(options)
+    assert ALLOW not in read_env(options.agent_file)
+    assert ALLOW not in read_env(options.agent_exec_file)
+    assert "so setup added it" not in script.text
+
+
+def test_a_codex_policy_fixes_the_execution_file_for_claude_code(options: InitOptions) -> None:
+    _with_codex(options, OPENAI_KEY)
+    _without_allow(options.agent_exec_file)
+    script = _rerun_with(options, "codex")
+    assert read_env(options.agent_exec_file)[ALLOW] == "ANTHROPIC_API_KEY"
+    assert f"  {options.agent_exec_file} sets ANTHROPIC_API_KEY but didn't pass it" in script.text
+
+
+def test_the_model_prompt_shows_what_enter_keeps(options: InitOptions) -> None:
+    script = _with_agent(options)
+    assert [p for p in script.prompts if p.startswith("Agent model")] == ["Agent model [default]: "]
+    _kept_session(options, model="claude-opus-5-5")
+    script = _kept_session(options)
+    assert "Agent model [claude-opus-5-5]: " in script.prompts
+    assert read_env(options.agent_file)["JOTFLOW_AGENT_MODEL"] == "claude-opus-5-5"

@@ -32,6 +32,12 @@ ENV_ALLOW_KEY = "JOTFLOW_AGENT_ENV_ALLOW"
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
 # Codex reads either; setup writes the first, which names its one use.
 CODEX_KEYS = ("CODEX_API_KEY", "OPENAI_API_KEY")
+# The model login each preset can read from its env file. claude-code can log
+# in inside its container instead, so a missing key is fine; a set one must pass.
+LOGIN_KEYS: Mapping[str, tuple[str, ...]] = {
+    "claude-code": (ANTHROPIC_KEY,),
+    "codex": CODEX_KEYS,
+}
 
 # The runner refuses a shorter secret.
 MIN_SECRET_LENGTH = 32
@@ -125,6 +131,24 @@ def with_agent_profile(current: str | None) -> str | None:
     if AGENT_PROFILE in profiles:
         return None
     return ",".join([*profiles, AGENT_PROFILE])
+
+
+def allowed(agent_env: Mapping[str, str]) -> list[str]:
+    """The names an agent env file passes to the agent, in order."""
+    raw = agent_env.get(ENV_ALLOW_KEY, "")
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def unpassed_logins(agent_env: Mapping[str, str], preset: str) -> list[str]:
+    """Login keys the file sets for ``preset`` but doesn't pass, so no run can sign in (#239).
+
+    Empty when a set key is already passed: codex needs only one of its two.
+    """
+    names = allowed(agent_env)
+    filled = [k for k in LOGIN_KEYS.get(preset, ()) if agent_env.get(k, "").strip()]
+    if any(k in names for k in filled):
+        return []
+    return filled
 
 
 def uses_command(agent_env: Mapping[str, str]) -> bool:
