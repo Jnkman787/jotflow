@@ -5,7 +5,7 @@
 - Issue: #181, in M6
 - Also serves: #54 (the agent containers) and #172 (Codex, a preset whose built-ins we can't remove)
 - Builds on: the architect's earlier draft in #200, closed without merging, with security's input folded in
-- Status: planning. Decisions 1 to 4, 6 and 7 are approved by the lead. Decision 5 waits on the maintainer, and the plan follows the lead's opt-in shape for it. No code until the lead confirms.
+- Status: planning. Decisions 1 to 4, 6 and 7 are approved by the lead. Decision 5 follows the lead's opt-in shape, with Compose option (b) approved. It waits only on the maintainer confirming opt-in over default. No code until the lead confirms.
 - Last verified: a throwaway spike in the pinned `python:3.14-slim-trixie` base on 2026-10-20, under Compose's hardening: a read-only root, `cap_drop: ALL`, `no-new-privileges`, and Docker's default seccomp. Results are under Validation.
 
 These are Linux user ids inside the agent containers, not GitHub or Slack accounts.
@@ -61,7 +61,7 @@ From the issue, refined:
    - `JOTFLOW_RUNNER_ISOLATION` in each agent env file takes `none`, the default, or `uid`. The runner reads it at startup, and its startup line says which mode is on.
    - With `none`, nothing changes from today: one uid, the shared `agent-home`, and CLI logins work.
    - With `uid`, each run gets a per-run home inside its run directory, and the runner refuses to start if the preset's model login isn't an API key in the environment. That's `ANTHROPIC_API_KEY` for claude-code, and `CODEX_API_KEY` or `OPENAI_API_KEY` for codex. The reason names the setting and the key.
-   - **How Compose allows the two modes** is open for the lead. Recommended is (b).
+   - **How Compose allows the two modes:** the lead approved (b).
      - (a) The agent services always start the runner as uid 0 with only SETUID and SETGID. In `none` mode, the runner drops itself to 10002 for good at startup. One Compose file serves both modes, but the default deployment starts as root, which it doesn't today.
      - (b) The default Compose files stay exactly as today: uid 10002 and no capabilities. Turning `uid` on means adding a small override, `docker-compose.isolation.yml`, shipped next to the policy override. It adds `user: "0:0"` and `cap_add: [SETUID, SETGID]` to the agent services, and `COMPOSE_FILE` lists it. The runner fails closed if `uid` is set but it didn't start as uid 0 with exactly those two capabilities, and the reason names the override. The default footprint doesn't change at all.
    - `jotflow init` asks nothing new yet, and writes `none`. `jotflow check` reports the mode, and warns in `uid` mode if the login isn't an API key.
