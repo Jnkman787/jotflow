@@ -48,6 +48,10 @@ REPOS_LINE = (
     "/jotflow repos lists the repos this channel feeds; add a word to narrow it, "
     "or change to see how to edit them."
 )
+# Proving a linked login is yours (#195).
+VERIFY_LINE = (
+    "/jotflow verify proves your GitHub login is yours, so cards stop marking it unverified."
+)
 COMMAND = "/jotflow help"
 
 
@@ -73,6 +77,7 @@ def help_text() -> str:
             *reaction_lines(),
             LINK_LINE,
             UNLINK_OTHER_LINE,
+            VERIFY_LINE,
             REPOS_LINE,
             CLOSING,
         ]

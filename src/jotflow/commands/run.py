@@ -237,6 +237,7 @@ async def serve(settings: Settings, policy: Policy) -> int:
             orchestrator.channel_mode,
             orchestrator.modes,
             orchestrator.links,
+            orchestrator.verify,
             orchestrator.repos,
         )
         if orchestrator.approval is not None:

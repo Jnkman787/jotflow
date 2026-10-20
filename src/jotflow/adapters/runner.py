@@ -51,7 +51,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from jotflow.adapters import github_repos
+from jotflow.adapters import github_proof, github_repos
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
     GITHUB_TOKEN_CHARS,
@@ -599,8 +599,24 @@ def runner_info(config: RunnerConfig) -> dict[str, Any]:
     }
 
 
-def build_runner_app(runner: Runner, config: RunnerConfig, *, github: Any = None) -> ASGIApp:
-    """The runner's HTTP app: GET /info, POST /runs, GET /runs/{id}, DELETE /runs/{id}.
+class VerifyRequest(BaseModel):
+    """What JotFlow sends to check a GitHub link's one-time code (#195)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    login: str = Field(min_length=1, max_length=39)
+    code_digest: str = Field(min_length=64, max_length=64)
+
+
+def build_runner_app(
+    runner: Runner,
+    config: RunnerConfig,
+    *,
+    github: Any = None,
+    github_transport: Any = None,
+) -> ASGIApp:
+    """The runner's HTTP app: GET /info, POST /runs, GET /runs/{id}, DELETE /runs/{id},
+    and, on the drafting runner, POST /verify (#195).
 
     Also GET /repos/{owner} on the drafting runner, and GET
     /repos/{owner}/{name}/access on the execution runner: the runner's own fixed
@@ -683,9 +699,34 @@ def build_runner_app(runner: Runner, config: RunnerConfig, *, github: Any = None
             return JSONResponse({"error": "no such run"}, status_code=404)
         return JSONResponse(view)
 
+    async def verify(request: Request) -> Response:
+        # Only the drafting runner checks codes: the execution runner, which holds
+        # the write token, does nothing but execution runs.
+        if config.serves_execution:
+            return JSONResponse({"error": "this runner doesn't check codes"}, status_code=403)
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = VerifyRequest.model_validate_json(body)
+            async with github_proof.new_client(github_transport) as http:
+                proof = await github_proof.check_proof(http, asked.login, asked.code_digest)
+        except (ValidationError, ValueError):
+            return JSONResponse(
+                {"error": "expected exactly a GitHub login and a code digest"}, status_code=400
+            )
+        except github_proof.ProofError as failed:
+            log.warning("a GitHub link check failed: %s", failed)
+            return JSONResponse({"error": str(failed)}, status_code=502)
+        log.info("a GitHub link check finished (verified: %s)", proof.verified)
+        return JSONResponse(proof.model_dump())
+
     app = Starlette(
         routes=[
             Route("/info", info, methods=["GET"]),
+            Route("/verify", verify, methods=["POST"]),
             Route("/runs", launch, methods=["POST"]),
             Route("/runs/{run_id}", status, methods=["GET"]),
             Route("/runs/{run_id}", stop, methods=["DELETE"]),

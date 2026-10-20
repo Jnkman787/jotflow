@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1188,3 +1189,74 @@ async def test_a_self_unlink_is_not_recorded(store: Store) -> None:
     await store.link_identity("U0BOB", "octo-cat")
     assert await store.unlink_identity("U0BOB")
     assert await store.identity_unlinks() == []
+
+
+# Verifying a GitHub link (#195)
+
+
+def a_code(user: str = "U0BOB", login: str = "octo-cat", minutes: int = 30) -> Any:
+    from jotflow.store import IdentityCode
+
+    return IdentityCode(user, login, "d" * 64, datetime(2026, 10, 18, 9, minutes, tzinfo=UTC))
+
+
+async def test_one_pending_code_per_person_counted_and_dropped(store: Store) -> None:
+    await store.start_verification(a_code())
+    assert await store.count_verification_check("U0BOB") == 1
+    assert await store.count_verification_check("U0BOB") == 2
+    await store.start_verification(a_code(login="other-login"))
+    pending = await store.get_verification("U0BOB")
+    assert pending is not None and pending.github_login == "other-login" and pending.checks == 0
+    assert "d" * 64 not in repr(pending)
+    await store.drop_verification("U0BOB")
+    assert await store.get_verification("U0BOB") is None
+    with pytest.raises(NotFoundError):
+        await store.count_verification_check("U0BOB")
+
+
+async def test_finishing_verifies_the_persons_link(store: Store, clock: Clock) -> None:
+    await store.link_identity("U0BOB", "octo-cat")
+    await store.start_verification(a_code())
+    when = clock.tick()
+    done = await store.finish_verification("U0BOB", github_login="Octo-Cat", github_id=42)
+    assert done.displaced is None
+    link = await store.get_identity("U0BOB")
+    assert link is not None
+    assert (link.github_login, link.verified, link.verified_at, link.github_id) == (
+        "Octo-Cat",
+        True,
+        when,
+        42,
+    )
+    assert await store.get_verification("U0BOB") is None
+    assert await store.identity_unlinks() == []
+
+
+async def test_proof_moves_a_login_someone_else_claimed(store: Store) -> None:
+    await store.link_identity("U0SQUAT", "octo-cat")
+    await store.start_verification(a_code("U0SQUAT"))
+    await store.start_verification(a_code("U0REAL"))
+    done = await store.finish_verification("U0REAL", github_login="octo-cat", github_id=42)
+    assert done.displaced == "U0SQUAT"
+    assert await store.get_identity("U0SQUAT") is None
+    assert await store.get_verification("U0SQUAT") is None
+    holder = await store.identity_for_login("OCTO-CAT")
+    assert holder is not None and holder.slack_user_id == "U0REAL" and holder.verified
+    [record] = await store.identity_unlinks()
+    assert (record.slack_user_id, record.removed_by) == ("U0SQUAT", "verification")
+
+
+@pytest.mark.parametrize("how", ["relink", "unlink", "remove"])
+async def test_changing_or_removing_a_link_drops_verification(store: Store, how: str) -> None:
+    await store.link_identity("U0BOB", "octo-cat")
+    await store.finish_verification("U0BOB", github_login="octo-cat", github_id=42)
+    await store.start_verification(a_code())
+    if how == "relink":
+        link = await store.link_identity("U0BOB", "octo-cat")
+        assert not link.verified and link.verified_at is None and link.github_id is None
+    elif how == "unlink":
+        assert await store.unlink_identity("U0BOB")
+        assert await store.get_identity("U0BOB") is None
+    else:
+        assert await store.remove_identity("U0BOB", removed_by="U0APPROVE")
+    assert await store.get_verification("U0BOB") is None

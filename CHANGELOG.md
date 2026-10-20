@@ -6,6 +6,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Added
 
+- **Prove a GitHub link is yours (#195).** `/jotflow verify` gives you a one-time code to put in your GitHub profile bio or a public gist's description, and `/jotflow verify check` checks it. A verified login loses "(unverified)" on cards. If someone else linked your login first, `/jotflow verify your-github-login` lets you prove it and moves the link to you; they're told privately. The check runs in the drafting agent container, anonymously, so JotFlow itself still never talks to GitHub, and it needs the agent containers on. GitHub limits anonymous reads, so a busy host may be asked to try again later. This adds migration 15.
 - **Per-repo house rules for issues (#216).**
   - A repo in `jotflow.toml` can have `conventions`, the team's own rules for its issues, which the drafting agent follows over the style of recent issues.
   - A repo can also have a `title_pattern` that every proposed title must fully match. JotFlow refuses a title that doesn't, and the agent tries again, up to three times per run.

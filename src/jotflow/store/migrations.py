@@ -110,6 +110,17 @@ CREATE TABLE identity_unlinks (
 )
 """
 
+# A pending one-time code for verifying a GitHub link (#195). Only its digest.
+_IDENTITY_CODES = """
+CREATE TABLE identity_codes (
+    slack_user_id TEXT PRIMARY KEY, -- Slack user id: one pending code per person
+    github_login TEXT NOT NULL, -- GitHub login the code is for
+    code_digest TEXT NOT NULL, -- SHA-256 of the code, never the code itself
+    expires_at TEXT NOT NULL, -- UTC, ISO 8601
+    checks INTEGER NOT NULL DEFAULT 0 -- how many times it was checked
+)
+"""
+
 _CHANNEL_MODES = """
 CREATE TABLE channel_modes (
     channel_id TEXT PRIMARY KEY, -- Slack channel id
@@ -345,6 +356,17 @@ MIGRATIONS: tuple[Migration, ...] = (
             "ALTER TABLE proposals ADD COLUMN duplicate_undone_by TEXT"
             " /* Slack user id who undid it, if anyone */",
             "ALTER TABLE proposals ADD COLUMN duplicate_undone_at TEXT /* UTC, ISO 8601 */",
+        ),
+    ),
+    # Verifying a GitHub link with a one-time public code (#195).
+    Migration(
+        15,
+        (
+            "ALTER TABLE identity_links ADD COLUMN verified_at TEXT"
+            " /* UTC, ISO 8601: when the person proved control of the account */",
+            "ALTER TABLE identity_links ADD COLUMN github_id INTEGER"
+            " /* GitHub's numeric user id, which survives a rename */",
+            _IDENTITY_CODES,
         ),
     ),
 )

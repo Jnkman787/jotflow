@@ -138,6 +138,17 @@ class RunnerInfo(BaseModel):
     kinds: tuple[RunKind, ...] = Field(max_length=len(RunKind))
 
 
+class VerifyAnswer(BaseModel):
+    """The drafting runner's answer to ``POST /verify`` (#195), validated strictly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    verified: bool
+    rate_limited: bool
+    github_id: int | None = Field(default=None, ge=1)
+    login: str | None = Field(default=None, max_length=39)
+
+
 class RunnerInfoWire(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -294,6 +305,28 @@ class RunnerClient:
             return AccessWire.model_validate_json(response.content).reachable
         except ValidationError:
             raise RunnerError("the runner's reply was not an access answer") from None
+
+    async def verify(self, login: str, code_digest: str) -> VerifyAnswer:
+        """Ask the drafting runner whether ``login``'s GitHub account carries the code (#195).
+
+        Only the code's digest is sent; the runner hashes what it finds and compares.
+
+        Raises :class:`RunnerError` if the runner refuses, or GitHub didn't answer.
+        """
+        response = await self._call(
+            "POST", RunKind.DRAFTING, "/verify", json={"login": login, "code_digest": code_digest}
+        )
+        if response.status_code == 502:
+            raise RunnerError("GitHub didn't answer the check")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        try:
+            answer = VerifyAnswer.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a verification answer") from None
+        if answer.verified and (answer.github_id is None or answer.login is None):
+            raise RunnerError("the runner's reply was not a verification answer")
+        return answer
 
     async def stop(self, run_id: str, kind: RunKind) -> None:
         """Ask the runner to kill the run. A run it does not know is already gone."""

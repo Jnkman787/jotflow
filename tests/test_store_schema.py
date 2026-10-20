@@ -127,6 +127,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "reaction_marks",
             "operator_tokens",
             "identity_unlinks",
+            "identity_codes",
         }
         for table in tables:
             (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()
@@ -384,13 +385,39 @@ async def test_the_identity_unlinks_upgrade_keeps_links(tmp_path: Path) -> None:
     """12 to 13 (#173): links survive, and the removal record starts empty."""
     path = tmp_path / "jotflow.db"
     old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 13])
-    await old.link_identity("U0BOB", "octo-cat")
     await old.close()
+    # The row as that version wrote it: today's code expects later columns.
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "INSERT INTO identity_links (slack_user_id, github_login, verified, linked_at)"
+            " VALUES ('U0BOB', 'octo-cat', 0, '2026-10-19T09:00:00+00:00')"
+        )
     store = await SqliteStore.open(path)
     try:
         link = await store.get_identity("U0BOB")
         assert link is not None and link.github_login == "octo-cat"
         assert await store.identity_unlinks() == []
         assert await store.remove_identity("U0BOB", removed_by="operator")
+    finally:
+        await store.close()
+
+
+async def test_the_identity_codes_upgrade_keeps_links_unverified(tmp_path: Path) -> None:
+    """To the verification migration (#195): links stay, unverified, and no code is pending."""
+    path = tmp_path / "jotflow.db"
+    version = max(m.version for m in MIGRATIONS if any("identity_codes" in s for s in m.statements))
+    old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < version])
+    await old.close()
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "INSERT INTO identity_links (slack_user_id, github_login, verified, linked_at)"
+            " VALUES ('U0BOB', 'octo-cat', 0, '2026-10-19T09:00:00+00:00')"
+        )
+    store = await SqliteStore.open(path)
+    try:
+        link = await store.get_identity("U0BOB")
+        assert link is not None and not link.verified
+        assert link.verified_at is None and link.github_id is None
+        assert await store.get_verification("U0BOB") is None
     finally:
         await store.close()
