@@ -4,7 +4,7 @@
 
 - Issue: #236 (M6)
 - Draft PR: to be opened with this plan
-- Status: planning. The lead approved it at f9cfab3; code waits on security's verdict
+- Status: implementing. The lead approved the plan at f9cfab3, and security at ebaa35b, with the four conditions below
 - Last verified: origin/main 378ca9a, 2026-10-20
 - Next safe action: security and the lead review this plan
 
@@ -52,7 +52,7 @@ aliases = { web = "website-v2" } # optional nicknames; otherwise the repo name i
 
 JotFlow holds no GitHub token, and that doesn't change.
 
-- **Discovery runs in the drafting runner's own code, never the agent's.** The drafting runner already holds the read token, so it gains one endpoint, `GET /repos?owner=<owner>`, behind the same runner secret as `/info` and `/runs`. It calls GitHub's REST API with the read token, `GET /orgs/{owner}/repos` or else `/users/{owner}/repos`, at 100 a page.
+- **Discovery runs in the drafting runner's own code, never the agent's.** The drafting runner already holds the read token, so it gains one endpoint, `GET /repos/{owner}`, behind the same runner secret as `/info` and `/runs`. It uses a path parameter, because the runner gate refuses query strings and that rule stays. `owner` is validated against GitHub's owner rule in both JotFlow and the runner. It calls GitHub's REST API with the read token, `GET /orgs/{owner}/repos` or else `/users/{owner}/repos`, at 100 a page.
 - **It returns metadata only:** each repo's numeric `id`, `full_name`, `description`, `topics`, `pushed_at`, `archived`, `fork` and `private`. It's capped at 1,000 repos and 1 MB. The token never appears in the response or the logs.
 - **The query is fixed in code.** Only `owner` comes from the request, validated as an owner name. The endpoint can't fetch anything else, and no agent is involved.
 - **No new agent tool.** The agent's GitHub tools are unchanged, so the exact tool-set gate (#172, the Codex gate) stays as it is. There's no `search_repositories` or `get_repository`.
@@ -95,7 +95,7 @@ A new `orchestrator/repo_catalog.py` gives `ChannelRepos`, with `resolve(channel
 Otherwise it's refused, with a fixed reason: "not in this channel's repos or scopes", or "not found in scope yet; JotFlow is refreshing the list", or "archived" or "a fork". Execution is unchanged. The proposal stores the canonical `owner/name`, the write runs with the write token, and `record_result` checks the URL against the approved repo.
 
 **The write token must cover every discovered repo.** Discovery uses the read token, so a scope can find repos the execution runner's write token can't reach. Without a check, that would be an approved proposal whose run fails at GitHub. So approval checks first:
-- **The execution runner gains `GET /repos/access?repo=<owner/name>`,** behind its own secret. It makes one fixed call, `GET /repos/{owner}/{name}` with the write token, and returns only `{"reachable": true|false}`. A fine-grained token answers 404 for a repo outside its list. The token never leaves the runner.
+- **The execution runner gains `GET /repos/{owner}/{name}/access`,** behind its own secret, with path parameters validated in both JotFlow and the runner. It makes one fixed call, `GET /repos/{owner}/{name}` with the write token, and returns only `{"reachable": true|false}`. A fine-grained token answers 404 for a repo outside its list. The token never leaves the runner.
 - **Approve, by button, reaction or Retry,** asks it for a discovered repo, and refuses with a fixed reason if it can't reach the repo: "JotFlow's write token can't reach owner/name. Give the token access to that repo on GitHub, then approve again." The proposal stays pending, and nothing is queued.
 - **Only a positive result is cached,** per repo for 15 minutes, so most approvals don't wait on a runner round trip. A negative result is never cached, by the lead's call, so the next Approve or Retry asks again, and a token just fixed on GitHub works at once.
 - **Fail closed:** if the execution runner can't be reached, approval is refused with "couldn't check write access; try again", and the proposal stays pending.
@@ -133,6 +133,20 @@ They're excluded by the cache filter above, from the `archived` and `fork` flags
 - The cache keys repos by GitHub's numeric `id`.
 - When a refresh sees an id under a new name, the new name is what resolves. The old name resolves to the new one for 7 days, so a draft or keyword from before the rename still works, and the card shows the new name.
 - Stored topic links keep the old `owner/name`, which GitHub redirects for issue reads and writes. Rewriting them is a follow-up, so this plan needs no migration.
+
+## Security's conditions (2026-10-20)
+
+1. **No query strings.** The runner gate keeps refusing them, so both endpoints use path parameters, validated against GitHub's owner and repo-name rules on both sides.
+2. **The runner validates GitHub's answer itself:**
+   - a strict model with only the eight fields
+   - every `full_name` must start with `{owner}/`, case-insensitively, and anything else is dropped and counted
+   - the 1,000-repo and 1 MB caps are enforced while reading
+   - no redirects, `trust_env=False`, and a timeout
+   - pages are built as `page=N` by the runner, never taken from GitHub's `Link` header
+3. **The org-wide issue search** can return issues from excluded repos. drafting.md says they are context only, never proposal targets, and a replay fixture has an excluded repo in search results that isn't proposed.
+4. **The threat model** gains a row for steering a proposal by planting a repo description or topics. The defences are the catalog, cleaning, `UntrustedText`, the card's repo line and public warning, and approval. The accepted gap for all-repositories tokens says the scope globs are then the only boundary.
+
+Security's answers to the risks below: risk 2 is agreed as proposed, risk 6 is enough as planned with no opt-in flag, and risk 7 is acceptable. `reachable` means the token can see the repo, not that it can write issues there. That's fine as an early refusal, because the write would fail at GitHub otherwise.
 
 ## Risks and open questions, for security
 
