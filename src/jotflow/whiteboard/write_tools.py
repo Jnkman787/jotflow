@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import re
 import secrets
@@ -208,6 +209,41 @@ NO_SLACK_LINKS = (
     "This channel keeps Slack out of GitHub (issue_links = none): remove every Slack link "
     "from the title, body and comment, and don't name people from the thread."
 )
+
+
+# A GitHub @-mention as GitHub reads one (#250): "@" not preceded by a word
+# character, so an email address doesn't count, then a login (1-39 letters,
+# digits or single hyphens), or a team as @org/team. Code is never a mention.
+_MENTION = re.compile(
+    r"(?<![A-Za-z0-9_`])@([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})(/[A-Za-z0-9_.-]+)?"
+)
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[`~]*[ \t]*$|\Z)", re.M | re.S)
+_CODE_SPAN = re.compile(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
+
+
+def mentions(text: str) -> list[str]:
+    """Every @login or @org/team GitHub would ping in ``text``, outside code (#250).
+
+    Read four ways: as written, with invisible format characters removed, and
+    each of those with HTML entities decoded once, as GitHub does: ``&#64;login``
+    and ``&commat;login`` ping. A zero-width space or an entity can't hide a
+    mention, or make one login look like another: every reading must pass.
+    """
+    visible = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    readings = (text, visible, html.unescape(text), html.unescape(visible))
+    found: list[str] = []
+    for reading in dict.fromkeys(readings):
+        prose = _CODE_SPAN.sub(" ", _FENCE.sub("\n", reading))
+        found += [m.group(1) + (m.group(2) or "") for m in _MENTION.finditer(prose)]
+    return list(dict.fromkeys(found))
+
+
+def _not_linked(login: str) -> str:
+    return (
+        f"@{login} would ping someone on GitHub, and it isn't the linked GitHub login of a "
+        "participant. Write the name without @, or mention only a participant who linked "
+        "their login."
+    )
 
 
 def _for_link_check(text: str) -> str:
@@ -409,6 +445,16 @@ class WriteTools:
                     "assign only someone who said they will take it"
                 )
 
+    async def _check_mentions(self, participants: list[str], *texts: str | None) -> None:
+        """Only a linked participant may be @-mentioned in what goes to GitHub (#250)."""
+        found = [m for text in texts if text for m in mentions(text)]
+        if not found:
+            return
+        logins = await self._linked_logins(participants)
+        for login in found:
+            if "/" in login or login.casefold() not in logins:
+                raise ToolError(_not_linked(login))
+
     def _check_no_slack_links(self, *texts: str | None) -> None:
         """With ``issue_links = "none"``, nothing Slack-shaped goes to GitHub (#168, #32)."""
         if self._policy.issue_links != "none":
@@ -469,6 +515,7 @@ class WriteTools:
             repo, labels = self._repo_and_labels(grant, args.repo, args.labels)
             await self._check_title(grant, repo, args.title)
             self._check_no_slack_links(args.title, args.body)
+            await self._check_mentions(args.participants, args.title, args.body)
             await self._check_assignees(args.assignees, args.participants)
             draft = IssueProposal.model_validate(
                 {
@@ -497,6 +544,7 @@ class WriteTools:
                 raise ToolError(
                     f"topic {args.topic_id} is not linked to {repo}#{args.issue_number}"
                 )
+            await self._check_mentions(args.participants, args.changes.body, args.changes.comment)
             await self._check_assignees(args.changes.add_assignees, args.participants)
             _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
             changes = args.changes.model_copy(update={"add_labels": labels})
@@ -616,11 +664,13 @@ _DESCRIPTIONS = {
         "Propose a new GitHub issue for a topic in this run's channel. People approve it "
         "on a Slack card before anything is written. Name the topic with topic_id; start "
         "one with link_message first. Use only the channel's repos and allowed labels. "
-        "Assign only someone in participants who said they will take it."
+        "Assign only someone in participants who said they will take it. @-mention only a "
+        "participant who linked their GitHub login; write anyone else's name without @."
     ),
     "propose_update": (
         "Propose a change to the issue a topic is already linked to: a body edit, a "
-        "comment, or label or assignee changes. People approve it before it is written."
+        "comment, or label or assignee changes. People approve it before it is written. "
+        "@-mention only a participant who linked their GitHub login."
     ),
     "link_message": (
         "Decide where a message from get_work belongs: a new topic, an existing topic, or "
