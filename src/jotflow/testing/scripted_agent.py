@@ -78,6 +78,12 @@ async def play(thread: SavedThread, index: int, config_path: Path) -> int:
             for call in run.calls:
                 tool, arguments = scripted_call(call, resolve, sorted(set(participants)))
                 result = await client.call_tool(tool, arguments)
+                expected = getattr(call, "expect_error", None)
+                if expected is not None:
+                    reason = "".join(getattr(part, "text", "") for part in result.content)
+                    if result.is_error and expected in reason:
+                        continue  # refused as the script expects (#216)
+                    return EXIT_REFUSED
                 if result.is_error:
                     return EXIT_REFUSED
                 if isinstance(call, LinkMessageCall) and call.topic_key:

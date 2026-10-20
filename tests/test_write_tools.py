@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1057,6 +1058,81 @@ async def test_an_expired_topic_is_revived_by_linking_to_it(
     assert active.id == topic_id and active.last_active == clock()
 
 
+# A repo's title_pattern (#216)
+
+PATTERNED = parse_policy(
+    f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The web app"
+labels = ["bug", "enhancement"]
+title_pattern = '^(feat|fix)(\\([a-z-]+\\))?: .+$'
+"""
+)
+
+
+@pytest.fixture
+def patterned(tools: WriteTools, store: MemoryStore, poster: Poster, clock: Clock) -> WriteTools:
+    """The write tools, with the packet recorded, for a repo with a title_pattern."""
+    return WriteTools(store, PATTERNED, poster, clock=clock, new_id=Ids())
+
+
+async def test_a_title_off_the_repos_pattern_is_refused_with_the_pattern(
+    tools: WriteTools, patterned: WriteTools, store: MemoryStore
+) -> None:
+    from jotflow.whiteboard.write_tools import TITLE_REFUSED
+
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError) as refused:
+        await patterned.propose_issue(DRAFT, issue(topic_id))
+    assert refused.value.reason == TITLE_REFUSED.format(pattern=r"^(feat|fix)(\([a-z-]+\))?: .+$")
+    result: Any = await patterned.propose_issue(
+        DRAFT, issue(topic_id, title="feat(dashboard): export the table as CSV")
+    )
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.title.startswith("feat(dashboard)")
+
+
+async def test_after_three_refused_titles_a_run_stops_proposing(
+    tools: WriteTools, patterned: WriteTools
+) -> None:
+    from jotflow.whiteboard.write_tools import MAX_TITLE_REFUSALS, TOO_MANY_TITLES
+
+    topic_id = await new_topic(tools)
+    for n in range(MAX_TITLE_REFUSALS):
+        with pytest.raises(ToolError):
+            await patterned.propose_issue(DRAFT, issue(topic_id, title=f"Try {n}"))
+    with pytest.raises(ToolError) as stopped:
+        await patterned.propose_issue(DRAFT, issue(topic_id, title="feat: now it matches"))
+    assert stopped.value.reason == TOO_MANY_TITLES.format(n=MAX_TITLE_REFUSALS)
+
+
+async def test_without_a_pattern_any_title_is_proposed_as_before(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(DRAFT, issue(topic_id, title="Any plain title"))
+    assert result.proposal_id
+
+
+async def test_refusal_counts_are_dropped_once_their_run_ends(
+    tools: WriteTools, patterned: WriteTools, store: LiveStore
+) -> None:
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError):
+        await patterned.propose_issue(DRAFT, issue(topic_id))
+    assert patterned._title_refusals == {"run-1": 1}
+    store.ended.add("run-1")
+    later = store.register(
+        Grant(run_id="run-2", kind=RunKind.DRAFTING, channel_id=CH, thread_ts=ROOT)
+    )
+    await store.record_packet("run-2", [MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT)])
+    with pytest.raises(ToolError):
+        await patterned.propose_issue(later, issue(topic_id))
+    assert patterned._title_refusals == {"run-2": 1}
+
+
 # @-mentions (#250)
 
 
@@ -1147,3 +1223,33 @@ async def test_propose_update_mentions_follow_the_same_rule(
         await tools.propose_update(DRAFT, update(topic_id, changes={field: "cc @stranger"}))
     ok = update(topic_id, participants=["U0BOB"], changes={field: "cc @acme-bob"})
     assert (await tools.propose_update(DRAFT, ok)).state is ProposalState.PENDING  # type: ignore[attr-defined]
+
+
+async def test_a_title_check_that_runs_out_of_time_fails_closed_and_logs_no_title(
+    tools: WriteTools,
+    patterned: WriteTools,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from jotflow.title_pattern import Match
+    from jotflow.whiteboard import write_tools as module
+    from jotflow.whiteboard.write_tools import MAX_TITLE_REFUSALS, TITLE_REFUSED
+
+    async def out_of_time(pattern: str, title: str) -> Match:
+        return Match.TIMEOUT
+
+    monkeypatch.setattr(module, "match_title_async", out_of_time)
+    topic_id = await new_topic(tools)
+    sentinel = "feat: SENTINEL-TITLE-1234"  # would match, if it were ever checked in time
+    with caplog.at_level(logging.DEBUG):
+        for _ in range(MAX_TITLE_REFUSALS):
+            with pytest.raises(ToolError) as refused:
+                await patterned.propose_issue(DRAFT, issue(topic_id, title=sentinel))
+            assert refused.value.reason == TITLE_REFUSED.format(
+                pattern=r"^(feat|fix)(\([a-z-]+\))?: .+$"
+            )
+    assert patterned.pattern_timeouts == {"acme-co/web": MAX_TITLE_REFUSALS}
+    assert "title_pattern for acme-co/web ran out of time" in caplog.text
+    assert "SENTINEL" not in caplog.text
+    with pytest.raises(ToolError, match="stop proposing"):
+        await patterned.propose_issue(DRAFT, issue(topic_id, title=sentinel))

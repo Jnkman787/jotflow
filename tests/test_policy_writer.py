@@ -181,3 +181,18 @@ def test_the_issue_reaction_round_trips(reaction: str) -> None:
     text = render_policy(policy)
     assert f'issue_reaction = "{reaction}"' in text
     assert parse_policy(text) == policy
+
+
+def test_conventions_and_title_pattern_survive_a_rewrite() -> None:
+    # Setup rewrites jotflow.toml when channels change; the team's rules must stay (#216).
+    repo = {
+        "repo": "acme/web",
+        "nickname": "web",
+        "description": "Web",
+        "title_pattern": r"^(feat|fix)(\([a-z-]+\))?: .+$",
+        "conventions": 'Use "Severity: high" only for outages.\n- Always add a checklist.',
+    }
+    policy = _policy(channels={"C0WEB": {"repos": [repo]}})
+    [back] = parse_policy(render_policy(policy)).channels["C0WEB"].repos
+    assert back.title_pattern == repo["title_pattern"]
+    assert back.conventions == repo["conventions"]

@@ -22,6 +22,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `closed-duplicate.json` | An idea that matches a closed issue, `acme-co/web#55`, that no topic is linked to. One topic, no proposal, and one `ask_channel` question naming the issue, since the agent searches closed issues too. |
 | `body-update.json` | As `existing-topic.json`, but the agent proposes replacing #42's body. JotFlow created #42, so its body carries the creating proposal's hidden marker. Executing the update keeps that marker and adds JotFlow's footer. |
 | `missing-label.json` | As `feature-request.json`, but the repo has no `enhancement` label on GitHub. Drafting is the same. Executing the proposal must fail, naming the missing label, and write nothing. |
+| `title-pattern.json` | As `feature-request.json`, but `acme-co/web` has a `title_pattern` and `conventions`. The first title doesn't match, so `propose_issue` refuses it with the pattern, and the agent proposes again with one that does. One proposal. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.
@@ -61,7 +62,7 @@ Each run has the `channel` and top-level `thread_ts` it drafts, and the `calls` 
 | `tool` | `arguments` |
 |---|---|
 | `link_message` | `jotflow.models.Classification` |
-| `propose_issue` | `jotflow.models.IssueProposal` |
+| `propose_issue` | `jotflow.models.IssueProposal`. The call may also carry `expect_error`, part of the refusal it must get, such as a title off the repo's `title_pattern`. It then makes no proposal, and being accepted fails the replay. |
 | `propose_update` | `jotflow.models.UpdateProposal` |
 | `ask_channel` | `{"text": ...}` |
 

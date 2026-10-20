@@ -128,6 +128,14 @@ class LinkMessageCall(_Strict):
 class ProposeIssueCall(_Strict):
     tool: Literal["propose_issue"]
     arguments: IssueProposal
+    expect_error: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Part of the refusal this call must get, such as a title_pattern's (#216). "
+            "The call then makes no proposal, and being accepted fails the replay"
+        ),
+    )
 
 
 class ProposeUpdateCall(_Strict):
@@ -523,7 +531,7 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
                     else decision.topic_id or ""
                 )
                 outcome.topics.setdefault(topic, []).append(ts)
-            elif isinstance(call, ProposeIssueCall):
+            elif isinstance(call, ProposeIssueCall) and call.expect_error is None:
                 create = call.arguments
                 outcome.proposals.append(
                     ExpectedProposal(

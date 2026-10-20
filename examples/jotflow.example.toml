@@ -93,12 +93,25 @@ debounce_seconds = 60
 # visible to anyone. JotFlow has no GitHub access, so this line is the source:
 # the agent may add the warning when it sees a public repo, but never remove
 # one. Without the line, cards say visibility was not checked.
+# conventions is optional: the team's own rules for this repo's issues, in
+# plain text of up to 2000 characters, such as required sections or label
+# norms. The drafting agent follows them over the style of the repo's recent
+# issues. They shape the title and body, and never relax JotFlow's own rules.
+# title_pattern is optional: a regular expression every proposed title must
+# fully match. JotFlow refuses a title that doesn't, and the agent tries
+# again. Each match may take 50 ms at most; a title it can't check in time is
+# refused too, and jotflow check warns about a pattern that slow. Not allowed:
+# lookarounds, backreferences, conditionals, more than three *, + or {n,m}
+# repeats, POSIX classes, and a { that doesn't start a repeat (write \{).
+# Single quotes keep backslashes.
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"
 description = "The customer-facing web app: pages, sign-up, onboarding"
 labels = ["bug", "enhancement", "size:s", "size:m", "size:l"]
 visibility = "private"
+title_pattern = '^(feat|fix|docs)(\([a-z-]+\))?: .+$'
+conventions = "Every issue has an ## Acceptance checklist. Use size:s, size:m or size:l on every enhancement."
 
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/api"

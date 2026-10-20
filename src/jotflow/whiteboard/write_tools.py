@@ -22,6 +22,7 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import re
 import secrets
 import unicodedata
@@ -48,10 +49,21 @@ from jotflow.models import (
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
 from jotflow.store.base import check_github_login, utc_now
+from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
 
+log = logging.getLogger("jotflow.whiteboard")
+
 MAX_PROPOSALS_PER_RUN = 3
+# A run may propose a title its repo's title_pattern refuses this many times (#216).
+MAX_TITLE_REFUSALS = 3
+TITLE_REFUSED = (
+    "this repo's titles must match title_pattern {pattern}; propose again with a title that matches"
+)
+TOO_MANY_TITLES = (
+    "this run's titles were refused {n} times; stop proposing and leave the title to a person"
+)
 MAX_QUESTIONS_PER_RUN = 2
 MAX_LINKS_PER_RUN = 200
 QUESTION_INTERVAL = timedelta(seconds=30)
@@ -321,6 +333,42 @@ class WriteTools:
         self._clock = clock
         self._new_id = new_id
         self._locks = _RunLocks()
+        self._title_refusals: dict[str, int] = {}
+        # Matches that ran out of time, by repo: a sign the pattern itself is broken.
+        self.pattern_timeouts: dict[str, int] = {}
+
+    async def _check_title(self, grant: Grant, repo: str, title: str) -> None:
+        """Refuse a title the repo's title_pattern doesn't fully match (#216).
+
+        Updates never change a title, so only propose_issue calls this.
+        """
+        refused = self._title_refusals.get(grant.run_id, 0)
+        if refused >= MAX_TITLE_REFUSALS:
+            raise ToolError(TOO_MANY_TITLES.format(n=refused))
+        pattern = self._policy.repo(grant.channel_id, repo).title_pattern
+        if pattern is None:
+            return
+        result = await match_title_async(pattern, title)
+        if result is Match.MATCH:
+            return
+        if result is Match.TIMEOUT:
+            # Fail closed: a title that can't be checked in time is refused. Never log it.
+            self.pattern_timeouts[repo] = self.pattern_timeouts.get(repo, 0) + 1
+            log.warning(
+                "title_pattern for %s ran out of time; refused the title (%d so far)",
+                repo,
+                self.pattern_timeouts[repo],
+            )
+        await self._forget_ended_runs()
+        self._title_refusals[grant.run_id] = refused + 1
+        raise ToolError(TITLE_REFUSED.format(pattern=pattern))
+
+    async def _forget_ended_runs(self) -> None:
+        """Drop refusal counts for runs that have ended. Only runs with one are kept."""
+        for run_id in list(self._title_refusals):
+            run = await self._store.get_run(run_id)
+            if run is None or run.status is not RunStatus.RUNNING:
+                del self._title_refusals[run_id]
 
     async def _once(
         self,
@@ -481,6 +529,7 @@ class WriteTools:
                     "use propose_update"
                 )
             repo, labels = self._repo_and_labels(grant, args.repo, args.labels)
+            await self._check_title(grant, repo, args.title)
             self._check_no_slack_links(args.title, args.body)
             await self._check_mentions(args.participants, args.title, args.body)
             await self._check_assignees(args.assignees, args.participants)

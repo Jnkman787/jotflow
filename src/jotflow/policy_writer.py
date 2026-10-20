@@ -97,6 +97,11 @@ def render_policy(policy: Policy) -> str:
                 lines.append(f"labels = {_array(repo.labels)}")
             if repo.visibility is not None:
                 lines.append(f"visibility = {toml_string(repo.visibility)}")
+            # The team's own issue rules (#216): kept on a rewrite, newlines and all.
+            if repo.title_pattern is not None:
+                lines.append(f"title_pattern = {toml_string(repo.title_pattern)}")
+            if repo.conventions is not None:
+                lines.append(f"conventions = {toml_string(repo.conventions)}")
         own_help = channel.help.model_dump(exclude_none=True)
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]

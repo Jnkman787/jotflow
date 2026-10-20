@@ -30,6 +30,7 @@ from pydantic import (
 from jotflow.models import RepoName, RepoVisibility, shown
 from jotflow.reactions import DEFAULT_APPROVAL, DEFAULT_ISSUE_REACTION, KEYWORD_REACTIONS, reserved
 from jotflow.text import unsafe_text_problem
+from jotflow.title_pattern import check_title_pattern
 
 _CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{2,}")
 _USER_ID = re.compile(r"[UW][A-Z0-9]{2,}")
@@ -135,6 +136,10 @@ class InvalidLabelError(PolicyViolation):
         self.labels = labels
 
 
+# A team's conventions text for one repo, in characters (#216).
+MAX_CONVENTIONS = 2000
+
+
 class RepoPolicy(_Strict):
     """One repo a channel may feed (D11)."""
 
@@ -157,6 +162,40 @@ class RepoPolicy(_Strict):
             "this repo; the agent can add that warning but never remove it (D7, #122)"
         ),
     )
+    conventions: str | None = Field(
+        default=None,
+        max_length=MAX_CONVENTIONS,
+        description=(
+            "Optional. The team's own rules for this repo's issues, such as required "
+            "sections or label norms, in plain text. The drafting agent follows them over "
+            "the style of the repo's recent issues (#216)"
+        ),
+    )
+    title_pattern: str | None = Field(
+        default=None,
+        description=(
+            "Optional. A regular expression every proposed title must fully match, such as "
+            "^(feat|fix|docs)(\\([a-z-]+\\))?: .+$. Only patterns that always match "
+            "quickly are allowed (#216)"
+        ),
+    )
+
+    @field_validator("conventions")
+    @classmethod
+    def _plain_conventions(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("conventions is empty; remove the line, or write the rules")
+        for line in value.splitlines():
+            if line.strip() and (problem := unsafe_text_problem(line.strip())):
+                raise ValueError(f"conventions {problem}")
+        return value.strip()
+
+    @field_validator("title_pattern")
+    @classmethod
+    def _cheap_title_pattern(cls, value: str | None) -> str | None:
+        return None if value is None else check_title_pattern(value)
 
     @field_validator("labels")
     @classmethod

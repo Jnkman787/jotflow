@@ -109,7 +109,7 @@ The pieces:
 1. **Slack app.** Each team creates their own from the included manifest, named and iconed however they like. It is how JotFlow hears messages and posts back. Slack only talks to installed apps, so this part is unavoidable.
 2. **Orchestrator**, the part of JotFlow that coordinates the rest. It waits for a thread to settle before acting, keeps a per-channel index of active topics so related messages land on the same issue, and holds proposals until they are approved.
 3. **Whiteboard MCP server.** The agent's only way to act. Tools to fetch the work, propose an issue or an update, link a message to a topic, ask the channel a question, and report the result of a write. Any MCP-capable agent can drive it.
-4. **Your agent.** JotFlow starts it in the background, with no window, connected to JotFlow's tools, using a preset for the agent program you use. It runs in two containers: drafting runs read, draft, and search your repos for duplicates with a read-only token, and execution runs perform the approved GitHub writes with the token that can write.
+4. **Your agent.** JotFlow starts it in the background, with no window, connected to JotFlow's tools, using a preset for the agent program you use. It runs in two containers: drafting runs read, draft, and search your repos for duplicates with a read-only token, and execution runs perform the approved GitHub writes with the token that can write. Drafts follow each repo's own style, or your team's `conventions` and `title_pattern` from `jotflow.toml`.
 5. **Approval gate.** Each channel is in `propose`, `auto`, or `paused` mode. It covers the whole lifecycle: creation, description edits, comments, assignment, and labels.
 
 ## What a team needs

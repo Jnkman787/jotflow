@@ -335,6 +335,16 @@ def scripted_call(
 
 async def _make_call(replay: _Replay, grant: Grant, call: Any, participants: list[str]) -> None:
     tool, arguments = scripted_call(call, replay.resolve, participants)
+    expected = getattr(call, "expect_error", None)
+    if expected is not None:
+        # A call the script expects to be refused, such as a title off its pattern.
+        try:
+            await replay.call(grant, tool, arguments)
+        except ReplayError as exc:
+            if expected not in str(exc):
+                raise
+            return
+        raise ReplayError(f"{tool} was accepted, but the script expected it refused: {expected}")
     result = await replay.call(grant, tool, arguments)
     if isinstance(call, LinkMessageCall) and call.topic_key:
         replay.topics[TOPIC_KEY_PREFIX + call.topic_key] = result.model_dump()["topic_id"]

@@ -578,3 +578,21 @@ def test_a_second_approver_without_approvers_is_a_configuration_problem(
     )
     assert main(["check"]) == check_command.EXIT_REFUSED
     assert "require_second_approver needs [approval] approvers" in capsys.readouterr().err
+
+
+def test_check_names_a_title_pattern_that_runs_out_of_time() -> None:
+    from jotflow.policy import Policy
+
+    slow = "a*a*a*" + "(a|aa|aaa|aaaa|aaaaa|aaaaaa)" * 5 + "b"
+    repos = [
+        {"repo": "acme-co/web", "nickname": "web", "description": "Web", "title_pattern": slow},
+        {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "API",
+            "title_pattern": "feat: .+",
+        },
+    ]
+    policy = Policy.model_validate({"channels": {"C0TEST1": {"repos": repos}}})
+    [warning] = check_command.pattern_warnings(policy)
+    assert warning.startswith("acme-co/web's title_pattern ran out of time on a test title")
