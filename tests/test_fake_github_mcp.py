@@ -311,3 +311,25 @@ def test_a_second_process_sees_the_first_ones_write(tmp_path: Path) -> None:
     text = json.loads(done.stdout)["result"]["content"][0]["text"]
     assert json.loads(text)["issues"][0]["number"] == 43
     assert len((tmp_path / "log").read_text().splitlines()) == 1
+
+
+def test_search_across_one_owner_with_org_or_owner_alone() -> None:
+    from jotflow.testing.threads import GithubIssue
+
+    def repo(number: int, title: str) -> GithubRepo:
+        issue = GithubIssue(number=number, title=title, state="open", body="")
+        return GithubRepo(issues=(issue,))
+
+    server = FakeGithub(
+        {
+            "acme-co/web": repo(1, "Export the report"),
+            "acme-co/web-demo": repo(2, "Export the demo report"),
+            "example-org/site": repo(3, "Export a page"),
+        }
+    )
+    names = {"acme-co/web", "acme-co/web-demo"}
+    by_org = call(server, "search_issues", query="org:acme-co export")
+    assert {i["html_url"].split("/issues")[0][19:] for i in by_org["items"]} == names
+    by_owner = call(server, "search_issues", query="export", owner="acme-co")
+    assert by_owner["total_count"] == 2
+    assert call(server, "search_issues", query="user:example-org export")["total_count"] == 1

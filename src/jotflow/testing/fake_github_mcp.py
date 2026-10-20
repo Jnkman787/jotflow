@@ -207,8 +207,12 @@ class FakeGithub:
         return found
 
     def _scoped(self, arguments: Mapping[str, Any]) -> list[tuple[str, GithubRepo]]:
-        if arguments.get("owner") or arguments.get("repo"):
+        if arguments.get("repo"):
             return [self._repo(arguments)]
+        if owner := arguments.get("owner"):
+            # One owner's every repo, as `org:<owner>` searches (#236).
+            prefix = f"{str(owner).casefold()}/"
+            return [(n, r) for n, r in self._repos.values() if n.casefold().startswith(prefix)]
         return list(self._repos.values())
 
     def _search(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -222,6 +226,8 @@ class FakeGithub:
             key, _, value = part.partition(":")
             if value and key.lower() == "repo" and "/" in value:
                 scope["owner"], scope["repo"] = value.split("/", 1)
+            elif value and key.lower() in ("org", "user"):
+                scope["owner"] = value
             elif value and key.lower() in ("is", "state") and value.lower() in ("open", "closed"):
                 state = value.lower()
             elif value and key.lower() == "is":

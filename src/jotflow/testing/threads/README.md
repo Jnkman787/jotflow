@@ -23,6 +23,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `body-update.json` | As `existing-topic.json`, but the agent proposes replacing #42's body. JotFlow created #42, so its body carries the creating proposal's hidden marker. Executing the update keeps that marker and adds JotFlow's footer. |
 | `missing-label.json` | As `feature-request.json`, but the repo has no `enhancement` label on GitHub. Drafting is the same. Executing the proposal must fail, naming the missing label, and write nothing. |
 | `title-pattern.json` | As `feature-request.json`, but `acme-co/web` has a `title_pattern` and `conventions`. The first title doesn't match, so `propose_issue` refuses it with the pattern, and the agent proposes again with one that does. One proposal. |
+| `scoped-search.json` | A channel lists `acme-co/web` and has a scope over every `acme-co` repo except `*-demo` ones. The idea, invoices as PDF, matches an open issue in the excluded `acme-co/web-demo`, which an `org:acme-co` search finds. The agent treats that hit as context only and proposes one issue to `acme-co/billing`, a repo the scope found. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.
@@ -40,11 +41,11 @@ A file is one JSON object. Unknown fields are rejected everywhere, so a typo fai
 | `description` | What the thread is and what should happen. |
 | `workspace` | `team`, `team_id`, and the `bot`'s `user_id`, `bot_id`, and handle `name`. |
 | `users` | Slack user id to `name`, an optional linked `github` login, and `guest` and `external` flags. |
-| `policy` | The same structure as `jotflow.toml`: channels, their repos, and optional label lists. |
+| `policy` | The same structure as `jotflow.toml`: channels, their repos and scopes, and optional label lists. |
 | `existing_topics` | Topics that exist before the thread starts, as `jotflow.models.Topic`. |
 | `events` | Slack events in delivery order. See below. |
 | `agent` | The scripted fake agent: one entry per drafting run. See below. |
-| `github` | Optional. What a real agent's GitHub read tools see, by `owner/name`: the repo's `labels` and its `issues`, each with `number`, `title`, `state` (`open` or `closed`), `body`, and `labels`. Every repo must be in `policy`, and an issue's labels must be in its repo's list. |
+| `github` | Optional. What a real agent's GitHub read tools see, by `owner/name`: the repo's `labels` and its `issues`, each with `number`, `title`, `state` (`open` or `closed`), `body`, and `labels`. Every repo must be in `policy`, or under a scope's owner, and an issue's labels must be in its repo's list. For a scope, these repos are also the owner's listing on GitHub, with optional `description`, `topics`, `pushed_at`, `private` (default true), `archived` and `fork`. A proposal must name a repo the channel lists, or one its scope finds there. |
 | `expected` | The outcome. See below. |
 
 ### Events

@@ -164,6 +164,18 @@ class RepoCatalog:
         except Exception as exc:  # the runner is down or refused: keep the last listing
             log.warning("could not list %s's repos: %s", owner, type(exc).__name__)
             return False
+        self._load(state, repos)
+        log.info("listed %d repos for %s", len(state.by_id), owner)
+        return True
+
+    def load(self, owner: str, repos: Iterable[DiscoveredRepo]) -> None:
+        """Take ``repos`` as ``owner``'s listing now, as a refresh would. For replay."""
+        state = self._owners.get(owner.casefold())
+        if state is None:
+            raise KeyError(owner)
+        self._load(state, list(repos))
+
+    def _load(self, state: _Owner, repos: list[DiscoveredRepo]) -> None:
         now = self._clock()
         fresh = {r.id: r for r in repos}
         for repo_id, old in state.by_id.items():
@@ -174,8 +186,6 @@ class RepoCatalog:
         state.by_id = fresh
         state.fetched_at = now
         state.generation += 1
-        log.info("listed %d repos for %s", len(fresh), owner)
-        return True
 
     async def refresh_all(self) -> None:
         for owner in self.owners:

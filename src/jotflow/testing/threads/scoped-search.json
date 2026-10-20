@@ -1,0 +1,232 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "scoped-search",
+  "description": "A channel with a scope over acme-co that leaves out *-demo repos. The idea matches an open issue in the excluded acme-co/web-demo, which the org-wide search finds. The agent treats that hit as context only and proposes one issue to acme-co/billing, a repo the scope found.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ],
+        "scopes": [
+          {
+            "owner": "acme-co",
+            "match": [
+              "*"
+            ],
+            "exclude": [
+              "*-demo"
+            ],
+            "labels": [
+              "bug",
+              "enhancement"
+            ],
+            "description": "An Acme Co service; choose it by its GitHub description"
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792320000.000100",
+      "user": "U0CAROL",
+      "text": "Customers keep asking for their invoices as PDF files. Could billing send a PDF with each invoice email?"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792320180.000100",
+      "user": "U0ALICE",
+      "text": "Yes please, finance asks for this every week.",
+      "thread_ts": "1792320000.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792320000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792320000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "invoice-pdf",
+          "title": "Invoices as PDF"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792320180.000100",
+              "thread_ts": "1792320000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:invoice-pdf"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:invoice-pdf",
+            "repo": "acme-co/billing",
+            "title": "Attach a PDF to each invoice email",
+            "body": "## Problem\nCustomers ask for their invoices as PDF files, and finance asks for them every week.\n\n## Proposal\nSend a PDF copy of the invoice with each invoice email.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Render each invoice as a PDF when its email is sent.\n2. Attach the PDF to the invoice email.\n\n## Acceptance\n- [ ] Every invoice email carries the invoice as a PDF\n- [ ] The PDF shows the same amounts as the email\n\n## Context\nOpen question: should past invoices be offered as PDFs too?",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792320000.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792320180.000100",
+                "thread_ts": "1792320000.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "enhancement"
+      ],
+      "description": "The customer web app",
+      "pushed_at": "2026-10-15T10:00:00Z",
+      "issues": [
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    },
+    "acme-co/billing": {
+      "labels": [
+        "bug",
+        "enhancement"
+      ],
+      "description": "Invoices, payments and the invoice emails",
+      "topics": [
+        "billing",
+        "invoices"
+      ],
+      "pushed_at": "2026-10-16T10:00:00Z",
+      "issues": [
+        {
+          "number": 4,
+          "title": "Invoice totals round the tax twice",
+          "state": "closed",
+          "body": "Totals were off by a cent.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    },
+    "acme-co/web-demo": {
+      "labels": [
+        "enhancement"
+      ],
+      "description": "A demo shop for sales calls",
+      "pushed_at": "2026-10-17T10:00:00Z",
+      "issues": [
+        {
+          "number": 9,
+          "title": "Send invoices as PDF files in the demo",
+          "state": "open",
+          "body": "The demo should attach a PDF to each invoice email.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "One new topic with both messages, and one create_issue proposal for acme-co/billing, a repo the scope found. Nothing is proposed to acme-co/web-demo, which the scope leaves out, though its issue matches the idea.",
+    "accepted": [
+      "1792320000.000100",
+      "1792320180.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:invoice-pdf",
+        "messages": [
+          "1792320000.000100",
+          "1792320180.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/billing",
+        "topic": "key:invoice-pdf",
+        "body_sections": [
+          "## Problem",
+          "## Proposal",
+          "## Suggested approach",
+          "## Acceptance"
+        ]
+      }
+    ]
+  }
+}
