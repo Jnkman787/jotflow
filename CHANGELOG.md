@@ -11,6 +11,11 @@ What changed in each JotFlow release, for the people who run it. The format foll
   - A repo can also have a `title_pattern` that every proposed title must fully match. JotFlow refuses a title that doesn't, and the agent tries again, up to three times per run.
   - Only patterns that always match quickly are accepted.
   - Setup keeps both settings when it rewrites `jotflow.toml`.
+  - Before rolling back to 0.3.0 or earlier, remove both settings, because older versions refuse keys they don't know.
+
+### Changed
+
+- **`/jotflow help` and `/jotflow repos` are easier to read (#257).** Each reply has short headed sections, for keywords, reactions, repos, approval and commands. Repos are a bulleted list with the nickname and `owner/name` in code. They still can't ping or link: Slack is told to show the text verbatim, and every name and description from `jotflow.toml` is escaped. A long list still fits Slack's limits, and ends "and N more" when it doesn't.
 
 ## [0.3.0] - 2026-10-20
 

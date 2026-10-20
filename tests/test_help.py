@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from jotflow.models import ChannelMode
+from jotflow.orchestrator import help_blocks
 from jotflow.orchestrator.help import (
     MODE_LINES,
     NOT_SET_UP,
@@ -183,12 +184,25 @@ async def _reply(app: FakeApp, channel: str, text: str = "help") -> dict[str, An
     return reply
 
 
+def _texts(reply: dict[str, Any]) -> list[dict[str, Any]]:
+    return [block["text"] for block in reply["blocks"]]
+
+
+def _safe(reply: dict[str, Any]) -> None:
+    """Nothing in the blocks can ping, link, or reformat (#231, #257)."""
+    for text in _texts(reply):
+        if text["type"] == "mrkdwn":
+            assert text["verbatim"] is True
+            assert "<" not in text["text"] and ">" not in text["text"]
+        else:
+            assert text["type"] == "plain_text"
+    # The notification fallback too: no <!here>, <@U…> or <url|label> markup (#259).
+    assert "<" not in reply["text"] and ">" not in reply["text"]
+
+
 async def _ask(app: FakeApp, channel: str) -> str:
     reply = await _reply(app, channel)
-    # Every word reaches Slack as plain_text, so nothing can ping or link (#231).
-    shown = "\n".join(block["text"]["text"] for block in reply["blocks"])
-    assert shown == reply["text"]
-    assert all(block["text"]["type"] == "plain_text" for block in reply["blocks"])
+    _safe(reply)
     text: str = reply["text"]
     return text
 
@@ -415,7 +429,8 @@ async def test_the_slash_command_routes_repos() -> None:
     register_commands(cast(Any, app), policy())
     reply = await _reply(app, CH, "repos")
     assert reply["text"].startswith("This channel feeds:")
-    assert reply["blocks"][0]["text"]["type"] == "plain_text"
+    _safe(reply)
+    assert reply["blocks"][0]["text"]["text"].startswith("*:file_folder: Repos this channel feeds*")
 
 
 def test_help_for_a_paused_channel_says_a_running_write_may_finish() -> None:
@@ -446,10 +461,15 @@ def _many_repos(count: int) -> Policy:
 def _fits(reply: dict[str, Any]) -> None:
     assert 1 <= len(reply["blocks"]) <= 50
     for block in reply["blocks"]:
-        assert block["type"] == "section" and block["text"]["type"] == "plain_text"
-        assert 1 <= len(block["text"]["text"]) <= 3000
+        limit = 150 if block["type"] == "header" else 3000
+        assert block["type"] in {"header", "section"}
+        assert 1 <= len(block["text"]["text"]) <= limit
     assert len(reply["text"]) <= 40_000
-    assert "\n".join(b["text"]["text"] for b in reply["blocks"]) == reply["text"]
+    _safe(reply)
+
+
+def _shown_in_blocks(reply: dict[str, Any]) -> str:
+    return "\n".join(text["text"] for text in _texts(reply))
 
 
 @pytest.mark.parametrize("count", [25, 120])
@@ -464,6 +484,10 @@ async def test_help_with_many_long_repos_fits_and_points_to_repos(count: int) ->
     shown = sum(f"k{i:03d} (" in line for i in range(count))
     assert 0 < shown < count
     assert line.endswith(f"and {count - shown} more; see /jotflow repos.")
+    # The blocks list the same repos and say the same number more.
+    blocks = _shown_in_blocks(reply)
+    assert sum(f"`{'k' * 29}{i:03d}`" in blocks for i in range(count)) == shown
+    assert f"and {count - shown} more; see `/jotflow repos`" in blocks
 
 
 async def test_repos_with_25_long_repos_lists_every_one_across_blocks() -> None:
@@ -474,10 +498,11 @@ async def test_repos_with_25_long_repos_lists_every_one_across_blocks() -> None:
     assert len(reply["blocks"]) > 1
     assert all(f"k{i:03d}: o" in reply["text"] for i in range(25))
     assert "more; jotflow.toml lists them all" not in reply["text"]
-    # Each repo's line stays whole inside one block.
-    for block in reply["blocks"]:
-        for line in block["text"]["text"].splitlines()[1:]:
-            assert line.startswith("  k") and line.endswith(tuple(f"{i:03d}" for i in range(25)))
+    # Each repo's bullet stays whole inside one section.
+    ends = tuple(f"{i:03d}" for i in range(25))
+    bullets = [line for t in _texts(reply) for line in t["text"].splitlines() if line[0] != "*"]
+    assert len(bullets) == 25
+    assert all(line.startswith("\u2022 `k") and line.endswith(ends) for line in bullets)
 
 
 async def test_repos_past_slacks_limits_says_how_many_more() -> None:
@@ -487,6 +512,9 @@ async def test_repos_past_slacks_limits_says_how_many_more() -> None:
     _fits(reply)
     shown = sum(f"k{i:03d}: o" in reply["text"] for i in range(400))
     assert reply["text"].endswith(f"and {400 - shown} more; jotflow.toml lists them all.")
+    blocks = _shown_in_blocks(reply)
+    assert blocks.endswith(f"and {400 - shown} more; jotflow.toml lists them all.")
+    assert sum(f"`{'k' * 29}{i:03d}`" in blocks for i in range(400)) == shown
 
 
 def test_a_line_longer_than_a_section_splits_at_a_space() -> None:
@@ -508,3 +536,78 @@ def test_no_section_is_ever_blank(text: str) -> None:
     blocks = plain_sections(text)
     assert all(b["text"]["text"].strip() for b in blocks)
     assert len(blocks) == (1 if text.strip() else 0)
+
+
+# Headed, bulleted, and still unable to ping or link (#257)
+
+
+def test_help_and_repos_have_headed_bulleted_sections() -> None:
+    from jotflow.orchestrator.help_blocks import help_reply, repos_reply
+
+    _, blocks = help_reply(policy(), CH)
+    shape = [(b["type"], b["text"]["text"].splitlines()[0]) for b in blocks]
+    assert shape == [
+        ("header", ":wave: JotFlow help"),
+        ("section", "*:label: Keywords*"),
+        ("section", "*:raised_hand: Reactions*"),
+        ("section", "*:file_folder: Repos*"),
+        ("section", "*:white_check_mark: Approval*"),
+        ("section", "*:keyboard: Commands*"),
+        ("section", "_Most people never need these: just post, and JotFlow works out the rest._"),
+    ]
+    repos = blocks[3]["text"]["text"].splitlines()
+    assert repos[1:] == ["• `web` `acme-co/web`", "• `api` `acme-co/api`"]
+    assert "• `idea:` this is an idea" in blocks[1]["text"]["text"]
+    _, listed = repos_reply(policy(), CH, "")
+    assert listed[0]["text"]["text"].splitlines() == [
+        "*:file_folder: Repos this channel feeds*",
+        "• `web` `acme-co/web`: Web",
+        "• `api` `acme-co/api`: API",
+    ]
+
+
+def test_without_a_policy_help_has_no_channel_sections() -> None:
+    from jotflow.orchestrator.help_blocks import help_reply
+
+    text, blocks = help_reply(None, CH)
+    firsts = [b["text"]["text"].splitlines()[0] for b in blocks]
+    assert "*:file_folder: Repos*" not in firsts and "*:white_check_mark: Approval*" not in firsts
+    assert text == help_text()
+
+
+NASTY = "Pings <!here> and <@U123>, links https://x.y, *bold* _it_ ~gone~ `code` & co"
+
+
+async def test_an_admins_description_cannot_ping_link_or_reformat() -> None:
+    nasty = Policy.model_validate(
+        {
+            "channels": {
+                CH: {"repos": [{"repo": "acme-co/web", "nickname": "web", "description": NASTY}]}
+            }
+        }
+    )
+    app = FakeApp()
+    register_commands(cast(Any, app), nasty)
+    reply = await _reply(app, CH, "repos")
+    _fits(reply)  # verbatim everywhere, and no < or > left in any mrkdwn
+    [bullet] = [x for x in _shown_in_blocks(reply).splitlines() if x.startswith("•")]
+    assert "&lt;!here&gt;" in bullet and "&lt;@U123&gt;" in bullet
+    assert "https://x.y" in bullet  # verbatim: shown, never linked
+    assert "&amp; co" in bullet
+    description = bullet.split(": ", 1)[1]
+    for mark in "*_~`":
+        assert mark not in description, mark
+    star, grave = help_blocks.LOOKALIKES["*"], help_blocks.LOOKALIKES["`"]
+    assert f"{star}bold{star}" in description and f"{grave}code{grave}" in description
+    # The plain fallback can't ping or link either: Slack reads <…> markup in it.
+    assert "<!here>" not in reply["text"] and "<@U123>" not in reply["text"]
+    assert "&lt;!here&gt; and &lt;@U123&gt;" in reply["text"]
+    assert "&amp; co" in reply["text"]
+
+
+def test_a_nickname_or_repo_with_a_backtick_is_escaped_not_put_in_code() -> None:
+    from jotflow.orchestrator.help_blocks import code
+
+    assert code("web") == "`web`"
+    assert code("a`b") == "a" + help_blocks.LOOKALIKES["`"] + "b"
+    assert code("a<b>") == "`a&lt;b&gt;`"
