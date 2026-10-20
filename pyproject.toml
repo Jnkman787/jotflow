@@ -28,6 +28,7 @@ dependencies = [
   "uvicorn>=0.40",
   "slack-sdk>=3.33",
   "httpx2>=2.0",
+  "regex>=2026.9.29",
 ]
 
 [project.urls]
@@ -46,6 +47,7 @@ dev = [
   "mypy>=1.13",
   "pytest-cov>=6.0",
   "httpx2>=2.0",
+  "types-regex==2026.9.29.20261005",
 ]
 
 [build-system]

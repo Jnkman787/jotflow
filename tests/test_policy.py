@@ -504,9 +504,9 @@ def test_conventions_must_be_plain_and_short(value: str, reason: str) -> None:
     assert any(reason in p for p in found), found
 
 
-def test_a_slow_title_pattern_is_refused_when_the_policy_loads() -> None:
-    found = problems(ONE_REPO + "title_pattern = '(a|ab)*'\n")
-    assert any("title_pattern" in p and "a group may take only ?" in p for p in found), found
+def test_a_title_pattern_the_filter_refuses_stops_the_policy_loading() -> None:
+    found = problems(ONE_REPO + "title_pattern = '(?=x).+'\n")
+    assert any("title_pattern" in p and "lookarounds" in p for p in found), found
 
 
 def test_the_example_title_pattern_loads() -> None:

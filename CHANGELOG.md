@@ -9,7 +9,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 - **Per-repo house rules for issues (#216).**
   - A repo in `jotflow.toml` can have `conventions`, the team's own rules for its issues, which the drafting agent follows over the style of recent issues.
   - A repo can also have a `title_pattern` that every proposed title must fully match. JotFlow refuses a title that doesn't, and the agent tries again, up to three times per run.
-  - Only patterns that always match quickly are accepted.
+  - Each match runs under a 50 ms limit, off the event loop. A title that can't be checked in time is refused, never accepted, and `jotflow check` warns about a pattern that slow.
   - Setup keeps both settings when it rewrites `jotflow.toml`.
   - Before rolling back to 0.3.0 or earlier, remove both settings, because older versions refuse keys they don't know.
 

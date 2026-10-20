@@ -22,6 +22,7 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import re
 import secrets
 import unicodedata
@@ -48,9 +49,11 @@ from jotflow.models import (
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
 from jotflow.store.base import check_github_login, utc_now
-from jotflow.title_pattern import title_matches
+from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
+
+log = logging.getLogger("jotflow.whiteboard")
 
 MAX_PROPOSALS_PER_RUN = 3
 # A run may propose a title its repo's title_pattern refuses this many times (#216).
@@ -331,6 +334,8 @@ class WriteTools:
         self._new_id = new_id
         self._locks = _RunLocks()
         self._title_refusals: dict[str, int] = {}
+        # Matches that ran out of time, by repo: a sign the pattern itself is broken.
+        self.pattern_timeouts: dict[str, int] = {}
 
     async def _check_title(self, grant: Grant, repo: str, title: str) -> None:
         """Refuse a title the repo's title_pattern doesn't fully match (#216).
@@ -341,8 +346,19 @@ class WriteTools:
         if refused >= MAX_TITLE_REFUSALS:
             raise ToolError(TOO_MANY_TITLES.format(n=refused))
         pattern = self._policy.repo(grant.channel_id, repo).title_pattern
-        if pattern is None or title_matches(pattern, title):
+        if pattern is None:
             return
+        result = await match_title_async(pattern, title)
+        if result is Match.MATCH:
+            return
+        if result is Match.TIMEOUT:
+            # Fail closed: a title that can't be checked in time is refused. Never log it.
+            self.pattern_timeouts[repo] = self.pattern_timeouts.get(repo, 0) + 1
+            log.warning(
+                "title_pattern for %s ran out of time; refused the title (%d so far)",
+                repo,
+                self.pattern_timeouts[repo],
+            )
         await self._forget_ended_runs()
         self._title_refusals[grant.run_id] = refused + 1
         raise ToolError(TITLE_REFUSED.format(pattern=pattern))

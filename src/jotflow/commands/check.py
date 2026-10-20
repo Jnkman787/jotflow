@@ -40,6 +40,7 @@ from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_li
 from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
+from jotflow.title_pattern import times_out
 
 EXIT_OK = 0
 # Something JotFlow needs is wrong in a file check can name, such as an agent
@@ -250,6 +251,27 @@ def agent_failures(policy: Policy, folder: Path) -> list[str]:
     return failures
 
 
+def pattern_warnings(policy: Policy) -> list[str]:
+    """Repos whose title_pattern runs out of time on a hostile title (#216).
+
+    JotFlow refuses a title it can't check in time, so such a pattern would
+    refuse good titles too. Names the repo and nothing else.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for channel in policy.channels.values():
+        for repo in channel.repos:
+            if repo.title_pattern is None or repo.repo in seen:
+                continue
+            seen.add(repo.repo)
+            if times_out(repo.title_pattern):
+                found.append(
+                    f"{repo.repo}'s title_pattern ran out of time on a test title, so JotFlow "
+                    "would refuse titles it can't check in time; make it simpler"
+                )
+    return found
+
+
 def _load() -> tuple[Settings, Policy]:
     settings = load_settings()
     return settings, load_policy(settings.config_path)
@@ -276,6 +298,8 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     count = len(policy.channels)
     print(f"ok    configuration: {count} channel(s) in {settings.config_path}")
+    for warning in pattern_warnings(policy):
+        print(f"warn  policy: {warning}")
     failures: list[str] = []
     if policy.agent.preset:
         failures = agent_failures(policy, Path("."))

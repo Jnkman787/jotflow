@@ -25,14 +25,15 @@
 
 **Policy** (`RepoPolicy`, per repo in `[[channels.<id>.repos]]`):
 - **`conventions: str | None`.** Plain text of at most 2,000 characters, checked with `unsafe_text_problem` like other policy text, so it has no control characters or bidi overrides. It is the admin's, not Slack's or GitHub's.
-- **`title_pattern: str | None`.** At most 200 characters, matched with `re.fullmatch` against the title, which is at most 256 characters. The title is agent-written, and so shaped by Slack and GitHub text. Python's `re` can't be interrupted, so the validator, at security's request, uses an allowlist over the parsed pattern, not a blocklist:
-  - `*`, `+` and `{n,}` apply only to a single character, a class, or `.`
-  - a group may take only `?`
-  - no backreferences, lookarounds, or conditionals
-  - alternation is allowed only where it can't repeat: at the top, or in a group with no quantifier or `?`
-  - at most 8 choice points, after security's blocker on c8fd7e4. A choice point is every quantifier that can match a varying number of times, `?` included, and every alternation. Chained choices such as `a?`×24 or `(a|aa)?`×17 are exponential even with no unbounded repeat. The real `^(feat|fix|docs)(\([a-z-]+\))?: .+$` uses 4.
-
-  That covers the real cases, such as `^(feat|fix|docs)(\([a-z-]+\))?: .+$`. The worst left is polynomial, a few `.*` in a row, which is cheap at 256 characters. A test runs the nastiest pattern the validator allows against a 256-character adversarial title, and asserts it finishes fast. A refused pattern names the construct.
+- **`title_pattern: str | None`.** At most 200 characters, matched in full against the title, which is at most 256 characters. The title is agent-written, and so shaped by Slack and GitHub text.
+  - **The guarantee is a time limit, by the lead's decision of 2026-10-20.** Three review rounds found static backtracking budgets bypassable, first counting repeats, then counting choice points. So every match runs in the third-party `regex` engine with `timeout=0.05` and `concurrent=True`, which releases the GIL, through `asyncio.to_thread`. A match that runs out of time is a refusal, never a match. It counts toward the 3-refusal stop, it's counted per repo, and it's logged with the repo only. `jotflow check` warns about a pattern that runs out of time on a hostile test title.
+  - **Engine choice:** `regex` 2026.9.29, uploaded 2026-09-29, has wheels for CPython 3.12 to 3.14 on manylinux x86_64 and aarch64. So does `google-re2`. `regex` was chosen for its explicit `timeout=` and `concurrent=True`. The dev stubs are `types-regex` 2026.9.29.20261005, pinned 15 days old rather than the 3-day-old upload.
+  - **A cheap syntax filter** still runs at load:
+    - 1 to 200 characters, compiling in both `re`, whose parser the filter walks, and `regex`
+    - no lookarounds, backreferences, or conditionals
+    - at most 3 repeats that can match more than once
+    - no syntax the engines read differently: an unescaped `{` that isn't a numeric repeat, since `regex` reads `{e<=1}` as fuzzy matching, and `[:` or `[[`
+  - **The earlier choice-point budget is gone,** as the lead asked: score nothing statically beyond the cheap filter.
 
 **Packet.** `RepoBrief` gains both fields. They're described as "the team's own rules for this repo's issues, from the policy file", in the same policy-not-Slack-text standing as `description` and `labels`. `ChannelBrief`'s docstring already says "Policy, not Slack text".
 
@@ -79,8 +80,15 @@ drafting.md is 7,890 bytes against an 8,000 cap. I'll trim elsewhere first, and 
 - `make check` passes.
 - `jotflow replay title-pattern` passes, both in-process and with `--agent scripted` over real MCP.
 - **The validator** accepts real formats, such as `^(feat|fix|docs)(\([a-z-]+\))?: .+$`, `\[[A-Z]+-\d+\] .+` and `(Bug|Feature): .{3,80}`. It refuses each shape security named, `(a+)+`, `(a|a)*`, `(a|ab)*` and `(\w+\s?)*`, plus lookarounds, backreferences, conditionals, and four or more repeats.
-- **Timing**, measured on a 256-character title with no match: three unbounded repeats take about 3 ms, and four about 210 ms, hence the cap of three. A test asserts the slowest allowed patterns finish within 0.5 s.
-- **Fuzz.** Random patterns from a small grammar were tried 9,000 times by hand, against five hostile 256-character titles. Of the 1,227 the validator allowed, the slowest match took 27 ms. A seeded test runs 200 allowed patterns the same way, with a 0.5 s bound.
+- **Slow shapes, timed under `regex` with the 50 ms limit,** against `a`×256, `a`×255+`!` and `ab`×128:
+  - security's "three repeats and wide alternations" and the reviewer's "eight ten-way alternations" stop at the limit, 0.05 s, as timeouts
+  - security's dot-stars pattern, the reviewer's class-repeat pattern, and both 200-character optional families finish in 4 ms or less, since `regex` handles them better than `re`
+- **Tests:**
+  - All six slow shapes return within the limit plus overhead, and never match `a`×256.
+  - A forced timeout is a timeout, never a match. `.*.*.*!` stays quick, and a conventional title matches.
+  - A ticker keeps running during a slow match, so the GIL is released.
+  - A seeded fuzz of 60 allowed patterns, with wide alternations and repeated groups, never runs past the limit.
+  - In the write tools, a timeout gives the same refusal, counts toward the stop, and logs the repo but never a sentinel title.
 - **drafting.md** is now 8,309 bytes, so the test's cap rises to 9,000. The held long-line nit in step 6 is rewrapped.
 
 ## Handoff notes
