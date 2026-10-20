@@ -5,7 +5,10 @@ the keyword list in docs/usage.md all come from here, so they never
 disagree. Each line is built from the keyword module's own lists, so a new
 keyword or reaction cannot be missing from one of them: a test checks that.
 
-Everything here is posted as ``plain_text``, so nothing in it can ping or link.
+Everything here is posted as ``plain_text``, so nothing in it can ping or link,
+except the ``/jotflow help`` and ``/jotflow repos`` replies. help_blocks.py
+formats those as verbatim mrkdwn, with every admin-written field escaped
+(#257). This module's text stays their plain fallback.
 """
 
 from __future__ import annotations

@@ -2,6 +2,12 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
+## [Unreleased]
+
+### Changed
+
+- **`/jotflow help` and `/jotflow repos` are easier to read (#257).** Each reply has short headed sections, for keywords, reactions, repos, approval and commands. Repos are a bulleted list with the nickname and `owner/name` in code. They still can't ping or link: Slack is told to show the text verbatim, and every name and description from `jotflow.toml` is escaped. A long list still fits Slack's limits, and ends "and N more" when it doesn't.
+
 ## [0.3.0] - 2026-10-20
 
 A minor release: drafted issues are fuller and follow each repo's own style. Upgrading only needs the new image version. The Compose files, the Slack app and `jotflow.toml` are unchanged since 0.2.0, and rolling back is a plain image swap.
