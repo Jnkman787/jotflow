@@ -34,6 +34,7 @@ from jotflow.orchestrator.help import (
     UNLINK_OTHER_LINE,
     _capped,
     _who_approves,
+    as_text,
     channel_help,
     help_text,
     plain_sections,
@@ -159,7 +160,7 @@ def repos_reply(policy: Policy, channel_id: str, argument: str) -> tuple[str, Bl
     repos = policy.channels[channel_id].repos
     heading = "*:file_folder: Repos this channel feeds*"
     bullets = [f"• {code(r.nickname)} {code(r.repo)}: {escaped(r.description)}" for r in repos]
-    plain = [f"  {r.nickname}: {r.repo}. {r.description}" for r in repos]
+    plain = [f"  {r.nickname}: {r.repo}. {as_text(r.description)}" for r in repos]
     more = "and {n} more; jotflow.toml lists them all."
     # As many as fit both the plain text and the blocks, with room for the "more" line.
     shown = len(repos)
