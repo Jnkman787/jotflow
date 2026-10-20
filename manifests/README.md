@@ -17,7 +17,13 @@ JotFlow needs both tokens. Keep them secret and out of the repository. Token rot
 
 ## Add a missing scope
 
-**Updating an app created from an older manifest.** The manifest now subscribes to `reaction_removed` (#138), so removing a keyword's reaction can take it back. It also turns on a read-only Messages tab (#173), where JotFlow tells a person their GitHub link was removed. It needs no new scope, people can't write to the app there, and JotFlow reads no DMs. An app made from the older manifest keeps working, but removing a reaction then does nothing, and the removal note can't be delivered, so the person who removed the link is asked to pass it on. To pick both up, open the app's **App Manifest** page, paste `manifests/slack-app.json` (or `slack-app-manifest.json` from setup), save, and click **Reinstall to Workspace** if Slack asks. Pasting the stock `slack-app.json` resets the bot's name to JotFlow, because it sets `display_information.name` and `features.bot_user.display_name`. To keep a custom name, paste the `slack-app-manifest.json` that setup saved, or change those two fields to your bot's name before you paste.
+**Updating an app created from an older manifest.** The manifest now subscribes to `reaction_removed` (#138), so removing a keyword's reaction can take it back. It also turns on a read-only Messages tab (#173), where JotFlow tells a person their GitHub link was removed. It needs no new scope, people can't write to the app there, and JotFlow reads no DMs. An app made from the older manifest keeps working, but removing a reaction then does nothing, and the removal note can't be delivered, so the person who removed the link is asked to pass it on. To pick both up, render a current manifest with your bot's name, as [Use a different bot name](#use-a-different-bot-name) shows:
+
+```
+uvx --from jotflow python -m jotflow.slack_manifest "Idea Bot" > slack-app-manifest.json
+```
+
+Then open the app's **App Manifest** page, paste that file, save, and click **Reinstall to Workspace** if Slack asks. Don't paste the stock `slack-app.json` as it is: it sets `display_information.name` and `features.bot_user.display_name` to JotFlow, so it resets your bot's name. Change those two fields first if you use it. An older `slack-app-manifest.json` from setup keeps the name but may lack the change you're picking up, because setup writes it only when it creates a new app.
 
 If JotFlow or setup reports a missing scope, open the app's **OAuth & Permissions** page, scroll to **Scopes**, and under **Bot Token Scopes** click **Add an OAuth Scope** for each scope named. Slack then shows a banner: click **Reinstall to Workspace** and **Allow**. Reinstalling can issue a new bot token. If setup is still asking for the bot token, paste the new one there. If setup has already stopped, run `uvx jotflow init` again and paste it.
 

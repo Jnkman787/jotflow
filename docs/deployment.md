@@ -90,7 +90,7 @@ A restore loses whatever happened after the backup was taken. Rebuilding the sto
 
 ## Upgrading, and rolling back
 
-1. Read the release notes. They say when a release needs a Slack app update. For example, the release that added `reaction_removed` needs the new manifest and a reinstall, as [manifests/README.md](../manifests/README.md) explains. Pasting the stock `slack-app.json` resets the bot's name to JotFlow, so paste the `slack-app-manifest.json` that setup saved, or first change its `display_information.name` and `features.bot_user.display_name` to your bot's name.
+1. Read the release notes. They say when a release needs a Slack app update. For example, the release that added `reaction_removed` needs the new manifest and a reinstall, as [manifests/README.md](../manifests/README.md) explains. Render the new manifest with your bot's name, `uvx --from jotflow python -m jotflow.slack_manifest "Your Bot Name"`. The stock `slack-app.json` resets the bot's name to JotFlow, and setup's saved `slack-app-manifest.json` may predate the change.
 2. Take a backup, as above.
 3. Re-pin, from the JotFlow folder:
 
