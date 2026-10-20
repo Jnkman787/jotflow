@@ -16,6 +16,12 @@ The two agent containers start only once `COMPOSE_PROFILES=agent` is set, which 
 
 Nothing listens for inbound connections. Slack's Socket Mode is a connection JotFlow makes outward, so the host needs no open port, public address, or reverse proxy. It needs outbound HTTPS to Slack, to GitHub, and to the model API the agents use.
 
+**DNS search domains (#234).** The containers find each other by Compose service name: `jotflow`, `agent` and `agent-exec`. A name whose service isn't running, such as `agent-exec` with only drafting on, is unknown to Docker's DNS. A lookup would then try the host's DNS search domain, and some ISP or DHCP resolvers answer every unknown name with a public address. So:
+- The Compose files set `dns_search: ["."]` on every service. A missing service name then fails to resolve instead.
+- JotFlow sends a runner secret, and a run token, only to a runner whose name resolves to private, loopback or link-local addresses: 10/8, 172.16/12, 192.168/16, 100.64/10, 127/8, 169.254/16, ::1, fc00::/7 or fe80::/10. It connects to the address it checked. A refused runner's kinds stay off, and the log says why.
+- Each runner refuses a run unless `jotflow`, the MCP server's host, resolves the same way, since the agent sends its run token there.
+- A runner on another machine works over a private network or a VPN such as Tailscale, which uses 100.64/10, with nothing to set. To send secrets to a runner at a public address anyway, set `JOTFLOW_RUNNER_ALLOW_PUBLIC=1` in `.env`. For a runner that reaches JotFlow at a public address, set `JOTFLOW_MCP_ALLOW_PUBLIC=1` in that agent's env file. Both say so at startup, and both send secrets over plain HTTP, so prefer the VPN.
+
 ## A server install
 
 Use one Linux host with Docker Engine and Docker Compose 2.24 or newer. Give JotFlow a folder of its own that only its operator can read, for example `/srv/jotflow`.
@@ -147,6 +153,7 @@ Install it as that user with `uv tool install jotflow`. If `uv tool dir --bin` p
   - The drafting runner can't reach `agent-exec`.
   - Only JotFlow reaches Slack.
   - No service publishes a port.
+  - No DNS search domain, so a missing service name doesn't resolve elsewhere (#234).
 - **Hardened containers.** Each has a read-only root filesystem, all capabilities dropped, no privilege escalation, and a non-root user: 10001 for JotFlow, 10002 for the agents. The agents' run directories go on in-memory storage.
 - **No Docker socket** in any container.
 - **One JotFlow at a time** against the database, on a persistent volume. SQLite with one writer is the design. Two replicas would both answer Slack.

@@ -53,4 +53,14 @@ docker compose --project-directory . -f docker/docker-compose.yml run --rm -T --
   -e JOTFLOW_RUNNER_SECRET="$drafting_secret" \
   -e JOTFLOW_RUNNER_EXEC_SECRET="$exec_secret" \
   jotflow python - < tests/compose/reach_probe.py
+
+# DNS (#234): no search domain anywhere, service names resolve privately, a name
+# that isn't running fails fast, and public names still resolve for egress.
+docker compose --project-directory . -f docker/docker-compose.yml run --rm -T --no-deps --use-aliases \
+  jotflow python - agent,agent-exec not-a-jotflow-service slack.com < tests/compose/dns_probe.py
+for service in agent agent-exec; do
+  docker compose --project-directory . -f docker/docker-compose.yml exec -T "$service" \
+    python - "" jotflow,not-a-jotflow-service github.com,api.anthropic.com,api.openai.com \
+    < tests/compose/dns_probe.py
+done
 echo "cross-container runs ok"

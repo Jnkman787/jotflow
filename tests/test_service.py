@@ -139,7 +139,7 @@ class Rig:
         )
 
     def _runner(self, request: httpx2.Request) -> httpx2.Response:
-        host = str(request.url.host)
+        host = request.headers["host"].rsplit(":", 1)[0]
         self.calls.append((request.method, host, request.url.path))
         if request.url.path == "/info":
             if self.info_status == 0:

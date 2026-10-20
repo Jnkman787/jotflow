@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.applications import Starlette
@@ -59,6 +60,7 @@ from jotflow.adapters.presets import (
     RunContext,
 )
 from jotflow.models import RunKind
+from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.store.base import DEFAULT_RUN_TIMEOUTS
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, MAX_TOKEN_TTL_SECONDS, TOKEN_PREFIX
 
@@ -71,6 +73,7 @@ MAX_LIVE_RUNS = 8
 KILL_GRACE_SECONDS = 5.0
 # A little longer than JotFlow's own limit, which also asks the runner to stop.
 TIMEOUT_GRACE_SECONDS = 60
+MCP_ALLOW_PUBLIC_ENV = "JOTFLOW_MCP_ALLOW_PUBLIC"
 DIR_PREFIX = "jotflow-run-"
 
 # Set by the runner for every run; a preset's extra env never replaces them.
@@ -149,6 +152,9 @@ class RunnerConfig:
     # The model per run kind; a kind left out gets the preset's default.
     models: Mapping[RunKind, str] = field(default_factory=dict)
     github_mcp: str = DEFAULT_GITHUB_MCP
+    # Hand the agent an MCP URL whose host resolves to a public address (#234). Off:
+    # the run token goes only to a private, loopback or link-local address.
+    mcp_allow_public: bool = False
 
     def __post_init__(self) -> None:
         if len(self.secret) < 32:
@@ -374,8 +380,10 @@ class Runner:
         environ: Mapping[str, str] | None = None,
         limit: Callable[[RunKind], float] = time_limit,
         kill_grace: float = KILL_GRACE_SECONDS,
+        resolver: Resolver | None = None,
     ) -> None:
         self._config = config
+        self._resolver: Resolver = resolver or SystemResolver()
         self._environ = dict(os.environ if environ is None else environ)
         self._limit = limit
         self._kill_grace = kill_grace
@@ -390,16 +398,26 @@ class Runner:
 
     async def launch(self, request: LaunchRequest) -> dict[str, Any]:
         """Start a run. Raises :class:`LaunchRefused` if it may not start."""
+        # Refusals that depend only on the config come first, so the reason is
+        # the most specific one, such as a kind this runner doesn't serve.
         if request.kind not in self._config.kinds:
             served = " and ".join(sorted(k.value for k in self._config.kinds))
             raise LaunchRefused(403, f"this runner serves only {served} runs")
-        existing = self._runs.get(request.run_id)
-        if existing is not None:
+        if self._config.github_token(request.kind) is None:  # pragma: no cover - config refuses
+            raise LaunchRefused(503, f"no GitHub token is configured for {request.kind.value} runs")
+        # The only await comes next, before the checks on live state: nothing may
+        # suspend between those and registering the run, or two launches of one
+        # run could both pass them.
+        try:
+            await self.check_mcp_host()
+        except AddressRefused as refused:
+            # The agent would send its run token to that host (#234).
+            log.warning("run %s refused: %s", request.run_id, refused)
+            raise LaunchRefused(502, str(refused)) from None
+        if request.run_id in self._runs:
             raise LaunchRefused(409, f"run {request.run_id} was already launched")
         if self.live() >= self._config.live_limit:
             raise LaunchRefused(429, "the runner is at its limit of live runs")
-        if self._config.github_token(request.kind) is None:  # pragma: no cover - config refuses
-            raise LaunchRefused(503, f"no GitHub token is configured for {request.kind.value} runs")
         run = _Run(request.run_id, request.kind)
         self._runs[request.run_id] = run
         # Keep finished runs from growing without bound.
@@ -410,6 +428,22 @@ class Runner:
         run.task = asyncio.create_task(self._run(run, request.token))
         log.info("run %s launching (%s)", run.run_id, run.kind.value)
         return run.view()
+
+    async def check_mcp_host(self) -> str:
+        """The address JotFlow's MCP host resolves to, private unless allowed (#234).
+
+        The agent CLI does its own lookup afterwards. ``dns_search: ["."]`` in the
+        Compose files stops that lookup falling back to a search domain.
+        """
+        url = urlsplit(self._config.mcp_url)
+        port = url.port or (443 if url.scheme == "https" else 80)
+        return await checked_address(
+            self._resolver,
+            url.hostname or "",
+            port,
+            allow_public=self._config.mcp_allow_public,
+            opt_in=MCP_ALLOW_PUBLIC_ENV,
+        )
 
     async def stop(self, run_id: str) -> dict[str, Any] | None:
         run = self._runs.get(run_id)
