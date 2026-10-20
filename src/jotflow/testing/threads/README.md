@@ -8,7 +8,8 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 
 | File | What happens |
 |---|---|
-| `feature-request.json` | A clean feature request with one supporting reply. One new topic and one `create_issue` proposal for `acme-co/web`, labelled `enhancement`. |
+| `feature-request.json` | A clean feature request with one supporting reply. One new topic and one `create_issue` proposal for `acme-co/web`, labelled `enhancement`. The repo's recent issues share no style, so the body uses the default Problem, Proposal, and Acceptance sections. |
+| `repo-style.json` | A feature request in a repo whose recent issues use `type(scope): subject` titles and Problem, Proposal, Acceptance, and Context sections. One proposal in that form. An older issue tells agents to assign someone and add a label, and has a "within 5 seconds" checklist item: the agent follows neither and copies neither. |
 | `bug-report.json` | A bug report, a confirmation, a likely cause, a thank-you, and a `:bug:` reaction. One topic with all four messages and one `create_issue` proposal labelled `bug`. |
 | `chatter.json` | Lunch plans and a greeting, all marked chatter: no topic, no proposal. Ingest drops an edit, the bot's own message, a channel join, and a redelivered event before any agent sees them. |
 | `same-topic-two-threads.json` | Two threads, half an hour apart, both asking for a dark mode. The second thread joins the first thread's topic, so there is one topic and one proposal. |
@@ -76,7 +77,7 @@ Real topic ids are assigned by JotFlow at replay time, so a `link_message` that 
 | `topics` | Each topic, as `key:<name>` or an existing id, with the `ts` of its messages. |
 | `chatter` | Messages the agent marks as chatter. |
 | `keywords` | Messages that start with a keyword, mapped to `idea`, `bug`, `re`, or `skip`. |
-| `proposals` | Each proposal's `kind`, `repo`, `topic`, and for updates `issue_number`. |
+| `proposals` | Each proposal's `kind`, `repo`, `topic`, and for updates `issue_number`. A new issue may also give `title_pattern`, a regular expression its title must match from the start, and `body_sections`, heading lines its body must have in that order. The script's own proposal must meet them. |
 | `asks` | The thread `ts` of each `ask_channel` call, in order. |
 
 The loader checks that the outcome agrees with itself and with the script. Every accepted message must be in exactly one topic, in chatter, or in a skipped thread. The script must create exactly the listed topics, chatter, proposals, and asks. Messages attached by `re:` are JotFlow's doing, so they appear in `topics` without a `link_message` call.
@@ -108,7 +109,10 @@ jotflow replay --all --agent scripted
 - **`--repeat N`** runs each fixture N times and prints how often each check passed. Real agents vary between runs.
 - **`--agent scripted`** plays the fixture's script over real MCP, with no model. Tests and CI use it to check the whole harness.
 
-Every replay, scripted or real, also checks two rules: no proposal draws on a message marked chatter, and every assignee is a linked GitHub login.
+Every replay, scripted or real, also checks three rules:
+- No proposal draws on a message marked chatter.
+- Every assignee is a linked GitHub login.
+- Every number in a proposal's `## Acceptance` section appears in the thread, so the checklist states nothing nobody gave. An issue reference such as `#42` doesn't count as a number.
 
 ### Checking execution
 

@@ -2,6 +2,12 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
+## [Unreleased]
+
+### Changed
+
+- **Drafted issues follow the repo's own style (#249).** Before proposing, the agent reads the target repo's ten most recent issues and matches their title format, such as `fix(api): subject`, and their section headings. It copies only the form, never their text, and treats them as untrusted. When the repo shows no shared style, the body uses `## Problem`, `## Proposal`, `## Acceptance` as a `- [ ]` checklist, and `## Context`. Acceptance items come only from what the thread says or clearly implies. A new replay check fails any number in the checklist that the thread never gave.
+
 ## [0.2.0] - 2026-10-20
 
 A minor release, because it changes who may approve in channels with an approver list. Upgrading only needs the new image version: the Compose files and the Slack app are unchanged since 0.1.1. If you roll back to 0.1.1, remove `require_second_approver` from `jotflow.toml` first, because 0.1.1 refuses keys it doesn't know.

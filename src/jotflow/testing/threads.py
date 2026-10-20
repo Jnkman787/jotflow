@@ -164,6 +164,66 @@ class ExpectedProposal(_Strict):
     repo: str
     topic: str
     issue_number: int | None = None
+    # How a drafted issue reads (#249), for create_issue only.
+    title_pattern: str | None = Field(
+        default=None, description="A regular expression the title must match from its start"
+    )
+    body_sections: tuple[str, ...] = Field(
+        default=(), description="Markdown heading lines the body must have, in this order"
+    )
+
+    @model_validator(mode="after")
+    def _form_is_for_new_issues(self) -> ExpectedProposal:
+        if self.kind != "create_issue" and (self.title_pattern or self.body_sections):
+            raise ValueError("title_pattern and body_sections apply to create_issue only")
+        if self.title_pattern is not None:
+            try:
+                re.compile(self.title_pattern)
+            except re.error as exc:
+                raise ValueError(f"title_pattern is not a regular expression: {exc}") from None
+        return self
+
+    def key(self) -> tuple[str, str, str, int | None]:
+        """What identifies the proposal, without how it reads."""
+        return (self.kind, self.repo.casefold(), self.topic, self.issue_number)
+
+    def form_problems(self, title: str, body: str) -> list[str]:
+        """How a drafted title and body miss this expectation; empty when they meet it."""
+        problems: list[str] = []
+        if self.title_pattern is not None and not re.match(self.title_pattern, title):
+            problems.append(f"title {title!r} does not match {self.title_pattern!r}")
+        lines = [line.strip() for line in body.splitlines()]
+        at = 0
+        for heading in self.body_sections:
+            try:
+                at = lines.index(heading, at) + 1
+            except ValueError:
+                problems.append(f"body has no {heading!r} after the sections before it")
+                break
+        return problems
+
+
+# A number in an acceptance item, but not an issue reference such as #42.
+_NUMBER = re.compile(r"(?<![#\w])\d+(?:[.,:]\d+)*")
+
+
+def acceptance_section(body: str) -> str:
+    """The text under a body's ``## Acceptance`` heading, up to the next heading."""
+    lines: list[str] = []
+    inside = False
+    for line in body.splitlines():
+        if line.startswith("#"):
+            inside = line.strip().lower() == "## acceptance"
+            continue
+        if inside:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def invented_numbers(body: str, thread_text: str) -> list[str]:
+    """Numbers in the acceptance checklist that the thread never gave (#249)."""
+    given = set(_NUMBER.findall(thread_text))
+    return [n for n in _NUMBER.findall(acceptance_section(body)) if n not in given]
 
 
 class Expected(_Strict):
@@ -371,6 +431,8 @@ class Outcome:
     topics: dict[str, list[str]] = field(default_factory=dict)
     chatter: list[str] = field(default_factory=list)
     proposals: list[ExpectedProposal] = field(default_factory=list)
+    # The (title, body) of each proposal, in the same order; empty for an update.
+    drafts: list[tuple[str, str]] = field(default_factory=list)
     asks: list[str] = field(default_factory=list)
 
 
@@ -402,6 +464,7 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
                         kind="create_issue", repo=create.repo, topic=create.topic_id or ""
                     )
                 )
+                outcome.drafts.append((create.title, create.body))
             elif isinstance(call, AskChannelCall):
                 outcome.asks.append(run.thread_ts)
             elif isinstance(call, ProposeUpdateCall):
@@ -414,6 +477,7 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
                         issue_number=update.issue_number,
                     )
                 )
+                outcome.drafts.append(("", ""))
     return outcome
 
 
@@ -474,8 +538,15 @@ def _expected_problems(thread: SavedThread) -> list[str]:
             f"expected.chatter: lists {sorted(expected.chatter)} but the script marks "
             f"{sorted(outcome.chatter)}"
         )
-    if list(expected.proposals) != outcome.proposals:
+    if [p.key() for p in expected.proposals] != [p.key() for p in outcome.proposals]:
         problems.append("expected.proposals: does not match the script's propose calls")
+    else:
+        # A fixture never expects a shape its own script doesn't draft.
+        for index, (want, (title, body)) in enumerate(
+            zip(expected.proposals, outcome.drafts, strict=True)
+        ):
+            for problem in want.form_problems(title, body):
+                problems.append(f"expected.proposals[{index}]: the script's {problem}")
     if list(expected.asks) != outcome.asks:
         problems.append(
             f"expected.asks: lists {list(expected.asks)} but the script asks in {outcome.asks}"

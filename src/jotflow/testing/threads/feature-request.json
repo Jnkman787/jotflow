@@ -1,7 +1,7 @@
 {
   "format": "jotflow-thread/1",
   "name": "feature-request",
-  "description": "A clean feature request with one supporting reply. The agent starts a topic and proposes one enhancement issue in acme-co/web.",
+  "description": "A clean feature request with one supporting reply. The agent starts a topic and proposes one enhancement issue in acme-co/web. The repo's recent issues share no style, so the body uses the default Problem, Proposal, and Acceptance sections.",
   "workspace": {
     "team": "Acme Co",
     "team_id": "T0ACME",
@@ -109,7 +109,7 @@
             "topic_id": "key:csv-export",
             "repo": "acme-co/web",
             "title": "Export the dashboard table as CSV",
-            "body": "People want to download the dashboard table as a CSV file. Exporting only the visible columns is enough for a first version.",
+            "body": "## Problem\nFinance needs the dashboard table every month, and there is no way to download it.\n\n## Proposal\nExport the current dashboard table as a CSV file.\n\n## Acceptance\n- [ ] The dashboard can export its current table as a CSV file\n- [ ] Exporting only the visible columns is enough\n\n## Context\nNo related issue was found.",
             "labels": [
               "enhancement"
             ],
@@ -215,7 +215,12 @@
       {
         "kind": "create_issue",
         "repo": "acme-co/web",
-        "topic": "key:csv-export"
+        "topic": "key:csv-export",
+        "body_sections": [
+          "## Problem",
+          "## Proposal",
+          "## Acceptance"
+        ]
       }
     ]
   }
