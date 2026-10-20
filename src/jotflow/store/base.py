@@ -291,6 +291,33 @@ class IdentityLink:
     github_login: str
     verified: bool
     linked_at: datetime
+    # Set once the person proved control of the account (#195): when, and GitHub's
+    # numeric user id, which survives a rename.
+    verified_at: datetime | None = None
+    github_id: int | None = None
+
+
+# ``removed_by`` when a person proved control of a login someone else had linked (#195).
+VERIFICATION_REMOVER = "verification"
+
+
+@dataclass(frozen=True)
+class IdentityCode:
+    """A pending one-time code (#195). Only its digest is kept."""
+
+    slack_user_id: str
+    github_login: str
+    code_digest: str = field(repr=False)
+    expires_at: datetime
+    checks: int = 0
+
+
+@dataclass(frozen=True)
+class Verified:
+    """What finishing a verification did: the new link, and whose link it replaced."""
+
+    link: IdentityLink
+    displaced: str | None = None
 
 
 # ``removed_by`` for a removal made with the host CLI rather than in Slack (#173).
@@ -783,6 +810,33 @@ class Store(Protocol):
 
     async def identity_unlinks(self) -> list[IdentityUnlink]:
         """Every removal by someone else, newest first."""
+        ...
+
+    async def identity_for_login(self, github_login: str) -> IdentityLink | None:
+        """Whoever has linked ``github_login``, compared without case."""
+        ...
+
+    # Verification codes (#195)
+
+    async def start_verification(self, code: IdentityCode) -> None:
+        """Keep ``code`` as the person's one pending code, replacing any other."""
+        ...
+
+    async def get_verification(self, slack_user_id: str) -> IdentityCode | None: ...
+
+    async def count_verification_check(self, slack_user_id: str) -> int:
+        """Add one check to the person's pending code, and return the new count."""
+        ...
+
+    async def drop_verification(self, slack_user_id: str) -> None: ...
+
+    async def finish_verification(
+        self, slack_user_id: str, *, github_login: str, github_id: int
+    ) -> Verified:
+        """In one step: drop the code, take ``github_login`` from anyone else who
+        linked it (recorded as removed by ``verification``), and link it to this
+        person, verified now. ``github_login`` is the name as GitHub spells it.
+        """
         ...
 
     # Operator tokens (#58)

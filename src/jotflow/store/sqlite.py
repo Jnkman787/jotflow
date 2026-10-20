@@ -45,11 +45,13 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    VERIFICATION_REMOVER,
     ChannelModeSetting,
     Clock,
     ConflictError,
     DuplicateRefusedError,
     EditField,
+    IdentityCode,
     IdentityLink,
     IdentityUnlink,
     LinkSource,
@@ -65,6 +67,7 @@ from jotflow.store.base import (
     StoreError,
     ToolCallRecord,
     TopicRecord,
+    Verified,
     check_clearable,
     check_edit,
     check_finish,
@@ -773,6 +776,8 @@ class SqliteStore:
             row["github_login"],
             bool(row["verified"]),
             from_text(row["linked_at"]),
+            from_text(row["verified_at"]) if row["verified_at"] else None,
+            row["github_id"],
         )
 
     async def link_identity(self, slack_user_id: str, github_login: str) -> IdentityLink:
@@ -793,9 +798,15 @@ class SqliteStore:
                 ON CONFLICT (slack_user_id) DO UPDATE SET
                     github_login = excluded.github_login,
                     verified = 0,
+                    verified_at = NULL,
+                    github_id = NULL,
                     linked_at = excluded.linked_at
                 """,
                 (slack_user_id, github_login, to_text(self._clock())),
+            )
+            # A changed link drops a pending code (#195).
+            await self._db.execute(
+                "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
             )
             row = await self._one(
                 "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
@@ -811,6 +822,9 @@ class SqliteStore:
 
     async def unlink_identity(self, slack_user_id: str) -> bool:
         async with self._write():
+            await self._db.execute(
+                "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
             cursor = await self._db.execute(
                 "DELETE FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
             )
@@ -820,6 +834,9 @@ class SqliteStore:
         check_id(slack_user_id, "Slack user id")
         check_id(removed_by, "remover")
         async with self._write():
+            await self._db.execute(
+                "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
             cursor = await self._db.execute(
                 "DELETE FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
             )
@@ -831,6 +848,113 @@ class SqliteStore:
                 (secrets.token_hex(8), slack_user_id, removed_by, to_text(self._clock())),
             )
             return True
+
+    async def identity_for_login(self, github_login: str) -> IdentityLink | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT * FROM identity_links WHERE github_login = ?", (github_login,)
+            )
+        return None if row is None else self._identity(row)
+
+    @staticmethod
+    def _code(row: aiosqlite.Row) -> IdentityCode:
+        return IdentityCode(
+            row["slack_user_id"],
+            row["github_login"],
+            row["code_digest"],
+            from_text(row["expires_at"]),
+            row["checks"],
+        )
+
+    async def start_verification(self, code: IdentityCode) -> None:
+        check_id(code.slack_user_id, "Slack user id")
+        check_github_login(code.github_login)
+        async with self._write():
+            await self._db.execute(
+                """
+                INSERT INTO identity_codes (slack_user_id, github_login, code_digest, expires_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (slack_user_id) DO UPDATE SET
+                    github_login = excluded.github_login,
+                    code_digest = excluded.code_digest,
+                    expires_at = excluded.expires_at,
+                    checks = 0
+                """,
+                (code.slack_user_id, code.github_login, code.code_digest, to_text(code.expires_at)),
+            )
+
+    async def get_verification(self, slack_user_id: str) -> IdentityCode | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT * FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return None if row is None else self._code(row)
+
+    async def count_verification_check(self, slack_user_id: str) -> int:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE identity_codes SET checks = checks + 1 WHERE slack_user_id = ?",
+                (slack_user_id,),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(f"no pending code for {slack_user_id}")
+            row = await self._one(
+                "SELECT checks FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return int(_found(row)["checks"])
+
+    async def drop_verification(self, slack_user_id: str) -> None:
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
+
+    async def finish_verification(
+        self, slack_user_id: str, *, github_login: str, github_id: int
+    ) -> Verified:
+        check_id(slack_user_id, "Slack user id")
+        check_github_login(github_login)
+        now = to_text(self._clock())
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
+            other = await self._one(
+                "SELECT slack_user_id FROM identity_links WHERE github_login = ?"
+                " AND slack_user_id != ?",
+                (github_login, slack_user_id),
+            )
+            displaced = None if other is None else str(other["slack_user_id"])
+            if displaced is not None:
+                await self._db.execute(
+                    "DELETE FROM identity_codes WHERE slack_user_id = ?", (displaced,)
+                )
+                await self._db.execute(
+                    "DELETE FROM identity_links WHERE slack_user_id = ?", (displaced,)
+                )
+                await self._db.execute(
+                    "INSERT INTO identity_unlinks (id, slack_user_id, removed_by, removed_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (secrets.token_hex(8), displaced, VERIFICATION_REMOVER, now),
+                )
+            await self._db.execute(
+                """
+                INSERT INTO identity_links
+                    (slack_user_id, github_login, verified, linked_at, verified_at, github_id)
+                VALUES (?, ?, 1, ?, ?, ?)
+                ON CONFLICT (slack_user_id) DO UPDATE SET
+                    github_login = excluded.github_login,
+                    verified = 1,
+                    linked_at = excluded.linked_at,
+                    verified_at = excluded.verified_at,
+                    github_id = excluded.github_id
+                """,
+                (slack_user_id, github_login, now, now, github_id),
+            )
+            row = await self._one(
+                "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return Verified(self._identity(_found(row)), displaced)
 
     async def identity_unlinks(self) -> list[IdentityUnlink]:
         async with self._lock:
