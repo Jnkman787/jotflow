@@ -263,7 +263,11 @@ def _pieces(line: str) -> list[str]:
 
 
 def plain_sections(text: str) -> list[dict[str, Any]]:
-    """``text`` as plain_text sections of at most SECTION_LIMIT characters, split on lines."""
+    """``text`` as plain_text sections of at most SECTION_LIMIT characters, split on lines.
+
+    Slack rejects a section with no visible text, so a blank chunk is left out, and
+    blank text gives no sections at all.
+    """
     chunks: list[str] = []
     current: str | None = None
     for line in (piece for raw in text.split("\n") for piece in _pieces(raw)):
@@ -275,7 +279,7 @@ def plain_sections(text: str) -> list[dict[str, Any]]:
             chunks.append(current)
             current = line
     chunks.append(current or "")
-    return [block for chunk in chunks for block in _plain_blocks(chunk)]
+    return [block for chunk in chunks if chunk.strip() for block in _plain_blocks(chunk)]
 
 
 class BoltHelpSlack:
