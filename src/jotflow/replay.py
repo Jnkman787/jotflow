@@ -384,7 +384,9 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
 
     by_store_id = {v: k for k, v in replay.topics.items()}
     got_proposals: Counter[tuple[str, str, str, int | None]] = Counter()
-    drafted: dict[tuple[str, str, str, int | None], list[tuple[str, str]]] = {}
+    drafted: dict[
+        tuple[str, str, str, int | None], list[tuple[str, str, tuple[str, ...], tuple[str, ...]]]
+    ] = {}
     for root in sorted({run.thread_ts for run in replay.thread.agent}):
         for proposal in await replay.store.thread_proposals(channel, root):
             draft = proposal.proposal
@@ -393,15 +395,17 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
             key = (draft.kind, draft.repo.casefold(), topic, number)
             got_proposals[key] += 1
             if draft.kind == "create_issue":
-                drafted.setdefault(key, []).append((draft.title, draft.body))
+                drafted.setdefault(key, []).append(
+                    (draft.title, draft.body, tuple(draft.labels), tuple(draft.assignees))
+                )
     want_proposals = Counter(p.key() for p in expected.proposals)
     checks.append(_counted("proposals", got_proposals, want_proposals))
     # How each new issue reads, where the fixture says (#249).
     form_problems: list[str] = []
-    shaped = [p for p in expected.proposals if p.title_pattern or p.body_sections]
+    shaped = [p for p in expected.proposals if p.shaped]
     for shape in shaped:
-        for title, body in drafted.get(shape.key(), []):
-            form_problems += shape.form_problems(title, body)
+        for drafted_issue in drafted.get(shape.key(), []):
+            form_problems += shape.form_problems(*drafted_issue)
     if shaped:
         checks.append(
             Check(

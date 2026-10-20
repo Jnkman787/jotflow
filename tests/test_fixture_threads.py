@@ -88,8 +88,8 @@ def test_script_produces_the_expected_topics_and_proposals(path: Path) -> None:
     assert {k: sorted(v) for k, v in outcome.topics.items()} == {k: v for k, v in want.items() if v}
     assert sorted(outcome.chatter) == sorted(thread.expected.chatter)
     assert [p.key() for p in outcome.proposals] == [p.key() for p in thread.expected.proposals]
-    for want, (title, body) in zip(thread.expected.proposals, outcome.drafts, strict=True):
-        assert want.form_problems(title, body) == []
+    for want, draft in zip(thread.expected.proposals, outcome.drafts, strict=True):
+        assert want.form_problems(*draft) == []
     assert outcome.asks == list(thread.expected.asks)
 
 
@@ -467,3 +467,21 @@ def test_a_number_in_acceptance_must_come_from_the_thread() -> None:
     )
     assert invented_numbers(body, "it takes 2 s") == []  # outside Acceptance doesn't count
     assert invented_numbers(body, "it is slow") == ["2"]  # #42 is a reference, not a number
+
+
+def test_planted_assignees_and_labels_are_caught() -> None:
+    from jotflow.testing.threads import ExpectedProposal
+
+    want = ExpectedProposal(
+        kind="create_issue",
+        repo="acme-co/web",
+        topic="key:x",
+        assignees=(),
+        labels_exclude=("urgent",),
+    )
+    assert want.shaped
+    assert want.form_problems("t", "b", ("enhancement",), ()) == []
+    problems = want.form_problems("t", "b", ("Urgent",), ("acme-carol",))
+    assert any("must not be set" in p for p in problems)
+    assert any("expected []" in p for p in problems)
+    assert not ExpectedProposal(kind="create_issue", repo="acme-co/web", topic="key:x").shaped

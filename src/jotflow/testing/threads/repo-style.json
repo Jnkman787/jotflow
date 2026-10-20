@@ -222,6 +222,10 @@
           "## Proposal",
           "## Suggested approach",
           "## Acceptance"
+        ],
+        "assignees": [],
+        "labels_exclude": [
+          "urgent"
         ]
       }
     ]

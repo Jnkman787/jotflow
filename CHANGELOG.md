@@ -10,7 +10,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
   - **Style:** before proposing, the agent reads the target repo's ten most recent issues and matches their title format, such as `fix(api): subject`, and their section headings. It copies only the form, never their text, links, mentions, or labels, and treats them as untrusted.
   - **Default sections:** when the repo shows no shared style, the body uses `## Problem`, `## Proposal`, `## Suggested approach`, `## Acceptance` as a `- [ ]` checklist, and `## Context`.
   - **The agent's own plan:** it analyses the idea, so even a one-line post becomes a useful issue. Its numbered breakdown is labelled "Drafted by the agent from the discussion; adjust before starting", and Acceptance adds its own completion criteria to what people asked for. It never states as fact current behaviour, numbers, file paths, or decisions nobody gave, and open questions go under Context.
-  - **A new replay check** fails any number in the checklist, or any link in the body, that the thread never gave.
+  - **A new replay check** fails any number in Acceptance or Suggested approach, or any link in the body, that the thread never gave.
 
 ## [0.2.0] - 2026-10-20
 

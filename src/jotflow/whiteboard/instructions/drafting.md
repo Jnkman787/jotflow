@@ -90,8 +90,8 @@ For each new topic that is real work, call `propose_issue` once:
 - `title`: under 80 characters and specific, in the format most recent titles
   share, if they share one.
 - `body`: Markdown in short headed sections, using the headings most recent
-  issues share. If they share none, use these, leaving out a section with
-  nothing to say:
+  issues share, or if they share none, these. Either way, leave out a
+  section you have nothing true to say in, such as a template's `Severity`:
   - `## Problem`: what is wrong or missing, and who it affects, with any
     details given (steps, expected and actual behaviour).
   - `## Proposal`: what people suggested.
