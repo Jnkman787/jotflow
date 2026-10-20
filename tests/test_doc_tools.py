@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
@@ -231,6 +232,7 @@ class FakeRunner:
     async def docs_read(self, repo: str, path: str) -> Doc:
         if self.error is not None:
             raise self.error
+        await asyncio.sleep(0)  # a real runner call yields, so parallel calls interleave
         self.reads.append((repo, path))
         return Doc(path, "a" * 40, self.files[path])
 
@@ -642,3 +644,14 @@ owner = "acme-co"
     assert runner.lists == []
     await specs["list_repo_docs"].handler(DRAFT, ListRepoDocsInput(repo="web"))
     assert runner.lists == ["acme-co/web"]
+
+
+async def test_parallel_reads_cannot_pass_the_cap_together(h: Harness) -> None:
+    h.runner.files = {f"docs/adr/{i}.md": "x" for i in range(MAX_READS_PER_RUN + 10)}
+    await h.list()
+    results = await asyncio.gather(
+        *(h.read(f"docs/adr/{i}.md") for i in range(MAX_READS_PER_RUN + 10)),
+        return_exceptions=True,
+    )
+    assert sum(not isinstance(r, Exception) for r in results) == MAX_READS_PER_RUN
+    assert len(h.runner.reads) == MAX_READS_PER_RUN

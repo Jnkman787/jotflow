@@ -22,6 +22,7 @@ word for word is flagged on its card.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -186,6 +187,8 @@ def has_long_passage(shingles: dict[int, list[int]], draft: str) -> bool:
 
 @dataclass
 class _RunDocs:
+    # One read at a time per run, so parallel calls can't each pass the caps.
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     reads: int = 0
     bytes: int = 0
     listings: dict[str, ListedDocs] = field(default_factory=dict)  # by owner/name, casefolded
@@ -310,6 +313,12 @@ def doc_tools(
         await check_running(grant)
         entry = repo_for(grant, args.repo)
         state = await reads.state(grant.run_id)
+        async with state.lock:
+            return await read_locked(grant, args, entry, state)
+
+    async def read_locked(
+        grant: Grant, args: ReadRepoDocInput, entry: RepoPolicy, state: _RunDocs
+    ) -> BaseModel:
         # The ledger keeps the count across a JotFlow restart; memory counts re-reads too.
         recorded = await store.count_tool_calls(grant.run_id, (READ_TOOL,))
         if max(state.reads, recorded) >= MAX_READS_PER_RUN:
