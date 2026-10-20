@@ -4,7 +4,7 @@
 
 - Issue: #236 (M6)
 - Draft PR: to be opened with this plan
-- Status: planning, plan only, for security and the lead before any code
+- Status: planning. The lead approved it at f9cfab3; code waits on security's verdict
 - Last verified: origin/main 378ca9a, 2026-10-20
 - Next safe action: security and the lead review this plan
 
@@ -97,7 +97,7 @@ Otherwise it's refused, with a fixed reason: "not in this channel's repos or sco
 **The write token must cover every discovered repo.** Discovery uses the read token, so a scope can find repos the execution runner's write token can't reach. Without a check, that would be an approved proposal whose run fails at GitHub. So approval checks first:
 - **The execution runner gains `GET /repos/access?repo=<owner/name>`,** behind its own secret. It makes one fixed call, `GET /repos/{owner}/{name}` with the write token, and returns only `{"reachable": true|false}`. A fine-grained token answers 404 for a repo outside its list. The token never leaves the runner.
 - **Approve, by button, reaction or Retry,** asks it for a discovered repo, and refuses with a fixed reason if it can't reach the repo: "JotFlow's write token can't reach owner/name. Give the token access to that repo on GitHub, then approve again." The proposal stays pending, and nothing is queued.
-- **Results are cached** for 15 minutes per repo. A refusal is cached for 1 minute, so a fixed token is noticed quickly.
+- **Only a positive result is cached,** per repo for 15 minutes, so most approvals don't wait on a runner round trip. A negative result is never cached, by the lead's call, so the next Approve or Retry asks again, and a token just fixed on GitHub works at once.
 - **Fail closed:** if the execution runner can't be reached, approval is refused with "couldn't check write access; try again", and the proposal stays pending.
 - **Static repos keep today's behaviour,** with no check, so this plan doesn't change approval for existing channels. A follow-up could apply the same check to static repos.
 - **The docs** say a scope should match what the write token was granted, and install.md's token steps say to add new repos to both tokens, as they already do for static repos.
