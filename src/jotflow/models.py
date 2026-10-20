@@ -68,6 +68,24 @@ def is_bare_repo_name(value: str) -> bool:
     return _NAME_RE.fullmatch(value) is not None and value not in {".", ".."}
 
 
+class DiscoveredRepo(BaseModel):
+    """One repo as the runner's discovery reports it (#236): these eight fields only.
+
+    Its text, description and topics, is GitHub's and untrusted.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    id: int = Field(gt=0)
+    full_name: str = Field(min_length=3, max_length=140)
+    description: str | None = Field(default=None, max_length=1000)
+    topics: tuple[str, ...] = Field(default=(), max_length=50)
+    pushed_at: str | None = Field(default=None, max_length=40)
+    archived: bool = False
+    fork: bool = False
+    private: bool = False
+
+
 def is_repo_name(value: str) -> bool:
     """Whether ``value`` is a valid ``owner/name`` GitHub repo."""
     match = _REPO_RE.fullmatch(value)

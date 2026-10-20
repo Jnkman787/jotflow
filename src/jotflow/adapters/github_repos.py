@@ -21,9 +21,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
-from jotflow.models import is_bare_repo_name, is_owner_name
+from jotflow.models import DiscoveredRepo, is_bare_repo_name, is_owner_name
 
 API = "https://api.github.com"
 PAGE_SIZE = 100
@@ -36,21 +36,6 @@ TIMEOUT_SECONDS = 15.0
 
 class GithubError(Exception):
     """GitHub answered with something other than what was asked for."""
-
-
-class DiscoveredRepo(BaseModel):
-    """One repo as discovery reports it: these eight fields and nothing else."""
-
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-    id: int = Field(gt=0)
-    full_name: str = Field(min_length=3, max_length=140)
-    description: str | None = Field(default=None, max_length=1000)
-    topics: tuple[str, ...] = Field(default=(), max_length=50)
-    pushed_at: str | None = Field(default=None, max_length=40)
-    archived: bool = False
-    fork: bool = False
-    private: bool = False
 
 
 @dataclass
