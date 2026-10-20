@@ -1073,8 +1073,21 @@ async def test_an_expired_topic_is_revived_by_linking_to_it(
         ("```\n@fenced\n```\nthen @after", ["after"]),
         ("~~~python\n@decorator\n~~~", []),
         ("an unclosed\n```\n@still-code", []),
-        ("@lo​gin", ["lo", "login"]),
-        ("@​hidden", ["hidden"]),
+        ("@lo\u200bgin", ["lo", "login"]),
+        ("@\u200bhidden", ["hidden"]),
+        # HTML entities: GitHub decodes them once and pings (checked with its /markdown API).
+        ("&#64;octocat", ["octocat"]),
+        ("&#x40;octocat", ["octocat"]),
+        ("&commat;octocat", ["octocat"]),
+        ("&#64;&#111;ctocat", ["octocat"]),
+        ("(&#64;octocat)", ["octocat"]),
+        ("x&#64;octocat", []),
+        ("&amp;#64;octocat", []),  # one decode leaves "&#64;": no mention, as on GitHub
+        ("`&#64;octocat`", []),
+        # GitHub decodes the backticks and doesn't ping, but the raw reading sees a
+        # bare @octocat: refused anyway. Over-refusing an odd draft is the safe side.
+        ("&#96;@octocat&#96;", ["octocat"]),
+        ("```\n&#64;octocat\n```", []),
     ],
 )
 def test_mentions_are_read_as_github_reads_them(text: str, found: list[str]) -> None:
@@ -1088,7 +1101,9 @@ def test_mentions_are_read_as_github_reads_them(text: str, found: list[str]) -> 
         {"body": "As @stranger said, the page is slow."},
         {"body": "cc @acme-co/web-team"},
         {"body": "cc @acme-bob"},  # linked, but not a participant here
-        {"body": "@lo​gin"},
+        {"body": "@lo\u200bgin"},
+        {"body": "Thanks &#64;stranger"},
+        {"title": "Ask &commat;stranger"},
     ],
 )
 async def test_an_unlinked_mention_is_refused(

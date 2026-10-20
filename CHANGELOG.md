@@ -10,7 +10,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Security
 
-- **No stray @-mentions in drafted issues (#250).** `propose_issue` and `propose_update` refuse a title, body or comment with an `@login` or `@org/team` that GitHub would ping, unless it's the linked GitHub login of a participant. That covers a login copied from the thread, or from an issue the agent read for style. Code spans and fenced blocks are exempt, and invisible characters can't hide a mention. The agent gets a fixed reason telling it to write the name without @.
+- **No stray @-mentions in drafted issues (#250).** `propose_issue` and `propose_update` refuse a title, body or comment with an `@login` or `@org/team` that GitHub would ping, unless it's the linked GitHub login of a participant. That covers a login copied from the thread, or from an issue the agent read for style. Code spans and fenced blocks are exempt, and neither invisible characters nor HTML entities such as `&#64;` can hide a mention. The agent gets a fixed reason telling it to write the name without @.
 
 ## [0.3.0] - 2026-10-20
 

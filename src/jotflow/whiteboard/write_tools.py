@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import re
 import secrets
@@ -214,13 +215,15 @@ _CODE_SPAN = re.compile(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
 def mentions(text: str) -> list[str]:
     """Every @login or @org/team GitHub would ping in ``text``, outside code (#250).
 
-    Read twice: as written, and with invisible format characters removed. A
-    zero-width space can't hide a mention, and can't make one login look like
-    another: both readings must pass.
+    Read four ways: as written, with invisible format characters removed, and
+    each of those with HTML entities decoded once, as GitHub does: ``&#64;login``
+    and ``&commat;login`` ping. A zero-width space or an entity can't hide a
+    mention, or make one login look like another: every reading must pass.
     """
     visible = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    readings = (text, visible, html.unescape(text), html.unescape(visible))
     found: list[str] = []
-    for reading in dict.fromkeys((text, visible)):
+    for reading in dict.fromkeys(readings):
         prose = _CODE_SPAN.sub(" ", _FENCE.sub("\n", reading))
         found += [m.group(1) + (m.group(2) or "") for m in _MENTION.finditer(prose)]
     return list(dict.fromkeys(found))
