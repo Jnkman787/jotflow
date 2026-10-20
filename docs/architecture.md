@@ -61,8 +61,8 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 
 | Tool | Rules |
 |---|---|
-| `propose_issue` | Needs a topic in the run's channel with no issue yet. Uses only the channel's repos and allowed labels. Sources must come from the run's packet. An assignee must be the linked GitHub login of a participant. Participants are recorded but never become assignees. The new proposal supersedes the thread's older pending ones. At most 3 proposals per run. |
-| `propose_update` | Only for the issue the topic is already linked to, with the same repo, label, source, and assignee rules |
+| `propose_issue` | Needs a topic in the run's channel with no issue yet. Uses only the channel's repos and allowed labels. Sources must come from the run's packet. An assignee must be the linked GitHub login of a participant. Participants are recorded but never become assignees. An `@login` in the title or body must be a participant's linked GitHub login too, outside code (#250). The new proposal supersedes the thread's older pending ones. At most 3 proposals per run. |
+| `propose_update` | Only for the issue the topic is already linked to, with the same repo, label, source, assignee, and `@login` rules |
 | `link_message` | Only messages the run's `get_work` packet served. A person's earlier decision always stands. At most 200 per run. |
 | `ask_channel` | Posts only into the run's own thread, with broadcast mentions removed and Slack markup escaped. Never unfurls or turns names into mentions. At most 2 per run, and one per thread every 30 seconds across runs. |
 | `record_result` | Execution runs only, for the grant's own proposal while it is executing, or reconciling after a restart. An issue URL must match the approved repo and issue. A result is recorded once. |
