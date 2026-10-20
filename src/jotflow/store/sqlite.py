@@ -176,6 +176,11 @@ class SqliteStore:
         store._file_lock = file_lock
         return store
 
+    @property
+    def locked(self) -> bool:
+        """Whether this store holds the database's lock (:mod:`jotflow.store.lock`)."""
+        return self._file_lock is not None
+
     async def close(self) -> None:
         try:
             await self._db.close()

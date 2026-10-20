@@ -63,8 +63,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--no-lock",
         action="store_true",
-        help="Skip the safety check that JotFlow isn't running, for a filesystem that "
-        "can't lock. Stop JotFlow yourself first",
+        help="On a filesystem that can't lock, run without the check that JotFlow isn't "
+        "running. Stop JotFlow yourself first. A running JotFlow is still refused where "
+        "locking works",
     )
     parser.add_argument(
         "--dry-run",
@@ -191,13 +192,12 @@ async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) ->
         )
         return EXIT_SLACK
     bot = BotIdentity(user_id=str(auth.get("user_id") or ""), bot_id=auth.get("bot_id"))
-    if args.no_lock:
-        print(
-            f"jotflow rebuild: --no-lock skips the safety check: {UNSUPPORTED}",
-            file=sys.stderr,
-        )
     try:
-        store = await SqliteStore.open(settings.database_path, exclusive=not args.no_lock)
+        # --no-lock still takes the lock where it can, so a running JotFlow is still
+        # refused. It only allows running unlocked where the filesystem can't lock.
+        store = await SqliteStore.open(
+            settings.database_path, exclusive=True, unlocked_ok=args.no_lock
+        )
     except StoreBusyError as exc:
         print(f"jotflow rebuild: refusing: {exc}", file=sys.stderr)
         return EXIT_REFUSED
@@ -209,6 +209,8 @@ async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) ->
             file=sys.stderr,
         )
         return EXIT_REFUSED
+    if not store.locked:
+        print(f"jotflow rebuild: running without the safety check: {UNSUPPORTED}", file=sys.stderr)
     try:
         await rebuild(
             store,
