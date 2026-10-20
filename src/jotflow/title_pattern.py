@@ -8,8 +8,14 @@ known-bad shapes, this allows only shapes that can't blow up:
 - ``*``, ``+`` and ``{n,m}`` apply only to one character, a class, or ``.``
 - a group takes ``?`` at most, so alternation never repeats
 - no backreferences, lookarounds, or conditionals
-- at most three repeats that can match more than once, so the worst case is
-  polynomial and small for a title of at most 256 characters
+- at most eight choice points: every quantifier that can match a varying
+  number of times, ``?`` included, and every alternation
+- of those, at most three repeats that can match more than once
+
+A run of choices, such as ``a?`` many times over, is exponential even when
+nothing repeats unboundedly, so the choice budget is what keeps the worst case
+small for a title of at most 256 characters. A test fuzzes allowed patterns
+against hostile titles to hold that (#216).
 
 That covers real title formats, such as ``^(feat|fix|docs)(\\([a-z-]+\\))?: .+$``.
 """
@@ -27,29 +33,41 @@ parser: Any = importlib.import_module("re._parser")
 MAX_PATTERN = 200
 MAX_TITLE = 256
 MAX_REPEATS = 3
+MAX_CHOICES = 8
 
 _SINGLE = {parser.LITERAL, parser.NOT_LITERAL, parser.ANY, parser.IN, parser.CATEGORY}
 _REPEATS = {parser.MAX_REPEAT, parser.MIN_REPEAT, parser.POSSESSIVE_REPEAT}
 
 
-def _walk(items: Any, repeats: list[int]) -> None:
+class _Budget:
+    """Choice points in a pattern: where matching can try more than one way."""
+
+    def __init__(self) -> None:
+        self.choices = 0
+        self.repeats = 0
+
+
+def _walk(items: Any, budget: _Budget) -> None:
     for op, value in items:
         if op in _REPEATS:
             low, high, body = value
+            if low != high:
+                budget.choices += 1
             if len(body) == 1 and body[0][0] in _SINGLE:
                 if high is parser.MAXREPEAT or high > 1:
-                    repeats.append(1)
+                    budget.repeats += 1
                 continue
             if (low, high) != (0, 1):
                 raise ValueError("a group may take only ?, never *, + or {n,m}")
-            _walk(body, repeats)
+            _walk(body, budget)
         elif op is parser.SUBPATTERN:
-            _walk(value[-1], repeats)
+            _walk(value[-1], budget)
         elif op is parser.ATOMIC_GROUP:
-            _walk(value, repeats)
+            _walk(value, budget)
         elif op is parser.BRANCH:
+            budget.choices += 1
             for branch in value[1]:
-                _walk(branch, repeats)
+                _walk(branch, budget)
         elif op in (parser.ASSERT, parser.ASSERT_NOT):
             raise ValueError("lookarounds are not allowed")
         elif op in (parser.GROUPREF, parser.GROUPREF_EXISTS):
@@ -69,12 +87,17 @@ def check_title_pattern(pattern: str) -> str:
         parsed = parser.parse(pattern)
     except re.error as exc:
         raise ValueError(f"title_pattern is not a regular expression: {exc}") from None
-    repeats: list[int] = []
-    _walk(parsed, repeats)
-    if len(repeats) > MAX_REPEATS:
+    budget = _Budget()
+    _walk(parsed, budget)
+    if budget.repeats > MAX_REPEATS:
         raise ValueError(
             f"title_pattern may repeat at most {MAX_REPEATS} characters or classes with "
             "*, + or {n,m}, so it always matches quickly"
+        )
+    if budget.choices > MAX_CHOICES:
+        raise ValueError(
+            f"title_pattern may have at most {MAX_CHOICES} choices (each ?, *, +, {{n,m}} "
+            "or | group), so it always matches quickly"
         )
     return pattern
 

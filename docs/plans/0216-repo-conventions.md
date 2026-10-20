@@ -30,6 +30,7 @@
   - a group may take only `?`
   - no backreferences, lookarounds, or conditionals
   - alternation is allowed only where it can't repeat: at the top, or in a group with no quantifier or `?`
+  - at most 8 choice points, after security's blocker on c8fd7e4. A choice point is every quantifier that can match a varying number of times, `?` included, and every alternation. Chained choices such as `a?`×24 or `(a|aa)?`×17 are exponential even with no unbounded repeat. The real `^(feat|fix|docs)(\([a-z-]+\))?: .+$` uses 4.
 
   That covers the real cases, such as `^(feat|fix|docs)(\([a-z-]+\))?: .+$`. The worst left is polynomial, a few `.*` in a row, which is cheap at 256 characters. A test runs the nastiest pattern the validator allows against a 256-character adversarial title, and asserts it finishes fast. A refused pattern names the construct.
 
@@ -79,6 +80,7 @@ drafting.md is 7,890 bytes against an 8,000 cap. I'll trim elsewhere first, and 
 - `jotflow replay title-pattern` passes, both in-process and with `--agent scripted` over real MCP.
 - **The validator** accepts real formats, such as `^(feat|fix|docs)(\([a-z-]+\))?: .+$`, `\[[A-Z]+-\d+\] .+` and `(Bug|Feature): .{3,80}`. It refuses each shape security named, `(a+)+`, `(a|a)*`, `(a|ab)*` and `(\w+\s?)*`, plus lookarounds, backreferences, conditionals, and four or more repeats.
 - **Timing**, measured on a 256-character title with no match: three unbounded repeats take about 3 ms, and four about 210 ms, hence the cap of three. A test asserts the slowest allowed patterns finish within 0.5 s.
+- **Fuzz.** Random patterns from a small grammar were tried 9,000 times by hand, against five hostile 256-character titles. Of the 1,227 the validator allowed, the slowest match took 27 ms. A seeded test runs 200 allowed patterns the same way, with a 0.5 s bound.
 - **drafting.md** is now 8,309 bytes, so the test's cap rises to 9,000. The held long-line nit in step 6 is rewrapped.
 
 ## Handoff notes

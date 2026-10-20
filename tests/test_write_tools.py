@@ -1113,3 +1113,20 @@ async def test_without_a_pattern_any_title_is_proposed_as_before(tools: WriteToo
     topic_id = await new_topic(tools)
     result: Any = await tools.propose_issue(DRAFT, issue(topic_id, title="Any plain title"))
     assert result.proposal_id
+
+
+async def test_refusal_counts_are_dropped_once_their_run_ends(
+    tools: WriteTools, patterned: WriteTools, store: LiveStore
+) -> None:
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError):
+        await patterned.propose_issue(DRAFT, issue(topic_id))
+    assert patterned._title_refusals == {"run-1": 1}
+    store.ended.add("run-1")
+    later = store.register(
+        Grant(run_id="run-2", kind=RunKind.DRAFTING, channel_id=CH, thread_ts=ROOT)
+    )
+    await store.record_packet("run-2", [MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT)])
+    with pytest.raises(ToolError):
+        await patterned.propose_issue(later, issue(topic_id))
+    assert patterned._title_refusals == {"run-2": 1}

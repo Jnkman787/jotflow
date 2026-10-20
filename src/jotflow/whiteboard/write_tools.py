@@ -296,7 +296,7 @@ class WriteTools:
         self._locks = _RunLocks()
         self._title_refusals: dict[str, int] = {}
 
-    def _check_title(self, grant: Grant, repo: str, title: str) -> None:
+    async def _check_title(self, grant: Grant, repo: str, title: str) -> None:
         """Refuse a title the repo's title_pattern doesn't fully match (#216).
 
         Updates never change a title, so only propose_issue calls this.
@@ -307,8 +307,16 @@ class WriteTools:
         pattern = self._policy.repo(grant.channel_id, repo).title_pattern
         if pattern is None or title_matches(pattern, title):
             return
+        await self._forget_ended_runs()
         self._title_refusals[grant.run_id] = refused + 1
         raise ToolError(TITLE_REFUSED.format(pattern=pattern))
+
+    async def _forget_ended_runs(self) -> None:
+        """Drop refusal counts for runs that have ended. Only runs with one are kept."""
+        for run_id in list(self._title_refusals):
+            run = await self._store.get_run(run_id)
+            if run is None or run.status is not RunStatus.RUNNING:
+                del self._title_refusals[run_id]
 
     async def _once(
         self,
@@ -459,7 +467,7 @@ class WriteTools:
                     "use propose_update"
                 )
             repo, labels = self._repo_and_labels(grant, args.repo, args.labels)
-            self._check_title(grant, repo, args.title)
+            await self._check_title(grant, repo, args.title)
             self._check_no_slack_links(args.title, args.body)
             await self._check_assignees(args.assignees, args.participants)
             draft = IssueProposal.model_validate(
