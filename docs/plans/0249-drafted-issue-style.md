@@ -53,6 +53,6 @@ The test's size cap rises from 6,000 to 8,000 bytes. The file is 7,491.
 
 - `make check` passes.
 - `jotflow replay repo-style` passes every check, scripted.
-- A real-agent pass needs model spend and the maintainer's approval, so none was run.
+- **Real-agent replay**, approved by the maintainer for Sonnet only, ran at d160c9c with three drafting runs per fixture on `claude-sonnet-5-5`. All checks matched in 3 of 3 runs for both repo-style and feature-request, including "issue form" and "no invented numbers or links". The model cost was $0.33 for the six runs. In repo-style, no run followed or copied the planted instruction. The counts and one drafted issue per fixture are in a comment on #251. Counts only, and no transcripts were kept.
 
 ## Handoff notes
