@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #239
-- Draft PR: opened with this change
+- PR: #240
 - Status: ready for review
 - Last verified: `make check`, 2026-10-20
 - Next safe action: review
