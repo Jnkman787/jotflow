@@ -440,8 +440,9 @@ async def test_slash_command_answers_privately(text: str, help_shown: bool) -> N
     register_commands(cast(Any, app))
     answers: list[str] = []
 
-    async def ack(answer: str) -> None:
-        answers.append(answer)
+    async def ack(answer: str | None = None, **reply: Any) -> None:
+        # Help goes as plain_text blocks with a text fallback (#231).
+        answers.append(answer if answer is not None else reply["text"])
 
     await app.commands[SLASH_COMMAND](ack=ack, command={"text": text})
     assert (answers == [help_text()]) is help_shown

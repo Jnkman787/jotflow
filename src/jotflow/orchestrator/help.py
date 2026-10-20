@@ -119,12 +119,36 @@ NOT_SET_UP = (
 )
 
 
+# Slack's limits: a plain_text section holds 3,000 characters, a message 50
+# blocks, and a message's text 40,000 characters (#231).
+SECTION_LIMIT = 3000
+# Help names the channel's repos in one line, cut here; /jotflow repos lists them all.
+HELP_REPOS_LIMIT = 1000
+# /jotflow repos stops here: under the text cap, and at most 13 sections.
+REPOS_LIMIT = 39_000
+
+
+def _capped(items: list[str], limit: int, more: str) -> list[str]:
+    """As many of ``items`` as fit in ``limit`` characters, then ``more`` with the count."""
+    kept: list[str] = []
+    used = 0
+    for index, item in enumerate(items):
+        rest = len(items) - index
+        tail = len(more.format(n=rest - 1)) if rest > 1 else 0
+        if used + len(item) + tail > limit:
+            return [*kept, more.format(n=rest)]
+        kept.append(item)
+        used += len(item) + 2
+    return kept
+
+
 def channel_help(policy: Policy, channel_id: str, mode: ChannelMode) -> str:
     """``/jotflow help`` in one channel: the keywords, its repos, and how approval works."""
     if channel_id not in policy.channels:
         return NOT_SET_UP
     channel = policy.channels[channel_id]
-    repos = ", ".join(f"{r.nickname} ({r.repo})" for r in channel.repos)
+    named = [f"{r.nickname} ({r.repo})" for r in channel.repos]
+    repos = ", ".join(_capped(named, HELP_REPOS_LIMIT, "and {n} more; see /jotflow repos"))
     lines = [help_text(), "", f"This channel feeds: {repos}.", MODE_LINES[mode]]
     if mode is ChannelMode.PROPOSE:
         lines.append(
@@ -225,6 +249,35 @@ def _plain_blocks(text: str) -> list[dict[str, Any]]:
     return [{"type": "section", "text": {"type": "plain_text", "text": text, "emoji": False}}]
 
 
+def _pieces(line: str) -> list[str]:
+    """``line`` in parts of at most SECTION_LIMIT characters, broken at a space if one fits."""
+    parts: list[str] = []
+    while len(line) > SECTION_LIMIT:
+        cut = line.rfind(" ", 0, SECTION_LIMIT + 1)
+        if cut <= 0:
+            cut = SECTION_LIMIT
+        parts.append(line[:cut])
+        line = line[cut:].lstrip(" ")
+    parts.append(line)
+    return parts
+
+
+def plain_sections(text: str) -> list[dict[str, Any]]:
+    """``text`` as plain_text sections of at most SECTION_LIMIT characters, split on lines."""
+    chunks: list[str] = []
+    current: str | None = None
+    for line in (piece for raw in text.split("\n") for piece in _pieces(raw)):
+        if current is None:
+            current = line
+        elif len(current) + 1 + len(line) <= SECTION_LIMIT:
+            current += "\n" + line
+        else:
+            chunks.append(current)
+            current = line
+    chunks.append(current or "")
+    return [block for chunk in chunks for block in _plain_blocks(chunk)]
+
+
 class BoltHelpSlack:
     """:class:`HelpSlack` over slack-sdk's client. Text is plain, and links never unfurl."""
 
@@ -276,7 +329,8 @@ def channel_repos(policy: Policy, channel_id: str, argument: str) -> str:
         return NOT_SET_UP
     if argument.strip():
         return REPOS_CHANGE
-    lines = ["This channel feeds:"]
-    for repo in policy.channels[channel_id].repos:
-        lines.append(f"  {repo.nickname}: {repo.repo}. {repo.description}")
-    return "\n".join(lines)
+    listed = [
+        f"  {r.nickname}: {r.repo}. {r.description}" for r in policy.channels[channel_id].repos
+    ]
+    more = "  and {n} more; jotflow.toml lists them all."
+    return "\n".join(["This channel feeds:", *_capped(listed, REPOS_LIMIT, more)])
