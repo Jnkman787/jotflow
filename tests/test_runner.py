@@ -634,6 +634,7 @@ def test_info_for_a_preset_runner(tmp_path: Path) -> None:
 # POST /verify: a GitHub link's one-time code (#195)
 
 VERIFY_CODE = "jotflow-Ab3_xY9-kLm2"
+VERIFY_DIGEST = __import__("hashlib").sha256(VERIFY_CODE.encode()).hexdigest()
 
 
 @asynccontextmanager
@@ -664,7 +665,7 @@ def github_answering(bio: str | None) -> Any:
 async def test_the_drafting_runner_checks_a_code(tmp_path: Path) -> None:
     github = github_answering(f"verify {VERIFY_CODE}")
     async with verify_http(config(tmp_path), github) as http:
-        reply = await http.post("/verify", json={"login": "octo", "code": VERIFY_CODE})
+        reply = await http.post("/verify", json={"login": "octo", "code_digest": VERIFY_DIGEST})
         assert reply.status_code == 200
         assert reply.json() == {
             "verified": True,
@@ -672,7 +673,7 @@ async def test_the_drafting_runner_checks_a_code(tmp_path: Path) -> None:
             "github_id": 7,
             "login": "Octo",
         }
-        missing = await http.post("/verify", json={"login": "octo", "code": "jotflow-ZZZZZZZZZZZZ"})
+        missing = await http.post("/verify", json={"login": "octo", "code_digest": "0" * 64})
         assert missing.json()["verified"] is False
         assert "verify" not in missing.text  # the bio never leaves the runner
 
@@ -681,7 +682,7 @@ async def test_the_execution_runner_never_checks_codes(tmp_path: Path) -> None:
     github = github_answering(VERIFY_CODE)
     cfg = config(tmp_path, execution=True)
     async with verify_http(cfg, github) as http:
-        reply = await http.post("/verify", json={"login": "octo", "code": VERIFY_CODE})
+        reply = await http.post("/verify", json={"login": "octo", "code_digest": VERIFY_DIGEST})
     assert reply.status_code == 403
     assert github.seen == []
 
@@ -690,9 +691,9 @@ async def test_the_execution_runner_never_checks_codes(tmp_path: Path) -> None:
     "body",
     [
         {"login": "octo"},
-        {"login": "octo", "code": VERIFY_CODE, "extra": 1},
-        {"login": "not a login", "code": VERIFY_CODE},
-        {"login": "octo", "code": "jotflow-short"},
+        {"login": "octo", "code_digest": VERIFY_DIGEST, "extra": 1},
+        {"login": "not a login", "code_digest": VERIFY_DIGEST},
+        {"login": "octo", "code_digest": VERIFY_CODE},
     ],
 )
 async def test_a_malformed_verify_request_is_refused_before_github(
@@ -710,7 +711,7 @@ async def test_verify_needs_the_runner_secret(tmp_path: Path) -> None:
     async with verify_http(config(tmp_path), github) as http:
         reply = await http.post(
             "/verify",
-            json={"login": "octo", "code": VERIFY_CODE},
+            json={"login": "octo", "code_digest": VERIFY_DIGEST},
             headers={"Authorization": "Bearer wrong"},
         )
     assert reply.status_code == 401
@@ -722,6 +723,6 @@ async def test_github_failing_is_a_502_not_a_verdict(tmp_path: Path) -> None:
         return httpx2.Response(500)
 
     async with verify_http(config(tmp_path), broken) as http:
-        reply = await http.post("/verify", json={"login": "octo", "code": VERIFY_CODE})
+        reply = await http.post("/verify", json={"login": "octo", "code_digest": VERIFY_DIGEST})
     assert reply.status_code == 502
     assert reply.json() == {"error": "GitHub answered 500"}

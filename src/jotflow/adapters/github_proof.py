@@ -9,27 +9,32 @@ are readable by anyone. It reads exactly two things:
 - ``GET /users/{login}/gists?per_page=10``: the code may be a recent public
   gist's description
 
-The code must appear as a whole word. Nothing else from the text is used,
-returned, or logged. A rate-limited answer is reported as such, never as "not
-verified", so a person is told to try again later.
+JotFlow keeps only the code's SHA-256 digest, so that's what it sends. The
+runner hashes each code-shaped word it finds and compares, so the code itself
+never travels or rests anywhere but in the person's own Slack reply and on
+GitHub. Nothing else from the text is used, returned, or logged. A
+rate-limited answer is reported as such, never as "not verified", so a person
+is told to try again later.
 """
 
 from __future__ import annotations
 
+import hmac
 import json
-import re
 from typing import Any
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from jotflow.proof_codes import CODE, CODE_WORD, DIGEST, code_digest
 from jotflow.store.base import check_github_login
 
 API = "https://api.github.com"
 MAX_RESPONSE_BYTES = 64 * 1024
 TIMEOUT_SECONDS = 10.0
 GISTS_CHECKED = 10
-CODE = re.compile(r"jotflow-[A-Za-z0-9_-]{12}")
+
+__all__ = ["CODE", "DIGEST", "Proof", "ProofError", "check_proof", "code_digest", "contains_code"]
 _HEADERS = {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
@@ -67,11 +72,11 @@ class _Gist(BaseModel):
     description: str | None = None
 
 
-def contains_code(text: str | None, code: str) -> bool:
-    """Whether ``code`` appears in ``text`` as a whole word."""
+def contains_code(text: str | None, digest: str) -> bool:
+    """Whether a whole-word code in ``text`` hashes to ``digest``."""
     if not text:
         return False
-    return re.search(rf"(?<![\w-]){re.escape(code)}(?![\w-])", text) is not None
+    return any(hmac.compare_digest(code_digest(found), digest) for found in CODE_WORD.findall(text))
 
 
 def _rate_limited(response: httpx2.Response) -> bool:
@@ -111,11 +116,11 @@ def new_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.Asy
     )
 
 
-async def check_proof(http: httpx2.AsyncClient, login: str, code: str) -> Proof:
-    """Whether ``login``'s public profile or recent gists carry ``code``."""
+async def check_proof(http: httpx2.AsyncClient, login: str, digest: str) -> Proof:
+    """Whether ``login``'s public profile or recent gists carry the code ``digest`` names."""
     check_github_login(login)
-    if not CODE.fullmatch(code):
-        raise ValueError("not a JotFlow verification code")
+    if not DIGEST.fullmatch(digest):
+        raise ValueError("not a code digest")
     status, data, limited = await _get(http, f"/users/{login}")
     if limited:
         return Proof(verified=False, rate_limited=True)
@@ -129,7 +134,7 @@ async def check_proof(http: httpx2.AsyncClient, login: str, code: str) -> Proof:
         raise ProofError("GitHub's answer was not a user") from None
     if user.type != "User":
         return Proof(verified=False)  # an organisation can't be a person's link
-    found = contains_code(user.bio, code)
+    found = contains_code(user.bio, digest)
     if not found:
         status, data, limited = await _get(http, f"/users/{login}/gists?per_page={GISTS_CHECKED}")
         if limited:
@@ -140,7 +145,7 @@ async def check_proof(http: httpx2.AsyncClient, login: str, code: str) -> Proof:
                     gist = _Gist.model_validate(item)
                 except ValidationError:
                     continue
-                if contains_code(gist.description, code):
+                if contains_code(gist.description, digest):
                     found = True
                     break
     if not found:

@@ -16,6 +16,7 @@ from jotflow.orchestrator.help_blocks import help_reply, repos_reply
 from jotflow.orchestrator.identity import LinkCommand
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
 from jotflow.orchestrator.modes import ModeCommand
+from jotflow.orchestrator.verify import VerifyCommand
 from jotflow.policy import Policy
 from jotflow.slack_manifest import SLASH_COMMAND
 
@@ -119,6 +120,7 @@ def register_commands(
     mode_for: Callable[[str], Awaitable[ChannelMode]] | None = None,
     modes: ModeCommand | None = None,
     links: LinkCommand | None = None,
+    verify: VerifyCommand | None = None,
 ) -> None:
     """Answer ``/jotflow`` privately: ``help``, ``mode``, and ``link`` and ``unlink``.
 
@@ -144,6 +146,12 @@ def register_commands(
             user = str(command.get("user_id") or "")
             linked = await links.handle(user, word, raw.partition(" ")[2])
             await respond(linked.text)
+            return
+        if word == "verify" and verify is not None:
+            # Checking runs through the drafting runner: acknowledge first.
+            await ack()
+            user = str(command.get("user_id") or "")
+            await respond(await verify.handle(user, raw.partition(" ")[2]))
             return
         if word == "mode" and modes is not None:
             # Setting auto can scan the channel's members, which takes longer than

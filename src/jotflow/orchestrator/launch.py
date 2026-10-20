@@ -244,13 +244,15 @@ class RunnerClient:
         except (ValidationError, ValueError):
             raise RunnerError("the runner's reply was not its info") from None
 
-    async def verify(self, login: str, code: str) -> VerifyAnswer:
-        """Ask the drafting runner whether ``login``'s GitHub account carries ``code`` (#195).
+    async def verify(self, login: str, code_digest: str) -> VerifyAnswer:
+        """Ask the drafting runner whether ``login``'s GitHub account carries the code (#195).
+
+        Only the code's digest is sent; the runner hashes what it finds and compares.
 
         Raises :class:`RunnerError` if the runner refuses, or GitHub didn't answer.
         """
         response = await self._call(
-            "POST", RunKind.DRAFTING, "/verify", json={"login": login, "code": code}
+            "POST", RunKind.DRAFTING, "/verify", json={"login": login, "code_digest": code_digest}
         )
         if response.status_code == 502:
             raise RunnerError("GitHub didn't answer the check")

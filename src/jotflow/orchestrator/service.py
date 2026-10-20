@@ -68,6 +68,7 @@ from jotflow.orchestrator.people import SlackAttribution, SlackPeople
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
+from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
 from jotflow.store import SqliteStore, Store
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
@@ -273,6 +274,7 @@ class Orchestrator:
         self.threads: ThreadNotice | None = None
         self.modes: ModeCommand | None = None
         self.links: LinkCommand | None = None
+        self.verify: VerifyCommand | None = None
         self.auto: AutoApprover | None = None
         self._keywords: KeywordHandler | None = None
         self._flush_seconds = flush_seconds
@@ -292,6 +294,12 @@ class Orchestrator:
         if self._store is None:
             raise RuntimeError("the orchestrator has not started")
         return self._store
+
+    def _verifier(self) -> Verifier | None:
+        """The drafting runner, when it's on, for checking a GitHub link's code (#195)."""
+        if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
+            return None
+        return self._runner
 
     @property
     def runs_on(self) -> bool:
@@ -336,6 +344,13 @@ class Orchestrator:
             policy=self._policy,
             names=people,
             notifier=self._link_notifier or SlackNote(self._client),
+        )
+        # Proving control of a GitHub login (#195), checked by the drafting runner.
+        self.verify = VerifyCommand(
+            self._store,
+            self._link_people or slack_people,
+            self._verifier,
+            self._link_notifier or SlackNote(self._client),
         )
         self.modes = ModeCommand(
             self._store,

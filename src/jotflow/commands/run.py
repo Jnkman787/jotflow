@@ -232,7 +232,12 @@ async def serve(settings: Settings, policy: Policy) -> int:
     try:
         register_handlers(app, EventFilter(policy.channels, identity), orchestrator.note)
         register_commands(
-            app, policy, orchestrator.channel_mode, orchestrator.modes, orchestrator.links
+            app,
+            policy,
+            orchestrator.channel_mode,
+            orchestrator.modes,
+            orchestrator.links,
+            orchestrator.verify,
         )
         if orchestrator.approval is not None:
             register_actions(app, orchestrator.approval)

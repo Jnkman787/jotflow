@@ -602,7 +602,7 @@ class VerifyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     login: str = Field(min_length=1, max_length=39)
-    code: str = Field(min_length=1, max_length=32)
+    code_digest: str = Field(min_length=64, max_length=64)
 
 
 def build_runner_app(
@@ -664,10 +664,10 @@ def build_runner_app(
         try:
             asked = VerifyRequest.model_validate_json(body)
             async with github_proof.new_client(github_transport) as http:
-                proof = await github_proof.check_proof(http, asked.login, asked.code)
+                proof = await github_proof.check_proof(http, asked.login, asked.code_digest)
         except (ValidationError, ValueError):
             return JSONResponse(
-                {"error": "expected exactly a GitHub login and a code"}, status_code=400
+                {"error": "expected exactly a GitHub login and a code digest"}, status_code=400
             )
         except github_proof.ProofError as failed:
             log.warning("a GitHub link check failed: %s", failed)

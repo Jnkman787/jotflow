@@ -4,19 +4,19 @@
 
 - Issue: #195, in M6
 - Also serves: #35 (self-service links) and #173 (removing a squatted link)
-- Status: approved by the lead, 2026-10-20, with three notes folded in below. Implementing.
+- Status: implemented, ready for review
 
 ## Objective and done-when
 
 Links are self-declared (#35), so cards mark every linked login "(unverified)", and someone can claim another person's login first. This lets a person prove they control the GitHub account, by putting a one-time code where only that account can put it. JotFlow holds no GitHub token, and its own process stays off GitHub.
 
-- [ ] A person can ask for a code, publish it on their GitHub account, and have JotFlow check it. On success the link is marked verified.
-- [ ] The code is random, short-lived, single-use, bound to one Slack user and one login, and stored only as a digest.
-- [ ] The check reaches GitHub without JotFlow holding a GitHub token, and without JotFlow's own container calling GitHub.
-- [ ] A verified link drops "(unverified)" from cards.
-- [ ] Changing or removing a link drops its verified state.
-- [ ] The real owner can verify a login someone else has claimed. The link moves to them, the other person is told, and the move is recorded.
-- [ ] The threat model's identity-squatting row narrows.
+- [x] A person can ask for a code, publish it on their GitHub account, and have JotFlow check it. On success the link is marked verified.
+- [x] The code is random, short-lived, single-use, bound to one Slack user and one login, and stored only as a digest.
+- [x] The check reaches GitHub without JotFlow holding a GitHub token, and without JotFlow's own container calling GitHub.
+- [x] A verified link drops "(unverified)" from cards.
+- [x] Changing or removing a link drops its verified state.
+- [x] The real owner can verify a login someone else has claimed. The link moves to them, the other person is told, and the move is recorded.
+- [x] The threat model's identity-squatting row narrows.
 
 **Out of scope:** GitHub OAuth, which needs an inbound callback (rejected in #173's design note), and periodic re-verification.
 
@@ -69,6 +69,10 @@ Links are self-declared (#35), so cards mark every linked login "(unverified)", 
    - An unverified one keeps it.
    - Assignment rules don't change: an assignee is still a linked participant's login.
 
+## Design note from implementation
+
+JotFlow keeps only the code's digest, so it sends the runner the digest, not the code. The runner hashes each code-shaped word it finds in the bio and the gist descriptions, and compares. The code itself is never in JotFlow's store, logs, or any request. The shared code shape and digest live in `jotflow/proof_codes.py`, because the orchestrator may not import the adapters.
+
 ## Store
 
 Migration 15, since #253 takes 14. Rebase after #253 merges, coordinating with product:
@@ -90,10 +94,10 @@ Migration 15, since #253 takes 14. Rebase after #253 merges, coordinating with p
 
 ## Progress checklist
 
-- [ ] The lead approves the decisions
-- [ ] The runner's `/verify` endpoint, with tests against a fake GitHub
-- [ ] JotFlow's `/jotflow verify` commands, the code store, and the link move
-- [ ] Card rendering for verified logins
-- [ ] Migration, store contract tests and the upgrade test
-- [ ] Docs: architecture's identity section, the threat model's squatting row, the README and the CHANGELOG
-- [ ] `make check`
+- [x] The lead approves the decisions
+- [x] The runner's `/verify` endpoint, with tests against a fake GitHub
+- [x] JotFlow's `/jotflow verify` commands, the code store, and the link move
+- [x] Card rendering for verified logins
+- [x] Migration, store contract tests and the upgrade test
+- [x] Docs: architecture's identity section, the threat model's squatting row, the README and the CHANGELOG
+- [x] `make check`

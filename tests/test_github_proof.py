@@ -9,10 +9,17 @@ import httpx2
 import pytest
 
 from jotflow.adapters import github_proof
-from jotflow.adapters.github_proof import Proof, ProofError, check_proof, contains_code
+from jotflow.adapters.github_proof import (
+    Proof,
+    ProofError,
+    check_proof,
+    code_digest,
+    contains_code,
+)
 
 CODE = "jotflow-Ab3_xY9-kLm2"
 OTHER = "jotflow-ZZZZZZZZZZZZ"
+DIGEST = code_digest(CODE)
 
 
 class FakeGitHub:
@@ -45,9 +52,9 @@ class FakeGitHub:
         return httpx2.Response(self.status, json=self.user, headers=self.headers)
 
 
-async def check(fake: FakeGitHub, login: str = "octo-cat", code: str = CODE) -> Proof:
+async def check(fake: FakeGitHub, login: str = "octo-cat", digest: str = DIGEST) -> Proof:
     async with github_proof.new_client(httpx2.MockTransport(fake)) as http:
-        return await check_proof(http, login, code)
+        return await check_proof(http, login, digest)
 
 
 @pytest.mark.parametrize(
@@ -63,7 +70,7 @@ async def check(fake: FakeGitHub, login: str = "octo-cat", code: str = CODE) -> 
     ],
 )
 def test_the_code_must_be_a_whole_word(text: str | None, found: bool) -> None:
-    assert contains_code(text, CODE) is found
+    assert contains_code(text, DIGEST) is found
 
 
 async def test_a_code_in_the_bio_verifies_with_the_canonical_login_and_id() -> None:
@@ -147,17 +154,17 @@ async def test_github_unreachable_is_an_error() -> None:
 
     async with github_proof.new_client(httpx2.MockTransport(down)) as http:
         with pytest.raises(ProofError, match="could not be reached"):
-            await check_proof(http, "octo-cat", CODE)
+            await check_proof(http, "octo-cat", DIGEST)
 
 
 @pytest.mark.parametrize(
-    ("login", "code"),
-    [("not a login", CODE), ("-bad", CODE), ("octo-cat", "jotflow-short"), ("octo-cat", "x" * 20)],
+    ("login", "digest"),
+    [("not a login", DIGEST), ("-bad", DIGEST), ("octo-cat", CODE), ("octo-cat", "A" * 64)],
 )
-async def test_a_bad_login_or_code_is_refused_before_any_request(login: str, code: str) -> None:
+async def test_a_bad_login_or_digest_is_refused_before_any_request(login: str, digest: str) -> None:
     fake = FakeGitHub()
     with pytest.raises(ValueError):
-        await check(fake, login, code)
+        await check(fake, login, digest)
     assert fake.requests == []
 
 
@@ -165,3 +172,8 @@ def test_the_client_sends_no_token_and_follows_no_redirect() -> None:
     client = github_proof.new_client()
     assert client.follow_redirects is False
     assert "authorization" not in client.headers
+
+
+def test_another_code_shaped_word_never_matches_the_digest() -> None:
+    assert not contains_code(f"{OTHER} and jotflow-Ab3_xY9-kLm3", DIGEST)
+    assert contains_code(f"{OTHER} then {CODE}", DIGEST)
