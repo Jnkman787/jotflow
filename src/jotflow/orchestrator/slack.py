@@ -217,3 +217,31 @@ class SlackThreadPoster:
         if not isinstance(ts, str):
             raise PostError("no ts in Slack's reply")
         return ts
+
+    async def post_plain(self, channel_id: str, thread_ts: str, text: str) -> str:
+        """A plain_text section, which Slack shows literally: no link, mention or format.
+
+        ``text`` is already escaped and stripped of links, so the notification
+        fallback, which is mrkdwn, holds nothing Slack could make live either.
+        """
+        from jotflow.whiteboard.write_tools import PostError
+
+        block = {"type": "section", "text": {"type": "plain_text", "text": text, "emoji": False}}
+        try:
+            response = await self._client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=text,
+                blocks=[block],
+                link_names=False,
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+        except SlackApiError as exc:
+            raise PostError(str(exc.response.get("error", "unknown_error"))) from None
+        except NETWORK_ERRORS as exc:
+            raise PostError(f"unreachable: {type(exc).__name__}") from None
+        ts = response.get("ts")
+        if not isinstance(ts, str):
+            raise PostError("no ts in Slack's reply")
+        return ts

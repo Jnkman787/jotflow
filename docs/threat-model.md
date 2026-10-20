@@ -61,6 +61,7 @@ Anyone who can post in a watched channel, which with approvers off includes the 
 | Approve, retry, discard, request changes or react-approve | Refused. The payload's team and the person's team must be this workspace, and `users.info` must not mark them a guest or external. If JotFlow can't learn its own team, everyone counts as external | [people.py](../src/jotflow/orchestrator/people.py), [approval.py](../src/jotflow/orchestrator/approval.py) |
 | Link a GitHub login, to become assignable | Refused by the same check | [identity.py](../src/jotflow/orchestrator/identity.py) |
 | Skip someone else's message | Refused by the same check | [keyword_handler.py](../src/jotflow/orchestrator/keyword_handler.py) |
+| Ask a question, to read private repos through the team's token (#57) | Refused by the same check, and fail closed: a lookup that fails, or a Slack Connect message whose `user_team` or `source_team` isn't this workspace, refuses too. The asker gets one private, fixed note, at most once per ten minutes, and no run is queued | [questions.py](../src/jotflow/orchestrator/questions.py) |
 
 ### A prompt-injected drafting agent
 
@@ -77,6 +78,7 @@ The likeliest attacker: the agent reads untrusted text, and might do what it say
 | Assign a stranger | An assignee must be the linked login of one of the proposal's participants | [write_tools.py](../src/jotflow/whiteboard/write_tools.py) `_check_assignees` |
 | Hide something from the approver | Every agent-written field on the card is `plain_text`, and a draft too long to show in full can't be approved, by button or by reaction | [cards.py](../src/jotflow/orchestrator/cards.py) |
 | Silence the public-repo warning | Only the policy can say private. An agent's "private" never removes a warning | [card_sync.py](../src/jotflow/orchestrator/card_sync.py) `effective_visibility` |
+| Make a question's answer post a link, ping someone, or quote another repo (#57) | The answer goes through `answer` once, at most 500 characters. JotFlow rewrites it after the same fold the Slack-link check uses: every URL, `www.` name, bare domain and email becomes `[link removed]`, references to repos outside the channel are dropped, `@` is stripped from mentions, and Slack markup is escaped. It's posted as a plain_text block labelled "Answer from the agent:", with link names and unfurls off, and refused in a paused channel | [write_tools.py](../src/jotflow/whiteboard/write_tools.py) |
 
 ### A misbehaving execution agent
 

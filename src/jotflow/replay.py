@@ -101,10 +101,16 @@ class _Poster:
 
     def __init__(self) -> None:
         self.threads: list[str] = []
+        self.answers: list[str] = []
 
     async def post(self, channel_id: str, thread_ts: str, text: str) -> str:
         self.threads.append(thread_ts)
         return f"1792310999.{len(self.threads):06d}"
+
+    async def post_plain(self, channel_id: str, thread_ts: str, text: str) -> str:
+        """A question run's answer (#57): recorded, never sent."""
+        self.answers.append(text)
+        return await self.post(channel_id, thread_ts, text)
 
 
 # The fictional workspace's address, for permalinks in planned issue bodies.

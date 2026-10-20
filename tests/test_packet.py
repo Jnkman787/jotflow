@@ -883,3 +883,27 @@ async def test_a_reaction_is_a_hint_and_a_text_keyword_wins() -> None:
     assert first.hint == "bug"  # the earliest reaction
     assert second.hint == "bug"
     assert third.hint is None
+
+
+async def test_a_question_to_jotflow_is_flagged_in_the_packet() -> None:
+    reader = FakeReader(
+        {
+            ROOT: [
+                msg(ROOT, "a progress bar"),
+                msg("1.2", "ask: is this tracked?"),
+                msg("1.3", "<@U0BOT> what about CSV?"),
+                msg("1.4", "<@U0SOMEONE> what about CSV?"),
+                msg("1.5", "ask: echo", user="U0BOT", bot_id="B0BOT"),
+            ]
+        }
+    )
+    bot = BotIdentity(user_id="U0BOT", bot_id="B0BOT")
+    messages = (await source(reader, bot=bot).thread(CH, ROOT)).messages
+    assert [(m.ts, m.asks_jotflow) for m in messages] == [
+        (ROOT, False),
+        ("1.2", True),
+        ("1.3", True),
+        ("1.4", False),
+        ("1.5", False),
+    ]
+    assert messages[1].hint == "ask"

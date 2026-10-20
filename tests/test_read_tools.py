@@ -294,12 +294,24 @@ async def test_drafting_work_carries_the_instructions_repos_and_people(
     assert all(p.display_name.untrusted for p in conversation.people)
 
 
-async def test_question_runs_get_no_drafting_instructions(store: MemoryStore, clock: Clock) -> None:
+async def test_question_runs_get_their_own_instructions_and_the_help_text(
+    store: MemoryStore, clock: Clock
+) -> None:
+    from jotflow.orchestrator.help import help_text
+    from jotflow.whiteboard.read_tools import QUESTION_INSTRUCTIONS
+
     grant = await running(store, RunKind.QUESTION)
     work: Work = await call(tools(store, clock)["get_work"], grant)
     assert work.conversation is not None
-    assert work.conversation.instructions == ""
+    assert work.conversation.instructions == QUESTION_INSTRUCTIONS
+    assert work.conversation.help == help_text()
     assert work.conversation.channel is not None
+
+
+async def test_drafting_runs_get_no_help_text(store: MemoryStore, clock: Clock) -> None:
+    grant = await running(store, RunKind.DRAFTING)
+    work: Work = await call(tools(store, clock)["get_work"], grant)
+    assert work.conversation is not None and work.conversation.help is None
 
 
 async def test_label_lists_reach_the_brief(store: MemoryStore, clock: Clock) -> None:

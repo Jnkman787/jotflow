@@ -911,6 +911,13 @@ class MemoryStore:
             and c.called_at >= since
         )
 
+    async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
+        return sum(
+            1
+            for r in self._runs.values()
+            if r.channel_id == channel_id and r.kind is kind and r.created_at >= since
+        )
+
     async def record_packet(self, run_id: str, refs: Collection[MessageRef]) -> None:
         check_id(run_id, "run id")
         async with self._lock:

@@ -4,7 +4,7 @@
 
 - Issue: #57 (M6: After v0.1.0), D12
 - Draft PR: to be opened
-- Status: plan, approved by the lead and by security on 2026-10-20, with security's changes below. Being built
+- Status: built, ready for review
 - Last verified: 2026-10-20, against main
 - Next safe action: review
 
@@ -40,7 +40,7 @@ Ingest already sees every message in a watched channel, with the bot's identity 
   - `<!channel>`, `<!here>` and `<!everyone>`
   - an edited message, since only new messages trigger
   - a message in a channel that isn't configured
-- **What the message becomes.** An `ask:` or mention message is a question, not an idea. It's marked as chatter, `linked_by='person'`, so drafting skips it, and its thread isn't armed for drafting by that message. A reply that isn't a question still arms the thread as today.
+- **What the message becomes.** An `ask:` or mention message is a question, not an idea. It's marked as the agent's chatter, so drafting skips it, and the orchestrator leaves it out of the debouncer, so it arms no drafting run. It's not a person's chatter: the debouncer treats a person's chatter on a thread's first message like `skip:`, and would keep the whole thread out of drafting. A reply that isn't a question still arms the thread as today.
 
 ## What the question run gets
 
@@ -117,13 +117,13 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
 ## Progress checklist
 
 - [x] Plan reviewed by the lead and security
-- [ ] `ask:` keyword, and mention detection in ingest
-- [ ] Question enqueue with rate limits and `[questions]` config
-- [ ] `get_work` question packet, and question.md
-- [ ] Who may ask: SlackPeople check, refused reply, tests for guest, external and failed lookup
-- [ ] `answer` tool: cleaning, the no-links rewrite after the fold, mentions(), plain_text, paused refusal. Presets swap `ask_channel` for `answer`, and `ask_channel` gets the same rewrite
-- [ ] Help text, guide, usage.md (including that a mention outside a watched channel does nothing), manifest README line, threat model rows for guests and for links
-- [ ] Replay fixtures: a topic question, a how-to question, an injected "post this link" question
+- [x] `ask:` keyword, and mention detection in ingest
+- [x] Question enqueue with rate limits and `[questions]` config
+- [x] `get_work` question packet, and question.md
+- [x] Who may ask: SlackPeople check, refused reply, tests for guest, external and failed lookup
+- [x] `answer` tool: cleaning, the no-links rewrite after the fold, mentions(), plain_text, paused refusal. Presets swap `ask_channel` for `answer`, and `ask_channel` gets the same rewrite
+- [x] Help text, guide, usage.md (including that a mention outside a watched channel does nothing), manifest README line, threat model rows for guests and for links
+- [ ] Replay fixtures: moved to #270, because replay plays only drafting runs and needs a question kind, a scripted `answer`, and the stand-in agent first
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
@@ -142,4 +142,8 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
 
 ## Handoff notes
 
-None yet.
+- **The question message is located in the packet, not stored.** Each packet message has `asks_jotflow`, true for `ask:` or a mention of the bot's id, set by the work source, which knows the bot. question.md says to answer the newest one. Runs have no column for the asking ts, and this needed no migration.
+- **`ask` is a fifth keyword.** It's not typo-tolerant. It's in the help text, the guide and usage.md, and their sync tests pass. The packet's `hint` can be `ask`.
+- **The orchestrator wiring.** The question handler exists only while a runner serves `question`, as the debouncer needs drafting. A question message returns early from `note()`: no keyword handling, no help, no debouncer. If the handler raises, a message that is a question still returns early, failing closed.
+- **The order of the rewrite matters:** fold, then broadcasts, then holding configured-repo references, dropping others, removing URL-like tokens, stripping `@`, restoring, and finally `clean_question`. URL patterns stop at `<`, `>` and `|`, so Slack markup isn't swallowed.
+- **`ask_channel`** is now drafting-only, and gets the same rewrite.

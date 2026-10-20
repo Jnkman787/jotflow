@@ -78,6 +78,7 @@ class Clock:
 class Poster:
     def __init__(self) -> None:
         self.posts: list[tuple[str, str, str]] = []
+        self.plain: list[tuple[str, str, str]] = []
         self.error: Exception | None = None
         self.delay = 0.0
 
@@ -88,6 +89,10 @@ class Poster:
             raise self.error
         self.posts.append((channel_id, thread_ts, text))
         return f"1792310999.{len(self.posts):06d}"
+
+    async def post_plain(self, channel_id: str, thread_ts: str, text: str) -> str:
+        self.plain.append((channel_id, thread_ts, text))
+        return await self.post(channel_id, thread_ts, text)
 
 
 class Ids:
@@ -485,7 +490,8 @@ async def test_a_question_goes_only_to_the_grants_thread_cleaned(
     [(channel, thread, text)] = poster.posts
     assert (channel, thread) == (CH, ROOT)
     assert "<!" not in text and "@here" not in text
-    assert text == "Which repo, &lt;https://evil.example|web&gt;?"
+    # No link survives, even inside Slack markup (#57).
+    assert text == "Which repo, &lt;[link removed]|web&gt;?"
     assert result.posted_ts == "1792310999.000001"
 
 
@@ -655,7 +661,8 @@ def test_the_write_tools_register_with_their_kinds(store: MemoryStore) -> None:
         "propose_issue": {RunKind.DRAFTING},
         "propose_update": {RunKind.DRAFTING},
         "link_message": {RunKind.DRAFTING},
-        "ask_channel": {RunKind.DRAFTING, RunKind.QUESTION},
+        "ask_channel": {RunKind.DRAFTING},
+        "answer": {RunKind.QUESTION},
         "record_result": {RunKind.EXECUTION},
     }
 

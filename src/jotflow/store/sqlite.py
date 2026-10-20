@@ -1503,6 +1503,15 @@ class SqliteStore:
             )
         return int(row["n"]) if row is not None else 0
 
+    async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
+        async with self._lock:
+            row = await self._one(
+                "SELECT count(*) AS n FROM runs WHERE channel_id = ? AND kind = ?"
+                " AND created_at >= ?",
+                (channel_id, kind.value, to_text(since)),
+            )
+        return int(row["n"]) if row is not None else 0
+
     async def record_packet(self, run_id: str, refs: Collection[MessageRef]) -> None:
         check_id(run_id, "run id")
         rows = []

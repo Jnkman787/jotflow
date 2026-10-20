@@ -48,7 +48,7 @@ Every call carries a token, and what a token may do depends on who holds it:
 |---|---|---|
 | Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel` |
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
-| Question run (M5, D12) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `ask_channel` (answers in the source thread only) |
+| Question run (D12, #57) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `answer` (once, in the source thread only) |
 | Operator token (M5, D12, #58) | One person, named channels, admin-issued and revocable | `list_topics`, `get_topic` only: no `get_work`, no write, approval or result tool |
 
 Tokens are short-lived for runs and revocable for operators. The server validates `Host` and `Origin` headers so a web page cannot reach it from a browser.
@@ -211,7 +211,7 @@ People never need syntax: a plain message is classified by the agent. Keywords l
 | `idea:`, `bug:` | Agent, as a hint | Suggests the kind of issue. The agent may overrule it; the card says when it does. |
 | `re:` | JotFlow | Attaches the message to an existing topic or issue in this channel's repos. `re: 42` when unambiguous, `re: web#42` otherwise. |
 | `skip:` | JotFlow | Marks the message as not an idea. Its text is kept out of agent packets. On a top-level message it covers the whole thread. |
-| `ask:` (M5) | Question run | Read-only question answered in the thread from this channel's topics and repos (D12). |
+| `ask:`, or an @-mention of the bot | Question run | A read-only question answered once in the thread from this channel's topics and repos, and from `/jotflow help` (D12, #57). Only this workspace's own members can ask. The answer is plain text, labelled as the agent's, with no links, pings, or other repos' references. The asking message is marked as the agent's chatter, so it is never drafted. |
 
 Post-v1: `hold:` and `go:` to lengthen or shorten the wait before drafting, and `new:` to split a reply off into its own topic.
 

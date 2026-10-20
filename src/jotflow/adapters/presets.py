@@ -48,7 +48,7 @@ JOTFLOW_TOOLS: Mapping[RunKind, tuple[str, ...]] = {
         "link_message",
         "ask_channel",
     ),
-    RunKind.QUESTION: ("get_work", "list_topics", "get_topic", "ask_channel"),
+    RunKind.QUESTION: ("get_work", "list_topics", "get_topic", "answer"),
     RunKind.EXECUTION: ("get_work", "record_result"),
 }
 

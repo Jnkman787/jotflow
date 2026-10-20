@@ -266,6 +266,26 @@ class HelpPolicy(_Strict):
     )
 
 
+class QuestionsPolicy(_Strict):
+    """Questions asked with ``ask:`` or an @-mention of the bot (#57). On by default."""
+
+    enabled: bool = Field(default=True, description="Answer questions at all")
+    per_hour: int = Field(
+        default=10, ge=1, le=1000, description="Question runs one channel may start in an hour"
+    )
+    per_person_seconds: int = Field(
+        default=60, ge=0, le=86400, description="How long one person waits between questions"
+    )
+
+
+class ChannelQuestions(_Strict):
+    """A channel's own question settings. Each one left out follows the top-level one."""
+
+    enabled: bool | None = None
+    per_hour: int | None = Field(default=None, ge=1, le=1000)
+    per_person_seconds: int | None = Field(default=None, ge=0, le=86400)
+
+
 class ChannelHelp(_Strict):
     """A channel's own help settings. Each one left out follows the top-level ``[help]``."""
 
@@ -369,6 +389,9 @@ class ChannelPolicy(_Strict):
     )
     help: ChannelHelp = Field(
         default_factory=ChannelHelp, description="Overrides the top-level [help] settings"
+    )
+    questions: ChannelQuestions = Field(
+        default_factory=ChannelQuestions, description="Overrides the top-level [questions]"
     )
 
     @model_validator(mode="after")
@@ -515,6 +538,7 @@ class Policy(_Strict):
     agent: AgentPolicy = Field(default_factory=AgentPolicy)
     approval: ApprovalPolicy = Field(default_factory=ApprovalPolicy)
     help: HelpPolicy = Field(default_factory=HelpPolicy)
+    questions: QuestionsPolicy = Field(default_factory=QuestionsPolicy)
     identity: IdentityPolicy = Field(default_factory=IdentityPolicy)
     channels: dict[ChannelId, ChannelPolicy] = Field(min_length=1)
 
@@ -556,6 +580,11 @@ class Policy(_Strict):
         """The channel's help settings, each one its own or the top-level default."""
         own = self.channel(channel_id).help.model_dump(exclude_none=True)
         return self.help.model_copy(update=own)
+
+    def questions_for(self, channel_id: str) -> QuestionsPolicy:
+        """The channel's question settings, each one its own or the top-level default."""
+        own = self.channel(channel_id).questions.model_dump(exclude_none=True)
+        return self.questions.model_copy(update=own)
 
 
 class PolicyError(Exception):

@@ -1009,6 +1009,10 @@ class Store(Protocol):
         """How many calls of ``tool`` any run made in this thread since ``since``."""
         ...
 
+    async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
+        """How many runs of ``kind`` were queued in the channel since ``since`` (#57)."""
+        ...
+
     # Packet membership (#14, #15): which message pointers a run's packet served
     async def record_packet(self, run_id: str, refs: Collection[MessageRef]) -> None:
         """Remember that ``run_id``'s packet served ``refs``."""

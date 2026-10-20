@@ -21,20 +21,20 @@ ordinary text too, and ``re:`` and ``bug:`` must be exact.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from jotflow.policy import ChannelPolicy, RepoPolicy
 from jotflow.reactions import KEYWORD_REACTIONS
 
-Keyword = Literal["idea", "bug", "re", "skip"]
-KEYWORDS: tuple[Keyword, ...] = ("idea", "bug", "re", "skip")
+Keyword = Literal["idea", "bug", "re", "skip", "ask"]
+KEYWORDS: tuple[Keyword, ...] = ("idea", "bug", "re", "skip", "ask")
 # Keywords long enough to tolerate a typo (D10).
 TYPO_TOLERANT: tuple[Keyword, ...] = ("idea", "skip")
 
 # Reactions that act like a keyword, kept in jotflow.reactions so policy can see them.
-REACTIONS: dict[str, Keyword] = KEYWORD_REACTIONS
+REACTIONS: Mapping[str, Keyword] = KEYWORD_REACTIONS
 
 # Leading spaces, one word, a colon, then optional spaces. The colon is required.
 _PREFIX = re.compile(r"\s*([A-Za-z]+):[ \t]*")
