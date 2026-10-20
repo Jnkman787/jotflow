@@ -4,7 +4,7 @@
 
 - Issue: #36 (M6: After v0.1.0)
 - Draft PR: to be opened
-- Status: plan only, for the lead, the architect and security before any code
+- Status: plan, with the lead's and the architect's calls recorded on 2026-10-20. Waiting on security before code
 - Last verified: 2026-10-20, against main
 - Next safe action: review the open questions below
 
@@ -43,18 +43,28 @@ Done when:
 
 ## Risks and open questions
 
-1. **A new state, or reuse `rejected`?** This is the architect's call.
+1. **Decided by the architect: reuse `rejected`.** The earlier options were: This is the architect's call.
    - A new `duplicate` state is clearest in the state diagram. But the proposals table has `CHECK (state IN (...))`, and SQLite can't alter a CHECK, so it would need a table rebuild in migration 14, and every state switch would have to handle it.
    - Reusing `rejected`, with `duplicate_of_repo` and `duplicate_of_number` set, needs only two `ALTER TABLE ... ADD COLUMN`s. The card tells the two apart by `duplicate_of`.
    - I'd reuse `rejected`.
-2. **"Same as" on update proposals?** An update already targets an existing issue, so I'd leave the button off. `related` is still shown.
+2. **Decided by the architect: no "same as" on update proposals.** An update already targets an existing issue. `related` is still shown.
 3. **Security.** New agent-supplied data reaches the card. It's three validated pointers, rendered by JotFlow, with no free text, and every repo is in the channel's allowlist. The click is a new state-changing action, so it takes the approval gate's full check set. Security to confirm.
 4. **Auto mode.** A proposal in `auto` is written at once, so "same as" never appears. The card still lists `related` after the write, for a person to catch a duplicate and close it on GitHub.
 5. **Older runners.** A runner or agent that doesn't send `related` is unaffected, because the field is optional.
 
+## Decisions, 2026-10-20
+
+- **The lead: who may click.** "Same as" follows exactly Approve's rules. In open mode, anyone in the channel may click it. With approvers on, only listed approvers may, never on a proposal drawn from their own messages. Guests and external users are always refused. It also takes every other approval check, including a second approver where the policy requires one.
+- **The architect: reuse `rejected`,** with `duplicate_of_repo` and `duplicate_of_number` added by two ADD COLUMNs in migration 14. Three conditions:
+  - **The card.** cards.py checks `duplicate_of` before the plain rejected text, and shows "Same as owner/name#N", marked by whom, instead of "Rejected. Nothing was written."
+  - **Card sync.** card_sync.py's `_NO_CARD_NEEDED = {SUPERSEDED, REJECTED}` is for proposals nobody saw. A same-as proposal always had a visible card, so sync must still edit it into its final state, with a test.
+  - **The invariant.** Either both duplicate_of columns are set or neither, and only with state `rejected`. It's enforced in both stores' code, since SQLite can't add a multi-column CHECK with ADD COLUMN, and a test covers it. architecture.md's state table says `rejected` with duplicate_of means "same as an existing issue", not "people said no".
+- **What follows a same-as click.** The topic is now linked to the issue, so a later message in the thread becomes a `propose_update` on that issue, which may be a closed one. The card's `(closed)` marker makes that visible before anyone clicks. usage.md says so.
+
 ## Progress checklist
 
-- [ ] Plan reviewed: the lead, the architect (questions 1 and 2), security (question 3)
+- [x] Plan reviewed by the lead and the architect
+- [ ] Security answers question 3
 - [ ] Model, validation, and tool schema
 - [ ] Card rendering
 - [ ] "Same as" action, store transition, migration 13
