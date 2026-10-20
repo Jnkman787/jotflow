@@ -4,7 +4,7 @@
 
 - Issue: #57 (M6: After v0.1.0), D12
 - Draft PR: to be opened
-- Status: plan only, for security on the posting path, then the lead, before any code
+- Status: plan, approved by the lead on 2026-10-20 pending security's verdict on the posting path
 - Last verified: 2026-10-20, against main
 - Next safe action: review
 
@@ -109,7 +109,7 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
    - the allowed-link rule, which rebuilds links JotFlow checked and removes all others
    - the plain_text block
    - refusing in paused mode even mid-run
-2. **For the lead: no new scope.** Detecting the mention from message events avoids `app_mentions:read` and a reinstall. Is it OK to leave #57's manifest line undone, and say why?
+2. **Decided by the lead on 2026-10-20: no new scope.** The mention is detected from the message events JotFlow already receives, so there's no `app_mentions:read` and no reinstall. #57 has a dated note. usage.md says a mention outside a watched channel does nothing.
 3. **Prompt injection.** A thread can tell the question agent to say something false. The answer is labelled as the agent's, limited to 3 sentences and 500 characters, can't link anywhere but the channel's issues, and can't ping. The worst case is a misleading sentence in a thread people are already reading.
 4. **Cost on a busy channel.** The defaults cap it at 10 runs an hour per channel. `enabled = false` is the off switch.
 
@@ -120,7 +120,7 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
 - [ ] Question enqueue with rate limits and `[questions]` config
 - [ ] `get_work` question packet, and question.md
 - [ ] `answer` tool: cleaning, link rule, plain_text, paused refusal; presets swap `ask_channel` for `answer`
-- [ ] Help text, guide, usage.md, manifest README line, threat model row
+- [ ] Help text, guide, usage.md (including that a mention outside a watched channel does nothing), manifest README line, threat model row
 - [ ] Replay fixtures: a topic question, a how-to question, an injected "post this link" question
 - [ ] CodeRabbit once, `make check`, mark ready
 
