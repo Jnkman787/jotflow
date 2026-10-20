@@ -35,6 +35,7 @@ KEYWORD_LINES: dict[Keyword, tuple[str, str]] = {
         "add this to an existing issue; re: 42 works when the channel has one repo",
     ),
     "skip": ("skip:", "not an idea; on a top-level message it keeps the whole thread out"),
+    "ask": ("ask:", "a question for JotFlow; the agent answers in the thread (#57)"),
 }
 
 INTRO = "Start a message with a keyword to steer JotFlow. The colon is required."

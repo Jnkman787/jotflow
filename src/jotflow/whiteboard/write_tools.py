@@ -26,7 +26,7 @@ import logging
 import re
 import secrets
 import unicodedata
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol, TypeVar
@@ -70,10 +70,14 @@ MAX_QUESTIONS_PER_RUN = 2
 MAX_LINKS_PER_RUN = 200
 QUESTION_INTERVAL = timedelta(seconds=30)
 MAX_QUESTION_LENGTH = 500
+MAX_ANSWER_LENGTH = 500
+# Every answer says whose it is, so nobody mistakes it for a person or a JotFlow fact.
+ANSWER_PREFIX = "Answer from the agent:"
 MAX_PARTICIPANTS = 50
 
 DRAFTING = frozenset({RunKind.DRAFTING})
 ASKING = frozenset({RunKind.DRAFTING, RunKind.QUESTION})
+ANSWERING = frozenset({RunKind.QUESTION})
 EXECUTION = frozenset({RunKind.EXECUTION})
 
 PROPOSE_TOOLS = ("propose_issue", "propose_update")
@@ -91,6 +95,13 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 class ThreadPoster(Protocol):
     async def post(self, channel_id: str, thread_ts: str, text: str) -> str:
         """Post ``text`` as a reply in the thread and return the new message's ts.
+
+        Raises :class:`PostError` if Slack refuses it.
+        """
+        ...
+
+    async def post_plain(self, channel_id: str, thread_ts: str, text: str) -> str:
+        """Post ``text`` as a plain_text block reply, which Slack never formats (#57).
 
         Raises :class:`PostError` if Slack refuses it.
         """
@@ -163,6 +174,10 @@ class AskChannelArgs(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_QUESTION_LENGTH)
 
 
+class AnswerArgs(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_ANSWER_LENGTH)
+
+
 class RecordResultArgs(ExecutionResult):
     pass
 
@@ -190,6 +205,13 @@ class LinkResult(BaseModel):
 
 class AskResult(BaseModel):
     posted_ts: str
+
+
+class AnswerResult(BaseModel):
+    posted_ts: str
+    removed: int = Field(
+        default=0, description="Links, addresses and other repos' references JotFlow removed"
+    )
 
 
 class RecordOutcome(BaseModel):
@@ -268,6 +290,70 @@ def _for_link_check(text: str) -> str:
         text = decoded
     folded = unicodedata.normalize("NFKC", text)
     return "".join(c for c in folded if unicodedata.category(c) not in ("Cc", "Cf"))
+
+
+# Anything Slack, a browser or a mail client could turn into a link (#57): a URL
+# with a scheme, a www. name, an email address, or a bare domain such as
+# example.com/x, which Slack auto-links in a message's text.
+_URLISH = re.compile(
+    r"(?i)(?:"
+    r"\b[a-z][a-z0-9+.-]*://[^\s<>|]*"
+    r"|\b(?:mailto|slack|tel|data|javascript):[^\s<>|]*"
+    r"|\bwww\.[^\s<>|]*"
+    r"|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+    # Labels and the top-level domain in any script, so an IDN such as
+    # \u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444 counts.
+    r"|\b(?:[^\W_](?:[\w-]{0,61}[^\W_])?\.)+[^\W\d_]{2,63}\b(?:/[^\s<>|]*)?"
+    r")"
+)
+# An issue reference, owner/name#42.
+_REPO_REF = re.compile(r"(?<![\w/.-])([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#([0-9]+)\b")
+_HELD = re.compile("\x00([0-9]+)\x00")
+LINK_REMOVED = "[link removed]"
+
+
+def safe_text(text: str, repos: Collection[str]) -> tuple[str, int]:
+    """``text`` as JotFlow posts it in a thread, and how much was removed (#57).
+
+    No link of any kind survives, after the same fold the Slack-link check uses,
+    so a zero-width space or a full-width dot can't hide one. An issue is named
+    only as ``owner/name#N`` text, and only for ``repos``. Any other repo's
+    reference is dropped. @-mentions lose their @, so they can't ping on
+    GitHub. Then :func:`clean_question` escapes Slack's markup.
+    """
+    allowed = {repo.casefold(): repo for repo in repos}
+    # Slack's own broadcasts first, while their markup is whole, and again until
+    # nothing changes, so a removal can't join the pieces of another.
+    folded = _for_link_check(text)
+    while True:
+        stripped = _BARE_BROADCAST.sub("", _SPECIAL_MENTION.sub("", folded))
+        if stripped == folded:
+            break
+        folded = stripped
+    held: list[str] = []
+    removed = 0
+
+    def hold(match: re.Match[str]) -> str:
+        nonlocal removed
+        repo = allowed.get(match.group(1).casefold())
+        if repo is None:
+            removed += 1
+            return ""
+        held.append(f"{repo}#{match.group(2)}")
+        return f"\x00{len(held) - 1}\x00"
+
+    def link(match: re.Match[str]) -> str:
+        nonlocal removed
+        removed += 1
+        return LINK_REMOVED
+
+    out = _REPO_REF.sub(hold, folded)
+    # @ goes before links are removed, so taking it away can't leave a domain behind.
+    out = _MENTION.sub(lambda m: m.group(1) + (m.group(2) or ""), out)
+    out = _URLISH.sub(link, out)
+    out = _HELD.sub(lambda m: held[int(m.group(1))], out)
+    out = re.sub(r"[ \t]{2,}", " ", out)  # what a removal leaves behind
+    return clean_question(out), removed
 
 
 def clean_question(text: str) -> str:
@@ -667,7 +753,8 @@ class WriteTools:
                     f"a question was asked in this thread in the last "
                     f"{int(QUESTION_INTERVAL.total_seconds())} seconds; wait for an answer"
                 )
-            text = clean_question(args.text)
+            # The same rewrite as an answer: it posts in the same place (#57).
+            text, _ = safe_text(args.text, self._channel_repos(grant))
             try:
                 posted = await self._poster.post(grant.channel_id, thread, text)
             except PostError as refused:
@@ -675,6 +762,30 @@ class WriteTools:
             return AskResult(posted_ts=posted)
 
         return await self._once(grant, "ask_channel", args, AskResult, act)
+
+    async def answer(self, grant: Grant, arguments: Any) -> BaseModel:
+        """A question run's one answer, in its thread, as plain text (#57)."""
+        args: AnswerArgs = arguments
+        thread = grant.thread_ts
+        if thread is None:  # pragma: no cover - question grants always name one
+            raise ToolError("this run has no thread to answer in")
+
+        async def act() -> AnswerResult:
+            await self._cap(grant, ("answer",), 1, "answers")
+            text, removed = safe_text(args.text, self._channel_repos(grant))
+            try:
+                posted = await self._poster.post_plain(
+                    grant.channel_id, thread, f"{ANSWER_PREFIX} {text}"
+                )
+            except PostError as refused:
+                raise ToolError(f"Slack did not post the answer ({refused})") from None
+            return AnswerResult(posted_ts=posted, removed=removed)
+
+        return await self._once(grant, "answer", args, AnswerResult, act)
+
+    def _channel_repos(self, grant: Grant) -> list[str]:
+        """The repos an answer may name: listed and found by scope, as propose_issue resolves."""
+        return [entry.repo for entry in self._repos.repos(grant.channel_id)]
 
     async def record_result(self, grant: Grant, arguments: Any) -> BaseModel:
         args: RecordResultArgs = arguments
@@ -735,7 +846,14 @@ _DESCRIPTIONS = {
     ),
     "ask_channel": (
         "Ask one short clarifying question in this run's own Slack thread, when you are "
-        "unsure. Broadcast mentions are removed. Asked at most twice per run."
+        "unsure. Broadcast mentions, links and @-mentions are removed. Asked at most twice "
+        "per run."
+    ),
+    "answer": (
+        "Answer the question in this run's own Slack thread, once, in at most 3 short "
+        "sentences. Name issues as owner/name#42 from this channel's repos only. Links, "
+        "web and email addresses, other repos and @-mentions are removed. JotFlow posts "
+        "it as plain text, labelled as the agent's answer."
     ),
     "record_result": (
         "Report the outcome of this execution run: the URL of the issue or comment you "
@@ -759,7 +877,8 @@ def write_tools(
         ("propose_issue", ProposeIssueArgs, DRAFTING),
         ("propose_update", ProposeUpdateArgs, DRAFTING),
         ("link_message", LinkMessageArgs, DRAFTING),
-        ("ask_channel", AskChannelArgs, ASKING),
+        ("ask_channel", AskChannelArgs, DRAFTING),
+        ("answer", AnswerArgs, ANSWERING),
         ("record_result", RecordResultArgs, EXECUTION),
     )
     return tuple(

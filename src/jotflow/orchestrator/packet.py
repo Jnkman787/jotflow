@@ -35,6 +35,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from jotflow.models import TopicIndex, UntrustedText
 from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
+from jotflow.orchestrator.questions import mentions_bot
 from jotflow.store.base import Store
 from jotflow.whiteboard.read_tools import Mention, RelatedExcerpt, ThreadMessage, WorkThread
 from jotflow.whiteboard.tools import ToolError
@@ -481,14 +482,23 @@ class SlackWorkSource:
             author=UntrustedText(text=author),
             text=UntrustedText(text=_cut(readable(rest, names), MAX_MESSAGE_CHARS)),
             # A keyword in the text wins over a reaction on the message (#139).
-            hint=keyword if keyword in ("idea", "bug", "re") else reaction_hint,
+            hint=keyword if keyword in ("idea", "bug", "re", "ask") else reaction_hint,
             mentions=[
                 Mention(user_id=uid, display_name=UntrustedText(text=names.get(uid, uid)))
                 for uid in mentioned_ids(rest)
             ],
             topic_id=topic_id,
             from_jotflow=self._from_jotflow(raw),
+            asks_jotflow=self._asks_jotflow(raw, keyword),
         )
+
+    def _asks_jotflow(self, raw: Mapping[str, Any], keyword: str | None) -> bool:
+        """A person asked JotFlow a question: ``ask:``, or a mention of the bot (#57)."""
+        if self._from_jotflow(raw) or raw.get("bot_id"):
+            return False
+        if keyword == "ask":
+            return True
+        return self._bot is not None and mentions_bot(str(raw.get("text") or ""), self._bot.user_id)
 
     async def related(self, thread: WorkThread, topics: TopicIndex) -> list[RelatedExcerpt]:
         # Rank the index's other threads by how many words their topic's title

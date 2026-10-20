@@ -48,6 +48,7 @@ from jotflow.models import (
     TopicSummary,
     UntrustedText,
 )
+from jotflow.orchestrator.help import help_text
 from jotflow.orchestrator.topics import list_topics as build_topic_list
 from jotflow.policy import IssueLinks, Policy, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
@@ -75,6 +76,9 @@ SLACK_PHASE_SECONDS = 25.0
 # JotFlow's own text, never built from Slack or policy strings.
 DRAFTING_INSTRUCTIONS = (
     resources.files("jotflow.whiteboard").joinpath("instructions", "drafting.md").read_text("utf-8")
+)
+QUESTION_INSTRUCTIONS = (
+    resources.files("jotflow.whiteboard").joinpath("instructions", "question.md").read_text("utf-8")
 )
 EXECUTION_INSTRUCTIONS = (
     resources.files("jotflow.whiteboard")
@@ -134,7 +138,7 @@ class ThreadMessage(BaseModel):
     user_id: str | None = Field(default=None, description="Slack user id of the author")
     author: UntrustedText = Field(description="The author's display name; untrusted")
     text: UntrustedText = Field(description="What the message says; untrusted")
-    hint: Literal["idea", "bug", "re"] | None = Field(
+    hint: Literal["idea", "bug", "re", "ask"] | None = Field(
         default=None,
         description="The keyword the author started with, removed from text; a hint only",
     )
@@ -150,6 +154,10 @@ class ThreadMessage(BaseModel):
             "True for JotFlow's own messages, such as its questions, and the change "
             "requests it posts for a person, who is named at the start of the text"
         ),
+    )
+    asks_jotflow: bool = Field(
+        default=False,
+        description="True for a person's question to JotFlow: ask:, or a mention of JotFlow",
     )
 
 
@@ -249,6 +257,10 @@ class ConversationWork(BaseModel):
     people: list[Person] = Field(default_factory=list)
     topics: TopicIndex = Field(description="The channel's active topics; titles are untrusted")
     related: list[RelatedExcerpt] = Field(default_factory=list)
+    help: str | None = Field(
+        default=None,
+        description="A question run's copy of /jotflow help, for questions about JotFlow itself",
+    )
 
 
 class ExecutionWork(BaseModel):
@@ -432,7 +444,9 @@ def read_tools(
             ],
         )
         conversation = ConversationWork(
-            instructions=DRAFTING_INSTRUCTIONS if grant.kind is RunKind.DRAFTING else "",
+            instructions=(
+                DRAFTING_INSTRUCTIONS if grant.kind is RunKind.DRAFTING else QUESTION_INSTRUCTIONS
+            ),
             run_id=run.id,
             channel_id=grant.channel_id,
             channel=_brief(grant.channel_id, thread),
@@ -440,6 +454,7 @@ def read_tools(
             people=await _people(thread),
             topics=index,
             related=related,
+            help=help_text() if grant.kind is RunKind.QUESTION else None,
         )
         return Work(kind=grant.kind, conversation=conversation)
 

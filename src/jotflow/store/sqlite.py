@@ -1161,11 +1161,13 @@ class SqliteStore:
         self, kind: RunKind, channel_id: str, thread_ts: str, proposal_id: str | None
     ) -> Run | None:
         """The queued run new work of this kind would coalesce with, if any."""
-        if kind is RunKind.DRAFTING:
+        if kind in (RunKind.DRAFTING, RunKind.QUESTION):
+            # One queued run of the kind per thread: a second question in it, from
+            # anyone, waits for the same run (#57).
             row = await self._one(
-                "SELECT * FROM runs WHERE kind = 'drafting' AND status = 'queued'"
+                "SELECT * FROM runs WHERE kind = ? AND status = 'queued'"
                 " AND channel_id = ? AND thread_ts = ?",
-                (channel_id, thread_ts),
+                (kind.value, channel_id, thread_ts),
             )
         elif kind is RunKind.EXECUTION:
             row = await self._one(
@@ -1500,6 +1502,15 @@ class SqliteStore:
                 "SELECT count(*) AS n FROM tool_calls WHERE channel_id = ? AND thread_ts IS ?"
                 " AND tool = ? AND called_at >= ?",
                 (channel_id, thread_ts, tool, to_text(since)),
+            )
+        return int(row["n"]) if row is not None else 0
+
+    async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
+        async with self._lock:
+            row = await self._one(
+                "SELECT count(*) AS n FROM runs WHERE channel_id = ? AND kind = ?"
+                " AND created_at >= ?",
+                (channel_id, kind.value, to_text(since)),
             )
         return int(row["n"]) if row is not None else 0
 

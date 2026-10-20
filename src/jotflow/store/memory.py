@@ -657,7 +657,7 @@ class MemoryStore:
             if run.kind is not kind:
                 continue
             if (
-                kind is RunKind.DRAFTING
+                kind in (RunKind.DRAFTING, RunKind.QUESTION)
                 and run.status is RunStatus.QUEUED
                 and (run.channel_id, run.thread_ts) == (channel_id, thread_ts)
             ):
@@ -909,6 +909,13 @@ class MemoryStore:
             for c in self._calls
             if (c.channel_id, c.thread_ts, c.tool) == (channel_id, thread_ts, tool)
             and c.called_at >= since
+        )
+
+    async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
+        return sum(
+            1
+            for r in self._runs.values()
+            if r.channel_id == channel_id and r.kind is kind and r.created_at >= since
         )
 
     async def record_packet(self, run_id: str, refs: Collection[MessageRef]) -> None:

@@ -33,6 +33,7 @@ from tests.test_card_sync import FakeCardPoster, FakePeople
 from tests.test_help import FakeHelpSlack
 from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
+from tests.test_questions import Slack as QuestionFakeSlack
 from tests.test_runner import ENVIRON, SECRET, config
 from tests.test_runs import CH, ISSUE_URL, THREAD, _approved
 from tests.test_thread_notice import FakeThreadSlack
@@ -112,6 +113,7 @@ class Rig:
         self.info_status = 200
         self.slack = FakeSlack()
         self.help = FakeHelpSlack()
+        self.questions = QuestionFakeSlack()
         self.cards = FakeCardPoster()
         self.threads = FakeThreadSlack()
         self.runner = RunnerClient(
@@ -129,6 +131,7 @@ class Rig:
             runner=self.runner,
             keyword_slack=self.slack,
             help_slack=self.help,
+            question_slack=self.questions,
             card_poster=self.cards,
             thread_slack=self.threads,
             people=FakePeople(),
@@ -1355,3 +1358,22 @@ async def test_with_runs_off_a_scope_finds_nothing_and_says_why(
     with pytest.raises(RunnerError):
         await orchestrator._write_reachable("acme-co", "web-shop")
     await orchestrator.stop()
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_a_question_queues_a_question_run_and_never_a_draft() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        await _deliver(app, _reply(REPLY, "ask: is dark mode already tracked?"), "Ev1")
+        await _deliver(app, _reply("1760781720.000100", "<@U0BOT> and icons?"), "Ev2")
+    finally:
+        await rig.orchestrator.stop()
+    runs = await rig.store.thread_runs(CH, THREAD)
+    assert [r.kind for r in runs] == [RunKind.QUESTION]  # one per thread, never a draft
+    assert await rig.store.pending_threads() == []
+    asked = await rig.store.get_message(CH, REPLY)
+    assert asked is not None and asked.chatter and asked.linked_by == "agent"
+    # Neither the keyword handler nor the help offered anything for a question.
+    assert rig.slack.reactions == [] and rig.help.whispers == []

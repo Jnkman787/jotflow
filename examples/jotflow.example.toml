@@ -71,6 +71,16 @@ newcomer_tip = true
 # such as "skip" or "Idea - ..." without the colon. JotFlow never acts on it.
 near_miss_nudge = true
 
+[questions]
+# Questions asked with "ask:" or an @-mention of the bot (#57). The agent
+# answers once in the thread, as plain text with no links or pings. Only this
+# workspace's own members can ask. A channel may set any of these for itself.
+enabled = true
+# Question runs one channel may start in an hour.
+per_hour = 10
+# How long one person waits between questions, in seconds.
+per_person_seconds = 60
+
 [identity]
 # Slack user ids that may remove someone else's GitHub link with
 # /jotflow unlink <member-id>, as approvers always may. For a login someone

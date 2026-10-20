@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from jotflow.policy import Policy, parse_policy
+from jotflow.policy import Policy, QuestionsPolicy, parse_policy
 
 HEADER = (
     "# jotflow.toml: admin policy for JotFlow, written by `jotflow init`.\n"
@@ -79,6 +79,15 @@ def render_policy(policy: Policy) -> str:
         "[identity]",
         f"admins = {_array(policy.identity.admins)}",
     ]
+    # Questions (#57): written only when a team changed them, so a default setup is unchanged.
+    if policy.questions != QuestionsPolicy():
+        lines += [
+            "",
+            "[questions]",
+            f"enabled = {_bool(policy.questions.enabled)}",
+            f"per_hour = {policy.questions.per_hour}",
+            f"per_person_seconds = {policy.questions.per_person_seconds}",
+        ]
     for channel_id, channel in policy.channels.items():
         # Channel ids are validated to [CG][A-Z0-9]+, so they are bare keys.
         lines += ["", f"[channels.{channel_id}]"]
@@ -125,6 +134,13 @@ def render_policy(policy: Policy) -> str:
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]
             lines += [f"{key} = {_bool(value)}" for key, value in own_help.items()]
+        own_questions = channel.questions.model_dump(exclude_none=True)
+        if own_questions:
+            lines += ["", f"[channels.{channel_id}.questions]"]
+            lines += [
+                f"{key} = {_bool(value) if isinstance(value, bool) else value}"
+                for key, value in own_questions.items()
+            ]
     text = "\n".join(lines) + "\n"
     if parse_policy(text) != policy:
         raise RuntimeError("rendered jotflow.toml does not load back to the same policy")

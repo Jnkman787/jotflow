@@ -210,3 +210,29 @@ def test_scopes_survive_a_rewrite() -> None:
     }
     policy = _policy(channels={"C0WEB": {"scopes": [scope]}})
     assert parse_policy(render_policy(policy)) == policy
+
+
+def test_question_settings_survive_a_rewrite() -> None:
+    from jotflow.policy import Policy, parse_policy
+    from jotflow.policy_writer import render_policy
+
+    data = {
+        "questions": {"enabled": True, "per_hour": 4, "per_person_seconds": 120},
+        "channels": {
+            "C0IDEAS01": {
+                "repos": [{"repo": "acme-co/web", "nickname": "web", "description": "Web"}],
+                "questions": {"enabled": False},
+            }
+        },
+    }
+    policy = Policy.model_validate(data)
+    text = render_policy(policy)
+    assert parse_policy(text) == policy
+    assert "[questions]" in text and "[channels.C0IDEAS01.questions]" in text
+    plain = Policy.model_validate(
+        {
+            "channels": data["channels"]
+            | {"C0IDEAS01": {"repos": data["channels"]["C0IDEAS01"]["repos"]}}
+        }
+    )
+    assert "[questions]" not in render_policy(plain)

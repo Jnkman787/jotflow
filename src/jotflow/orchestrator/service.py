@@ -71,6 +71,12 @@ from jotflow.orchestrator.modes import AutoApprover, BoltModeSlack, ModeCommand,
 from jotflow.orchestrator.notices import GiveUpNotice
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
 from jotflow.orchestrator.people import SlackAttribution, SlackPeople
+from jotflow.orchestrator.questions import (
+    BoltQuestionSlack,
+    QuestionHandler,
+    QuestionSlack,
+    is_question,
+)
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
@@ -242,6 +248,7 @@ class Orchestrator:
         runner: RunnerClient | None = None,
         keyword_slack: KeywordSlack | None = None,
         help_slack: HelpSlack | None = None,
+        question_slack: QuestionSlack | None = None,
         card_poster: CardPoster | None = None,
         people: People | None = None,
         card_seconds: float = SYNC_SECONDS,
@@ -266,6 +273,8 @@ class Orchestrator:
         self._runner = runner
         self._keyword_slack = keyword_slack
         self._help_slack = help_slack
+        self._question_slack = question_slack
+        self._questions: QuestionHandler | None = None
         self._help: HelpHandler | None = None
         self._card_poster = card_poster
         self._people = people
@@ -488,6 +497,15 @@ class Orchestrator:
             restored = await self._debouncer.restore()
             if restored:
                 log.info("%d thread(s) still waiting out their quiet window", restored)
+        # Questions (#57) only while a runner serves them, as drafting needs the debouncer.
+        if RunKind.QUESTION in self.kinds.on:
+            self._questions = QuestionHandler(
+                self._store,
+                self._policy,
+                self._question_slack
+                or BoltQuestionSlack(self._client, slack_people, BoltHelpSlack(self._client)),
+                self._identity.user_id,
+            )
         supervise = (
             self._supervisor.run(self._stop)
             if self._tick_seconds is None
@@ -522,6 +540,21 @@ class Orchestrator:
                 log.exception("could not read the channel's mode")
                 paused = True  # fail closed: read nothing rather than act in a paused channel
             if paused:
+                return
+        if (
+            isinstance(decision, Accepted)
+            and decision.kind == "message"
+            and event is not None
+            and self._questions is not None
+        ):
+            try:
+                question = (await self._questions.on_message(event)).outcome != "not_a_question"
+            except Exception:
+                log.exception("could not take a question")
+                # Fail closed: a question that failed is still not an idea to draft.
+                question = is_question(str(event.get("text") or ""), self._identity.user_id)
+            if question:
+                # A question is not an idea: no keyword handling, no help, no drafting run.
                 return
         if isinstance(decision, Accepted) and event is not None and self._keywords is not None:
             try:

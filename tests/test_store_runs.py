@@ -100,9 +100,12 @@ async def test_an_execution_run_coalesces_per_proposal(store: Store) -> None:
     assert (await store.enqueue_run(E, CH, T1, proposal_id="p1")).id == first.id
 
 
-async def test_question_runs_do_not_coalesce(store: Store) -> None:
+async def test_queued_question_runs_coalesce_per_thread(store: Store) -> None:
+    # One queued question run per thread (#57): it answers every question asked
+    # since JotFlow's last answer there, so a second asker isn't lost.
     first = await store.enqueue_run(Q, CH, T1)
-    assert (await store.enqueue_run(Q, CH, T1)).id != first.id
+    assert (await store.enqueue_run(Q, CH, T1)).id == first.id
+    assert (await store.enqueue_run(Q, CH, T2)).id != first.id
 
 
 async def test_custom_timeout(store: Store, clock: Clock) -> None:

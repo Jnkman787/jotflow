@@ -58,7 +58,7 @@ Each permission below is used in this release. JotFlow asks for nothing it doesn
 | App Home | Messages tab on, read-only; Home tab off | JotFlow tells a person there when their GitHub link was removed. People can't write to the app, and it has no DM scopes, so it reads no DMs |
 | Org-wide deploy | off | The app is internal to one workspace |
 
-There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Answering questions by @-mention isn't built yet (#57). When it is, the manifest will add `app_mentions:read`, and the release notes will say to update the app.
+There is no `channels:join` scope: joining a channel is always a team member's explicit invite. Questions by @-mention (#57) need no extra scope: the `message.channels` and `message.groups` events JotFlow already receives carry the mention in every watched channel, and a mention anywhere else does nothing. So there's no `app_mentions:read`, and no reinstall.
 
 ## Changing the manifest
 
