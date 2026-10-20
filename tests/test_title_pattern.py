@@ -40,6 +40,9 @@ def test_real_title_formats_are_allowed(pattern: str) -> None:
         ("a?" * 24 + "a" * 24, "at most 8 choices"),
         ("(a|aa)?" * 17 + "b", "at most 8 choices"),
         ("a?" * 9, "at most 8 choices"),
+        # Both families at the 200-character maximum.
+        ("a?" * 66 + "a" * 68, "at most 8 choices"),
+        ("(a|aa)?" * 28 + "b" * 4, "at most 8 choices"),
         ("", "1 to 200 characters"),
         ("x" * 201, "1 to 200 characters"),
         ("(", "not a regular expression"),
