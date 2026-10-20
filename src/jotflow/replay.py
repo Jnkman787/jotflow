@@ -11,9 +11,10 @@ The report names messages by ``ts`` only, never by what they say.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -24,11 +25,14 @@ from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.packet import SlackWorkSource
-from jotflow.orchestrator.runs import RunLifecycle
+from jotflow.orchestrator.questions import QuestionHandler
+from jotflow.orchestrator.runs import RunLifecycle, StartedRun
 from jotflow.store import MemoryStore, Store
 from jotflow.testing.threads import (
     FIXTURE_LISTED_AT,
     TOPIC_KEY_PREFIX,
+    AgentRun,
+    AnswerCall,
     AskChannelCall,
     LinkMessageCall,
     MessageEvent,
@@ -40,6 +44,7 @@ from jotflow.testing.threads import (
     invented_commands,
     invented_links,
     invented_numbers,
+    play_order,
 )
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
@@ -101,7 +106,8 @@ class _Poster:
 
     def __init__(self) -> None:
         self.threads: list[str] = []
-        self.answers: list[str] = []
+        # Each answer as JotFlow would post it: (thread, posted ts, text) (#57, #270).
+        self.answers: list[tuple[str, str, str]] = []
 
     async def post(self, channel_id: str, thread_ts: str, text: str) -> str:
         self.threads.append(thread_ts)
@@ -109,8 +115,9 @@ class _Poster:
 
     async def post_plain(self, channel_id: str, thread_ts: str, text: str) -> str:
         """A question run's answer (#57): recorded, never sent."""
-        self.answers.append(text)
-        return await self.post(channel_id, thread_ts, text)
+        ts = f"1792311999.{len(self.answers) + 1:06d}"
+        self.answers.append((thread_ts, ts, text))
+        return ts
 
 
 # The fictional workspace's address, for permalinks in planned issue bodies.
@@ -177,6 +184,15 @@ class _FixtureSlack:
         self._thread = thread
         self.reactions: list[tuple[str, str]] = []
         self.replies: list[str] = []
+        self.whispers: list[tuple[str, str]] = []  # (user, text): questions' private replies
+
+    async def own_team(self) -> str | None:
+        return self._thread.workspace.team_id
+
+    async def whisper(
+        self, channel_id: str, user_id: str, thread_ts: str | None, text: str
+    ) -> None:
+        self.whispers.append((user_id, text))
 
     async def react(self, channel_id: str, ts: str, name: str) -> None:
         self.reactions.append((ts, name))
@@ -210,6 +226,9 @@ class _Replay:
     topics: dict[str, str] = field(default_factory=dict)  # key:<name> or fixture id -> store id
     accepted: list[MessageEvent] = field(default_factory=list)  # messages ingest accepted
     attribution: FixtureAttribution | None = None
+    slack: _FixtureSlack | None = None
+    removed: list[int] = field(default_factory=list)  # what each answer's rewrite removed
+    exact: bool = True  # the scripted agent: its answers' exact words are checked
 
     def resolve(self, topic: str | None) -> str | None:
         if topic is None:
@@ -271,16 +290,37 @@ async def _seed(replay: _Replay) -> None:
         replay.topics[topic.id] = record.topic.id
 
 
+def _questions(replay: _Replay) -> QuestionHandler:
+    slack = replay.slack or _FixtureSlack(replay.thread)
+    return QuestionHandler(
+        replay.store,
+        replay.thread.policy,
+        slack,
+        replay.thread.workspace.bot.user_id,
+        clock=replay.clock,
+        monotonic=replay.clock.mono,
+    )
+
+
 async def _apply_keywords(replay: _Replay, accepted: Sequence[str]) -> None:
-    """Apply re: and skip: with the live keyword handler, before any run (#56)."""
-    handler = KeywordHandler(replay.store, replay.thread.policy, _FixtureSlack(replay.thread))
+    """Questions, then re: and skip:, with the live handlers, before any run (#56, #57).
+
+    As live, a message the question handler takes, queued or refused, gets no
+    keyword handling, and its question run is queued here, not by the script.
+    """
+    slack = replay.slack or _FixtureSlack(replay.thread)
+    handler = KeywordHandler(replay.store, replay.thread.policy, slack)
+    questions = _questions(replay)
     wanted = set(accepted)
     for event in replay.thread.events:
         if isinstance(event, ReactionEvent):
             if f"{event.item.ts}:{event.reaction}" in wanted:
                 await handler.on_reaction(event.model_dump(exclude_none=True))
         elif event.ts in wanted:
-            await handler.on_message(event.model_dump(exclude_none=True))
+            data = event.model_dump(exclude_none=True)
+            if (await questions.on_message(data)).outcome != "not_a_question":
+                continue
+            await handler.on_message(data)
 
 
 def _participants(thread: SavedThread, accepted: Sequence[MessageEvent], root: str) -> list[str]:
@@ -296,13 +336,9 @@ def _participants(thread: SavedThread, accepted: Sequence[MessageEvent], root: s
 async def run_script(
     replay: _Replay, lifecycle: RunLifecycle, registry: TokenRegistry, accepted: list[MessageEvent]
 ) -> None:
-    """Play the fixture's scripted drafting runs in-process."""
-    max_running = replay.thread.policy.agent.max_concurrent_runs
-    for run in replay.thread.agent:
-        await replay.store.enqueue_run(RunKind.DRAFTING, run.channel, run.thread_ts)
-        started = await lifecycle.start_next(max_running=max_running)
-        if started is None:
-            raise ReplayError(f"the run for thread {run.thread_ts} did not start")
+    """Play the fixture's scripted runs in-process: question runs, then drafting (#270)."""
+    for _, run in play_order(replay.thread):
+        started = await start_scripted(replay, lifecycle, run)
         grant = registry.check(started.token)
         if grant is None:  # pragma: no cover - the token was issued a moment ago
             raise ReplayError("the run's token was refused")
@@ -315,6 +351,30 @@ async def run_script(
             await lifecycle.finish(started.run.id, RunStatus.FAILED, error="scripted call refused")
             raise
         await lifecycle.finish(started.run.id, RunStatus.SUCCEEDED)
+
+
+async def start_scripted(replay: _Replay, lifecycle: RunLifecycle, run: AgentRun) -> StartedRun:
+    """Start the run a fixture scripts. A question run must already be queued.
+
+    The question handler queued it, as live, so a script for a question JotFlow
+    refused, such as a guest's, fails here. The started run's kind and thread are
+    checked, so a misordering fails rather than being misattributed.
+    """
+    kind = RunKind.QUESTION if run.kind == "question" else RunKind.DRAFTING
+    if kind is RunKind.DRAFTING:
+        await replay.store.enqueue_run(kind, run.channel, run.thread_ts)
+    max_running = replay.thread.policy.agent.max_concurrent_runs
+    started = await lifecycle.start_next(max_running=max_running, kinds={kind})
+    if started is None:
+        if kind is RunKind.QUESTION:
+            raise ReplayError(f"the question run for thread {run.thread_ts} was not queued")
+        raise ReplayError(f"the run for thread {run.thread_ts} did not start")
+    if started.run.thread_ts != run.thread_ts or started.run.channel_id != run.channel:
+        await lifecycle.finish(started.run.id, RunStatus.FAILED, error="not the scripted run")
+        raise ReplayError(
+            f"the {kind.value} run started for thread {started.run.thread_ts}, not {run.thread_ts}"
+        )
+    return started
 
 
 def scripted_call(
@@ -338,7 +398,9 @@ def scripted_call(
         return tool, arguments
     if isinstance(call, AskChannelCall):
         return "ask_channel", call.arguments.model_dump()
-    raise ReplayError(f"unknown scripted call {call!r}")  # pragma: no cover - four types only
+    if isinstance(call, AnswerCall):
+        return "answer", call.arguments.model_dump()
+    raise ReplayError(f"unknown scripted call {call!r}")  # pragma: no cover - five types only
 
 
 async def _make_call(replay: _Replay, grant: Grant, call: Any, participants: list[str]) -> None:
@@ -434,10 +496,67 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
             )
         )
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
+    # ask: is a question, checked under questions, not a keyword a handler applies (#57).
     found = {
-        m.ts: keyword for m in replay.accepted if (keyword := split_keyword(m.text)[0]) is not None
+        m.ts: keyword
+        for m in replay.accepted
+        if (keyword := split_keyword(m.text)[0]) is not None and keyword != "ask"
     }
     checks.append(_equal("keywords", found, dict(expected.keywords)))
+    checks += await _question_checks(replay)
+    return checks
+
+
+async def _question_checks(replay: _Replay) -> list[Check]:
+    """Questions JotFlow took, the answers it posted, and its private replies (#270)."""
+    expected = replay.thread.expected
+    channel = _channel(replay.thread)
+    drafted = []
+    for ts in expected.questions:
+        link = await replay.store.get_message(channel, ts)
+        if link is not None and link.topic_id is not None:
+            drafted.append(ts)
+    checks = [
+        Check(
+            "questions",
+            not drafted,
+            f"in a topic: {', '.join(drafted)}"
+            if drafted
+            else f"{len(expected.questions)} set aside",
+        )
+    ]
+    posted = replay.poster.answers
+    problems: list[str] = []
+    got_threads = [thread for thread, _, _ in posted]
+    want_threads = [a.thread for a in expected.answers]
+    if got_threads != want_threads:
+        problems.append(f"posted in {got_threads}, expected {want_threads}")
+    else:
+        for index, (want, (_, _, text)) in enumerate(zip(expected.answers, posted, strict=True)):
+            problems += [
+                f"answer {index} lacks {part!r}" for part in want.contains if part not in text
+            ]
+            problems += [f"answer {index} has {part!r}" for part in want.excludes if part in text]
+            if replay.exact and want.text is not None and text != want.text:
+                problems.append(f"answer {index} differs from the expected text")
+            if replay.exact and want.removed is not None:
+                got = replay.removed[index] if index < len(replay.removed) else None
+                if got != want.removed:
+                    problems.append(f"answer {index} removed {got}, expected {want.removed}")
+    checks.append(
+        Check("answers", not problems, "; ".join(problems) or f"{len(posted)} as expected")
+    )
+    whispers = replay.slack.whispers if replay.slack else []
+    wanted = [(w.user, w.text) for w in expected.whispers]
+    checks.append(
+        Check(
+            "private replies",
+            whispers == wanted,
+            f"{len(wanted)} as expected"
+            if whispers == wanted
+            else f"sent to {[u for u, _ in whispers]}, expected {[u for u, _ in wanted]}",
+        )
+    )
     return checks
 
 
@@ -493,8 +612,16 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
         )
     }
     state = _Replay(
-        thread, active, clock, specs, poster, accepted=messages, attribution=attribution
+        thread,
+        active,
+        clock,
+        specs,
+        poster,
+        accepted=messages,
+        attribution=attribution,
+        slack=_FixtureSlack(thread),
     )
+    _record_answers(state)
     registry = TokenRegistry(clock=clock.mono)
     lifecycle = RunLifecycle(active, registry, clock=clock)
     report = ReplayReport(thread.name, thread.description)
@@ -503,9 +630,28 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
     return Prepared(state, lifecycle, registry, report, accepted, ignored)
 
 
-async def finish(prepared: Prepared) -> ReplayReport:
-    """Compare the store with the fixture's expected outcome, and add the invariants."""
+def _record_answers(state: _Replay) -> None:
+    """Note what each answer's rewrite removed, in process or over MCP alike (#270)."""
+    spec = state.specs.get("answer")
+    if spec is None:  # pragma: no cover - the write tools always include it
+        return
+    real = spec.handler
+
+    async def handler(grant: Grant, arguments: Any) -> BaseModel:
+        result = await real(grant, arguments)
+        state.removed.append(int(result.model_dump()["removed"]))
+        return result
+
+    state.specs["answer"] = replace(spec, handler=handler)
+
+
+async def finish(prepared: Prepared, *, exact: bool = True) -> ReplayReport:
+    """Compare the store with the fixture's expected outcome, and add the invariants.
+
+    ``exact`` is for the scripted agent: an answer's exact words are checked too.
+    """
     state = prepared.state
+    state.exact = exact
     prepared.report.checks += await _compare(state, prepared.accepted, prepared.ignored)
     prepared.report.checks += await invariants(state)
     return prepared.report
@@ -523,6 +669,64 @@ async def replay(thread: SavedThread, *, store: Store | None = None) -> ReplayRe
         report.checks.append(Check("script", True, f"{len(thread.agent)} run(s) completed"))
     # Compare even after a refused call, so the report shows what differs.
     return await finish(prepared)
+
+
+# Anything that could link or ping, found on its own terms rather than with the
+# answer rewrite's patterns, so a gap in the rewrite can't pass its own check (#270).
+_LINK_OR_PING = re.compile(r"(?i)https?://|www\.|<@|<!|<#|@[A-Za-z0-9-]+|\b[a-z0-9-]+\.[a-z]{2,}/")
+
+
+async def _answer_checks(replay: _Replay) -> list[Check]:
+    """What every posted answer keeps to, whatever the fixture expects (#57, #270)."""
+    from jotflow.whiteboard.write_tools import ANSWER_PREFIX
+
+    posted = replay.poster.answers
+    asked_in = {run.thread_ts for run in replay.thread.agent if run.kind == "question"}
+    unlabelled = [ts for _, ts, text in posted if not text.startswith(ANSWER_PREFIX + " ")]
+    leaks = [ts for _, ts, text in posted if _LINK_OR_PING.search(text)]
+    elsewhere = [thread for thread, _, _ in posted if thread not in asked_in]
+    # As live, JotFlow's own post goes back through ingest: it must never ask a question.
+    bot = replay.thread.workspace.bot
+    events = EventFilter(replay.thread.policy.channels, BotIdentity(bot.user_id, bot.bot_id))
+    questions = _questions(replay)
+    channel = _channel(replay.thread)
+    looped: list[str] = []
+    for thread, ts, text in posted:
+        event = {
+            "type": "message",
+            "channel": channel,
+            "ts": ts,
+            "thread_ts": thread,
+            "user": bot.user_id,
+            "bot_id": bot.bot_id,
+            "text": text,
+        }
+        if not isinstance(events.classify(event), Accepted):
+            continue
+        if (await questions.on_message(event)).outcome == "queued":
+            looped.append(ts)
+    return [
+        Check(
+            "answers are labelled",
+            not unlabelled,
+            f"unlabelled: {', '.join(unlabelled)}" if unlabelled else f"{len(posted)} labelled",
+        ),
+        Check(
+            "no link or ping in an answer",
+            not leaks,
+            f"in answer {', '.join(leaks)}" if leaks else "none",
+        ),
+        Check(
+            "answers stay in their thread",
+            not elsewhere,
+            f"posted in {', '.join(elsewhere)}" if elsewhere else "all in place",
+        ),
+        Check(
+            "no question from JotFlow's own post",
+            not looped,
+            f"queued from {', '.join(looped)}" if looped else "none",
+        ),
+    ]
 
 
 async def invariants(replay: _Replay) -> list[Check]:
@@ -554,6 +758,7 @@ async def invariants(replay: _Replay) -> list[Check]:
             invented += invented_links(written, thread_text)
             commands += invented_commands(written, thread_text)
     return [
+        *await _answer_checks(replay),
         Check(
             "no proposal from chatter",
             not from_chatter,

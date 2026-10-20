@@ -201,7 +201,7 @@ async def test_a_run_that_does_not_start_is_an_error() -> None:
     state = _state()
 
     class Stuck:
-        async def start_next(self, *, max_running: int) -> None:
+        async def start_next(self, *, max_running: int, kinds: Any = None) -> None:
             return None
 
     with pytest.raises(module.ReplayError, match="did not start"):

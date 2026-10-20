@@ -158,17 +158,31 @@ class AskChannelCall(_Strict):
     arguments: AskChannel
 
 
+class Answer(_Strict):
+    text: str = Field(min_length=1, max_length=500)
+
+
+class AnswerCall(_Strict):
+    """A question run's one answer (#57, #270). JotFlow rewrites it before posting."""
+
+    tool: Literal["answer"]
+    arguments: Answer
+
+
 ToolCall = Annotated[
-    LinkMessageCall | ProposeIssueCall | ProposeUpdateCall | AskChannelCall,
+    LinkMessageCall | ProposeIssueCall | ProposeUpdateCall | AskChannelCall | AnswerCall,
     Field(discriminator="tool"),
 ]
+# What a question run may call, as #57 gives the question kind its tools.
+QUESTION_TOOLS = frozenset({"answer", "ask_channel"})
 
 
 class AgentRun(_Strict):
-    """One drafting run of the scripted fake agent."""
+    """One run of the scripted fake agent: a drafting run, or a question run (#270)."""
 
     channel: str
-    thread_ts: str = Field(description="The thread this run drafts")
+    thread_ts: str = Field(description="The thread this run drafts or answers in")
+    kind: Literal["drafting", "question"] = "drafting"
     calls: tuple[ToolCall, ...]
 
 
@@ -310,6 +324,39 @@ def invented_links(body: str, thread_text: str) -> list[str]:
     return [link for link in _LINK.findall(body) if link.rstrip(".,;:") not in thread_text]
 
 
+class ExpectedAnswer(_Strict):
+    """An answer as JotFlow posts it, after its no-links rewrite (#270).
+
+    ``text`` and ``removed`` are exact, and checked only for the scripted agent,
+    since a real model's words vary. ``contains`` and ``excludes`` hold for any agent.
+    """
+
+    thread: str = Field(description="The thread ts the answer is posted in")
+    text: str | None = Field(default=None, min_length=1, description="The exact posted text")
+    removed: int | None = Field(default=None, ge=0, description="What the rewrite removed")
+    contains: tuple[str, ...] = ()
+    excludes: tuple[str, ...] = ()
+
+
+class ExpectedWhisper(_Strict):
+    user: str = Field(description="Who gets the private reply")
+    text: str = Field(description="One of the question handler's fixed replies")
+
+    @model_validator(mode="after")
+    def _fixed(self) -> ExpectedWhisper:
+        if self.text not in _question_replies():
+            raise ValueError("a whisper must be one of the question handler's fixed replies")
+        return self
+
+
+def _question_replies() -> frozenset[str]:
+    from jotflow.orchestrator import questions
+
+    return frozenset(
+        {questions.MEMBERS_ONLY, questions.TOO_MANY, questions.TOO_SOON, questions.OFF}
+    )
+
+
 class Expected(_Strict):
     summary: str = Field(min_length=1)
     accepted: tuple[str, ...] = Field(
@@ -325,6 +372,16 @@ class Expected(_Strict):
     proposals: tuple[ExpectedProposal, ...] = ()
     asks: tuple[str, ...] = Field(
         default=(), description="Thread ts of each ask_channel call, in order"
+    )
+    questions: tuple[str, ...] = Field(
+        default=(),
+        description="Messages JotFlow takes as questions (ask: or a bot mention), answered or not",
+    )
+    answers: tuple[ExpectedAnswer, ...] = Field(
+        default=(), description="Each answer JotFlow posts, in order"
+    )
+    whispers: tuple[ExpectedWhisper, ...] = Field(
+        default=(), description="JotFlow's fixed private replies about questions, in order"
     )
 
 
@@ -482,6 +539,7 @@ def _script_problems(thread: SavedThread) -> list[str]:
             problems.append(
                 f"agent[{r}]: thread_ts {run.thread_ts} is not a top-level message in {run.channel}"
             )
+        problems += _kind_problems(thread, r, run)
         for c, call in enumerate(run.calls):
             where = f"agent[{r}].calls[{c}]"
             if isinstance(call, LinkMessageCall):
@@ -490,6 +548,27 @@ def _script_problems(thread: SavedThread) -> list[str]:
                     topics.add(TOPIC_KEY_PREFIX + call.topic_key)
             elif isinstance(call, ProposeIssueCall | ProposeUpdateCall):
                 problems += _proposal_problems(where, run.channel, call, thread, topics)
+    return problems
+
+
+def _kind_problems(thread: SavedThread, r: int, run: AgentRun) -> list[str]:
+    """A question run answers once, with its kind's tools, in a thread someone asked in."""
+    tools = [call.tool for call in run.calls]
+    if run.kind == "drafting":
+        return [f"agent[{r}]: answer is only for a question run"] if "answer" in tools else []
+    problems = [
+        f"agent[{r}]: a question run may not call {tool}"
+        for tool in dict.fromkeys(tools)
+        if tool not in QUESTION_TOOLS
+    ]
+    if tools.count("answer") > 1:
+        problems.append(f"agent[{r}]: a question run answers at most once")
+    asked = set(question_messages(thread))
+    if not any(m.root == run.thread_ts and ts in asked for ts, m in thread.messages.items()):
+        problems.append(
+            f"agent[{r}]: nobody asks JotFlow a question in thread {run.thread_ts}, "
+            "so JotFlow would start no question run there"
+        )
     return problems
 
 
@@ -555,6 +634,32 @@ class Outcome:
     # The (title, body, labels, assignees) of each proposal, in order; empty for an update.
     drafts: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = field(default_factory=list)
     asks: list[str] = field(default_factory=list)
+    answers: list[str] = field(default_factory=list)  # the thread of each answer, in order
+
+
+def play_order(thread: SavedThread) -> list[tuple[int, AgentRun]]:
+    """The fixture's runs as replay plays them, each with its index in ``agent``.
+
+    Question runs come first, as live: one is queued as soon as someone asks,
+    while drafting waits out the quiet window. Within a kind, script order (#270).
+    """
+    runs = list(enumerate(thread.agent))
+    return [r for r in runs if r[1].kind == "question"] + [
+        r for r in runs if r[1].kind == "drafting"
+    ]
+
+
+def question_messages(thread: SavedThread) -> list[str]:
+    """Accepted messages from a person that JotFlow takes as questions, in order (#57)."""
+    from jotflow.orchestrator.questions import is_question
+
+    bot = thread.workspace.bot.user_id
+    accepted = set(thread.expected.accepted)
+    return [
+        ts
+        for ts, m in thread.messages.items()
+        if ts in accepted and m.user and m.bot_id is None and is_question(m.text or "", bot)
+    ]
 
 
 def scripted_outcome(thread: SavedThread) -> Outcome:
@@ -564,7 +669,7 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
     assigned at replay time.
     """
     outcome = Outcome()
-    for run in thread.agent:
+    for _, run in play_order(thread):
         for call in run.calls:
             if isinstance(call, LinkMessageCall):
                 decision = call.arguments
@@ -590,6 +695,8 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
                 )
             elif isinstance(call, AskChannelCall):
                 outcome.asks.append(run.thread_ts)
+            elif isinstance(call, AnswerCall):
+                outcome.answers.append(run.thread_ts)
             elif isinstance(call, ProposeUpdateCall):
                 update = call.arguments
                 outcome.proposals.append(
@@ -634,12 +741,15 @@ def _expected_problems(thread: SavedThread) -> list[str]:
         placed[ts] = placed.get(ts, 0) + 1
     for ts in skipped(thread):
         placed[ts] = placed.get(ts, 0) + 1
+    # A question is neither an idea nor the agent's chatter call: JotFlow sets it aside (#57).
+    for ts in expected.questions:
+        placed[ts] = placed.get(ts, 0) + 1
     for ts in accepted_messages:
         count = placed.get(ts, 0)
         if count != 1:
             problems.append(
                 f"expected: accepted message {ts} must be in exactly one topic, chatter, "
-                f"or skipped thread; found {count}"
+                f"skipped thread, or questions; found {count}"
             )
 
     outcome = scripted_outcome(thread)
@@ -672,6 +782,30 @@ def _expected_problems(thread: SavedThread) -> list[str]:
         problems.append(
             f"expected.asks: lists {list(expected.asks)} but the script asks in {outcome.asks}"
         )
+    problems += _question_problems(thread, outcome)
+    return problems
+
+
+def _question_problems(thread: SavedThread, outcome: Outcome) -> list[str]:
+    from jotflow.whiteboard.write_tools import ANSWER_PREFIX
+
+    expected = thread.expected
+    problems: list[str] = []
+    asked = question_messages(thread)
+    if list(expected.questions) != asked:
+        problems.append(f"expected.questions: lists {list(expected.questions)}, but {asked} ask")
+    answered = [a.thread for a in expected.answers]
+    if answered != outcome.answers:
+        problems.append(
+            f"expected.answers: lists threads {answered} but the script answers in "
+            f"{outcome.answers}"
+        )
+    for index, answer in enumerate(expected.answers):
+        if answer.text is not None and not answer.text.startswith(ANSWER_PREFIX + " "):
+            problems.append(f"expected.answers[{index}]: an answer starts with {ANSWER_PREFIX!r}")
+    for index, whisper in enumerate(expected.whispers):
+        if whisper.user not in thread.users:
+            problems.append(f"expected.whispers[{index}]: {whisper.user} is not in users")
     return problems
 
 

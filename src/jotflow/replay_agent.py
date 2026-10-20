@@ -34,10 +34,18 @@ from pathlib import Path
 from jotflow.adapters.presets import PRESETS, CommandPreset, Preset
 from jotflow.adapters.runner import LIVE, LaunchRequest, Runner, RunnerConfig, RunState
 from jotflow.models import RunKind, RunStatus
-from jotflow.replay import Check, Prepared, ReplayError, ReplayReport, finish, prepare
+from jotflow.replay import (
+    Check,
+    Prepared,
+    ReplayError,
+    ReplayReport,
+    finish,
+    prepare,
+    start_scripted,
+)
 from jotflow.store import Store
 from jotflow.testing.scripted_agent import ERROR_FILE
-from jotflow.testing.threads import TOPIC_KEY_PREFIX, SavedThread
+from jotflow.testing.threads import TOPIC_KEY_PREFIX, SavedThread, play_order
 from jotflow.whiteboard.server import PATH, McpServer, bound_socket, build_app
 
 SCRIPTED = "scripted"
@@ -184,12 +192,10 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
             f"{_usage_wrapper(root, options.usage_file)}{os.pathsep}{environ.get('PATH', '')}"
         )
     failed: list[str] = []
-    max_running = state.thread.policy.agent.max_concurrent_runs
-    for index, run in enumerate(state.thread.agent):
-        await state.store.enqueue_run(RunKind.DRAFTING, run.channel, run.thread_ts)
-        started = await prepared.lifecycle.start_next(max_running=max_running)
-        if started is None:
-            raise ReplayError(f"the run for thread {run.thread_ts} did not start")
+    # Question runs first, as live, each already queued by the question handler (#270).
+    for index, run in play_order(state.thread):
+        started = await start_scripted(state, prepared.lifecycle, run)
+        kind = started.run.kind
         preset = _preset(options, index)
         config = RunnerConfig(
             secret="replay-" + "x" * 32,
@@ -199,13 +205,11 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
             env_allow=tuple(n for n in options.env_allow if n in environ),
             allowed_hosts=frozenset(),
             workdir=root,
-            models={k: v for k, v in options.models.items() if k is RunKind.DRAFTING},
+            models={k: v for k, v in options.models.items() if k is kind},
             github_mcp=str(github),
         )
         runner = Runner(config, environ=environ, limit=lambda _kind: options.time_limit)
-        await runner.launch(
-            LaunchRequest(run_id=started.run.id, kind=RunKind.DRAFTING, token=started.token)
-        )
+        await runner.launch(LaunchRequest(run_id=started.run.id, kind=kind, token=started.token))
         view = await _wait(runner, started.run.id)
         ok = view["state"] == RunState.EXITED.value and view["exit_code"] == 0
         if not ok:
@@ -268,7 +272,8 @@ async def replay_with_agent(
     finally:
         await server.stop()
     await _name_new_topics(prepared)
-    return await finish(prepared)
+    # A real model's words vary, so only the scripted agent's answers are matched exactly.
+    return await finish(prepared, exact=options.agent == SCRIPTED)
 
 
 @dataclass
