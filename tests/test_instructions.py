@@ -122,6 +122,6 @@ def test_the_scope_rules_are_in_the_instructions() -> None:
     # search hit outside the channel's repos is never a target.
     text = " ".join(DRAFTING_INSTRUCTIONS.split())
     assert "`github_description` and `topics`" in text
-    assert "`org:<owner>`" in text
+    assert "`org:<owner>`" in text and "`user:<owner>` when `org:`" in text
     assert "is context only, never a repo to propose to" in text
     assert "if none shown fits, ask rather than guess a name" in text

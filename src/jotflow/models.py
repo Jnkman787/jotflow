@@ -68,6 +68,17 @@ def is_bare_repo_name(value: str) -> bool:
     return _NAME_RE.fullmatch(value) is not None and value not in {".", ".."}
 
 
+def under_owner(full_name: str, owner: str) -> bool:
+    """Whether ``full_name`` is a valid ``owner/name`` under ``owner``, ignoring case.
+
+    Both halves are checked first, so the comparison only ever sees ASCII (#236).
+    """
+    found, _, name = full_name.partition("/")
+    if not (is_owner_name(found) and is_owner_name(owner) and is_bare_repo_name(name)):
+        return False
+    return found.lower() == owner.lower()
+
+
 class DiscoveredRepo(BaseModel):
     """One repo as the runner's discovery reports it (#236): these eight fields only.
 

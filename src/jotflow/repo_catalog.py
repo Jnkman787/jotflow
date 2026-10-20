@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from jotflow.models import DiscoveredRepo
+from jotflow.models import DiscoveredRepo, under_owner
 from jotflow.policy import (
     ChannelPolicy,
     Policy,
@@ -227,8 +227,8 @@ class RepoCatalog:
         return self._policy.channel(channel_id)
 
     def _in_scope(self, scope: ScopePolicy, repo: DiscoveredRepo) -> bool:
-        owner, _, name = repo.full_name.partition("/")
-        if owner.casefold() != scope.owner.casefold() or not scope.covers(name):
+        name = repo.full_name.partition("/")[2]
+        if not under_owner(repo.full_name, scope.owner) or not scope.covers(name):
             return False
         if repo.archived and not scope.include_archived:
             return False

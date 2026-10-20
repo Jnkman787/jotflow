@@ -46,6 +46,7 @@ from jotflow.models import (
     RunStatus,
     is_bare_repo_name,
     is_owner_name,
+    under_owner,
 )
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.orchestrator.runs import RunLifecycle
@@ -286,13 +287,7 @@ class RunnerClient:
             raw = DiscoveryWire.model_validate_json(response.content)
         except ValidationError:
             raise RunnerError("the runner's reply was not a repo list") from None
-        prefix = f"{owner.casefold()}/"
-        return [
-            r
-            for r in raw.repos[:MAX_DISCOVERED]
-            if r.full_name.casefold().startswith(prefix)
-            and is_bare_repo_name(r.full_name.partition("/")[2])
-        ]
+        return [r for r in raw.repos[:MAX_DISCOVERED] if under_owner(r.full_name, owner)]
 
     async def write_reachable(self, owner: str, name: str) -> bool:
         """Whether the execution runner's write token can see ``owner/name`` (#236)."""

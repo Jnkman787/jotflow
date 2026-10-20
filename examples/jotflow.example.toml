@@ -128,7 +128,8 @@ description = "Team handbook and process docs"
 
 # A scope finds repos live instead of listing them, for an org whose repos come
 # and go (#236). owner is one GitHub org or user, never a pattern; match and
-# exclude are globs on the repo name. JotFlow asks GitHub, through the drafting
+# exclude are globs on the repo name, ignoring case as GitHub does, so
+# "payroll*" also leaves out Payroll-api. JotFlow asks GitHub, through the drafting
 # agent container's read token, every 15 minutes, so new and renamed repos
 # appear without a restart. Forks and archived repos are left out unless
 # include_forks or include_archived is true. A repo listed above always wins,

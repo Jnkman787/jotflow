@@ -23,7 +23,7 @@ from typing import Any
 import httpx2
 from pydantic import ValidationError
 
-from jotflow.models import DiscoveredRepo, is_bare_repo_name, is_owner_name
+from jotflow.models import DiscoveredRepo, is_bare_repo_name, is_owner_name, under_owner
 
 API = "https://api.github.com"
 PAGE_SIZE = 100
@@ -112,7 +112,6 @@ async def list_repos(
         f"{api}/orgs/{owner}/repos?type=all&per_page={PAGE_SIZE}",
         f"{api}/user/repos?affiliation=owner,collaborator,organization_member&per_page={PAGE_SIZE}",
     )
-    prefix = f"{owner.casefold()}/"
     for attempt, base in enumerate(bases):
         page = 1
         while True:
@@ -137,8 +136,7 @@ async def list_repos(
                 except ValidationError:
                     listing.dropped += 1
                     continue
-                name = repo.full_name.partition("/")[2]
-                if not repo.full_name.casefold().startswith(prefix) or not is_bare_repo_name(name):
+                if not under_owner(repo.full_name, owner):
                     listing.dropped += 1
                     continue
                 if len(listing.repos) >= MAX_REPOS:

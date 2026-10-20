@@ -28,7 +28,7 @@ from pydantic import (
     model_validator,
 )
 
-from jotflow.models import RepoName, RepoVisibility, shown
+from jotflow.models import RepoName, RepoVisibility, shown, under_owner
 from jotflow.reactions import DEFAULT_APPROVAL, DEFAULT_ISSUE_REACTION, KEYWORD_REACTIONS, reserved
 from jotflow.text import unsafe_text_problem
 from jotflow.title_pattern import check_title_pattern
@@ -332,9 +332,14 @@ class ScopePolicy(_Strict):
         return value
 
     def covers(self, name: str) -> bool:
-        """Whether a repo ``name`` under :attr:`owner` is in this scope by its globs."""
-        return any(fnmatch.fnmatchcase(name, g) for g in self.match) and not any(
-            fnmatch.fnmatchcase(name, g) for g in self.exclude
+        """Whether a repo ``name`` under :attr:`owner` is in this scope by its globs.
+
+        Case is ignored, as GitHub ignores it in repo names: ``exclude = ["payroll*"]``
+        leaves out ``Payroll-api`` too. Names and globs are ASCII by their checks.
+        """
+        wanted = name.lower()
+        return any(fnmatch.fnmatchcase(wanted, g.lower()) for g in self.match) and not any(
+            fnmatch.fnmatchcase(wanted, g.lower()) for g in self.exclude
         )
 
     def summary(self) -> str:
@@ -396,10 +401,10 @@ class ChannelPolicy(_Strict):
         Offline only: it can't tell a fork or an archived repo. For what may be
         written, ask the repo catalog.
         """
-        owner, _, name = repo.partition("/")
+        name = repo.partition("/")[2]
         if any(r.repo.casefold() == repo.casefold() for r in self.repos):
             return True
-        return any(s.owner.casefold() == owner.casefold() and s.covers(name) for s in self.scopes)
+        return any(under_owner(repo, s.owner) and s.covers(name) for s in self.scopes)
 
 
 MAX_CONCURRENT_RUNS = 32

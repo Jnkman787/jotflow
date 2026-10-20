@@ -177,3 +177,74 @@ async def test_a_thousand_found_repos_fit_in_one_reply() -> None:
     assert len(blocks) <= MAX_BLOCKS and len(text) <= 39_000
     assert "more; add a word to narrow the list" in text
     assert text.splitlines()[-1].startswith("Also every repo in acme-co")
+
+
+# Globs ignore case, as GitHub's repo names do (#236, security's review)
+
+CASED = Policy.model_validate(
+    {
+        "channels": {
+            CH: {
+                "repos": [{"repo": "acme-co/docs", "nickname": "docs", "description": "Docs"}],
+                "scopes": [{"owner": "acme-co", "match": ["*"], "exclude": ["payroll*"]}],
+            }
+        }
+    }
+)
+
+
+async def cased_catalog() -> RepoCatalog:
+    listing = [found(1, "Payroll-api"), found(2, "PAYROLL"), found(3, "Web-Shop")]
+
+    async def lister(owner: str) -> list[DiscoveredRepo]:
+        return list(listing)
+
+    repos = RepoCatalog(CASED, lister=lister, access=lambda o, n: _yes())
+    await repos.refresh("acme-co")
+    return repos
+
+
+async def _yes() -> bool:
+    return True
+
+
+def test_a_glob_ignores_case_in_match_and_exclude() -> None:
+    scope = CASED.channels[CH].scopes[0]
+    assert not scope.covers("Payroll-api") and not scope.covers("PAYROLL")
+    assert scope.covers("Web-Shop")
+    upper = scope.model_copy(update={"match": ("WEB-*",), "exclude": ()})
+    assert upper.covers("web-shop") and upper.covers("Web-Shop")
+    assert not CASED.channels[CH].reaches("ACME-CO/Payroll-api")
+    assert CASED.channels[CH].reaches("ACME-CO/web-shop")
+
+
+def test_the_owner_check_ignores_case_and_refuses_odd_names() -> None:
+    from jotflow.models import under_owner
+
+    assert under_owner("Acme-Co/web", "acme-co")
+    assert not under_owner("acme-co-x/web", "acme-co")
+    assert not under_owner("acme-cö/web", "acme-cö")  # not a GitHub owner
+    assert not under_owner("acme-co/..", "acme-co") and not under_owner("acme-co", "acme-co")
+
+
+async def test_an_excluded_repo_with_capitals_is_never_found_proposed_or_approved() -> None:
+    from jotflow.policy import RepoNotAllowedError
+
+    repos = await cased_catalog()
+    # Discovery: neither payroll repo is listed, whatever its case.
+    assert [r.repo for r in repos.repos(CH)] == ["acme-co/docs", "acme-co/Web-Shop"]
+    with pytest.raises(RepoNotAllowedError):
+        repos.repo(CH, "acme-co/Payroll-api")
+    # Approval: a proposal for it, however it was stored, is refused at the re-check.
+    store = MemoryStore()
+    slack = Slack()
+    handler = ApprovalHandler(store, CASED, slack, repos=repos)
+    rec = record("acme-co/Payroll-api")
+    await store.add_proposal(rec)
+    await store.set_card_ts(rec.id, CARD_TS)
+    from jotflow.store import content_hash
+    from tests.test_approval import click
+
+    value = f"{rec.id}:{content_hash(rec.proposal)}"
+    assert await handler.on_approve(click(value)) == "refused"
+    assert "can't be used here any more" in slack.ephemerals[-1][2]

@@ -64,7 +64,8 @@ Before `propose_issue`, look for an issue that already covers the idea:
   and `repo`, with the idea in a few plain words as the `query`. It searches
   open and closed issues with no date limit. Try a second phrasing if the
   first finds nothing. For `discovered` repos, search once per owner
-  instead, with `org:<owner>` in the query. A hit in a repo not in
+  instead, with `org:<owner>` in the query, or `user:<owner>` when `org:`
+  finds nothing, as for a person's repos. A hit in a repo not in
   `channel.repos` is context only, never a repo to propose to.
 - Check `topics`; call `get_topic` when a title looks close.
 

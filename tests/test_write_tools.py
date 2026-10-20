@@ -1376,3 +1376,13 @@ async def test_propose_update_works_on_a_found_repos_issue(
         DRAFT, update(topic_id, repo="acme-co/svc-billing", sources=[])
     )
     assert result.state is ProposalState.PENDING
+
+
+async def test_propose_issue_refuses_an_excluded_repo_whatever_its_case(
+    store: MemoryStore, poster: Poster, clock: Clock
+) -> None:
+    tools = await scoped_tools(store, poster, clock)
+    for repo in ("acme-co/SVC-demo", "ACME-CO/svc-Demo"):
+        topic = await new_topic(tools)
+        with pytest.raises(ToolError, match="is not one of channel"):
+            await tools.propose_issue(DRAFT, issue(topic, repo=repo, title=repo, sources=[]))
