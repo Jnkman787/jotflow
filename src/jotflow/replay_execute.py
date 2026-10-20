@@ -52,13 +52,12 @@ from jotflow.replay_agent import (
     SCRIPTED,
     AgentOptions,
     _fake_github,
-    _free_port,
     _usage_wrapper,
     _wait,
 )
 from jotflow.store.hashing import content_hash
 from jotflow.testing.threads import GithubRepo, SavedThread
-from jotflow.whiteboard.server import PATH, McpServer, build_app
+from jotflow.whiteboard.server import PATH, McpServer, bound_socket, build_app
 
 APPROVER = "U0REPLAY"
 
@@ -213,9 +212,10 @@ async def _scenario(
     records = await _approved(prepared)
     if not records:
         return [Check(f"execute ({name})", True, "no proposals to execute")]
-    port = _free_port()
+    sock = bound_socket()  # held, never released, so nothing else can take the port (#184)
+    port = int(sock.getsockname()[1])
     app = build_app(port=port, tokens=prepared.registry, tools=list(state.specs.values()))
-    server = McpServer(app, "127.0.0.1", port)
+    server = McpServer(app, "127.0.0.1", port, sock=sock)
     await server.start()
     problems: list[str] = []
     try:

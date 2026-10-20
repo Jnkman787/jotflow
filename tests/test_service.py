@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import socket
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -32,7 +33,7 @@ from tests.test_card_sync import FakeCardPoster, FakePeople
 from tests.test_help import FakeHelpSlack
 from tests.test_keyword_handler import FakeSlack
 from tests.test_launch import EXEC_SECRET, Runners
-from tests.test_runner import ENVIRON, SECRET, _free_port, config
+from tests.test_runner import ENVIRON, SECRET, config
 from tests.test_runs import CH, ISSUE_URL, THREAD, _approved
 from tests.test_thread_notice import FakeThreadSlack
 
@@ -307,6 +308,17 @@ for n, (name, arguments) in enumerate(calls):
         seen.append(json.loads(reply.read()))
 json.dump(seen, open(out, "w"))
 """
+
+
+def _free_port() -> int:
+    """A free port for JotFlow's own MCP server, which binds it itself.
+
+    Settings carry only a port number, so this can't hold the port the way
+    bound_socket does elsewhere, and another process could take it first (#184).
+    """
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
 
 
 async def test_an_execution_run_end_to_end_records_only_the_approved_repo(

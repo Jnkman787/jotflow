@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import socket
 import stat
 import subprocess
 import sys
@@ -34,7 +33,7 @@ from jotflow.store import MemoryStore
 from jotflow.testing.fake_responses_api import PROBE_FILE, FakeResponsesApi, apply_patch_call
 from jotflow.testing.threads import builtin_thread
 from jotflow.whiteboard.read_tools import read_tools
-from jotflow.whiteboard.server import PATH, McpServer, build_app
+from jotflow.whiteboard.server import PATH, McpServer, bound_socket, build_app
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.write_tools import write_tools
 
@@ -87,12 +86,6 @@ class NeverPosts:
         raise AssertionError("the gate posts nothing")
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
 def _fake_github(root: Path) -> Path:
     data = root / "github.json"
     repos = builtin_thread("feature-request").github
@@ -115,9 +108,12 @@ async def test_codex_offers_no_shell_and_refuses_apply_patch(
     registry = TokenRegistry()
     grant = Grant("run-gate", kind, CH, thread_ts="1792310400.000100")
     token = registry.issue(grant, 600)
-    port = _free_port()
+    sock = bound_socket()  # never released, so no other process can take the port (#184)
+    port = int(sock.getsockname()[1])
     tools = (*read_tools(store, POLICY), *write_tools(store, POLICY, NeverPosts()))
-    server = McpServer(build_app(port=port, tokens=registry, tools=tools), "127.0.0.1", port)
+    server = McpServer(
+        build_app(port=port, tokens=registry, tools=tools), "127.0.0.1", port, sock=sock
+    )
     await server.start()
     run_dir = tmp_path / "run"
     run_dir.mkdir(mode=0o700)
