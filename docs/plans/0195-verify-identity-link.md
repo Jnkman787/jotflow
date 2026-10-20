@@ -4,7 +4,7 @@
 
 - Issue: #195, in M6
 - Also serves: #35 (self-service links) and #173 (removing a squatted link)
-- Status: planning. No code until the lead approves the decisions below.
+- Status: approved by the lead, 2026-10-20, with three notes folded in below. Implementing.
 
 ## Objective and done-when
 
@@ -28,7 +28,7 @@ Links are self-declared (#35), so cards mark every linked login "(unverified)", 
 | **B. The drafting runner fetches, anonymously** (recommended) | A new secret-gated runner endpoint, `POST /verify`, takes `{login, code}` and reads the user's public profile and gists. It returns only `{verified, github_id, login}`. | JotFlow's container stays off GitHub, so the stated property holds. The agent container already reaches GitHub. No token is needed, because public profiles and gists need none, so the read token isn't used either. | It needs the agent profile on. Linked logins only matter for assignees, which only agent runs use, so a team without the agent has nothing to verify for. It adds runner code outside the agent CLI. |
 | **C. An agent run checks it** | A new run kind asks the model to look. | Reuses the run machinery. | It costs model tokens and takes seconds to minutes. It puts an untrusted profile in a model's context to answer a yes-or-no question that plain code answers exactly. Rejected. |
 
-## Decisions (for the lead to approve)
+## Decisions (approved)
 
 1. **Option B, anonymous, on the drafting runner.**
    - **The runner side:**
@@ -43,7 +43,7 @@ Links are self-declared (#35), so cards mark every linked login "(unverified)", 
    - The runner reads `GET /users/{login}`. It requires `type == "User"`, so organisations are refused, and takes `id`, `login` and `bio`.
    - If the code isn't there, it reads the 10 most recent gists, `GET /users/{login}/gists?per_page=10`, checking only descriptions.
    - The match is the exact code as a whole word. Nothing else from the text is used.
-   - Anonymous API calls allow 60 an hour per IP, which is plenty for occasional checks. A 403 rate limit is a clear "try again later".
+   - Anonymous API calls allow 60 an hour per IP, shared with anything else on the host. A 403 or 429 from rate limiting is never "not verified". The runner answers `{"rate_limited": true}`, and JotFlow replies with fixed text: "GitHub is limiting requests right now; try `/jotflow verify check` again in a few minutes." The code isn't consumed, and the check doesn't count toward its 5. The docs say heavy use needs patience.
 3. **The code:** `jotflow-` plus 12 characters from `secrets.token_urlsafe`, about 72 bits.
    - It's shown once, privately, to the person who asked.
    - It's stored as a SHA-256 digest with the Slack id, the login and an expiry 30 minutes ahead.
@@ -71,7 +71,7 @@ Links are self-declared (#35), so cards mark every linked login "(unverified)", 
 
 ## Store
 
-Migration 15, numbered at rebase time:
+Migration 15, since #253 takes 14. Rebase after #253 merges, coordinating with product:
 - `identity_links` gains `verified_at` (UTC) and `github_id` (GitHub's numeric user id), both nullable. The `verified` column exists already.
 - A new `identity_codes` table holds:
   - `slack_user_id`, the primary key, so one pending code per person;
