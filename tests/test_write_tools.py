@@ -1301,3 +1301,78 @@ def test_related_holds_at_most_three_and_no_free_text() -> None:
         issue("t", related=[{"repo": "acme-co/web", "number": 1, "state": "open", "title": "x"}])
     with pytest.raises(ValidationError):
         issue("t", related=[{"repo": "acme-co/web", "number": 1, "state": "wontfix"}])
+
+
+# A channel with a scope (#236)
+
+SCOPED = parse_policy(
+    f"""
+[channels.{CH}]
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The web app"
+
+[[channels.{CH}.scopes]]
+owner = "acme-co"
+match = ["svc-*"]
+exclude = ["*-demo"]
+labels = ["bug", "enhancement"]
+"""
+)
+
+
+async def scoped_tools(store: MemoryStore, poster: Poster, clock: Clock) -> WriteTools:
+    from jotflow.models import DiscoveredRepo
+    from jotflow.repo_catalog import RepoCatalog
+
+    def found(n: int, name: str, **fields: Any) -> DiscoveredRepo:
+        return DiscoveredRepo(id=n, full_name=f"acme-co/{name}", **fields)
+
+    repos = RepoCatalog(SCOPED, clock=clock)
+    repos.load(
+        "acme-co",
+        [found(1, "svc-billing"), found(2, "svc-demo"), found(3, "svc-old", archived=True)],
+    )
+    packet = [
+        MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT),
+        MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT),
+    ]
+    await store.record_packet("run-1", packet)
+    return WriteTools(store, SCOPED, poster, clock=clock, new_id=Ids(), repos=repos)
+
+
+async def test_propose_issue_takes_a_found_repo_and_refuses_the_rest(
+    store: MemoryStore, poster: Poster, clock: Clock
+) -> None:
+    tools = await scoped_tools(store, poster, clock)
+    topic_id = await new_topic(tools)
+    found: Any = await tools.propose_issue(
+        DRAFT, issue(topic_id, repo="acme-co/svc-billing", sources=[])
+    )
+    record = await store.get_proposal(found.proposal_id)
+    assert record is not None and record.proposal.repo == "acme-co/svc-billing"
+    assert record.proposal.labels == ["enhancement"]  # the scope's own label list
+    refusals = {
+        "acme-co/svc-demo": "is not one of channel",  # excluded by the scope
+        "acme-co/billing": "is not one of channel",  # the globs don't cover it
+        "acme-co/svc-old": "is archived",
+        "acme-co/svc-new": "isn't in channel",  # covered, but GitHub didn't list it
+        "example-org/svc-billing": "is not one of channel",  # another owner
+    }
+    for repo, reason in refusals.items():
+        topic = await new_topic(tools)
+        with pytest.raises(ToolError, match=reason):
+            await tools.propose_issue(DRAFT, issue(topic, repo=repo, title=repo, sources=[]))
+
+
+async def test_propose_update_works_on_a_found_repos_issue(
+    store: MemoryStore, poster: Poster, clock: Clock
+) -> None:
+    tools = await scoped_tools(store, poster, clock)
+    topic_id = await new_topic(tools)
+    await store.set_topic_issue(topic_id, "acme-co/svc-billing", 42)
+    result: Any = await tools.propose_update(
+        DRAFT, update(topic_id, repo="acme-co/svc-billing", sources=[])
+    )
+    assert result.state is ProposalState.PENDING

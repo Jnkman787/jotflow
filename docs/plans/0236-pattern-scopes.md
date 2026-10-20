@@ -14,10 +14,10 @@ A channel lists its repos by hand. In an org that adds and renames repos every w
 
 From the issue:
 
-- [ ] A plan reviewed by security settles the scope syntax, how discovery reaches the agent, caching, and the write allowlist check. This file.
-- [ ] A pattern scope is enforced by `propose_issue` and `propose_update` (tested).
-- [ ] New and renamed repos are picked up without a restart, and archived repos and forks are excluded (tested with a fake GitHub).
-- [ ] `/jotflow repos` and the help text handle large scopes (see #231).
+- [x] A plan reviewed by security settles the scope syntax, how discovery reaches the agent, caching, and the write allowlist check. This file.
+- [x] A pattern scope is enforced by `propose_issue` and `propose_update` (tested).
+- [x] New and renamed repos are picked up without a restart, and archived repos and forks are excluded (tested with a fake GitHub).
+- [x] `/jotflow repos` and the help text handle large scopes (see #231).
 
 **Out of scope:**
 - README or `docs/` summaries per repo, which need Contents read, in #209.
@@ -161,15 +161,15 @@ Security's answers to the risks below: risk 2 is agreed as proposed, risk 6 is e
 ## Progress checklist
 
 - [x] Confirm the issue is ready: the shape is to plan, and this plan settles it
-- [ ] Security and the lead review this plan
-- [ ] Policy: `scopes`, validation, writer round trip, and the example toml
-- [ ] Runner: `GET /repos`, with a fake GitHub API in tests
-- [ ] Orchestrator: the catalog and its cache, refresh, and rename handling
-- [ ] Callers moved to the catalog. Enforcement in propose_issue, propose_update, Approve, and the card picker
-- [ ] Packet fields and drafting.md
-- [ ] Help and repos at scale, and `/jotflow repos <word>`
-- [ ] Docs: usage, install (token scope), the threat model, and the CHANGELOG
-- [ ] `make check` passes
+- [x] Security and the lead review this plan
+- [x] Policy: `scopes`, validation, writer round trip, and the example toml
+- [x] Runner: `GET /repos`, with a fake GitHub API in tests
+- [x] Orchestrator: the catalog and its cache, refresh, and rename handling
+- [x] Callers moved to the catalog. Enforcement in propose_issue, propose_update, Approve, and the card picker
+- [x] Packet fields and drafting.md
+- [x] Help and repos at scale, and `/jotflow repos <word>`
+- [x] Docs: usage, install (token scope), the threat model, and the CHANGELOG
+- [x] `make check` passes
 
 ## Validation
 

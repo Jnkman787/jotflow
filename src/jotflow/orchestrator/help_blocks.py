@@ -121,7 +121,8 @@ def _reactions() -> list[str]:
 
 def _commands() -> list[str]:
     return [
-        f"• {code('/jotflow repos')} lists the repos this channel feeds",
+        f"• {code('/jotflow repos')} lists the repos this channel feeds; add a word to "
+        f"narrow it, or {code('/jotflow repos change')} to see how to edit them",
         f"• {code('/jotflow link your-github-login')} lets proposals assign you, "
         f"and {code('/jotflow unlink')} undoes it",
         f"• {UNLINK_OTHER_LINE}",

@@ -44,7 +44,10 @@ LINK_LINE = "/jotflow link your-github-login lets proposals assign you; /jotflow
 UNLINK_OTHER_LINE = (
     "Approvers can remove someone else's link with /jotflow unlink and their Slack member ID."
 )
-REPOS_LINE = "/jotflow repos lists the repos this channel feeds."
+REPOS_LINE = (
+    "/jotflow repos lists the repos this channel feeds; add a word to narrow it, "
+    "or change to see how to edit them."
+)
 COMMAND = "/jotflow help"
 
 
