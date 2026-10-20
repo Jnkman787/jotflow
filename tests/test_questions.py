@@ -274,6 +274,8 @@ REPOS = ["acme-co/web"]
         ("<!channel> it's done", "it's done"),
         ("[click](https://evil.example)", "[click]([link removed]"),
         ("e.g. the CSV one.", "e.g. the CSV one."),
+        ("<!<!here>channel> done", "channel&gt; done"),  # escaped text, no broadcast
+        ("@evil.example and @x.example/y", "[link removed] and [link removed]"),
     ],
 )
 def test_the_answer_holds_no_link_no_ping_and_no_other_repo(text: str, posted: str) -> None:
@@ -328,3 +330,17 @@ async def test_an_answer_is_refused_in_a_paused_channel(
 def test_an_answer_is_at_most_500_characters() -> None:
     with pytest.raises(ValueError):
         AnswerArgs(text="x" * 501)
+
+
+async def test_two_askers_in_one_thread_share_one_queued_question_run(tmp_path: Any) -> None:
+    from jotflow.store import SqliteStore
+
+    for store in (MemoryStore(), await SqliteStore.open(tmp_path / "jotflow.db")):
+        try:
+            questions, _, _, _ = handler(store)
+            await questions.on_message(event("ask: one", ts="1.1", thread_ts=ROOT, user="U0P1"))
+            await questions.on_message(event("ask: two", ts="1.2", thread_ts=ROOT, user="U0P2"))
+            runs = await store.thread_runs(CH, ROOT)
+            assert [r.kind for r in runs] == [RunKind.QUESTION]
+        finally:
+            await store.close()

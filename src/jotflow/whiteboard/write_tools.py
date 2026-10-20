@@ -320,8 +320,14 @@ def safe_text(text: str, repos: Collection[str]) -> tuple[str, int]:
     GitHub. Then :func:`clean_question` escapes Slack's markup.
     """
     allowed = {repo.casefold(): repo for repo in repos}
-    # Slack's own broadcasts first, while their markup is whole.
-    folded = _BARE_BROADCAST.sub("", _SPECIAL_MENTION.sub("", _for_link_check(text)))
+    # Slack's own broadcasts first, while their markup is whole, and again until
+    # nothing changes, so a removal can't join the pieces of another.
+    folded = _for_link_check(text)
+    while True:
+        stripped = _BARE_BROADCAST.sub("", _SPECIAL_MENTION.sub("", folded))
+        if stripped == folded:
+            break
+        folded = stripped
     held: list[str] = []
     removed = 0
 
@@ -340,8 +346,9 @@ def safe_text(text: str, repos: Collection[str]) -> tuple[str, int]:
         return LINK_REMOVED
 
     out = _REPO_REF.sub(hold, folded)
-    out = _URLISH.sub(link, out)
+    # @ goes before links are removed, so taking it away can't leave a domain behind.
     out = _MENTION.sub(lambda m: m.group(1) + (m.group(2) or ""), out)
+    out = _URLISH.sub(link, out)
     out = _HELD.sub(lambda m: held[int(m.group(1))], out)
     out = re.sub(r"[ \t]{2,}", " ", out)  # what a removal leaves behind
     return clean_question(out), removed

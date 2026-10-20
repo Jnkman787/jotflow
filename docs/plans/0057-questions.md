@@ -142,8 +142,11 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
 
 ## Handoff notes
 
-- **The question message is located in the packet, not stored.** Each packet message has `asks_jotflow`, true for `ask:` or a mention of the bot's id, set by the work source, which knows the bot. question.md says to answer the newest one. Runs have no column for the asking ts, and this needed no migration.
+- **The question messages are located in the packet, not stored.** Each packet message has `asks_jotflow`, true for `ask:` or a mention of the bot's id, set by the work source, which knows the bot. question.md says to answer every one since JotFlow's last answer in the thread, together. Runs have no column for the asking ts, and this needed no migration.
 - **`ask` is a fifth keyword.** It's not typo-tolerant. It's in the help text, the guide and usage.md, and their sync tests pass. The packet's `hint` can be `ask`.
 - **The orchestrator wiring.** The question handler exists only while a runner serves `question`, as the debouncer needs drafting. A question message returns early from `note()`: no keyword handling, no help, no debouncer. If the handler raises, a message that is a question still returns early, failing closed.
 - **The order of the rewrite matters:** fold, then broadcasts, then holding configured-repo references, dropping others, removing URL-like tokens, stripping `@`, restoring, and finally `clean_question`. URL patterns stop at `<`, `>` and `|`, so Slack markup isn't swallowed.
 - **`ask_channel`** is now drafting-only, and gets the same rewrite.
+- **CodeRabbit's two findings, both fixed:**
+  - Question runs now coalesce per thread like drafting, in both stores. That reverses `test_question_runs_do_not_coalesce`, which was written before questions existed, so a second asker joins the queued run and gets an answer.
+  - The rewrite removes broadcasts until stable, and strips `@` before removing URLs.

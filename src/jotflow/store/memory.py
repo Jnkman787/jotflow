@@ -657,7 +657,7 @@ class MemoryStore:
             if run.kind is not kind:
                 continue
             if (
-                kind is RunKind.DRAFTING
+                kind in (RunKind.DRAFTING, RunKind.QUESTION)
                 and run.status is RunStatus.QUEUED
                 and (run.channel_id, run.thread_ts) == (channel_id, thread_ts)
             ):
