@@ -9,8 +9,8 @@ What changed in each JotFlow release, for the people who run it. The format foll
 - **Drafted issues are fuller, and follow the repo's own style (#249).**
   - **Style:** before proposing, the agent reads the target repo's ten most recent issues and matches their title format, such as `fix(api): subject`, and their section headings. It copies only the form, never their text, links, mentions, or labels, and treats them as untrusted.
   - **Default sections:** when the repo shows no shared style, the body uses `## Problem`, `## Proposal`, `## Suggested approach`, `## Acceptance` as a `- [ ]` checklist, and `## Context`.
-  - **The agent's own plan:** it analyses the idea, so even a one-line post becomes a useful issue. Its numbered breakdown is labelled "Drafted by the agent from the discussion; adjust before starting", and Acceptance adds its own completion criteria to what people asked for. It never states as fact current behaviour, numbers, file paths, or decisions nobody gave, and open questions go under Context.
-  - **A new replay check** fails any number in Acceptance or Suggested approach, or any link in the body, that the thread never gave.
+  - **The agent's own plan:** it analyses the idea, so even a one-line post becomes a useful issue. Its numbered breakdown is labelled "Drafted by the agent from the discussion; adjust before starting", and Acceptance adds its own completion criteria to what people asked for. Its plan is described in words, with no commands, install steps, new dependencies, links, or secret handling unless the thread gave them. It never states as fact current behaviour, numbers, file paths, or decisions the thread didn't give. Something from a related issue goes under Context only, credited as "per owner/name#N", and nothing from the issues it reads for style goes in at all. Open questions go under Context.
+  - **New replay checks** fail any number in Acceptance or Suggested approach, any link in the body, or any command line, that the thread never gave.
 
 ## [0.2.0] - 2026-10-20
 

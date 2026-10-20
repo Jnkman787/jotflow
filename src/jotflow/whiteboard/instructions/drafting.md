@@ -98,7 +98,9 @@ For each new topic that is real work, call `propose_issue` once:
   - `## Suggested approach`: your own short numbered breakdown of the work.
     Start it with: "Drafted by the agent from the discussion; adjust before
     starting." Add this section even when the repo's headings have no place
-    for it.
+    for it. Describe the work in words. Include no shell commands, scripts,
+    install or download steps, new dependencies, URLs, or steps that handle
+    secrets or credentials, unless someone in the thread wrote them.
   - `## Acceptance`: a `- [ ]` checklist of what done means: what people
     asked for, and your own completion criteria for the idea.
   - `## Context`: related issues from step 5, as `owner/name#N`, and open
@@ -106,9 +108,10 @@ For each new topic that is real work, call `propose_issue` once:
   Analyse the idea so that even a one-line post becomes a useful issue.
   Scale to the input: summarise a detailed thread faithfully with a short
   plan, and give a one-liner a fuller plan. Never state as fact current
-  behaviour, numbers, file paths, or decisions that the thread did not give
-  and you did not read on GitHub. Put open questions under Context instead of
-  guessing. Summarise; do not paste the thread. Put no Slack links in the body;
+  behaviour, numbers, file paths, or decisions that the thread did not give.
+  Something you read in a related issue may go under Context only, attributed
+  to it, as "per owner/name#N". Nothing from the issues you read for style
+  goes in at all. Put open questions under Context instead of guessing. Summarise; do not paste the thread. Put no Slack links in the body;
   `sources` carries them. If `channel.issue_links` is `none`, also leave out
   people's names and the channel.
 - `labels`: only labels that exist on the repo; check with `list_label`. If

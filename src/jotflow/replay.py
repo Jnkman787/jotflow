@@ -35,6 +35,7 @@ from jotflow.testing.threads import (
     ProposeUpdateCall,
     ReactionEvent,
     SavedThread,
+    invented_commands,
     invented_links,
     invented_numbers,
 )
@@ -511,6 +512,7 @@ async def invariants(replay: _Replay) -> list[Check]:
     from_chatter: list[str] = []
     unlinked: list[str] = []
     invented: list[str] = []
+    commands: list[str] = []
     for root in sorted({run.thread_ts for run in replay.thread.agent}):
         for record in await replay.store.thread_proposals(channel, root):
             draft = record.proposal
@@ -529,6 +531,7 @@ async def invariants(replay: _Replay) -> list[Check]:
             )
             invented += invented_numbers(written, thread_text)
             invented += invented_links(written, thread_text)
+            commands += invented_commands(written, thread_text)
     return [
         Check(
             "no proposal from chatter",
@@ -545,5 +548,11 @@ async def invariants(replay: _Replay) -> list[Check]:
             "no invented numbers or links",
             not invented,
             f"nobody gave: {', '.join(invented)}" if invented else "nothing invented",
+        ),
+        # A plan a coding agent may act on carries no command nobody wrote (#249).
+        Check(
+            "no commands nobody gave",
+            not commands,
+            f"commands: {' / '.join(commands)}" if commands else "none",
         ),
     ]

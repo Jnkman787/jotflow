@@ -268,7 +268,23 @@ def invented_numbers(body: str, thread_text: str) -> list[str]:
     return [n for n in _NUMBER.findall(checked_sections(body)) if n not in given]
 
 
-_LINK = re.compile(r"https?://[^\s<>()\[\]|]+")
+# A link GitHub would make clickable: with a scheme, or a bare www. host it autolinks.
+_LINK = re.compile(r"(?:https?://|\bwww\.)[^\s<>()\[\]|]+")
+
+
+# A line that runs something: what a coding agent acting on the issue might execute.
+_COMMAND = re.compile(
+    r"\b(?:curl|wget|sudo)\s|\bpip3? install\b|\bnpm (?:i|install)\b|\|\s*(?:ba)?sh\b"
+)
+
+
+def invented_commands(body: str, thread_text: str) -> list[str]:
+    """Body lines that look like commands to run, unless the thread gave that line (#249)."""
+    return [
+        line.strip()
+        for line in body.splitlines()
+        if _COMMAND.search(line) and line.strip() not in thread_text
+    ]
 
 
 def invented_links(body: str, thread_text: str) -> list[str]:

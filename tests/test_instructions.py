@@ -71,6 +71,10 @@ def test_the_instructions_are_plain_bounded_ascii() -> None:
         "## Context",
         "Scale to the input",
         "Never state as fact current behaviour, numbers, file paths, or decisions",
+        "may go under Context only, attributed to it",
+        "Nothing from the issues you read for style goes in at all",
+        "Describe the work in words",
+        "steps that handle secrets or credentials, unless someone in the thread wrote them",
         "Put open questions under Context instead of guessing",
     ],
 )
