@@ -82,9 +82,10 @@ NOT_RUNNING = "run {run} is not running"
 # Codex keeps MCP resource tools that read files through GitHub's server with the
 # read token. With Contents: Read they reach every file the token does, so
 # read_paths can't bound them: the two are refused together, failing closed.
+# Only drafting: a question run has no GitHub server and no read token (#57).
 # Lifted when Codex can drop those tools (#274, with #220).
 CODEX_CONFLICT = (
-    "drafting and question runs are off: jotflow.toml sets read_paths and the preset is "
+    "drafting runs are off: jotflow.toml sets read_paths and the preset is "
     "codex, whose MCP resource tools would read any file the read token reaches once it "
     "has Contents: Read, not only read_paths. Use claude-code, or remove read_paths"
 )

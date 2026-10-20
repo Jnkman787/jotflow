@@ -140,11 +140,13 @@ def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
         )
     on: set[RunKind] = set()
     off: list[str] = []
-    if (conflict := docs_conflict(policy)) is not None:
-        # Fail closed (#209): the read token would reach past read_paths.
-        off.append(conflict)
-    elif settings.runner_secret is None:
+    if settings.runner_secret is None:
         off.append("drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set")
+    elif (conflict := docs_conflict(policy)) is not None:
+        # Fail closed (#209): a drafting run's read token would reach past
+        # read_paths. A question run has no GitHub server or token (#57), so it stays.
+        on.add(RunKind.QUESTION)
+        off.append(conflict)
     else:
         on |= CONVERSATION_KINDS
     if settings.runner_exec_secret is None:
@@ -186,7 +188,8 @@ async def check_runners(
     on = set(kinds.on)
     off = list(kinds.off)
     for label, group in RUNNER_GROUPS:
-        if not group <= on:
+        # Asked whenever any of its kinds is on, so one kind off can't skip the check.
+        if not group & on:
             continue
         reason = await _runner_mismatch(client, group, preset, attempts=attempts, delay=delay)
         if reason is not None:
@@ -334,8 +337,12 @@ class Orchestrator:
         return self._store
 
     def _verifier(self) -> Verifier | None:
-        """The drafting runner, when it's on, for checking a GitHub link's code (#195)."""
-        if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
+        """The drafting runner, when it's on, for checking a GitHub link's code (#195).
+
+        It serves drafting and questions, so either kind being on is enough: the
+        check is anonymous, so a codex drafting refusal (#209) doesn't touch it.
+        """
+        if self._runner is None or not self.kinds.on & CONVERSATION_KINDS:
             return None
         return self._runner
 

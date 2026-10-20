@@ -617,5 +617,5 @@ def test_codex_with_read_paths_fails_check(
     toml.write_text(toml.read_text() + 'read_paths = ["docs/*.md"]\n')
     assert main(["check"]) == check_command.EXIT_FAILED
     out = capsys.readouterr().out
-    assert "fail  policy: drafting and question runs are off" in out
+    assert "fail  policy: drafting runs are off" in out
     assert "codex, whose MCP resource tools would read any file" in out
