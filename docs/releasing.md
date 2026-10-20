@@ -150,6 +150,13 @@ git tag -d v0.1.0
 
 The same applies if you notice a mistake before any publish job has started. Cancel the run first, then delete the tag.
 
+### One image published, the other failed
+
+A publish job marked **cancelled** may still have finished its steps, so check each job's log for the line `ghcr.io/jnkman787/<image>:X.Y.Z is sha256:…`. If one image was tagged and the release must be redone:
+
+- **The package is still private,** because this is its first release and nobody has made it public. Nobody else could have pulled it, so you may delete the tag, fix main, and tag the same version again. The rebuild moves `:X.Y.Z` and `:latest` to a new digest. The old attestation stays in the public transparency log, so say in the GitHub release which digest replaced which.
+- **The package is public,** or the version reached PyPI. Treat the version as spent, and release the next patch version.
+
 ### Images published, PyPI failed
 
 Re-run the **Publish to PyPI** job. If the cause is outside GitHub, such as the pending publisher's fields or the environment name, fix that first. Don't push a new tag for the same version.
