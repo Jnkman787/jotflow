@@ -4,7 +4,7 @@
 
 - Issue: #36 (M6: After v0.1.0)
 - Draft PR: to be opened
-- Status: plan, with the lead's and the architect's calls recorded on 2026-10-20. Waiting on security before code
+- Status: plan, with the lead's, the architect's and security's calls recorded on 2026-10-20. Ready to build
 - Last verified: 2026-10-20, against main
 - Next safe action: review the open questions below
 
@@ -15,13 +15,15 @@ The drafting agent already searches for duplicates (drafting.md section 5). When
 Done when:
 
 - [ ] `propose_issue` and `propose_update` accept an optional `related` list: up to 3 issue references the agent found, each `owner/name#N` plus `open` or `closed`
-- [ ] The card shows them in one context line, such as `Related: acme-co/web#42 (closed) · acme-co/web#57 (open)`, each linked to its GitHub issue by JotFlow
+- [ ] The card shows them in one context line, such as `Related: acme-co/web#42 (agent says closed) · acme-co/web#57 (agent says open)`, each linked to its GitHub issue by JotFlow. The state is labelled as the agent's claim, since JotFlow can't check it
 - [ ] The card offers **Same as acme-co/web#42** for the first candidate on a pending create proposal. A person allowed to approve can click it. JotFlow then:
   - links the proposal's topic to that issue
   - closes the proposal without writing anything to GitHub
   - replies in the thread with the existing issue's link, as it does after a write
   - shows on the card who marked it, and as the same as what
-- [ ] Nothing new is stored but pointers: repo, number and state. No issue title or body ever reaches the card or the store
+- [ ] Nothing new is stored but pointers: repo, number, the agent's claimed state, and the Slack id of who clicked. No issue title or body ever reaches the card or the store
+- [ ] **"Not a duplicate" undoes a wrong "same as",** under the same rules. It unbinds the topic only if the topic still points at that issue and no proposal has been applied to the topic since. Then it queues a fresh drafting run for the thread
+- [ ] A threat-model row: "Suppress a real issue by steering a wrong 'same as'"
 - [ ] The drafting instructions say when to fill `related`, and when to ask instead
 - [ ] Tests cover the validation, the card, the click's gate checks, and the store transition. `make check` passes
 
@@ -38,7 +40,7 @@ Done when:
     - The proposal moves to a closed state, with `duplicate_of` set. See the open questions.
     - JotFlow posts the thread reply "Already tracked in acme-co/web#42: <link>" through the existing link-reply path, and the source messages get the issue reaction.
   - **No GitHub write happens,** so no execution run, no token, and nothing for the runners.
-- **The store.** One migration, 14, after #194's 13, adds `duplicate_of_repo` and `duplicate_of_number` to proposals, which are pointers only, for the card to show after closing. The draft is cleared as for any final proposal.
+- **The store.** One migration, 14, after #194's 13, adds `duplicate_of_repo`, `duplicate_of_number` and `duplicate_by` to proposals. They're pointers and a Slack id only, for the card to show after closing, and for a wrong click to have an owner. The draft is cleared as for any final proposal.
 - **The drafting instructions.** Section 5 keeps "ask instead of proposing" for an issue that looks like the same idea. It adds: list the issues you found that are close but not the same in `related`, most similar first, at most 3.
 
 ## Risks and open questions
@@ -61,13 +63,34 @@ Done when:
   - **The invariant.** Either both duplicate_of columns are set or neither, and only with state `rejected`. It's enforced in both stores' code, since SQLite can't add a multi-column CHECK with ADD COLUMN, and a test covers it. architecture.md's state table says `rejected` with duplicate_of means "same as an existing issue", not "people said no".
 - **What follows a same-as click.** The topic is now linked to the issue, so a later message in the thread becomes a `propose_update` on that issue, which may be a closed one. The card's `(closed)` marker makes that visible before anyone clicks. usage.md says so.
 
+## Security's review, 2026-10-20
+
+- **The same rule as Approve, not stricter.** In open mode, Approve causes a GitHub write and "same as" causes none, so requiring an approver for the milder action would be inconsistent. With approvers on, it takes approvers. Authorship doesn't apply, because it settles nothing the person wrote. The real harm is that the binding persists: later approved updates comment on that issue. Hence the four controls below.
+- **1. Trust only the stored draft.** The button's value carries the proposal id, the content hash and the index, and nothing else. The handler reads the repo and number from the stored draft's `related[index]`, never from the value. It checks that the proposal's topic is in the card's channel.
+- **2. Record who clicked:** `duplicate_by`, the Slack id, stored next to `duplicate_of`. The log line names ids only.
+- **3. Undo, "Not a duplicate".** It's a button on the closed same-as card, under the same who-may rules.
+  - It refuses if the topic now points at another issue, or if any proposal on the topic was applied after the same-as click, since a write may already rely on the binding.
+  - Otherwise it clears the topic's issue link, through a new store call `clear_topic_issue(topic_id, expected=(repo, number))` that does nothing if the topic has moved on. It records the undo on the proposal: duplicate_of is kept for the record, and `duplicate_undone_by` and `_at` are added in the same migration 14. It then queues a drafting run for the thread, so a fresh proposal appears.
+  - The card shows "Same as acme-co/web#42, undone by @x".
+  - An operator path, documented in deployment.md, does the same from the host.
+- **4. The state is the agent's claim:** "(agent says closed)". JotFlow has no GitHub access to check it.
+- **5. A threat-model row:** "Suppress a real issue by steering a wrong 'same as'". The defences are:
+  - a person clicks, under Approve's rules
+  - the target comes from the stored draft and is in the channel's repos
+  - the click is recorded with who made it
+  - it can be undone
+  - no GitHub write happens
+- **Confirmed as designed:** dropping out-of-allowlist repos with a warning, links built from RepoName and number only, escaping, and the content hash covering `related`.
+
 ## Progress checklist
 
 - [x] Plan reviewed by the lead and the architect
-- [ ] Security answers question 3
+- [x] Security answers question 3
 - [ ] Model, validation, and tool schema
 - [ ] Card rendering
-- [ ] "Same as" action, store transition, migration 13
+- [ ] "Same as" action, store transition, migration 14 with duplicate_of, duplicate_by and the undo columns
+- [ ] "Not a duplicate" undo, `clear_topic_issue`, and the redraft
+- [ ] Threat model row
 - [ ] Drafting instructions
 - [ ] Docs: usage.md, architecture.md's state diagram, threat model row if security asks
 - [ ] CodeRabbit once, `make check`, mark ready
