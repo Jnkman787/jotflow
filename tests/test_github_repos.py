@@ -219,3 +219,28 @@ async def test_a_github_failure_is_a_502_without_detail(tmp_path: Path) -> None:
     async with runner_http(tmp_path, fake) as http:
         answer = await http.get("/repos/example-org")
     assert answer.status_code == 502 and "internal detail" not in answer.text
+
+
+@pytest.mark.parametrize(
+    ("status", "headers"),
+    [(429, {}), (403, {"x-ratelimit-remaining": "0"}), (403, {"retry-after": "60"})],
+)
+async def test_a_rate_limit_is_couldnt_check_never_cant_reach(
+    status: int, headers: dict[str, str]
+) -> None:
+    def limited(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status, headers=headers, json={"message": "rate limit"})
+
+    fake = FakeGithub({"/repos/example-org/web": limited, "/orgs/example-org/repos": limited})
+    with pytest.raises(GithubError, match="rate limit"):
+        await reachable("example-org", "web", WRITE, http=fake.client())
+    with pytest.raises(GithubError, match="rate limit"):
+        await list_repos("example-org", READ, http=fake.client())
+
+
+async def test_a_plain_403_is_still_cant_reach() -> None:
+    def forbidden(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(403, headers={"x-ratelimit-remaining": "4999"}, json={})
+
+    fake = FakeGithub({"/repos/example-org/web": forbidden})
+    assert not await reachable("example-org", "web", WRITE, http=fake.client())

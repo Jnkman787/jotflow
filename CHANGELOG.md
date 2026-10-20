@@ -20,7 +20,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Changed
 
-- **`/jotflow repos <word>` now filters the list (#236).** It shows the repos whose nickname, name, description or topics contain the word. How to change the repos moved to `/jotflow repos change`. Before, any word after `/jotflow repos` showed that text.
+- **`/jotflow repos <word>` now filters the list (#236).** It shows the repos whose nickname, name, description or topics contain the word. How to change the repos moved to `/jotflow repos change`, and `/jotflow repos add …` and `remove …` still show it. Before, any word after `/jotflow repos` showed that text.
 - **`/jotflow help` and `/jotflow repos` are easier to read (#257).** Each reply has short headed sections, for keywords, reactions, repos, approval and commands. Repos are a bulleted list with the nickname and `owner/name` in code. They still can't ping or link: Slack is told to show the text verbatim, and every name and description from `jotflow.toml` is escaped. A long list still fits Slack's limits, and ends "and N more" when it doesn't.
 
 ### Security

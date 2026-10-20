@@ -361,7 +361,9 @@ REPOS_CHANGE = (
     "repo by itself within 15 minutes, once the tokens can reach it."
 )
 # `/jotflow repos change` says how; any other word filters the list (#236).
+# `add …` and `remove …` say how too, as they did before (#91).
 CHANGE_WORD = "change"
+CHANGE_WORDS = frozenset({CHANGE_WORD, "add", "remove"})
 FILTER_LIMIT = 40
 REPOS_MORE = "and {n} more; add a word to narrow the list, such as /jotflow repos web."
 
@@ -398,7 +400,8 @@ def repos_view(
     if channel_id not in policy.channels:
         return NOT_SET_UP
     word = argument.strip()
-    if word.casefold() == CHANGE_WORD:
+    first = word.split(maxsplit=1)[0].casefold() if word else ""
+    if first in CHANGE_WORDS:
         return REPOS_CHANGE
     catalog = repos if repos is not None else RepoCatalog.static(policy)
     rows = []

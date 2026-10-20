@@ -413,7 +413,9 @@ def test_repos_lists_this_channels_repos() -> None:
     assert channel_repos(policy(), "C0ELSEWHERE", "") == NOT_SET_UP
 
 
-@pytest.mark.parametrize("argument", ["change", "Change ", " CHANGE"])
+@pytest.mark.parametrize(
+    "argument", ["change", "Change ", " CHANGE", "add acme-co/mobile", "remove web", "Add"]
+)
 def test_changing_repos_says_how_and_changes_nothing(argument: str) -> None:
     from jotflow.orchestrator.help import REPOS_CHANGE, channel_repos
 
@@ -633,8 +635,8 @@ def test_a_word_that_matches_nothing_points_at_repos_change() -> None:
     from jotflow.orchestrator.help import channel_repos
     from jotflow.orchestrator.help_blocks import repos_reply
 
-    text = channel_repos(policy(), CH, "add <!here> acme-co/mobile")
-    assert text.startswith("No repo this channel feeds matches add &lt;!here&gt;")
+    text = channel_repos(policy(), CH, "nothing <!here> acme-co/mobile")
+    assert text.startswith("No repo this channel feeds matches nothing &lt;!here&gt;")
     assert text.endswith("/jotflow repos change says how to add one.")
-    reply_text, blocks = repos_reply(policy(), CH, "add <!here> acme-co/mobile")
+    reply_text, blocks = repos_reply(policy(), CH, "nothing <!here> acme-co/mobile")
     assert "<!here>" not in reply_text and "<!here>" not in str(blocks)

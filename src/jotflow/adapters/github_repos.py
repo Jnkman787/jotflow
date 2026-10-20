@@ -73,9 +73,25 @@ def _headers(token: str) -> dict[str, str]:
     }
 
 
+def _rate_limited(response: httpx2.Response) -> bool:
+    """GitHub's rate limits: a 429, or a 403 with no requests left or a Retry-After."""
+    if response.status_code == 429:
+        return True
+    if response.status_code != 403:
+        return False
+    headers = response.headers
+    return headers.get("x-ratelimit-remaining") == "0" or "retry-after" in headers
+
+
 async def _page(http: httpx2.AsyncClient, url: str, token: str, budget: int) -> tuple[int, bytes]:
-    """One page's status and body, read up to ``budget`` bytes."""
+    """One page's status and body, read up to ``budget`` bytes.
+
+    A rate limit raises: it says nothing about the token's reach, so a caller
+    must never read it as "can't reach" (#236).
+    """
     async with http.stream("GET", url, headers=_headers(token)) as response:
+        if _rate_limited(response):
+            raise GithubError("GitHub's rate limit")
         body = b""
         async for chunk in response.aiter_bytes():
             body += chunk
