@@ -2,7 +2,7 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-10-19
 
 The first release. JotFlow watches the Slack channels you choose, hands each quiet thread to your team's own agent, and posts what the agent proposes as a card. Nothing reaches GitHub until a person approves it, unless a channel is set to `auto`.
 
@@ -34,7 +34,7 @@ The first release. JotFlow watches the Slack channels you choose, hands each qui
 ### The agent
 
 - **Your agent, in its own containers.** Drafting and questions run in one container with a read-only GitHub token. Approved writes run in another, with the token that can write. The write token never sits where untrusted Slack text is read.
-- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `codex` starts Codex CLI with the same limits, for drafting and question runs on `gpt-5.5`, while execution stays on claude-code. The published agent image carries both CLIs. `command` runs your own agent instead.
+- **Presets.** `claude-code` starts Claude Code locked down: only JotFlow's tools and the GitHub MCP server, no shell, file, or web tools, nothing persisted, and a model you can choose per run kind. `codex` starts Codex CLI with no shell or web tools and only JotFlow's and GitHub's tools, though it keeps MCP resource-read tools, which reach public repos only, and a patch tool its read-only sandbox refuses. It serves drafting and question runs on `gpt-5.5`, while execution stays on claude-code. The published agent image carries both CLIs. `command` runs your own agent instead.
 - **Exact writes.** An execution run gets only the approved fields. It finds an issue it already wrote by a hidden marker before writing again, and JotFlow checks the reported issue URL against the approved repo. A failed write is retried a few times, then reported on the card.
 - **Issue bodies** carry permalinks to the Slack messages they came from, or no Slack details at all with `issue_links = "none"`.
 
