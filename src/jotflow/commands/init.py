@@ -963,7 +963,8 @@ def _ask_agent(console: Console, options: InitOptions, preset: str | None) -> Ag
     current = next((f[agent_setup.MODEL_KEY] for f in files if f.get(agent_setup.MODEL_KEY)), None)
     console.say()
     _explain(console, EXPLAIN_MODEL)
-    answer = console.ask("Agent model", current, _model_answer)
+    # Brackets show what Enter keeps, as every other prompt does (#239).
+    answer = console.ask("Agent model", current or "default", _model_answer)
     if answer == "default":
         return AgentChoice(preset, change_model=current is not None)
     if not answer or answer == current:
@@ -1116,7 +1117,15 @@ def _plan_agent_files(options: InitOptions, choice: AgentChoice, env: dict[str, 
             else:
                 if choice.change_model:
                     updates[agent_setup.MODEL_KEY] = choice.model
-                if (kept := _kept_codex_key(values)) and kept in _allowed(values):
+                if missing := agent_setup.unpassed_logins(values, runs):
+                    # A kept file with the key but not the line would fail every run (#239).
+                    names = [*agent_setup.allowed(values), *missing]
+                    updates[agent_setup.ENV_ALLOW_KEY] = ",".join(names)
+                    notes.append(
+                        f"  {path} sets {', '.join(missing)} but didn't pass it to the agent, "
+                        f"so setup added it to {agent_setup.ENV_ALLOW_KEY}."
+                    )
+                if (kept := _kept_codex_key(values)) and kept in agent_setup.allowed(values):
                     notes.append(
                         f"  {path} still passes {kept} to the agent, which {runs} doesn't "
                         f"use. Remove it from {agent_setup.ENV_ALLOW_KEY} if nothing else "
@@ -1161,17 +1170,12 @@ def _plan_agent_files(options: InitOptions, choice: AgentChoice, env: dict[str, 
     return AgentFiles(changes, env_updates, notes)
 
 
-def _allowed(values: Mapping[str, str]) -> list[str]:
-    raw = values.get(agent_setup.ENV_ALLOW_KEY, "")
-    return [k.strip() for k in raw.split(",") if k.strip()]
-
-
 def _codex_updates(
     path: Path, values: Mapping[str, str], key: str | None, notes: list[str]
 ) -> dict[str, str | None]:
     """agent.env's changes for codex: its login, and no claude-code model."""
     updates: dict[str, str | None] = {}
-    allow = _allowed(values)
+    allow = agent_setup.allowed(values)
     name = _kept_codex_key(values)
     if key is not None:
         name = agent_setup.CODEX_KEYS[0]
@@ -1196,7 +1200,7 @@ def _codex_updates(
         else:
             allow.remove(anthropic)
             updates[anthropic] = None
-    if allow != _allowed(values):
+    if allow != agent_setup.allowed(values):
         updates[agent_setup.ENV_ALLOW_KEY] = ",".join(allow)
     # The runner refuses any model but the verified one, so a claude-code name goes.
     if values.get(agent_setup.MODEL_KEY):

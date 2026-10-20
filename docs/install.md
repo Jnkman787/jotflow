@@ -153,7 +153,7 @@ Agent preset [none]: claude-code
 Which model should the agent use? Press Enter for the preset's defaults: a stronger
 model for drafting and questions, a faster one for writing approved issues.
   ...
-Agent model:
+Agent model [default]:
 
   agent.env got a new runner secret.
   agent-exec.env got a new runner secret.
@@ -238,7 +238,15 @@ warn  agent: JOTFLOW_GITHUB_WRITE_TOKEN is blank in agent-exec.env
 warn  agent: ANTHROPIC_API_KEY is blank in agent-exec.env, which passes it to the agent
 ```
 
-Fill in the agent files as [the agent containers](#the-agent-containers) describes, then run `uvx jotflow init` again to set `COMPOSE_PROFILES`. JotFlow still starts with warnings, but drafts nothing until they're fixed. If check says `configuration problem` instead, fix what it names, or run `uvx jotflow init` again, before starting JotFlow. With no preset, check prints only the configuration line. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
+Fill in the agent files as [the agent containers](#the-agent-containers) describes, then run `uvx jotflow init` again to set `COMPOSE_PROFILES`. JotFlow still starts with warnings, but drafts nothing until they're fixed.
+
+A `fail` line means a run could never work as the files stand, and check exits with status 1. The common one is a model login the file sets but doesn't list in `JOTFLOW_AGENT_ENV_ALLOW`, so the runner never passes it to the agent. Check names the file and the whole line to set, without showing the key:
+
+```
+fail  agent: agent.env sets ANTHROPIC_API_KEY but doesn't pass it to the agent, so no run can sign in. Set this line in agent.env: JOTFLOW_AGENT_ENV_ALLOW=ANTHROPIC_API_KEY
+```
+
+Running `uvx jotflow init` again adds that line for you and says so. If check says `configuration problem` instead, fix what it names, or run `uvx jotflow init` again, before starting JotFlow. With no preset, check prints only the configuration line. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
 
 Optionally, the [live check](troubleshooting.md), `check --live`, does a real round trip to Slack: it posts one test message in a channel the bot is in and deletes it. It runs while JotFlow is stopped, so do it before the next step or stop JotFlow first.
 

@@ -42,6 +42,9 @@ from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
 
 EXIT_OK = 0
+# Something JotFlow needs is wrong in a file check can name, such as an agent
+# login the runner would never pass to the agent (#239).
+EXIT_FAILED = 1
 EXIT_REFUSED = 2
 
 OPT_IN = "JOTFLOW_LIVE_CHECK"
@@ -222,6 +225,31 @@ def agent_readiness(policy: Policy, folder: Path) -> list[str]:
     return found
 
 
+def agent_failures(policy: Policy, folder: Path) -> list[str]:
+    """Agent env files that would fail every run, each with the line that fixes it (#239).
+
+    A login key the file sets but doesn't list in its allowlist never reaches the
+    agent. Never shows a value; agent_readiness reports files it can't read.
+    """
+    preset = policy.agent.preset
+    if not preset or preset == "command" or not (folder / ".env").exists():
+        return []
+    failures: list[str] = []
+    for name, _, kinds in AGENT_FILES:
+        try:
+            env = read_env(folder / name)
+        except OSError:
+            continue
+        missing = agent_setup.unpassed_logins(env, expected_runner_preset(kinds, preset))
+        if missing:
+            line = f"{ENV_ALLOW_KEY}={','.join([*agent_setup.allowed(env), *missing])}"
+            failures.append(
+                f"{name} sets {', '.join(missing)} but doesn't pass it to the agent, so no run "
+                f"can sign in. Set this line in {name}: {line}"
+            )
+    return failures
+
+
 def _load() -> tuple[Settings, Policy]:
     settings = load_settings()
     return settings, load_policy(settings.config_path)
@@ -248,14 +276,19 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     count = len(policy.channels)
     print(f"ok    configuration: {count} channel(s) in {settings.config_path}")
+    failures: list[str] = []
     if policy.agent.preset:
+        failures = agent_failures(policy, Path("."))
         warnings = agent_readiness(policy, Path("."))
+        for failure in failures:
+            print(f"fail  agent: {failure}")
         for warning in warnings:
             print(f"warn  agent: {warning}")
-        if not warnings:
+        if not warnings and not failures:
             print(f"ok    agent: {policy.agent.preset}, both agent files filled in")
+    done = EXIT_FAILED if failures else EXIT_OK
     if not getattr(args, "live", False):
-        return EXIT_OK
+        return done
 
     timeout = getattr(args, "timeout", DEFAULT_TIMEOUT)
     try:
@@ -278,6 +311,7 @@ def run(args: argparse.Namespace) -> int:
     if not go_ahead:
         print("jotflow check: not posting; nothing was sent", file=sys.stderr)
         return EXIT_REFUSED
-    return asyncio.run(
+    live = asyncio.run(
         run_live_check(make_slack(settings), channel, out=sys.stdout, timeout=timeout)
     )
+    return live if live != EXIT_OK else done
