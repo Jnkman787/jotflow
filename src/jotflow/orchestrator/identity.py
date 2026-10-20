@@ -1,10 +1,11 @@
 """`/jotflow link`: a person links their own Slack account to a GitHub login (#35).
 
 Assignees work only through these links (#15), so this is how a proposal can
-name someone. Links are self-declared in v1, so the store keeps them
-unverified, and every card marks such a login "(unverified)" for everyone,
-approvers included. A person can link only themselves. Guests and external
-Slack Connect users can't link at all.
+name someone. A link starts self-declared, so the store keeps it unverified,
+and every card marks such a login "(unverified)" for everyone, approvers
+included, until the person proves the account is theirs with ``/jotflow
+verify`` (#195, :mod:`jotflow.orchestrator.verify`). A person can link only
+themselves. Guests and external Slack Connect users can't link at all.
 
 An approver, or someone in ``[identity] admins``, can remove someone else's
 link with ``/jotflow unlink <member-id>`` (#173), for a login claimed by the
@@ -116,12 +117,17 @@ def removal_note(by: str | None) -> str:
 def _linked(login: str) -> str:
     return (
         f"Linked to GitHub login {login}. Proposals can now assign you. Cards show it as "
-        "unverified, because JotFlow can't check GitHub itself."
+        "unverified until you prove it's yours with /jotflow verify."
     )
 
 
-def _current(login: str) -> str:
-    return f"You're linked to GitHub login {login}, shown as unverified on cards."
+def _current(login: str, verified: bool) -> str:
+    if verified:
+        return f"You're linked to GitHub login {login}, verified."
+    return (
+        f"You're linked to GitHub login {login}, shown as unverified on cards. "
+        "/jotflow verify proves it's yours."
+    )
 
 
 def _unlinked(login: str) -> str:
@@ -228,7 +234,11 @@ class LinkCommand:
             return await self._unlink(user_id)
         if not argument.strip():
             current = await self._store.get_identity(user_id)
-            return LinkReply(NOTHING_LINKED if current is None else _current(current.github_login))
+            return LinkReply(
+                NOTHING_LINKED
+                if current is None
+                else _current(current.github_login, current.verified)
+            )
         login = clean_login(argument)
         if login is None:
             return LinkReply(NOT_A_LOGIN)

@@ -629,3 +629,100 @@ def test_info_for_a_preset_runner(tmp_path: Path) -> None:
 
     cfg = config(tmp_path, execution=True, command=(), preset=CLAUDE_CODE, write_token="ghp_write")
     assert runner_info(cfg) == {"preset": "claude-code", "kinds": ["execution"]}
+
+
+# POST /verify: a GitHub link's one-time code (#195)
+
+VERIFY_CODE = "jotflow-Ab3_xY9-kLm2"
+VERIFY_DIGEST = __import__("hashlib").sha256(VERIFY_CODE.encode()).hexdigest()
+
+
+@asynccontextmanager
+async def verify_http(cfg: RunnerConfig, github: Any) -> AsyncIterator[httpx2.AsyncClient]:
+    runner = Runner(cfg, environ=ENVIRON)
+    app = build_runner_app(runner, cfg, github_transport=httpx2.MockTransport(github))
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(app=app),
+        base_url=f"http://{HOST}",
+        headers={"Authorization": f"Bearer {SECRET}"},
+    ) as http:
+        yield http
+
+
+def github_answering(bio: str | None) -> Any:
+    seen: list[str] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        seen.append(str(request.url))
+        if request.url.path.endswith("/gists"):
+            return httpx2.Response(200, json=[])
+        return httpx2.Response(200, json={"id": 7, "login": "Octo", "type": "User", "bio": bio})
+
+    handle.seen = seen  # type: ignore[attr-defined]
+    return handle
+
+
+async def test_the_drafting_runner_checks_a_code(tmp_path: Path) -> None:
+    github = github_answering(f"verify {VERIFY_CODE}")
+    async with verify_http(config(tmp_path), github) as http:
+        reply = await http.post("/verify", json={"login": "octo", "code_digest": VERIFY_DIGEST})
+        assert reply.status_code == 200
+        assert reply.json() == {
+            "verified": True,
+            "rate_limited": False,
+            "github_id": 7,
+            "login": "Octo",
+        }
+        missing = await http.post("/verify", json={"login": "octo", "code_digest": "0" * 64})
+        assert missing.json()["verified"] is False
+        assert "verify" not in missing.text  # the bio never leaves the runner
+
+
+async def test_the_execution_runner_never_checks_codes(tmp_path: Path) -> None:
+    github = github_answering(VERIFY_CODE)
+    cfg = config(tmp_path, execution=True)
+    async with verify_http(cfg, github) as http:
+        reply = await http.post("/verify", json={"login": "octo", "code_digest": VERIFY_DIGEST})
+    assert reply.status_code == 403
+    assert github.seen == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"login": "octo"},
+        {"login": "octo", "code_digest": VERIFY_DIGEST, "extra": 1},
+        {"login": "not a login", "code_digest": VERIFY_DIGEST},
+        {"login": "octo", "code_digest": VERIFY_CODE},
+    ],
+)
+async def test_a_malformed_verify_request_is_refused_before_github(
+    tmp_path: Path, body: dict[str, Any]
+) -> None:
+    github = github_answering(VERIFY_CODE)
+    async with verify_http(config(tmp_path), github) as http:
+        reply = await http.post("/verify", json=body)
+    assert reply.status_code == 400
+    assert github.seen == []
+
+
+async def test_verify_needs_the_runner_secret(tmp_path: Path) -> None:
+    github = github_answering(VERIFY_CODE)
+    async with verify_http(config(tmp_path), github) as http:
+        reply = await http.post(
+            "/verify",
+            json={"login": "octo", "code_digest": VERIFY_DIGEST},
+            headers={"Authorization": "Bearer wrong"},
+        )
+    assert reply.status_code == 401
+    assert github.seen == []
+
+
+async def test_github_failing_is_a_502_not_a_verdict(tmp_path: Path) -> None:
+    def broken(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500)
+
+    async with verify_http(config(tmp_path), broken) as http:
+        reply = await http.post("/verify", json={"login": "octo", "code_digest": VERIFY_DIGEST})
+    assert reply.status_code == 502
+    assert reply.json() == {"error": "GitHub answered 500"}

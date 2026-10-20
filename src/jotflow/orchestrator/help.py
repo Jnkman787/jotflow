@@ -43,6 +43,10 @@ UNLINK_OTHER_LINE = (
     "Approvers can remove someone else's link with /jotflow unlink and their Slack member ID."
 )
 REPOS_LINE = "/jotflow repos lists the repos this channel feeds."
+# Proving a linked login is yours (#195).
+VERIFY_LINE = (
+    "/jotflow verify proves your GitHub login is yours, so cards stop marking it unverified."
+)
 COMMAND = "/jotflow help"
 
 
@@ -68,6 +72,7 @@ def help_text() -> str:
             *reaction_lines(),
             LINK_LINE,
             UNLINK_OTHER_LINE,
+            VERIFY_LINE,
             REPOS_LINE,
             CLOSING,
         ]

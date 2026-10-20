@@ -120,6 +120,8 @@ def _commands() -> list[str]:
         f"• {code('/jotflow link your-github-login')} lets proposals assign you, "
         f"and {code('/jotflow unlink')} undoes it",
         f"• {UNLINK_OTHER_LINE}",
+        f"• {code('/jotflow verify')} proves your GitHub login is yours, so cards stop "
+        "marking it unverified",
         f"• {code('/jotflow help')} shows this again",
     ]
 

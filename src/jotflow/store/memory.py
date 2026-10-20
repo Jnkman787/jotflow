@@ -34,11 +34,13 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    VERIFICATION_REMOVER,
     ChannelModeSetting,
     Clock,
     ConflictError,
     DuplicateRefusedError,
     EditField,
+    IdentityCode,
     IdentityLink,
     IdentityUnlink,
     LinkSource,
@@ -53,6 +55,7 @@ from jotflow.store.base import (
     Recovery,
     ToolCallRecord,
     TopicRecord,
+    Verified,
     check_clearable,
     check_edit,
     check_finish,
@@ -91,6 +94,7 @@ class MemoryStore:
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
         self._unlinks: list[IdentityUnlink] = []
+        self._codes: dict[str, IdentityCode] = {}
         self._operators: dict[str, OperatorToken] = {}
         self._modes: dict[str, ChannelModeSetting] = {}
         self._notices: set[tuple[str, str, str]] = set()
@@ -469,6 +473,7 @@ class MemoryStore:
                     raise ConflictError(f"GitHub login {github_login} is already linked")
             link = IdentityLink(slack_user_id, github_login, False, self._clock())
             self._identities[slack_user_id] = link
+            self._codes.pop(slack_user_id, None)  # a changed link drops a pending code
             return link
 
     async def get_identity(self, slack_user_id: str) -> IdentityLink | None:
@@ -476,12 +481,14 @@ class MemoryStore:
 
     async def unlink_identity(self, slack_user_id: str) -> bool:
         async with self._lock:
+            self._codes.pop(slack_user_id, None)
             return self._identities.pop(slack_user_id, None) is not None
 
     async def remove_identity(self, slack_user_id: str, *, removed_by: str) -> bool:
         check_id(slack_user_id, "Slack user id")
         check_id(removed_by, "remover")
         async with self._lock:
+            self._codes.pop(slack_user_id, None)
             if self._identities.pop(slack_user_id, None) is None:
                 return False
             self._unlinks.append(
@@ -491,6 +498,60 @@ class MemoryStore:
 
     async def identity_unlinks(self) -> list[IdentityUnlink]:
         return sorted(self._unlinks, key=lambda u: u.removed_at, reverse=True)
+
+    async def identity_for_login(self, github_login: str) -> IdentityLink | None:
+        wanted = github_login.casefold()
+        return next(
+            (link for link in self._identities.values() if link.github_login.casefold() == wanted),
+            None,
+        )
+
+    async def start_verification(self, code: IdentityCode) -> None:
+        check_id(code.slack_user_id, "Slack user id")
+        check_github_login(code.github_login)
+        async with self._lock:
+            self._codes[code.slack_user_id] = replace(code, checks=0)
+
+    async def get_verification(self, slack_user_id: str) -> IdentityCode | None:
+        return self._codes.get(slack_user_id)
+
+    async def count_verification_check(self, slack_user_id: str) -> int:
+        async with self._lock:
+            code = self._codes.get(slack_user_id)
+            if code is None:
+                raise NotFoundError(f"no pending code for {slack_user_id}")
+            self._codes[slack_user_id] = replace(code, checks=code.checks + 1)
+            return code.checks + 1
+
+    async def drop_verification(self, slack_user_id: str) -> None:
+        async with self._lock:
+            self._codes.pop(slack_user_id, None)
+
+    async def finish_verification(
+        self, slack_user_id: str, *, github_login: str, github_id: int
+    ) -> Verified:
+        check_id(slack_user_id, "Slack user id")
+        check_github_login(github_login)
+        async with self._lock:
+            self._codes.pop(slack_user_id, None)
+            displaced: str | None = None
+            for other in list(self._identities.values()):
+                if (
+                    other.github_login.casefold() == github_login.casefold()
+                    and other.slack_user_id != slack_user_id
+                ):
+                    displaced = other.slack_user_id
+                    del self._identities[other.slack_user_id]
+                    self._codes.pop(other.slack_user_id, None)
+                    self._unlinks.append(
+                        IdentityUnlink(
+                            secrets.token_hex(8), displaced, VERIFICATION_REMOVER, self._clock()
+                        )
+                    )
+            now = self._clock()
+            link = IdentityLink(slack_user_id, github_login, True, now, now, github_id)
+            self._identities[slack_user_id] = link
+            return Verified(link, displaced)
 
     # Operator tokens
 
