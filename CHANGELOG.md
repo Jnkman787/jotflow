@@ -12,6 +12,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
   - Each match runs under a 50 ms limit, off the event loop. A title that can't be checked in time is refused, never accepted, and `jotflow check` warns about a pattern that slow.
   - Setup keeps both settings when it rewrites `jotflow.toml`.
   - Before rolling back to 0.3.0 or earlier, remove both settings, because older versions refuse keys they don't know.
+- **`jotflow rebuild`** restores topics, message links, channel modes and the guide flag from JotFlow's own Slack replies, after the database is lost without a backup. It stores pointers only, never message text, and doesn't touch GitHub. [docs/deployment.md](docs/deployment.md#rebuild-from-slack-without-a-backup) lists what it can't restore (#38).
 
 ### Changed
 
@@ -122,6 +123,7 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
+[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.1

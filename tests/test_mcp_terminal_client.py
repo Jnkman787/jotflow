@@ -12,7 +12,6 @@ poster is a stub that is never called, since listing calls no tool.
 
 from __future__ import annotations
 
-import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -27,7 +26,7 @@ from jotflow.models import RunKind
 from jotflow.policy import parse_policy
 from jotflow.store import MemoryStore
 from jotflow.whiteboard.read_tools import read_tools
-from jotflow.whiteboard.server import PATH, PINNED_VERSIONS, McpServer, build_app
+from jotflow.whiteboard.server import PATH, PINNED_VERSIONS, McpServer, bound_socket, build_app
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec, checked_registry
 from jotflow.whiteboard.write_tools import write_tools
@@ -80,16 +79,13 @@ def grant_for(kind: RunKind) -> Grant:
     return Grant(f"run-{kind.value}", kind, CH, thread_ts=POST)
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
 @asynccontextmanager
 async def real_server(tokens: TokenRegistry) -> AsyncIterator[str]:
-    port = _free_port()
-    server = McpServer(build_app(port=port, tokens=tokens, tools=all_tools()), "127.0.0.1", port)
+    sock = bound_socket()  # never released, so no other process can take the port (#184)
+    port = int(sock.getsockname()[1])
+    server = McpServer(
+        build_app(port=port, tokens=tokens, tools=all_tools()), "127.0.0.1", port, sock=sock
+    )
     await server.start()
     try:
         yield f"http://127.0.0.1:{port}{PATH}"

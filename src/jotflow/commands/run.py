@@ -51,6 +51,7 @@ from jotflow.orchestrator.slack import (
 )
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.store import StoreError
+from jotflow.store.lock import StoreBusyError
 from jotflow.whiteboard.server import McpServer, McpStartError, build_app
 from jotflow.whiteboard.tokens import TokenCheck
 from jotflow.whiteboard.tools import ToolSpec
@@ -217,6 +218,9 @@ async def serve(settings: Settings, policy: Policy) -> int:
     except McpStartError as exc:
         log.error("%s", exc)
         return EXIT_MCP
+    except StoreBusyError as exc:
+        log.error("%s", exc)
+        return EXIT_STORE
     except (StoreError, OSError, sqlite3.Error) as exc:
         # The type and path only: an error's text could, in principle, quote a row.
         log.error(

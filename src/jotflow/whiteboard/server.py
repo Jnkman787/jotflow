@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import socket
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -182,14 +183,36 @@ class _QuietServer(uvicorn.Server):
         yield
 
 
+def bound_socket(host: str = "127.0.0.1") -> socket.socket:
+    """A TCP socket bound to a free port on ``host``, not yet listening (#184).
+
+    Hand it to :class:`McpServer` as ``sock`` so the port is never released
+    between choosing it and serving, where another process could take it. Held
+    open without a server, it is a port nobody can listen on: connecting is
+    refused.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, 0))
+    except OSError:
+        sock.close()
+        raise
+    return sock
+
+
 @dataclass
 class McpServer:
-    """Runs the app with uvicorn in the current event loop."""
+    """Runs the app with uvicorn in the current event loop.
+
+    With ``sock``, it serves on that already-bound socket, which then belongs to
+    the server; ``port`` must be the socket's port.
+    """
 
     app: ASGIApp
     host: str
     port: int
     startup_timeout: float = STARTUP_TIMEOUT_SECONDS
+    sock: socket.socket | None = None
     _server: uvicorn.Server | None = field(default=None, init=False)
     _task: asyncio.Task[None] | None = field(default=None, init=False)
 
@@ -214,7 +237,7 @@ class McpServer:
             # uvicorn calls sys.exit() on a bind error, which asyncio would
             # re-raise out of the event loop; turn it into ours here.
             try:
-                await server.serve()
+                await server.serve(sockets=[self.sock] if self.sock is not None else None)
             except (SystemExit, OSError) as exc:
                 raise McpStartError(
                     f"could not listen on {self.host}:{self.port}; is the port in use?"

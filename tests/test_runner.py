@@ -7,7 +7,6 @@ import asyncio
 import json
 import logging
 import os
-import socket
 import stat
 import sys
 from collections.abc import AsyncIterator
@@ -36,7 +35,7 @@ from jotflow.adapters.runner import (
 )
 from jotflow.commands import runner as runner_command
 from jotflow.models import RunKind
-from jotflow.whiteboard.server import McpServer, build_app
+from jotflow.whiteboard.server import McpServer, bound_socket, build_app
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 
 SECRET = "s" * 40
@@ -488,17 +487,12 @@ async def test_launch_status_and_stop_over_http(tmp_path: Path) -> None:
 # The agent reaches JotFlow's real MCP server
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
 async def test_a_launched_agent_reaches_the_mcp_server_with_its_token(tmp_path: Path) -> None:
-    port = _free_port()
+    sock = bound_socket()  # never released, so no other process can take the port (#184)
+    port = int(sock.getsockname()[1])
     registry = TokenRegistry()
     token = registry.issue(Grant("run-1", RunKind.DRAFTING, "C0EXAMPLE1", thread_ts="1.0"), 60)
-    server = McpServer(build_app(port=port, tokens=registry), "127.0.0.1", port)
+    server = McpServer(build_app(port=port, tokens=registry), "127.0.0.1", port, sock=sock)
     await server.start()
     try:
         cfg = config(tmp_path, mode="mcp", mcp_url=f"http://127.0.0.1:{port}/mcp")
