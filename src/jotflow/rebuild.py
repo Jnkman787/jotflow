@@ -26,13 +26,14 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from jotflow.models import ChannelMode, MessageRef
 from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
+from jotflow.orchestrator.packet import Budget, Sleep, with_backoff
 from jotflow.policy import Policy
 from jotflow.store import Store
 
@@ -48,6 +49,10 @@ _MODE = re.compile(r"set JotFlow to (?P<mode>propose|auto|paused) mode in this c
 # A sentence only the channel guide says (help.guide_text).
 _GUIDE = "turns ideas and bugs posted here into GitHub issues, after a person approves."
 PAGE_SIZE = 200
+# Rate-limit waiting one channel may spend, shared across its pages: a long
+# history takes minutes, but a channel that stays limited stops cleanly.
+CHANNEL_BUDGET_SECONDS = 900.0
+RETRY_ATTEMPTS = 8
 
 
 class RebuildSlack(Protocol):
@@ -70,6 +75,8 @@ class ThreadPlan:
     issues: list[tuple[str, int]] = field(default_factory=list)
     # (ts, index into issues) for an idea; (ts, None) for a skip: message.
     messages: list[tuple[str, int | None]] = field(default_factory=list)
+    # JotFlow replies naming a repo the channel no longer feeds: not restored.
+    unknown_repos: int = 0
 
 
 @dataclass
@@ -79,6 +86,7 @@ class ChannelPlan:
     mode: ChannelMode | None = None
     guide_posted: bool = False
     messages_read: int = 0
+    unknown_repos: int = 0
 
     @property
     def issue_count(self) -> int:
@@ -130,13 +138,19 @@ async def _pages(
 
 
 def plan_thread(
-    thread_ts: str, messages: Sequence[Mapping[str, Any]], bot: BotIdentity
+    thread_ts: str,
+    messages: Sequence[Mapping[str, Any]],
+    bot: BotIdentity,
+    repos: Collection[str] | None = None,
 ) -> ThreadPlan:
     """Each person's message goes to the issue of the first JotFlow reply at or after it.
 
     Messages after the last reply go to that last issue: they are follow-ups,
-    which JotFlow would have proposed as updates to it.
+    which JotFlow would have proposed as updates to it. With ``repos``, a reply
+    naming any other repo is skipped and counted, so a repo since removed from
+    jotflow.toml doesn't come back.
     """
+    allowed = None if repos is None else {r.casefold() for r in repos}
     plan = ThreadPlan(thread_ts)
     waiting: list[str] = []
     ordered = sorted(messages, key=lambda m: float(str(m.get("ts") or 0)))
@@ -146,6 +160,9 @@ def plan_thread(
         if _is_own(message, bot):
             match = _REPLY.search(_text(message))
             if match is None:
+                continue
+            if allowed is not None and match["repo"].casefold() not in allowed:
+                plan.unknown_repos += 1
                 continue
             issue = (match["repo"], int(match["number"]))
             if issue not in plan.issues:
@@ -171,13 +188,34 @@ async def collect(
     bot: BotIdentity,
     *,
     oldest: str | None = None,
+    repos: Collection[str] | None = None,
     progress: Callable[[str], None] = lambda _: None,
+    sleep: Sleep | None = None,
 ) -> ChannelPlan:
-    """Read one channel and plan what to restore. Writes nothing."""
+    """Read one channel and plan what to restore. Writes nothing.
+
+    Every Slack call goes through ingest's :func:`with_backoff`, sharing one
+    :class:`Budget` across the channel. When it runs out, ``SlackFetchError``
+    stops the channel, and ``--merge`` continues later.
+    """
     plan = ChannelPlan(channel_id)
-    top = await _pages(
-        lambda cursor: slack.history(channel_id, cursor=cursor, oldest=oldest, limit=PAGE_SIZE)
-    )
+    budget = Budget(CHANNEL_BUDGET_SECONDS)
+    extra: dict[str, Any] = {} if sleep is None else {"sleep": sleep}
+
+    def paced(
+        fetch: Callable[[str | None], Awaitable[Mapping[str, Any]]], what: str
+    ) -> Callable[[str | None], Awaitable[Mapping[str, Any]]]:
+        async def call(cursor: str | None) -> Mapping[str, Any]:
+            return await with_backoff(
+                lambda: fetch(cursor), what=what, attempts=RETRY_ATTEMPTS, budget=budget, **extra
+            )
+
+        return call
+
+    async def history(cursor: str | None) -> Mapping[str, Any]:
+        return await slack.history(channel_id, cursor=cursor, oldest=oldest, limit=PAGE_SIZE)
+
+    top = await _pages(paced(history, f"{channel_id}'s history"))
     plan.messages_read = len(top)
     mode_ts = -1.0
     threads = [m for m in top if isinstance(m.get("reply_count"), int) and m["reply_count"] > 0]
@@ -193,9 +231,10 @@ async def collect(
             plan.mode = ChannelMode(found["mode"])
     for n, parent in enumerate(threads, 1):
         ts = str(parent.get("ts") or "")
-        replies = await _pages(_replies(slack, channel_id, ts))
+        replies = await _pages(paced(_replies(slack, channel_id, ts), f"a thread in {channel_id}"))
         plan.messages_read += max(len(replies) - 1, 0)
-        thread = plan_thread(ts, replies, bot)
+        thread = plan_thread(ts, replies, bot, repos)
+        plan.unknown_repos += thread.unknown_repos
         if thread.issues:
             plan.threads.append(thread)
         if n % 25 == 0 or n == len(threads):

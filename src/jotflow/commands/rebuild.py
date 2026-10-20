@@ -24,21 +24,21 @@ from collections.abc import Mapping
 from typing import Any
 
 from slack_sdk.errors import SlackApiError
-from slack_sdk.http_retry.builtin_async_handlers import AsyncRateLimitErrorRetryHandler
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.commands.run import SettingsError, load_settings
 from jotflow.orchestrator.health import MAX_AGE_SECONDS, heartbeat_age, heartbeat_path
 from jotflow.orchestrator.ingest import BotIdentity
+from jotflow.orchestrator.packet import SlackFetchError
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.rebuild import ChannelPlan, RebuildSlack, Restored, apply, collect
 from jotflow.store import SqliteStore, Store, StoreError
+from jotflow.store.lock import StoreBusyError
 
 EXIT_OK = 0
 EXIT_REFUSED = 2
 EXIT_SLACK = 3
 EXIT_STORE = 4
-RATE_LIMIT_RETRIES = 10
 _SINCE = re.compile(r"(?P<days>[0-9]{1,5})d")
 
 
@@ -130,7 +130,8 @@ async def rebuild(
     results: list[tuple[ChannelPlan, Restored | None]] = []
     for channel in channels:
         say(f"{channel}: reading history")
-        plan = await collect(slack, channel, bot, oldest=oldest, progress=say)
+        repos = [entry.repo for entry in policy.channels[channel].repos]
+        plan = await collect(slack, channel, bot, oldest=oldest, repos=repos, progress=say)
         restored = None if dry_run else await apply(store, policy, plan, bot)
         results.append((plan, restored))
         say(_summary(plan, restored, windowed=oldest is not None))
@@ -167,15 +168,14 @@ def _summary(plan: ChannelPlan, restored: Restored | None, *, windowed: bool = F
         parts.append(f"mode {plan.mode.value if plan.mode else ''}")
     if restored.guide:
         parts.append("guide noted")
+    if plan.unknown_repos:
+        parts.append(f"{plan.unknown_repos} replies for repos not in jotflow.toml skipped")
     return f"{head}; " + ", ".join(parts) + unsure
 
 
 async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) -> int:
     settings = load_settings()
-    client = AsyncWebClient(
-        token=settings.slack_bot_token.get_secret_value(),
-        retry_handlers=[AsyncRateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES)],
-    )
+    client = AsyncWebClient(token=settings.slack_bot_token.get_secret_value())
     try:
         auth = await client.auth_test()
     except SlackApiError as exc:
@@ -185,7 +185,11 @@ async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) ->
         )
         return EXIT_SLACK
     bot = BotIdentity(user_id=str(auth.get("user_id") or ""), bot_id=auth.get("bot_id"))
-    store = await SqliteStore.open(settings.database_path)
+    try:
+        store = await SqliteStore.open(settings.database_path, exclusive=True)
+    except StoreBusyError as exc:
+        print(f"jotflow rebuild: refusing: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
     try:
         await rebuild(
             store,
@@ -200,8 +204,12 @@ async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) ->
     except RefusedError as exc:
         print(f"jotflow rebuild: refusing: {exc}", file=sys.stderr)
         return EXIT_REFUSED
-    except SlackApiError as exc:
-        print(f"jotflow rebuild: Slack error ({exc.response.get('error')})", file=sys.stderr)
+    except SlackFetchError as exc:
+        print(
+            f"jotflow rebuild: stopped: {exc}. What was restored is kept; run it again "
+            "with --merge to continue",
+            file=sys.stderr,
+        )
         return EXIT_SLACK
     finally:
         await store.close()

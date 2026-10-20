@@ -91,7 +91,8 @@ StoreOpener = Callable[[str], Awaitable[Store]]
 
 
 async def open_sqlite(path: str) -> Store:
-    return await SqliteStore.open(path)
+    # One writer at a time: a rebuild, or a second JotFlow, can't share the store.
+    return await SqliteStore.open(path, exclusive=True)
 
 
 CONVERSATION_KINDS = frozenset({RunKind.DRAFTING, RunKind.QUESTION})

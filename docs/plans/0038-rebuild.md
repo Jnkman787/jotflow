@@ -87,7 +87,7 @@ These are documented in deployment.md:
 ## Progress checklist
 
 - [x] The lead approves this plan, and decides questions 1 and 4
-- [ ] Security looks at the transient text handling
+- [x] Security looked at the transient text handling, and every item is built (see the handoff notes)
 - [x] The command, the Slack walk, and the store writes
 - [x] Refusals: running JotFlow, non-empty store without `--merge`
 - [x] Tests with a fake Slack: round trip, deleted reply, two issues in one thread, rate limits, `--dry-run`
@@ -106,4 +106,10 @@ These are documented in deployment.md:
   - The store API has no multi-call transaction, so a crash can leave a thread half-restored. Rebuilding again with `--merge` completes it, because every write is skipped if its row already exists.
 - **Message assignment:** each person's message goes to the issue of the first JotFlow reply at or after it. Later follow-ups go to the thread's last issue.
 - **The mode** is recorded with the bot's own user id as `changed_by`, so `/jotflow mode` says it was set by the bot.
-- **The running check** only sees a heartbeat in the same environment. The docs say to stop JotFlow first.
+- **Security's #38 items, 2026-10-20:**
+  1. A sentinel sits in every person's message, in a JotFlow card, and in a mode announcement's name. The test scans the SQLite file, WAL and SHM, and the DEBUG logs.
+  2. A parsed issue URL must name one of the channel's configured repos. Any other is skipped and counted. The mode word comes only from the fixed announcement sentence.
+  3. JotFlow's messages are identified by the bot's user id or bot id. A test has a person copying the exact reply wording, and another bot.
+  4. **One writer.** `jotflow run` opens the store with `exclusive=True`, an advisory `flock` on `jotflow.db.lock` held until close, and so does rebuild. Each refuses while the other runs, across containers sharing the volume. The heartbeat check stays as a quick first refusal.
+  5. Slack calls go through ingest's `with_backoff`, with one `Budget` per channel, sized for a long walk at 900 s. slack-sdk's own retry handler isn't used, so retries don't stack.
+  6. Permalinks are stored as ingest stores them, which is none, and a test pins it.

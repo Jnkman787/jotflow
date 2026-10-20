@@ -145,7 +145,8 @@ def workspace() -> FakeSlack:
         CH,
         own(
             "1002.000100",
-            f"Alice set JotFlow to auto mode in this channel.\n{MEANING[ChannelMode.AUTO]}",
+            f"Alice {SENTINEL} set JotFlow to auto mode in this channel.\n"
+            f"{MEANING[ChannelMode.AUTO]}",
         ),
     )
     # A thread that became web#42, with a follow-up that updated it.
@@ -153,7 +154,7 @@ def workspace() -> FakeSlack:
         CH,
         person("1100.000100"),
         person("1100.000200"),
-        own("1100.000300", "card"),
+        own("1100.000300", f"Proposed issue {SENTINEL}"),
         own("1100.000400", _reply(CH, WEB42)),
         person("1100.000500", f"also {SENTINEL}"),
         person("1100.000600", "skip: lunch?"),
@@ -445,3 +446,84 @@ async def test_a_windowed_rebuild_that_finds_no_mode_says_to_check_it(tmp_path: 
     finally:
         await store.close()
     assert "check C0IDEAS01's mode with /jotflow mode" in lines[-1]
+
+
+# --- security review (#38): validation, permalinks, pacing, one writer -------------------------
+
+
+def test_a_reply_for_a_repo_not_in_the_channel_is_skipped_and_counted() -> None:
+    plan = plan_thread(
+        "1.0",
+        [person("1.0"), own("2.0", _reply(CH, "https://github.com/acme-co/old/issues/3"))],
+        BOT,
+        repos=["acme-co/web"],
+    )
+    assert plan.issues == [] and plan.unknown_repos == 1
+
+
+async def test_permalinks_are_stored_as_ingest_stores_them(tmp_path: Path) -> None:
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    try:
+        await run_rebuild(store, workspace())
+        link = await store.get_message(CH, "1100.000200")
+        assert link is not None and link.ref.permalink is None
+        assert link.ref.thread_ts == "1100.000100"
+    finally:
+        await store.close()
+
+
+class _RateLimited(FakeSlack):
+    def __init__(self) -> None:
+        super().__init__()
+        self.limited = 1
+
+    async def history(
+        self, channel: str, *, cursor: str | None, oldest: str | None, limit: int
+    ) -> Mapping[str, Any]:
+        if self.limited:
+            self.limited -= 1
+            from slack_sdk.errors import SlackApiError
+            from slack_sdk.web.async_slack_response import AsyncSlackResponse
+
+            response = AsyncSlackResponse(
+                client=None,  # type: ignore[arg-type]
+                http_verb="POST",
+                api_url="https://slack.com/api/conversations.history",
+                req_args={},
+                data={"ok": False, "error": "ratelimited"},
+                headers={"Retry-After": "3"},
+                status_code=429,
+            )
+            raise SlackApiError("ratelimited", response)
+        return await super().history(channel, cursor=cursor, oldest=oldest, limit=limit)
+
+
+async def test_a_rate_limited_page_is_retried_with_the_shared_backoff() -> None:
+    from jotflow.rebuild import collect
+
+    slack = _RateLimited()
+    slack.thread(CH, person("1.0"), own("2.0", _reply(CH, WEB42)))
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    plan = await collect(slack, CH, BOT, repos=["acme-co/web"], sleep=sleep)
+    assert waits == [3.0]
+    assert plan.issue_count == 1
+
+
+async def test_only_one_process_holds_the_store(tmp_path: Path) -> None:
+    from jotflow.orchestrator.service import open_sqlite
+    from jotflow.store.lock import StoreBusyError
+
+    path = str(tmp_path / "jotflow.db")
+    running = await open_sqlite(path)  # what jotflow run opens
+    try:
+        with pytest.raises(StoreBusyError, match="stop it first"):
+            await SqliteStore.open(path, exclusive=True)
+    finally:
+        await running.close()
+    # Closing releases it, so a rebuild can now take it.
+    rebuilding = await SqliteStore.open(path, exclusive=True)
+    await rebuilding.close()

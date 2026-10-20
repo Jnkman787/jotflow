@@ -120,7 +120,9 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 - real topic titles
 - messages deleted in Slack, threads older than the workspace's history retention or `--since`, and threads JotFlow never wrote an issue for
 
-**The running check.** Rebuild refuses when it sees JotFlow's heartbeat, but a separate `docker compose run` container can't see the running one's, so stop JotFlow first.
+**One writer at a time.** `jotflow run` holds a lock on the database, a `jotflow.db.lock` file next to it, for as long as it runs. Rebuild takes the same lock, so it refuses with "another JotFlow process is using the database" while JotFlow is running, and a second JotFlow refuses to start during a rebuild. Both containers share the data volume, so each sees the other's lock. The lock goes away when the process exits, even after a crash.
+
+Rebuild also skips a JotFlow reply for a repo that's no longer in `jotflow.toml`, and counts it in the summary.
 
 ## Upgrading, and rolling back
 

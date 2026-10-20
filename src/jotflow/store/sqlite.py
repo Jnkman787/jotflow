@@ -76,6 +76,7 @@ from jotflow.store.base import (
     utc_now,
 )
 from jotflow.store.hashing import canonical_json
+from jotflow.store.lock import StoreLock, acquire
 from jotflow.store.migrations import MIGRATIONS, Migration
 from jotflow.store.titles import clean_title
 
@@ -117,6 +118,7 @@ class SqliteStore:
         self._clock = clock
         self._lock = asyncio.Lock()
         self._wal = False
+        self._file_lock: StoreLock | None = None
 
     @classmethod
     async def open(
@@ -125,12 +127,21 @@ class SqliteStore:
         *,
         clock: Clock = utc_now,
         migrations: Sequence[Migration] = MIGRATIONS,
+        exclusive: bool = False,
     ) -> Self:
         """Open or create the database at ``path`` and bring its schema up to date.
 
-        A new file is created with mode 0600.
+        A new file is created with mode 0600. With ``exclusive``, the store's
+        lock is held until :meth:`close`, and :class:`StoreBusyError` is raised
+        if another process holds it (:mod:`jotflow.store.lock`).
         """
-        _create_private(path)
+        file_lock = acquire(path) if exclusive else None
+        try:
+            _create_private(path)
+        except BaseException:
+            if file_lock is not None:
+                file_lock.release()
+            raise
         db = await aiosqlite.connect(str(path), isolation_level=None)
         in_memory = str(path) == ":memory:"
         try:
@@ -144,13 +155,20 @@ class SqliteStore:
             await migrate(db, migrations)
         except BaseException:
             await db.close()
+            if file_lock is not None:
+                file_lock.release()
             raise
         store = cls(db, clock)
         store._wal = not in_memory
+        store._file_lock = file_lock
         return store
 
     async def close(self) -> None:
-        await self._db.close()
+        try:
+            await self._db.close()
+        finally:
+            if self._file_lock is not None:
+                self._file_lock.release()
 
     async def __aenter__(self) -> Self:
         return self
