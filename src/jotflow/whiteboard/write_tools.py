@@ -303,9 +303,21 @@ _URLISH = re.compile(
     r"|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
     # Labels and the top-level domain in any script, so an IDN such as
     # \u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444 counts.
-    r"|\b(?:[^\W_](?:[\w-]{0,61}[^\W_])?\.)+[^\W\d_]{2,63}\b(?:/[^\s<>|]*)?"
+    r"|(?P<domain>\b(?:[^\W_](?:[\w-]{0,61}[^\W_])?\.)+(?P<last>[^\W\d_]{2,63})\b)"
+    r"(?P<path>/[^\s<>|]*)?"
     r")"
 )
+# File extensions an answer may keep, as in "Node.js" or "config.yaml" (#57): none
+# is a top-level domain, so Slack can't make a link of them. An allowlist, so a
+# newly delegated TLD fails closed: md, py, sh, rs, io and ai are real ccTLDs, so
+# "README.md" is still removed. A test checks this list against a pinned copy of
+# IANA's. Only a bare name: anything with a path, a scheme, www. or an @ is removed.
+FILE_EXTENSIONS = frozenset(
+    {
+        "js", "ts", "tsx", "jsx", "mjs", "cjs", "json", "yaml", "yml", "toml",
+        "lock", "cfg", "ini", "txt", "csv", "log", "html", "css", "scss", "env",
+    }
+)  # fmt: skip
 # An issue reference, owner/name#42.
 _REPO_REF = re.compile(r"(?<![\w/.-])([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#([0-9]+)\b")
 _HELD = re.compile("\x00([0-9]+)\x00")
@@ -344,6 +356,9 @@ def safe_text(text: str, repos: Collection[str]) -> tuple[str, int]:
 
     def link(match: re.Match[str]) -> str:
         nonlocal removed
+        last = match.group("last")
+        if last is not None and match.group("path") is None and last.lower() in FILE_EXTENSIONS:
+            return match.group(0)  # a file name, which Slack can't make a link of
         removed += 1
         return LINK_REMOVED
 

@@ -384,3 +384,36 @@ async def test_an_answer_may_name_a_repo_found_by_a_channels_scope(clock: Clock)
     write = WriteTools(store, scoped, poster, clock=clock, repos=repos)
     await write.answer(QUESTION, AnswerArgs(text="See acme-co/web#7, acme-co/docs#2, other/x#1."))
     assert poster.plain == [(CH, ROOT, f"{ANSWER_PREFIX} See acme-co/web#7, acme-co/docs#2, .")]
+
+
+@pytest.mark.parametrize(
+    ("text", "posted"),
+    [
+        ("Run it with Node.js", "Run it with Node.js"),
+        ("Edit config.yaml and app.tsx", "Edit config.yaml and app.tsx"),
+        ("see README.md", "see [link removed]"),  # md is Moldova's TLD
+        (
+            "x.py, x.sh, x.rs, x.io and x.ai",
+            "[link removed], [link removed], [link removed], [link removed] and [link removed]",
+        ),
+        ("app.tsx/x", "[link removed]"),  # a path is never kept
+        ("https://evil.example/app.js", "[link removed]"),
+        ("www.app.js", "[link removed]"),
+        ("ops@node.js", "[link removed]"),
+    ],
+)
+def test_a_file_name_stays_but_never_a_tld(text: str, posted: str) -> None:
+    assert safe_text(text, REPOS)[0] == posted
+
+
+def test_no_kept_file_extension_is_a_delegated_tld() -> None:
+    from pathlib import Path
+
+    from jotflow.whiteboard.write_tools import FILE_EXTENSIONS
+
+    # IANA's list as of version 2026102000. Refresh it from
+    # https://data.iana.org/TLD/tlds-alpha-by-domain.txt before adding an extension.
+    lines = (Path(__file__).parent / "data" / "iana_tlds.txt").read_text().splitlines()
+    tlds = {line.strip().lower() for line in lines if line and not line.startswith("#")}
+    assert len(tlds) > 1000
+    assert not FILE_EXTENSIONS & tlds
