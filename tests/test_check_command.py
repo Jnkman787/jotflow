@@ -567,3 +567,14 @@ def test_the_command_preset_has_no_login_to_check(workspace: Path) -> None:
     _agent_folder(workspace)
     _drop_allow(workspace / "agent.env")
     assert check_command.agent_failures(load_policy(workspace / "jotflow.toml"), workspace) == []
+
+
+def test_a_second_approver_without_approvers_is_a_configuration_problem(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # It would do nothing, so a team could believe it needs two people when it doesn't (#244).
+    (workspace / "jotflow.toml").write_text(
+        "[approval]\nrequire_second_approver = true\n" + ONE_CHANNEL
+    )
+    assert main(["check"]) == check_command.EXIT_REFUSED
+    assert "require_second_approver needs [approval] approvers" in capsys.readouterr().err

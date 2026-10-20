@@ -44,7 +44,13 @@ max_concurrent_runs = 2
 [approval]
 # Slack user ids allowed to approve and change channel modes. Empty, the
 # default, lets anyone in the channel approve, including their own proposals.
+# A listed approver may approve their own proposals too, unless
+# require_second_approver is true.
 approvers = []
+# With approvers listed, true refuses an approver who wrote the thread's first
+# message or a message the proposal cites, so every write needs a second
+# person. Off by default. It needs approvers: alone, it's refused.
+require_second_approver = false
 # Whether a reaction on a card counts as approval. Off by default. When on,
 # the reaction runs every check the Approve button does, and approves only a
 # card that shows the current draft in full.

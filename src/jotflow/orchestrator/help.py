@@ -142,6 +142,21 @@ def _capped(items: list[str], limit: int, more: str) -> list[str]:
     return kept
 
 
+def _who_approves(policy: Policy) -> str:
+    approval = policy.approval
+    if not approval.approvers_enabled:
+        return "Anyone in the channel can approve."
+    if approval.require_second_approver:
+        return (
+            "Only the channel's approvers can approve, and never a proposal drawn from their "
+            "own messages."
+        )
+    return (
+        "Only the channel's approvers can approve, including proposals drawn from their "
+        "own messages."
+    )
+
+
 def channel_help(policy: Policy, channel_id: str, mode: ChannelMode) -> str:
     """``/jotflow help`` in one channel: the keywords, its repos, and how approval works."""
     if channel_id not in policy.channels:
@@ -151,11 +166,7 @@ def channel_help(policy: Policy, channel_id: str, mode: ChannelMode) -> str:
     repos = ", ".join(_capped(named, HELP_REPOS_LIMIT, "and {n} more; see /jotflow repos"))
     lines = [help_text(), "", f"This channel feeds: {repos}.", MODE_LINES[mode]]
     if mode is ChannelMode.PROPOSE:
-        lines.append(
-            "Only the channel's approvers can approve."
-            if policy.approval.approvers_enabled
-            else "Anyone in the channel can approve."
-        )
+        lines.append(_who_approves(policy))
     return "\n".join(lines)
 
 

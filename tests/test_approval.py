@@ -46,7 +46,9 @@ CARD_TS = "1760781700.000900"
 ALICE, BOB, CAROL, DAVE = "U0ALICE", "U0BOB", "U0CAROL", "U0DAVE"
 
 
-def policy(approvers: list[str] | None = None, *, reactions: bool = False) -> Policy:
+def policy(
+    approvers: list[str] | None = None, *, reactions: bool = False, second: bool = False
+) -> Policy:
     data: dict[str, Any] = {
         "channels": {
             CH: {"repos": [{"repo": "acme-co/web", "nickname": "web", "description": "Web"}]}
@@ -55,6 +57,8 @@ def policy(approvers: list[str] | None = None, *, reactions: bool = False) -> Po
     }
     if approvers is not None:
         data["approval"]["approvers"] = approvers
+    if second:
+        data["approval"]["require_second_approver"] = True
     return Policy.model_validate(data)
 
 
@@ -108,12 +112,14 @@ class Cards:
 
 
 class Rig:
-    def __init__(self, approvers: list[str] | None = None, *, reactions: bool = False) -> None:
+    def __init__(
+        self, approvers: list[str] | None = None, *, reactions: bool = False, second: bool = False
+    ) -> None:
         self.store = MemoryStore()
         self.slack = Slack()
         self.cards = Cards()
         self.armed: list[tuple[str, str]] = []
-        self._policy = policy(approvers, reactions=reactions)
+        self._policy = policy(approvers, reactions=reactions, second=second)
         self._publisher = CardPublisher(self.store, self.cards)
         self.handler = ApprovalHandler(
             self.store, self._policy, self.slack, refresh=self._refresh, arm_thread=self._arm
@@ -276,7 +282,7 @@ async def test_a_malformed_payload_is_ignored() -> None:
 
 
 async def test_with_approvers_on_only_a_listed_approver_who_wrote_none_of_it_approves() -> None:
-    rig = Rig(approvers=[ALICE, CAROL])
+    rig = Rig(approvers=[ALICE, CAROL], second=True)
     pid = await rig.proposal(participants=[ALICE, CAROL])  # Carol was only mentioned
     good = f"{pid}:{await rig.hash(pid)}"
     assert await rig.handler.on_approve(click(good, user=BOB)) == "refused"
@@ -291,7 +297,7 @@ async def test_the_author_of_a_cited_reply_cannot_approve_either() -> None:
     from jotflow.models import MessageRef
 
     reply = "1760781650.000300"
-    rig = Rig(approvers=[CAROL])
+    rig = Rig(approvers=[CAROL], second=True)
     pid = await rig.proposal(sources=[MessageRef(channel_id=CH, ts=reply, thread_ts=THREAD)])
     rig.slack.written_by[reply] = CAROL
     good = f"{pid}:{await rig.hash(pid)}"
@@ -303,12 +309,12 @@ async def test_the_author_of_a_cited_reply_cannot_approve_either() -> None:
 async def test_authors_that_cannot_be_confirmed_refuse_the_approval() -> None:
     from jotflow.models import MessageRef
 
-    rig = Rig(approvers=[CAROL])
+    rig = Rig(approvers=[CAROL], second=True)
     pid = await rig.proposal(sources=[MessageRef(channel_id=CH, ts="1760781650.000300")])
     good = f"{pid}:{await rig.hash(pid)}"
     assert await rig.handler.on_approve(click(good, user=CAROL)) == "refused"
     assert rig.slack.ephemerals == [(CH, CAROL, AUTHORS_UNKNOWN)]
-    many = Rig(approvers=[CAROL])
+    many = Rig(approvers=[CAROL], second=True)
     refs = [MessageRef(channel_id=CH, ts=f"1760781650.{i:06d}") for i in range(30)]
     pid = await many.proposal(sources=refs)
     good = f"{pid}:{await many.hash(pid)}"
@@ -714,7 +720,7 @@ async def test_real_app_a_stale_hash_approves_nothing_and_refreshes_the_card() -
 async def test_real_app_approvers_on_refuse_a_non_approver_and_a_source_author() -> None:
     from jotflow.models import MessageRef
 
-    rig = Rig(approvers=[ALICE, CAROL])
+    rig = Rig(approvers=[ALICE, CAROL], second=True)
     reply = "1760781650.000300"
     rig.slack.written_by[reply] = CAROL
     pid = await rig.proposal(
@@ -777,13 +783,13 @@ async def test_the_bolt_adapter_skips_a_bots_post_but_not_a_missing_author() -> 
 async def test_real_app_a_thread_rooted_in_a_bot_post_can_be_approved() -> None:
     from jotflow.models import MessageRef
 
-    rig = Rig(approvers=[CAROL])
+    rig = Rig(approvers=[CAROL], second=True)
     rig.slack.written_by[THREAD] = None  # an alert bot started the thread
     pid = await rig.proposal()
     await _press(_real_app(rig), click(f"{pid}:{await rig.hash(pid)}", user=CAROL))
     assert await rig.state(pid) is ProposalState.APPROVED
     # A cited message that has since been deleted still refuses.
-    deleted = Rig(approvers=[CAROL])
+    deleted = Rig(approvers=[CAROL], second=True)
     deleted.slack.written_by[THREAD] = None
     pid = await deleted.proposal(sources=[MessageRef(channel_id=CH, ts="1760781699.000100")])
     await _press(_real_app(deleted), click(f"{pid}:{await deleted.hash(pid)}", user=CAROL))
@@ -900,7 +906,7 @@ async def test_a_draft_too_long_for_the_card_is_not_approved_by_reaction() -> No
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
 async def test_the_reaction_runs_the_approver_author_and_guest_checks() -> None:
-    rig = Rig(approvers=[ALICE, CAROL], reactions=True)
+    rig = Rig(approvers=[ALICE, CAROL], reactions=True, second=True)
     rig.slack.people[DAVE] = Person(DAVE, external=True)
     pid = await rig.proposal()
     await _shown(rig, pid)
@@ -1062,3 +1068,60 @@ async def test_a_select_menus_chosen_value_is_read() -> None:
     assert seen == [f"{pid}:api"]
     body["actions"][0]["selected_option"] = {"value": "x" * 129}
     assert await rig.handler.guarded(body, edit) == "ignored"
+
+
+# A listed approver's own proposal (#244)
+
+
+async def test_by_default_a_listed_approver_approves_their_own_proposal() -> None:
+    rig = Rig(approvers=[ALICE])
+    rig.slack.written_by[THREAD] = ALICE
+    pid = await rig.proposal(participants=[ALICE, BOB])
+    good = f"{pid}:{await rig.hash(pid)}"
+    # The list still holds: a non-approver, even the only other person, is refused.
+    assert await rig.handler.on_approve(click(good, user=BOB)) == "refused"
+    assert rig.slack.ephemerals == [(CH, BOB, NOT_AN_APPROVER)]
+    assert await rig.handler.on_approve(click(good, user=ALICE)) == "approved"
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and record.approved_by == ALICE
+    assert rig.slack.author_lookups == []  # no authorship lookup without the rule
+
+
+async def test_retry_follows_the_same_rule_both_ways() -> None:
+    for second, expected in ((False, "approved"), (True, "refused")):
+        rig = Rig(approvers=[ALICE], second=second)
+        rig.slack.written_by[THREAD] = ALICE
+        pid = await rig.proposal()
+        await _failed(rig, pid)
+        retry = f"{pid}:{await rig.hash(pid)}"
+        assert await rig.handler.on_approve(click(retry, user=ALICE)) == expected
+        if second:
+            assert rig.slack.ephemerals == [(CH, ALICE, OWN_PROPOSAL)]
+            assert await rig.state(pid) is ProposalState.FAILED
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
+async def test_by_default_an_approvers_reaction_approves_their_own_and_others_stay_refused() -> (
+    None
+):
+    rig = Rig(approvers=[ALICE], reactions=True)
+    rig.slack.written_by[THREAD] = ALICE
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    app = _reacting_app(rig)
+    await _react(app, user=BOB, n=1)  # not listed, under the new default too
+    assert [e[2] for e in rig.slack.ephemerals] == [NOT_AN_APPROVER]
+    assert await rig.state(pid) is ProposalState.PENDING
+    await _react(app, user=ALICE, n=2)  # wrote the first message, and is listed
+    assert await rig.state(pid) is ProposalState.APPROVED and await rig.executions() == 1
+
+
+def test_a_second_approver_needs_an_approver_list() -> None:
+    from jotflow.policy import PolicyError, parse_policy
+
+    with pytest.raises(PolicyError, match="require_second_approver needs"):
+        parse_policy(
+            "[approval]\nrequire_second_approver = true\n"
+            '[channels.C0TEST1]\nrepos = [{repo = "acme-co/web", nickname = "web", '
+            'description = "Web"}]\n'
+        )

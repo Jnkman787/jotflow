@@ -8,8 +8,9 @@ Approval guarantees, always:
   the person's own team are this workspace, and guests and external Slack
   Connect users never approve.
 - The click is on the proposal's own card, in the proposal's own channel.
-- With approvers on, only a listed approver may approve, and never someone
-  who wrote one of the messages the proposal was drawn from, as Slack says.
+- With approvers on, only a listed approver may approve. With
+  ``require_second_approver`` too, never someone who wrote one of the
+  messages the proposal was drawn from, as Slack says (#244).
 
 JotFlow runs in Socket Mode, so Slack's request signature has no part here.
 Payloads arrive over the websocket Bolt opens with the app-level token, which
@@ -367,7 +368,11 @@ class ApprovalHandler:
         if approval.approvers_enabled:
             if click.user_id not in approval.approvers:
                 raise Refused(NOT_AN_APPROVER)
-            if click.user_id in await self._source_authors(record):
+            # A listed approver may approve their own proposal unless the team
+            # asks for a second person (#244). Only this clause is optional.
+            if approval.require_second_approver and click.user_id in await self._source_authors(
+                record
+            ):
                 raise Refused(OWN_PROPOSAL)
         if record.state not in (ProposalState.PENDING, ProposalState.FAILED):
             raise Refused(_already(record.state))

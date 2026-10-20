@@ -47,20 +47,22 @@ WEB = {"repo": "acme-co/web", "nickname": "web", "description": "Web"}
 API = {"repo": "acme-co/api", "nickname": "api", "description": "API", "labels": ["bug"]}
 
 
-def policy(approvers: list[str] | None = None) -> Policy:
+def policy(approvers: list[str] | None = None, *, second: bool = False) -> Policy:
     data: dict[str, Any] = {"channels": {CH: {"repos": [WEB, API]}}, "approval": {}}
     if approvers is not None:
         data["approval"]["approvers"] = approvers
+    if second:
+        data["approval"]["require_second_approver"] = True
     return Policy.model_validate(data)
 
 
 class Rig:
-    def __init__(self, approvers: list[str] | None = None) -> None:
+    def __init__(self, approvers: list[str] | None = None, *, second: bool = False) -> None:
         self.store = MemoryStore()
         self.slack = Slack()
         self.cards = Cards()
         self.refreshed: list[str] = []
-        self._policy = policy(approvers)
+        self._policy = policy(approvers, second=second)
         self._publisher = CardPublisher(self.store, self.cards)
         self.handler = ApprovalHandler(self.store, self._policy, self.slack, refresh=self._refresh)
         self.edits = CardEdits(
@@ -341,7 +343,7 @@ async def test_with_approvers_off_any_member_edits() -> None:
 async def test_an_author_approver_may_edit_but_another_approver_must_approve() -> None:
     from jotflow.orchestrator.approval import OWN_PROPOSAL
 
-    rig = Rig(approvers=[ALICE, "U0CAROL"])
+    rig = Rig(approvers=[ALICE, "U0CAROL"], second=True)
     await rig.proposal()
     old = content_hash(await rig.draft())
     app = rig.app()
@@ -359,6 +361,18 @@ async def test_an_author_approver_may_edit_but_another_approver_must_approve() -
     record = await rig.store.get_proposal(PID)
     assert record is not None and record.state is ProposalState.APPROVED
     assert record.approved_by == "U0CAROL" and record.proposal.repo == "acme-co/api"
+
+
+async def test_by_default_an_author_approver_may_edit_and_then_approve_alone() -> None:
+    # The trade-off the threat model records (#244): one approver, acting alone.
+    rig = Rig(approvers=[ALICE])
+    await rig.proposal()
+    app = rig.app()
+    await click(app, body(ACTION_REPO, f"{PID}:api", user=ALICE))
+    await click(app, body(ACTION_APPROVE, f"{PID}:{content_hash(await rig.draft())}", user=ALICE))
+    record = await rig.store.get_proposal(PID)
+    assert record is not None and record.state is ProposalState.APPROVED
+    assert record.approved_by == ALICE and record.proposal.repo == "acme-co/api"
 
 
 async def test_a_nickname_the_channel_does_not_list_is_refused() -> None:

@@ -269,7 +269,10 @@ The mode applies uniformly to creation, description edits, comments, assignment,
 | Setting | Approve | Change mode | Self-approval |
 |---|---|---|---|
 | Approvers off (default) | Anyone in the channel | Anyone in the channel | Allowed |
-| Approvers on | Listed approvers | Listed approvers | Not allowed |
+| Approvers on | Listed approvers | Listed approvers | Allowed, for a listed approver |
+| Approvers on, with `require_second_approver = true` | Listed approvers | Listed approvers | Not allowed |
+
+`require_second_approver` needs an approver list: on its own it would do nothing, so the policy refuses it (#244).
 
 Every mode change is announced in the channel. Approval by reaction is off by default and can be turned on.
 
@@ -282,7 +285,7 @@ Every mode change is announced in the channel. Approval by reaction is off by de
 1. The payload's team, and the person's own team, are this workspace.
 2. The person is not a guest and not an external Slack Connect user.
 3. The proposal exists in the card's channel, and the clicked message is its stored card.
-4. With approvers on, the person is a listed approver. For Approve or Retry, they must also not have written the thread's first message or any message the proposal cites, as Slack reports them at the moment of the click. Someone who was only mentioned may approve. If Slack can't confirm an author, the approval is refused.
+4. With approvers on, the person is a listed approver. With `require_second_approver` too, for Approve or Retry they must also not have written the thread's first message or any message the proposal cites, as Slack reports them at the moment of the click. Someone who was only mentioned may approve. If Slack can't confirm an author, the approval is refused.
 5. Approve and Retry lock the content hash the button carries. A stale card approves nothing and is redrawn.
 
 An approval records who and when, queues one execution run, and redraws the card. A failed card offers **Retry**, which approves again and starts a fresh count of execution attempts (#30), and **Discard**, which clears the draft, after which Retry is refused.

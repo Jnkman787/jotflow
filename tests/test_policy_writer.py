@@ -38,7 +38,11 @@ def test_every_setting_round_trips() -> None:
         issue_links="none",
         debounce_seconds=30,
         agent={"preset": "claude-code"},
-        approval={"approvers": ["U0AAA", "U0BBB"], "reactions": True},
+        approval={
+            "approvers": ["U0AAA", "U0BBB"],
+            "require_second_approver": True,
+            "reactions": True,
+        },
         channels={
             "G0PRIV": {
                 "debounce_seconds": 5,
@@ -133,6 +137,15 @@ def test_help_settings_round_trip_and_only_the_overriding_channel_gets_a_table()
     assert parse_policy(text) == policy
     assert "near_miss_nudge = false" in text
     assert "[channels.C0TWO1.help]" in text and "[channels.C0ONE1.help]" not in text
+
+
+def test_a_second_approver_survives_a_rewrite() -> None:
+    # Setup rewrites jotflow.toml when channels change; the setting must stay (#244).
+    policy = _policy(approval={"approvers": ["U0AAA"], "require_second_approver": True})
+    text = render_policy(policy)
+    assert "require_second_approver = true" in text
+    assert parse_policy(text).approval.require_second_approver is True
+    assert "require_second_approver = false" in render_policy(_policy())
 
 
 def test_a_custom_approval_reaction_round_trips() -> None:
