@@ -58,7 +58,7 @@ eval-execute: ## Claude Code executing every fixture's proposals; costs model to
 	uv run jotflow replay --all --agent claude-code --execute $(if $(YES),--yes,)
 
 templates: ## Copy the deployment files into the package, for jotflow init outside a checkout
-	cp docker/docker-compose.yml docker/docker-compose.policy.yml \
+	cp docker/docker-compose.yml docker/docker-compose.policy.yml docker/docker-compose.isolation.yml \
 		examples/agent.env.example examples/agent-exec.env.example src/jotflow/templates/
 
 manifest: ## Regenerate manifests/slack-app.json from the renderer

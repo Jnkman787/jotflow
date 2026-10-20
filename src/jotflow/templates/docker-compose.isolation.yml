@@ -1,0 +1,40 @@
+# Per-run uids for the agent containers (#181), opt-in.
+#
+# Each run's agent then runs as its own unprivileged uid, so runs of one kind
+# can't read each other's environment, run directory or MCP config, or the
+# runner's, which holds the GitHub token and the runner secret.
+#
+# To turn it on:
+#   1. In agent.env and agent-exec.env, set JOTFLOW_RUNNER_ISOLATION=uid, and give
+#      the agent an API key (ANTHROPIC_API_KEY, or CODEX_API_KEY for codex), listed
+#      in JOTFLOW_AGENT_ENV_ALLOW. A CLI login kept in the agent's home can't be
+#      used: each run gets its own home.
+#   2. Add this file to COMPOSE_FILE in .env, after docker-compose.yml, for
+#      example COMPOSE_FILE=docker-compose.yml:docker-compose.policy.yml:docker-compose.isolation.yml
+#
+# The runner then starts as root with only the SETUID and SETGID capabilities:
+# no other capability, a read-only root, no-new-privileges and the default
+# seccomp all stay. It checks this at startup and refuses to start otherwise,
+# and each run drops to a pool uid with no capabilities at all. /tmp becomes the
+# runner's own directory, so runs can't leave files there for each other.
+
+services:
+  agent:
+    user: "0:0"
+    # A tiny init as PID 1 reaps a run's orphaned processes once the sweep ends them.
+    init: true
+    cap_add:
+      - SETUID
+      - SETGID
+    tmpfs: !override
+      - /tmp:mode=0711
+
+  agent-exec:
+    user: "0:0"
+    # A tiny init as PID 1 reaps a run's orphaned processes once the sweep ends them.
+    init: true
+    cap_add:
+      - SETUID
+      - SETGID
+    tmpfs: !override
+      - /tmp:mode=0711

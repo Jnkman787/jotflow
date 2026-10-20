@@ -51,6 +51,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from jotflow.adapters import github_proof
+from jotflow.adapters import isolation as isolation_mod
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
     GITHUB_TOKEN_CHARS,
@@ -156,6 +157,9 @@ class RunnerConfig:
     # Hand the agent an MCP URL whose host resolves to a public address (#234). Off:
     # the run token goes only to a private, loopback or link-local address.
     mcp_allow_public: bool = False
+    # Per-run uids (#181): "none", the default, or "uid", which needs the runner to
+    # start as root with only SETUID and SETGID (docker-compose.isolation.yml).
+    isolation: isolation_mod.Mode = "none"
 
     def __post_init__(self) -> None:
         if len(self.secret) < 32:
@@ -277,6 +281,7 @@ def child_env(
     *,
     extra: Mapping[str, str] | None = None,
     github_token_env: bool = True,
+    home: Path | None = None,
 ) -> dict[str, str]:
     """The agent's whole environment. Only what is named here, from ``environ``,
     plus a preset's ``extra``, which never sets a base or allowlisted name, nor
@@ -296,9 +301,10 @@ def child_env(
     env.update(
         {
             # HOME stays the agent user's own, where the CLI keeps its model login;
-            # only scratch files go to the run's private directory.
-            "HOME": environ.get("HOME", str(run_dir)),
-            "TMPDIR": str(run_dir),
+            # only scratch files go to the run's private directory. With per-run uids
+            # (#181), the run gets its own home and scratch space there too.
+            "HOME": str(home) if home is not None else environ.get("HOME", str(run_dir)),
+            "TMPDIR": str(run_dir / "tmp") if home is not None else str(run_dir),
             "JOTFLOW_RUN_ID": run_id,
             "JOTFLOW_RUN_KIND": kind.value,
             "JOTFLOW_MCP_CONFIG": str(run_dir / "mcp.json"),
@@ -363,6 +369,8 @@ class _Run:
     process: asyncio.subprocess.Process | None = None
     task: asyncio.Task[None] | None = None
     stop: asyncio.Event = field(default_factory=asyncio.Event)
+    # The run's own uid, with JOTFLOW_RUNNER_ISOLATION=uid (#181).
+    user: isolation_mod.RunUser | None = None
 
     def view(self) -> dict[str, Any]:
         return {"run_id": self.run_id, "state": self.state.value, "exit_code": self.exit_code}
@@ -389,6 +397,8 @@ class Runner:
         self._limit = limit
         self._kill_grace = kill_grace
         self._runs: dict[str, _Run] = {}
+        # Per-run uids (#181): the pool, when the runner is set to use one.
+        self._pool = isolation_mod.UidPool() if config.isolation == "uid" else None
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         run = self._runs.get(run_id)
@@ -419,7 +429,12 @@ class Runner:
             raise LaunchRefused(409, f"run {request.run_id} was already launched")
         if self.live() >= self._config.live_limit:
             raise LaunchRefused(429, "the runner is at its limit of live runs")
-        run = _Run(request.run_id, request.kind)
+        user = None
+        if self._pool is not None:
+            user = self._pool.acquire()
+            if user is None:
+                raise LaunchRefused(429, "the runner has no free run uid")
+        run = _Run(request.run_id, request.kind, user=user)
         self._runs[request.run_id] = run
         # Keep finished runs from growing without bound.
         for old in [r for r in self._runs.values() if r.state not in LIVE][
@@ -464,7 +479,14 @@ class Runner:
 
     async def _run(self, run: _Run, token: str) -> None:
         run_dir = Path(tempfile.mkdtemp(prefix=DIR_PREFIX, dir=self._config.workdir))
+        user = run.user
+        home: Path | None = None
         try:
+            if user is not None:
+                # The run's own home and scratch space, inside its directory (#181).
+                home = run_dir / "home"
+                home.mkdir(mode=0o700)
+                (run_dir / "tmp").mkdir(mode=0o700)
             config_path = run_dir / "mcp.json"
             github_token = self._config.github_token(run.kind)
             if github_token is None:  # pragma: no cover - launch refuses this first
@@ -487,6 +509,8 @@ class Runner:
                 json.dump(plan.config, handle)
             for relative, text in plan.files.items():
                 write_private(run_dir, relative, text)
+            if user is not None:
+                isolation_mod.share_tree(run_dir, user)
             env = child_env(
                 self._config,
                 run.kind,
@@ -495,7 +519,9 @@ class Runner:
                 self._environ,
                 extra=plan.env,
                 github_token_env=plan.github_token_env,
+                home=home,
             )
+            options = {} if user is None else isolation_mod.spawn_options(user)
             try:
                 run.process = await asyncio.create_subprocess_exec(
                     *plan.argv,
@@ -505,15 +531,30 @@ class Runner:
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                     start_new_session=True,
+                    **options,  # type: ignore[arg-type]
                 )
             except OSError as exc:
                 run.state = RunState.FAILED
                 log.error("run %s could not start the agent (%s)", run.run_id, type(exc).__name__)
                 return
+            if user is not None and not isolation_mod.check_child(run.process.pid, user):
+                # Fail closed: the drop didn't take (#181).
+                log.error("run %s didn't drop to its own uid with no capabilities", run.run_id)
+                run.state = RunState.FAILED
+                await isolation_mod.kill_all(user)
+                with contextlib.suppress(ProcessLookupError):
+                    run.process.kill()
+                await run.process.wait()
+                return
             run.state = RunState.RUNNING
             await self._watch(run)
         finally:
+            clean = True
+            if user is not None:
+                clean = await isolation_mod.sweep(user, run_dir)
             shutil.rmtree(run_dir, ignore_errors=True)
+            if user is not None and self._pool is not None:
+                self._pool.release(user, clean=clean and not run_dir.exists())
             log.info("run %s ended (%s)", run.run_id, run.state.value)
 
     async def _watch(self, run: _Run) -> None:
@@ -531,7 +572,11 @@ class Runner:
             run.state = RunState.EXITED
             return
         run.state = RunState.KILLED if stopping in done else RunState.TIMED_OUT
-        await self._kill(process)
+        if run.user is not None:
+            # The runner can't signal another uid: a helper as the run's uid does (#181).
+            await isolation_mod.kill_all(run.user)
+        else:
+            await self._kill(process)
         run.exit_code = await waiting
 
     async def _kill(self, process: asyncio.subprocess.Process) -> None:

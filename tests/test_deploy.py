@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKOUT = {
     deploy.COMPOSE: ROOT / "docker" / deploy.COMPOSE,
     deploy.COMPOSE_POLICY: ROOT / "docker" / deploy.COMPOSE_POLICY,
+    deploy.COMPOSE_ISOLATION: ROOT / "docker" / deploy.COMPOSE_ISOLATION,
     **{name: ROOT / "examples" / name for name in deploy.AGENT_EXAMPLES},
 }
 

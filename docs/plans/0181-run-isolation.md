@@ -5,7 +5,7 @@
 - Issue: #181, in M6
 - Also serves: #54 (the agent containers) and #172 (Codex, a preset whose built-ins we can't remove)
 - Builds on: the architect's earlier draft in #200, closed without merging, with security's input folded in
-- Status: planning. Decisions 1 to 4, 6 and 7 are approved by the lead. Decision 5 follows the lead's opt-in shape, with Compose option (b) approved. It waits only on the maintainer confirming opt-in over default. No code until the lead confirms.
+- Status: planning. Decisions 1 to 4, 6 and 7 are approved by the lead. All decisions approved, with the maintainer choosing opt-in. Implemented; ready for review.
 - Last verified: a throwaway spike in the pinned `python:3.14-slim-trixie` base on 2026-10-20, under Compose's hardening: a read-only root, `cap_drop: ALL`, `no-new-privileges`, and Docker's default seccomp. Results are under Validation.
 
 These are Linux user ids inside the agent containers, not GitHub or Slack accounts.
@@ -26,14 +26,14 @@ Today it's accepted. The claude-code preset has no file or shell tools, Codex re
 
 From the issue, refined:
 
-- [ ] **A test in the agent image,** in the cross-container CI job, shows that a run can't read:
+- [x] **A test in the agent image,** in the cross-container CI job, shows that a run can't read:
   - another live run's `/proc/<pid>/environ`, run directory or MCP config;
   - the runner's `/proc/<pid>/environ`, or its secret or GitHub token by any path a run can reach.
-- [ ] **A run can't start another run,** because it never sees the runner secret.
-- [ ] **Isolation is opt-in for now:** `JOTFLOW_RUNNER_ISOLATION=uid` in an agent env file turns it on for that service. Off by default, today's single-uid behaviour is unchanged, so a CLI login kept in `agent-home` keeps working.
-- [ ] **With isolation on, model logins work with an API key in the environment.** A CLI login kept in the home is refused at runner startup, with a reason naming the setting.
-- [ ] **The container stays hardened:** a read-only root, `no-new-privileges`, and only the two capabilities this design needs, named and justified.
-- [ ] **docs/threat-model.md** narrows the "Runs of the same kind can read each other's environment" row to what's left.
+- [x] **A run can't start another run,** because it never sees the runner secret.
+- [x] **Isolation is opt-in for now:** `JOTFLOW_RUNNER_ISOLATION=uid` in an agent env file turns it on for that service. Off by default, today's single-uid behaviour is unchanged, so a CLI login kept in `agent-home` keeps working.
+- [x] **With isolation on, model logins work with an API key in the environment.** A CLI login kept in the home is refused at runner startup, with a reason naming the setting.
+- [x] **The container stays hardened:** a read-only root, `no-new-privileges`, and only the two capabilities this design needs, named and justified.
+- [x] **docs/threat-model.md** narrows the "Runs of the same kind can read each other's environment" row to what's left.
 
 **Out of scope:** network separation between runs of one kind, and the drafting/execution split, which stays as it is.
 
@@ -105,12 +105,12 @@ From the issue, refined:
 
 ## Progress checklist
 
-- [ ] The lead approves the decisions
-- [ ] The image and Compose changes
-- [ ] The runner: `JOTFLOW_RUNNER_ISOLATION` (`none` or `uid`), the startup drop in `none` mode, and in `uid` mode the pool, group-owned directories, the drop, the same-uid stop helper, the sweep, the API-key requirement, and the fail-closed checks
-- [ ] Unit tests for the pool and sweep, and the cross-container test above
-- [ ] Docs and the threat model
-- [ ] `make check` and the agent-image CI pass
+- [x] The lead approves the decisions
+- [x] The image and Compose changes
+- [x] The runner: `JOTFLOW_RUNNER_ISOLATION` (`none` or `uid`), the startup drop in `none` mode, and in `uid` mode the pool, group-owned directories, the drop, the same-uid stop helper, the sweep, the API-key requirement, and the fail-closed checks
+- [x] Unit tests for the pool and sweep, and the cross-container test above
+- [x] Docs and the threat model
+- [x] `make check` and the agent-image CI pass
 
 ## Validation
 
@@ -124,3 +124,15 @@ The spike, on 2026-10-20, in the pinned base image with `--read-only --cap-drop 
 | Uid 20001 reads its own run A's environ | Readable, which is why a uid is never shared between live runs |
 | Runner `kill()`s its own child running as 20001 | EPERM without CAP_KILL, which is why decision 3 exists |
 | A helper as uid 20001 calls `kill(-1, SIGKILL)` | Run A and its daemonized, `setsid` grandchild are both gone. The runner then reaps A, which exits -9. |
+
+## Implementation notes
+
+- The runner joins every run group with `setgroups` at startup: Docker doesn't load supplementary groups for `user: "0:0"`, and chgrp to a group the runner isn't in would need CAP_CHOWN. A spike confirmed `setgroups` plus chgrp works with only SETUID and SETGID.
+- The runner can't remove what a run created inside its directory, since that needs DAC_OVERRIDE. So the end-of-run helper, running as the run's uid, empties the directory first. At startup, the same helper sweeps stale run directories.
+- `init: true` in the override puts a tiny init at PID 1. Without it, the runner, as PID 1, never reaped a run's orphaned processes, and the cross-container check found their zombies.
+- tests/compose/isolation_check.sh runs two concurrent stand-in runs in CI. Each asserts:
+  - it runs as a pool uid, with CapEff, CapPrm and CapAmb all 0 and NoNewPrivs on;
+  - it can't read the peer run's or the runner's `/proc/<pid>/environ`, or the peer's directory;
+  - it can't list or write `/tmp`.
+
+  It then asserts nothing of a pool uid is left, and that the runner refuses `uid` mode without the override.
