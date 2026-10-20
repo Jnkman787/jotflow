@@ -4,7 +4,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ## [0.1.1] - 2026-10-19
 
-A fix release. Upgrade by re-running setup with this version and replacing both Compose files when it asks: the DNS fix is in the Compose files, so changing only the image version in `.env` misses it.
+A fix release. Upgrade by re-running setup with this version and replacing both Compose files when it asks: the DNS fix is in the Compose files, so changing only the image version in `.env` misses it. If `.env` sets `JOTFLOW_IMAGE_REF` or `JOTFLOW_AGENT_IMAGE_REF`, change both to 0.1.1 or remove them, since they override the Compose files' pins.
 
 ### Security
 
@@ -18,7 +18,7 @@ A fix release. Upgrade by re-running setup with this version and replacing both 
 
 - **Setup and `jotflow check` catch a model key the runner never passes (#239).** An agent env file kept from before setup ran could set `ANTHROPIC_API_KEY` without listing it in `JOTFLOW_AGENT_ENV_ALLOW`, so every run failed to sign in, and `check` still passed. Setup now adds the key to that line and says so. `check` fails, naming the file and the line to set. A Claude account login with no key is left alone.
 - **The "Agent model" prompt shows its default,** as `[default]` or the model already set, like setup's other prompts (#239).
-- **`/jotflow help` and `/jotflow repos` fit Slack's limits with many repos or long repo names (#231).** Both now reply in plain-text blocks of at most 3,000 characters, so nothing in them can ping or link. Help lists repos up to a length, then says how many more `/jotflow repos` shows. `/jotflow repos` lists every repo (#237, #238).
+- **`/jotflow help` and `/jotflow repos` fit Slack's limits with many repos or long repo names (#231).** Both now reply in plain-text blocks of at most 3,000 characters, so nothing in them can ping or link. Help lists repos up to a length, then says how many more `/jotflow repos` shows. `/jotflow repos` lists every repo, up to Slack's message limit (#237, #238).
 
 ## [0.1.0] - 2026-10-19
 
