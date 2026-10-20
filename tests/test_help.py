@@ -159,14 +159,26 @@ class FakeApp:
         return register
 
 
+async def _reply(app: FakeApp, channel: str, text: str = "help") -> dict[str, Any]:
+    """What /jotflow sent back: its text and blocks."""
+    replies: list[dict[str, Any]] = []
+
+    async def ack(**reply: Any) -> None:
+        replies.append(reply)
+
+    await app.commands[SLASH_COMMAND](ack=ack, command={"text": text, "channel_id": channel})
+    [reply] = replies
+    return reply
+
+
 async def _ask(app: FakeApp, channel: str) -> str:
-    answers: list[str] = []
-
-    async def ack(answer: str) -> None:
-        answers.append(answer)
-
-    await app.commands[SLASH_COMMAND](ack=ack, command={"text": "help", "channel_id": channel})
-    return answers[0]
+    reply = await _reply(app, channel)
+    # Every word reaches Slack as plain_text, so nothing can ping or link (#231).
+    shown = "\n".join(block["text"]["text"] for block in reply["blocks"])
+    assert shown == reply["text"]
+    assert all(block["text"]["type"] == "plain_text" for block in reply["blocks"])
+    text: str = reply["text"]
+    return text
 
 
 async def test_the_slash_command_answers_for_its_channel() -> None:
@@ -389,13 +401,9 @@ def test_changing_repos_says_how_and_changes_nothing(argument: str) -> None:
 async def test_the_slash_command_routes_repos() -> None:
     app = FakeApp()
     register_commands(cast(Any, app), policy())
-    answers: list[str] = []
-
-    async def ack(answer: str) -> None:
-        answers.append(answer)
-
-    await app.commands[SLASH_COMMAND](ack=ack, command={"text": "repos", "channel_id": CH})
-    assert answers[0].startswith("This channel feeds:")
+    reply = await _reply(app, CH, "repos")
+    assert reply["text"].startswith("This channel feeds:")
+    assert reply["blocks"][0]["text"]["type"] == "plain_text"
 
 
 def test_help_for_a_paused_channel_says_a_running_write_may_finish() -> None:
@@ -404,4 +412,78 @@ def test_help_for_a_paused_channel_says_a_running_write_may_finish() -> None:
     assert text == (
         "JotFlow is paused here: it starts nothing new and posts nothing. "
         "A run already in progress may finish."
+    )
+
+
+# --- many repos: within Slack's limits (#231) -----------------------------------------
+
+
+def _many_repos(count: int) -> Policy:
+    """A channel with ``count`` repos, every field at its longest."""
+    repos = [
+        {
+            "repo": f"{'o' * 36}{i:03d}/{'n' * 97}{i:03d}",
+            "nickname": f"{'k' * 29}{i:03d}",
+            "description": f"{('Covers a long description. ' * 8)[:197]}{i:03d}",
+        }
+        for i in range(count)
+    ]
+    return Policy.model_validate({"channels": {CH: {"repos": repos}}})
+
+
+def _fits(reply: dict[str, Any]) -> None:
+    assert 1 <= len(reply["blocks"]) <= 50
+    for block in reply["blocks"]:
+        assert block["type"] == "section" and block["text"]["type"] == "plain_text"
+        assert 1 <= len(block["text"]["text"]) <= 3000
+    assert len(reply["text"]) <= 40_000
+    assert "\n".join(b["text"]["text"] for b in reply["blocks"]) == reply["text"]
+
+
+@pytest.mark.parametrize("count", [25, 120])
+async def test_help_with_many_long_repos_fits_and_points_to_repos(count: int) -> None:
+    many = _many_repos(count)
+    assert len(many.channels[CH].repos[0].description) == 200
+    app = FakeApp()
+    register_commands(cast(Any, app), many)
+    reply = await _reply(app, CH)
+    _fits(reply)
+    [line] = [x for x in reply["text"].splitlines() if x.startswith("This channel feeds:")]
+    shown = sum(f"k{i:03d} (" in line for i in range(count))
+    assert 0 < shown < count
+    assert line.endswith(f"and {count - shown} more; see /jotflow repos.")
+
+
+async def test_repos_with_25_long_repos_lists_every_one_across_blocks() -> None:
+    app = FakeApp()
+    register_commands(cast(Any, app), _many_repos(25))
+    reply = await _reply(app, CH, "repos")
+    _fits(reply)
+    assert len(reply["blocks"]) > 1
+    assert all(f"k{i:03d}: o" in reply["text"] for i in range(25))
+    assert "more; jotflow.toml lists them all" not in reply["text"]
+    # Each repo's line stays whole inside one block.
+    for block in reply["blocks"]:
+        for line in block["text"]["text"].splitlines()[1:]:
+            assert line.startswith("  k") and line.endswith(tuple(f"{i:03d}" for i in range(25)))
+
+
+async def test_repos_past_slacks_limits_says_how_many_more() -> None:
+    app = FakeApp()
+    register_commands(cast(Any, app), _many_repos(400))
+    reply = await _reply(app, CH, "repos")
+    _fits(reply)
+    shown = sum(f"k{i:03d}: o" in reply["text"] for i in range(400))
+    assert reply["text"].endswith(f"and {400 - shown} more; jotflow.toml lists them all.")
+
+
+def test_a_line_longer_than_a_section_splits_at_a_space() -> None:
+    from jotflow.orchestrator.help import plain_sections
+
+    words = " ".join(["word"] * 1000)  # 4,999 characters
+    blocks = plain_sections(f"first\n{words}\n{'x' * 3500}")
+    texts = [b["text"]["text"] for b in blocks]
+    assert all(len(t) <= 3000 for t in texts)
+    assert "".join(texts).replace("\n", "").replace(" ", "") == (
+        "first" + "word" * 1000 + "x" * 3500
     )

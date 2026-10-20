@@ -3,10 +3,10 @@
 ## Links and status
 
 - Issue: #231
-- Draft PR: to be opened with this plan
-- Status: implementing
-- Last verified: origin/main 4edb2c7, 2026-10-19
-- Next safe action: build `plain_sections` in `orchestrator/help.py`
+- Draft PR: #237
+- Status: ready for review
+- Last verified: `make check`, 2026-10-19
+- Next safe action: review
 
 ## Objective and done-when
 
@@ -14,10 +14,10 @@ A channel has no repo limit, and a real deployment is about to configure 25 repo
 
 Done when:
 
-- [ ] `/jotflow help` and `/jotflow repos` reply in `plain_text` section blocks, and no block exceeds 3,000 characters.
-- [ ] Help's repo line is capped, and ends "and N more; see /jotflow repos" when it's cut.
-- [ ] `/jotflow repos` lists every repo, split across blocks. Past Slack's limits, it ends with how many more repos `jotflow.toml` holds.
-- [ ] A test covers 25 or more repos at the maximum field lengths, for both replies.
+- [x] `/jotflow help` and `/jotflow repos` reply in `plain_text` section blocks, and no block exceeds 3,000 characters.
+- [x] Help's repo line is capped, and ends "and N more; see /jotflow repos" when it's cut.
+- [x] `/jotflow repos` lists every repo, split across blocks. Past Slack's limits, it ends with how many more repos `jotflow.toml` holds.
+- [x] A test covers 25 or more repos at the maximum field lengths, for both replies.
 
 **Out of scope:** the mode, link and other slash replies, whose text is short and fixed.
 
@@ -40,12 +40,21 @@ Done when:
 ## Progress checklist
 
 - [x] Confirm the issue is ready
-- [ ] Commit this plan and open the draft PR
-- [ ] `plain_sections`, the two budgets, and the block replies
-- [ ] Tests with 25 or more maximum-length repos
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] Commit this plan and open the draft PR
+- [x] `plain_sections`, the two budgets, and the block replies
+- [x] Tests with 25 or more maximum-length repos
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
+
+`make check` passes. Measured with 25 repos at every field's maximum length:
+
+| Reply | Characters | Blocks | Largest block |
+| --- | --- | --- | --- |
+| `/jotflow help` | 1,832 | 1 | 1,832 |
+| `/jotflow repos` | 9,494 | 4 | 2,672 |
+
+Before this change, help's single "This channel feeds:" line alone was 4,444 characters for the same channel. Tests cover help at 25 and 120 repos, `/jotflow repos` at 25 and 400, and a line too long for one section.
 
 ## Handoff notes
