@@ -59,7 +59,12 @@ JotFlow holds no GitHub token, and that doesn't change.
 - **Visibility to the token is a second boundary.** A fine-grained read token with "Only select repositories" makes discovery see only those, which install.md already recommends. With an all-repositories token, the scope is the only boundary, and the docs will say so.
 - **The packet's `channel.repos`** carries the static repos, then up to 30 discovered repos, ranked, plus `scope_total`, the number of repos in scope. Each discovered entry gives `repo`, `nickname`, `description` and `topics`, all as `UntrustedText`, because anyone with admin rights on a repo can write them. It also gives `pushed_at` and `discovered: true`.
 - **Descriptions are cleaned and capped like other GitHub text.** The agent picks a repo by its description, and a discovered one comes from GitHub, not the policy. So:
-  - **Cleaned** with the same `clean_untrusted` the packet uses for issue text from GitHub. Control, bidi and invisible characters go, as do Slack markup and links. Topics are kept only if they're plain `[a-z0-9-]`.
+  - **Cleaned** with the pipeline topic titles already use, `clean_title` in store/titles.py, generalised to take a length:
+    - entities unescaped until stable, then NFKC
+    - control, bidi and invisible characters dropped
+    - Slack tokens, URLs, bare hosts, @-mentions and markup removed
+
+    Topics are kept only if they're plain `[a-z0-9-]`.
   - **Capped** at 200 characters, the static description's limit, with at most 10 topics.
   - **A scope default:** `description = "…"` on a scope, admin-written like a static description, is shown as the policy's text. The GitHub description follows it, marked untrusted. The agent then sees the team's own words first. A repo with neither shows only its name and topics.
   - **In Slack,** `/jotflow repos` and the card show the cleaned description through help_blocks' escaping.
