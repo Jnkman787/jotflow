@@ -1,6 +1,6 @@
 [project]
 name = "jotflow"
-version = "0.1.1"
+version = "0.2.0"
 description = "Turn team chat into GitHub issues. A self-hosted, agent-agnostic bridge from a shared Slack channel to your repos, with a human approval gate."
 readme = "README.md"
 license = "Apache-2.0"

@@ -2,7 +2,9 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-20
+
+A minor release, because it changes who may approve in channels with an approver list. Upgrading only needs the new image version: the Compose files and the Slack app are unchanged since 0.1.1. If you roll back to 0.1.1, remove `require_second_approver` from `jotflow.toml` first, because 0.1.1 refuses keys it doesn't know.
 
 ### Changed
 
@@ -89,5 +91,6 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
+[0.2.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.0
