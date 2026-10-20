@@ -13,6 +13,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
   - Setup keeps both settings when it rewrites `jotflow.toml`.
   - Before rolling back to 0.3.0 or earlier, remove both settings, because older versions refuse keys they don't know.
 - **`jotflow rebuild`** restores topics, message links, channel modes and the guide flag from JotFlow's own Slack replies, after the database is lost without a backup. It stores pointers only, never message text, and doesn't touch GitHub. [docs/deployment.md](docs/deployment.md#rebuild-from-slack-without-a-backup) lists what it can't restore (#38).
+- **Related issues on the card, and Same as (#36).** The card lists up to three issues the agent found close to the idea, marking each open or closed as the agent's claim. **Same as** links the conversation to the first one instead of writing a new issue, under Approve's rules for who may click. **Not a duplicate** takes it back and drafts again. The store gains migration 14, with pointers and Slack ids only.
 
 ### Changed
 

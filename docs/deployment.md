@@ -110,7 +110,7 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 - `--dry-run` reads Slack and prints what it would restore, writing nothing.
 - `--since 90d` reads only the last 90 days. The default is all history. A mode set before that window isn't seen, so the channel falls back to `propose`, and rebuild says to check it with `/jotflow mode`.
 - `--channel C0IDEAS01` rebuilds one channel, and can be repeated.
-- `--no-lock` skips the check that JotFlow isn't running, for a filesystem that can't lock. Stop JotFlow yourself first.
+- `--no-lock` lets rebuild run without the check that JotFlow isn't running, but only on a filesystem that can't lock. Stop JotFlow yourself first. Where locking works, a running JotFlow is still refused.
 - `--merge` adds to a store that already has topics, never overwriting what's there. Without it, rebuild refuses a store with topics in a configured channel.
 
 **What it can't restore.** These are by design:
@@ -124,7 +124,7 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 
 **One writer at a time.** `jotflow run` holds a lock on the database, a `jotflow.db.lock` file next to it, for as long as it runs. Rebuild takes the same lock, so it refuses with "another JotFlow process is using the database" while JotFlow is running, and a second JotFlow refuses to start during a rebuild. Both containers share the data volume, so each sees the other's lock. The lock goes away when the process exits, even after a crash.
 
-Some filesystems can't lock, such as some network mounts and Docker Desktop's file sharing. There, `jotflow run` logs "the database's filesystem doesn't support locking" once and runs unlocked, as before the lock existed. Rebuild refuses instead. Stop JotFlow yourself, then rerun with `--no-lock`, which skips the safety check.
+Some filesystems can't lock, such as some network mounts and Docker Desktop's file sharing. There, `jotflow run` logs "the database's filesystem doesn't support locking" once and runs unlocked, as before the lock existed. Rebuild refuses instead. Stop JotFlow yourself, then rerun with `--no-lock`, which runs without the safety check there and says so.
 
 Rebuild also skips a JotFlow reply for a repo that's no longer in `jotflow.toml`, and counts it in the summary.
 

@@ -171,6 +171,27 @@ REPO_VISIBILITY_DESCRIPTION = (
 )
 
 
+MAX_RELATED = 3
+RELATED_DESCRIPTION = (
+    "Up to 3 existing issues your search found that are close to this idea but not the same, "
+    "most similar first. Only issues in this channel's repos; JotFlow drops any other. If one "
+    "is the same idea, ask in the thread instead of proposing"
+)
+
+
+class RelatedIssue(BaseModel):
+    """An issue the drafting agent found close to the idea (#36). A pointer only: no title."""
+
+    # Nothing else rides along: no title, no note, nothing free-text to reach the card.
+    model_config = ConfigDict(extra="forbid")
+
+    repo: RepoName
+    number: int = Field(ge=1, le=10**9)
+    state: Literal["open", "closed"] = Field(
+        description="As the agent's search reported it. JotFlow can't check it, and says so"
+    )
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -200,6 +221,11 @@ class IssueProposal(BaseModel):
     _hint_overruled = field_validator("hint_overruled")(_safe_hint)
     repo_visibility: RepoVisibility | None = Field(
         default=None, description=REPO_VISIBILITY_DESCRIPTION
+    )
+    related: list[RelatedIssue] = Field(
+        default_factory=list,
+        max_length=MAX_RELATED,
+        description=RELATED_DESCRIPTION,
     )
 
 
@@ -234,6 +260,11 @@ class UpdateProposal(BaseModel):
     _hint_overruled = field_validator("hint_overruled")(_safe_hint)
     repo_visibility: RepoVisibility | None = Field(
         default=None, description=REPO_VISIBILITY_DESCRIPTION
+    )
+    related: list[RelatedIssue] = Field(
+        default_factory=list,
+        max_length=MAX_RELATED,
+        description=RELATED_DESCRIPTION,
     )
 
 
@@ -296,6 +327,21 @@ class ExecutionResult(BaseModel):
         return int(match["number"]) == proposal.issue_number
 
 
+class Duplicate(BaseModel):
+    """A "same as" on a proposal (#36): pointers and Slack ids only.
+
+    The proposal is ``rejected``, and its topic was bound to this issue. An undo
+    unbinds it again; the record stays, with who undid it.
+    """
+
+    repo: RepoName
+    number: int = Field(ge=1)
+    by: str = Field(description="Slack user id of who marked it")
+    at: AwareDatetime
+    undone_by: str | None = None
+    undone_at: AwareDatetime | None = None
+
+
 class ProposalRecord(BaseModel):
     """A proposal as JotFlow stores and tracks it.
 
@@ -354,6 +400,10 @@ class ProposalRecord(BaseModel):
     thread_told_at: AwareDatetime | None = Field(
         default=None,
         description="When the thread was told the issue URL, once the proposal was applied (#32)",
+    )
+    duplicate: Duplicate | None = Field(
+        default=None,
+        description="Set when a person marked the proposal the same as an existing issue (#36)",
     )
 
     @property

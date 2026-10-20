@@ -732,7 +732,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "regex", specifier = ">=2026.9.29" },
+    { name = "regex", specifier = "==2026.9.29" },
     { name = "slack-bolt", specifier = ">=1.21" },
     { name = "slack-sdk", specifier = ">=3.33" },
     { name = "starlette", specifier = ">=1.0" },

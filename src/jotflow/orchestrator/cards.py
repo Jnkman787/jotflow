@@ -49,6 +49,8 @@ ACTION_ASSIGN = "jotflow_assign"
 ACTION_UNASSIGN = "jotflow_unassign"
 ACTION_RETRY = "jotflow_retry"
 ACTION_DISCARD = "jotflow_discard"
+ACTION_SAME_AS = "jotflow_same_as"
+ACTION_NOT_DUPLICATE = "jotflow_not_duplicate"
 
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 _PERMALINK = re.compile(
@@ -342,10 +344,47 @@ def _state_block(record: ProposalRecord) -> Block | None:
     return block
 
 
+def _issue_link(repo: str, number: int) -> str:
+    """A link JotFlow builds from a checked repo name and number: nothing else reaches it."""
+    return f"<https://github.com/{repo}/issues/{number}|{repo}#{number}>"
+
+
+def _who(user_id: str) -> str:
+    return f"<@{user_id}>" if _SLACK_USER.fullmatch(user_id) else "someone"
+
+
+def _related_block(record: ProposalRecord) -> Block | None:
+    """The issues the agent found close to this one (#36), as pointers JotFlow links.
+
+    Open or closed is the agent's own claim from its search. JotFlow has no GitHub
+    access to check it, so the card says whose claim it is.
+    """
+    related = record.proposal.related
+    if not related:
+        return None
+    items = " · ".join(f"{_issue_link(r.repo, r.number)} (agent says {r.state})" for r in related)
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Related: {items}"}]}
+
+
+def _duplicate_line(record: ProposalRecord) -> Block | None:
+    duplicate = record.duplicate
+    if duplicate is None:
+        return None
+    text = (
+        f"Same as {_issue_link(duplicate.repo, duplicate.number)}, marked by "
+        f"{_who(duplicate.by)}. Nothing was written."
+    )
+    if duplicate.undone_by is not None:
+        text += f" Then undone by {_who(duplicate.undone_by)}, so JotFlow drafts it again."
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
+
+
 def _state_line(record: ProposalRecord) -> Block | None:
     state = record.state
     if state is ProposalState.PENDING:
         return None
+    if state is ProposalState.REJECTED and record.duplicate is not None:
+        return _duplicate_line(record)
     if record.draft_cleared_at is not None and state is not ProposalState.APPLIED:
         suffix = " The drafted text has been cleared."
     else:
@@ -424,7 +463,10 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
     pending = record.state is ProposalState.PENDING
     # A failed proposal can be retried, or discarded, while its draft is kept (#27).
     retryable = record.state is ProposalState.FAILED and record.draft_cleared_at is None
-    blocks, header, show_body, approvable = _laid_out(record, context, pending or retryable)
+    undoable = record.duplicate is not None and record.duplicate.undone_at is None
+    blocks, header, show_body, approvable = _laid_out(
+        record, context, pending or retryable or undoable
+    )
     if pending:
         if not approvable and show_body:
             blocks.append(_context(SHORTENED))
@@ -437,6 +479,16 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
                 style="primary",
             )
             actions.insert(0, approve)
+            if isinstance(record.proposal, IssueProposal) and record.proposal.related:
+                # Only the first, the agent's best candidate. The click names its index
+                # and this draft's hash; the store reads the issue from the draft (#36).
+                best = record.proposal.related[0]
+                same = _button(
+                    f"Same as {best.repo}#{best.number}",
+                    ACTION_SAME_AS,
+                    f"{record.id}:{content_hash(record.proposal)}:0",
+                )
+                actions.append(same)
         blocks.append({"type": "actions", "elements": actions})
     elif retryable:
         actions = [_button("Discard", ACTION_DISCARD, record.id, style="danger")]
@@ -445,6 +497,9 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
             retry = _button("Retry", ACTION_RETRY, f"{record.id}:{content_hash(record.proposal)}")
             actions.insert(0, retry)
         blocks.append({"type": "actions", "elements": actions})
+    elif undoable:
+        undo = _button("Not a duplicate", ACTION_NOT_DUPLICATE, record.id)
+        blocks.append({"type": "actions", "elements": [undo]})
     return Card(blocks=blocks[:MAX_BLOCKS], text=f"{header} for {record.proposal.repo}")
 
 
@@ -462,6 +517,8 @@ def _assemble(
     blocks: list[Block] = [{"type": "header", "text": plain(header, MAX_HEADER_TEXT)}]
     blocks += _repo_blocks(record, context, pending)
     blocks += content
+    if (related := _related_block(record)) is not None:
+        blocks.append(related)
     if (sources := _sources_block(record)) is not None:
         blocks.append(sources)
     if (state := _state_block(record)) is not None:
