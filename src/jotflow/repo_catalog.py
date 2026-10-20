@@ -387,7 +387,7 @@ class RepoCatalog:
     # The write token's reach
 
     async def writable(self, channel_id: str, repo: str) -> bool:
-        """Whether the write token can push to ``repo``. Listed repos aren't checked.
+        """Whether the write token can see ``repo``. Listed repos aren't checked.
 
         Raises whatever the check raises when the execution runner can't be
         asked, so the caller fails closed. Only a positive answer is cached.

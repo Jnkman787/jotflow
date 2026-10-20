@@ -157,21 +157,19 @@ async def list_repos(
 async def reachable(
     owner: str, name: str, token: str, *, http: httpx2.AsyncClient, api: str = API
 ) -> bool:
-    """Whether ``token`` can push to ``owner/name``, by GitHub's ``permissions.push``.
+    """Whether ``token`` can see ``owner/name``: an early check, not proof it can write.
 
-    Seeing the repo isn't enough: any token sees a public repo. A fine-grained
-    token outside its repo list gets 404. Anything but ``push: true`` is a no.
+    A fine-grained token outside its repo list gets 404. Any token sees a public
+    repo, so there the real limit is the write itself failing at GitHub, which
+    fails closed and says so on the card. ``permissions.push`` isn't used: it
+    follows the user's role, not the token's grant, and filing an issue needs
+    Issues write, not push (#236).
     """
     if not is_owner_name(owner) or not is_bare_repo_name(name):
         raise GithubError("not a GitHub repo")
-    status, body = await _page(http, f"{api}/repos/{owner}/{name}", token, 64 * 1024)
+    status, _ = await _page(http, f"{api}/repos/{owner}/{name}", token, 64 * 1024)
+    if status == 200:
+        return True
     if status in (403, 404):
         return False
-    if status != 200:
-        raise GithubError(f"GitHub answered {status}")
-    try:
-        answer = json.loads(body)
-    except ValueError:
-        raise GithubError("GitHub's answer was not JSON") from None
-    permissions = answer.get("permissions") if isinstance(answer, dict) else None
-    return isinstance(permissions, dict) and permissions.get("push") is True
+    raise GithubError(f"GitHub answered {status}")

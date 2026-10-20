@@ -295,7 +295,7 @@ class RunnerClient:
         ]
 
     async def write_reachable(self, owner: str, name: str) -> bool:
-        """Whether the execution runner's write token can push to ``owner/name`` (#236)."""
+        """Whether the execution runner's write token can see ``owner/name`` (#236)."""
         if not is_owner_name(owner) or not is_bare_repo_name(name):
             raise RunnerError("not a GitHub repo")
         response = await self._call("GET", RunKind.EXECUTION, f"/repos/{owner}/{name}/access")

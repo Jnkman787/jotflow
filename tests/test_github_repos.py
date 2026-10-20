@@ -133,27 +133,20 @@ def answering(body: Any) -> Callable[[httpx2.Request], httpx2.Response]:
     return answer
 
 
-async def test_write_access_needs_push_not_just_a_visible_repo() -> None:
-    can_push = {**repo(7), "permissions": {"pull": True, "push": True}}
-    read_only = {**repo(8), "permissions": {"pull": True, "push": False}}
+async def test_write_access_is_visibility_and_never_consults_push() -> None:
+    # permissions.push follows the user's role, not a fine-grained token's grant,
+    # and an issue needs Issues write, not push: so it is never read (#236).
     fake = FakeGithub(
         {
-            "/repos/example-org/web": answering(can_push),
-            # A read-only token on a public repo: GitHub still answers 200.
-            "/repos/example-org/site": answering(read_only),
+            "/repos/example-org/web": answering({**repo(7), "permissions": {"push": False}}),
             "/repos/example-org/bare": answering(
                 {k: v for k, v in repo(9).items() if k != "permissions"}
             ),
-            "/repos/example-org/odd": answering({**repo(10), "permissions": {"push": "yes"}}),
-            "/repos/example-org/list": answering([can_push]),
-            "/repos/example-org/junk": answering("not json"),
         }
     )
     assert await reachable("example-org", "web", WRITE, http=fake.client())
-    for refused in ("site", "bare", "odd", "list", "api"):  # api: 404, outside the token
-        assert not await reachable("example-org", refused, WRITE, http=fake.client()), refused
-    with pytest.raises(GithubError):
-        await reachable("example-org", "junk", WRITE, http=fake.client())
+    assert await reachable("example-org", "bare", WRITE, http=fake.client())
+    assert not await reachable("example-org", "api", WRITE, http=fake.client())  # 404
     with pytest.raises(GithubError):
         await reachable("example-org", "..", WRITE, http=fake.client())
 
@@ -199,13 +192,11 @@ async def test_the_execution_runner_serves_access_and_not_discovery(tmp_path: Pa
     fake = FakeGithub(
         {
             "/repos/example-org/web": answering({**repo(7), "permissions": {"push": True}}),
-            "/repos/example-org/site": answering({**repo(8), "permissions": {"push": False}}),
         }
     )
     async with runner_http(tmp_path, fake, execution=True) as http:
         assert (await http.get("/repos/example-org/web/access")).json() == {"reachable": True}
         assert (await http.get("/repos/example-org/api/access")).json() == {"reachable": False}
-        assert (await http.get("/repos/example-org/site/access")).json() == {"reachable": False}
         assert (await http.get("/repos/example-org")).status_code == 404
         assert (await http.get("/repos/example-org/../access")).status_code in (400, 404)
     assert all(r.headers["Authorization"] == f"Bearer {WRITE}" for r in fake.seen)
