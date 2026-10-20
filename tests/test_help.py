@@ -413,7 +413,7 @@ def test_repos_lists_this_channels_repos() -> None:
     assert channel_repos(policy(), "C0ELSEWHERE", "") == NOT_SET_UP
 
 
-@pytest.mark.parametrize("argument", ["add acme-co/mobile", "remove web", "anything"])
+@pytest.mark.parametrize("argument", ["change", "Change ", " CHANGE"])
 def test_changing_repos_says_how_and_changes_nothing(argument: str) -> None:
     from jotflow.orchestrator.help import REPOS_CHANGE, channel_repos
 
@@ -511,9 +511,13 @@ async def test_repos_past_slacks_limits_says_how_many_more() -> None:
     reply = await _reply(app, CH, "repos")
     _fits(reply)
     shown = sum(f"k{i:03d}: o" in reply["text"] for i in range(400))
-    assert reply["text"].endswith(f"and {400 - shown} more; jotflow.toml lists them all.")
+    assert reply["text"].endswith(
+        f"and {400 - shown} more; add a word to narrow the list, such as /jotflow repos web."
+    )
     blocks = _shown_in_blocks(reply)
-    assert blocks.endswith(f"and {400 - shown} more; jotflow.toml lists them all.")
+    assert blocks.endswith(
+        f"and {400 - shown} more; add a word to narrow the list, such as /jotflow repos web."
+    )
     assert sum(f"`{'k' * 29}{i:03d}`" in blocks for i in range(400)) == shown
 
 
@@ -611,3 +615,26 @@ def test_a_nickname_or_repo_with_a_backtick_is_escaped_not_put_in_code() -> None
     assert code("web") == "`web`"
     assert code("a`b") == "a" + help_blocks.LOOKALIKES["`"] + "b"
     assert code("a<b>") == "`a&lt;b&gt;`"
+
+
+@pytest.mark.parametrize(
+    ("argument", "expected"),
+    [("api", ["  api: acme-co/api. API"]), ("WEB", ["  web: acme-co/web. Web"]), ("acme", 2)],
+)
+def test_a_word_after_repos_filters_the_list(argument: str, expected: Any) -> None:
+    from jotflow.orchestrator.help import channel_repos
+
+    lines = channel_repos(policy(), CH, argument).splitlines()
+    assert lines[0] == f"Repos this channel feeds matching {argument}:"
+    assert lines[1:] == expected if isinstance(expected, list) else len(lines[1:]) == expected
+
+
+def test_a_word_that_matches_nothing_points_at_repos_change() -> None:
+    from jotflow.orchestrator.help import channel_repos
+    from jotflow.orchestrator.help_blocks import repos_reply
+
+    text = channel_repos(policy(), CH, "add <!here> acme-co/mobile")
+    assert text.startswith("No repo this channel feeds matches add &lt;!here&gt;")
+    assert text.endswith("/jotflow repos change says how to add one.")
+    reply_text, blocks = repos_reply(policy(), CH, "add <!here> acme-co/mobile")
+    assert "<!here>" not in reply_text and "<!here>" not in str(blocks)

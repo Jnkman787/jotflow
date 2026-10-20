@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from jotflow.models import ChannelMode
 from jotflow.orchestrator.keywords import KEYWORDS, REACTIONS, Keyword, near_miss, split_keyword
 from jotflow.policy import Policy
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import Store
 
 log = logging.getLogger("jotflow.help")
@@ -160,14 +162,19 @@ def _who_approves(policy: Policy) -> str:
     )
 
 
-def channel_help(policy: Policy, channel_id: str, mode: ChannelMode) -> str:
+def channel_help(
+    policy: Policy, channel_id: str, mode: ChannelMode, repos: RepoCatalog | None = None
+) -> str:
     """``/jotflow help`` in one channel: the keywords, its repos, and how approval works."""
     if channel_id not in policy.channels:
         return NOT_SET_UP
-    channel = policy.channels[channel_id]
-    named = [f"{r.nickname} ({r.repo})" for r in channel.repos]
-    repos = ", ".join(_capped(named, HELP_REPOS_LIMIT, "and {n} more; see /jotflow repos"))
-    lines = [help_text(), "", f"This channel feeds: {repos}.", MODE_LINES[mode]]
+    catalog = repos if repos is not None else RepoCatalog.static(policy)
+    named = [_named(r.nickname, r.repo) for r in catalog.repos(channel_id)]
+    fed = ", ".join(_capped(named, HELP_REPOS_LIMIT, "and {n} more; see /jotflow repos"))
+    lines = [help_text(), ""]
+    if named:
+        lines.append(f"This channel feeds: {fed}.")
+    lines += [*catalog.summaries(channel_id), MODE_LINES[mode]]
     if mode is ChannelMode.PROPOSE:
         lines.append(_who_approves(policy))
     return "\n".join(lines)
@@ -329,16 +336,93 @@ class BoltHelpSlack:
         await self._client.pins_add(channel=channel_id, timestamp=ts)
 
 
+def _named(nickname: str, repo: str) -> str:
+    return f"{nickname} ({repo})" if nickname else repo
+
+
 # /jotflow repos (#91): the channel's repos, read-only
 
 
 REPOS_CHANGE = (
     "JotFlow's repos live in jotflow.toml, which a running JotFlow can't change. On the "
-    "machine that runs JotFlow, edit that file's [[channels.<id>.repos]] entries; "
+    "machine that runs JotFlow, edit that file's [[channels.<id>.repos]] or "
+    "[[channels.<id>.scopes]] entries; "
     "examples/jotflow.example.toml in JotFlow's repo explains each line. Then restart JotFlow with "
     "`docker compose restart jotflow`, so it reads the file again. Also give the agents' "
-    "GitHub tokens access to a repo you add, on GitHub: JotFlow can't."
+    "GitHub tokens access to a repo you add, on GitHub: JotFlow can't. A scope finds a new "
+    "repo by itself within 15 minutes, once the tokens can reach it."
 )
+# `/jotflow repos change` says how; any other word filters the list (#236).
+CHANGE_WORD = "change"
+FILTER_LIMIT = 40
+REPOS_MORE = "and {n} more; add a word to narrow the list, such as /jotflow repos web."
+
+
+@dataclass(frozen=True)
+class RepoRow:
+    """One repo as /jotflow repos shows it. ``description`` may be GitHub's, cleaned."""
+
+    nickname: str  # "" when a found repo has none free
+    repo: str
+    description: str
+    topics: tuple[str, ...] = ()
+
+    def matches(self, word: str) -> bool:
+        wanted = word.casefold()
+        fields = (self.nickname, self.repo, self.description, *self.topics)
+        return any(wanted in field.casefold() for field in fields)
+
+
+@dataclass(frozen=True)
+class ReposView:
+    """What /jotflow repos shows: a heading, the repos, and a line per scope."""
+
+    heading: str
+    rows: list[RepoRow]
+    scopes: list[str]
+    word: str = ""
+
+
+def repos_view(
+    policy: Policy, channel_id: str, argument: str, repos: RepoCatalog | None = None
+) -> ReposView | str:
+    """The repos to list, or the whole reply when there is no list to show."""
+    if channel_id not in policy.channels:
+        return NOT_SET_UP
+    word = argument.strip()
+    if word.casefold() == CHANGE_WORD:
+        return REPOS_CHANGE
+    catalog = repos if repos is not None else RepoCatalog.static(policy)
+    rows = []
+    for entry in catalog.repos(channel_id):
+        found = catalog.details(channel_id, entry.repo)
+        rows.append(
+            RepoRow(
+                entry.nickname,
+                entry.repo,
+                found.description or entry.description,
+                found.topics,
+            )
+        )
+    scopes = catalog.summaries(channel_id)
+    if not word:
+        return ReposView("This channel feeds:", rows, scopes)
+    word = word[:FILTER_LIMIT]
+    hits = [row for row in rows if row.matches(word)]
+    if not hits:
+        return ReposView(
+            f"No repo this channel feeds matches {word}. "
+            f"/jotflow repos {CHANGE_WORD} says how to add one.",
+            [],
+            scopes,
+            word,
+        )
+    return ReposView(f"Repos this channel feeds matching {word}:", hits, scopes, word)
+
+
+def plain_row(row: RepoRow) -> str:
+    label = f"{row.nickname}: {row.repo}" if row.nickname else row.repo
+    return f"  {label}. {as_text(row.description)}" if row.description else f"  {label}"
 
 
 _FALLBACK_ENTITIES = str.maketrans({"&": "&amp;", "<": "&lt;", ">": "&gt;"})
@@ -353,15 +437,13 @@ def as_text(value: str) -> str:
     return value.translate(_FALLBACK_ENTITIES)
 
 
-def channel_repos(policy: Policy, channel_id: str, argument: str) -> str:
-    """``/jotflow repos``: list this channel's repos, or say how to change them."""
-    if channel_id not in policy.channels:
-        return NOT_SET_UP
-    if argument.strip():
-        return REPOS_CHANGE
-    listed = [
-        f"  {r.nickname}: {r.repo}. {as_text(r.description)}"
-        for r in policy.channels[channel_id].repos
-    ]
-    more = "  and {n} more; jotflow.toml lists them all."
-    return "\n".join(["This channel feeds:", *_capped(listed, REPOS_LIMIT, more)])
+def channel_repos(
+    policy: Policy, channel_id: str, argument: str, repos: RepoCatalog | None = None
+) -> str:
+    """``/jotflow repos``: list this channel's repos, filter them, or say how to change them."""
+    view = repos_view(policy, channel_id, argument, repos)
+    if isinstance(view, str):
+        return view
+    listed = [plain_row(row) for row in view.rows]
+    lines = [as_text(view.heading), *_capped(listed, REPOS_LIMIT, "  " + REPOS_MORE)]
+    return "\n".join([*lines, *(as_text(s) for s in view.scopes)])

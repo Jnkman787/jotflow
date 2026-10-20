@@ -1,4 +1,4 @@
-"""Cards for repos a channel's scope found: the warning, the dropdown, the edit (#236)."""
+"""A channel with a scope: cards, re:, replies, rebuild and help see the found repos (#236)."""
 
 from __future__ import annotations
 
@@ -140,3 +140,40 @@ async def test_the_thread_reply_uses_a_found_repos_nickname() -> None:
     rec = rec.model_copy(update={"result": ExecutionResult(issue_url=url)})
     assert reply_text(POLICY, rec, repos) == f"Created <{url}|web-site#4>"
     assert reply_text(POLICY, rec) == f"Created <{url}|acme-co/web-site#4>"
+
+
+async def test_help_and_repos_show_found_repos_and_a_line_per_scope() -> None:
+    from jotflow.models import ChannelMode
+    from jotflow.orchestrator.help import channel_help, channel_repos
+    from jotflow.orchestrator.help_blocks import help_reply, repos_reply
+
+    repos = await catalog(
+        [
+            found(1, "web", description="The storefront <!here>", topics=["shop"]),
+            found(2, "web-admin", description="Back office"),
+        ]
+    )
+    text = channel_help(POLICY, CH, ChannelMode.PROPOSE, repos)
+    assert "This channel feeds: docs (acme-co/docs), web-admin (acme-co/web-admin)" in text
+    assert "Also every repo in acme-co matching web*" in text
+    _, blocks = help_reply(POLICY, CH, ChannelMode.PROPOSE, repos)
+    star = chr(0x2217)  # the lookalike: a glob's * doesn't turn the line bold
+    assert f"every repo in acme-co matching web{star}" in str(blocks)
+    listed = channel_repos(POLICY, CH, "", repos)
+    assert "  web: acme-co/web. The storefront" in listed  # GitHub's text, cleaned
+    assert "<!here>" not in listed
+    assert channel_repos(POLICY, CH, "shop", repos).splitlines()[1:2] == [
+        "  web: acme-co/web. The storefront"
+    ]
+    reply, blocks = repos_reply(POLICY, CH, "", repos)
+    assert reply == listed and "<!here>" not in str(blocks)
+
+
+async def test_a_thousand_found_repos_fit_in_one_reply() -> None:
+    from jotflow.orchestrator.help_blocks import MAX_BLOCKS, repos_reply
+
+    repos = await catalog([found(n, f"web-{n:04d}", description="x" * 150) for n in range(1, 1001)])
+    text, blocks = repos_reply(POLICY, CH, "", repos)
+    assert len(blocks) <= MAX_BLOCKS and len(text) <= 39_000
+    assert "more; add a word to narrow the list" in text
+    assert text.splitlines()[-1].startswith("Also every repo in acme-co")

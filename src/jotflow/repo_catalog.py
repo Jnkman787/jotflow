@@ -25,6 +25,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from jotflow.models import DiscoveredRepo
 from jotflow.policy import (
@@ -82,12 +83,17 @@ class RepoDetails:
     discovered: bool = False
 
 
+# A discovered repo as the channel may use it, and what GitHub says about it.
+_Found = tuple[RepoPolicy, RepoDetails]
+
+
 @dataclass
 class _Owner:
     fetched_at: datetime | None = None
     by_id: dict[int, DiscoveredRepo] = field(default_factory=dict)
     renamed: dict[str, tuple[int, datetime]] = field(default_factory=dict)
     last_miss_refresh: float = float("-inf")
+    generation: int = 0  # counts listings, so a channel's built list knows it's out of date
 
 
 def clean_description(text: str | None) -> str | None:
@@ -134,6 +140,8 @@ class RepoCatalog:
         }
         self._writable: dict[str, datetime] = {}
         self._tasks: set[asyncio.Task[bool]] = set()
+        # channel id -> (what it was built from, its found repos, them by owner/name)
+        self._built: dict[str, tuple[tuple[Any, ...], list[_Found], dict[str, _Found]]] = {}
 
     @classmethod
     def static(cls, policy: Policy) -> RepoCatalog:
@@ -165,6 +173,7 @@ class RepoCatalog:
         state.renamed = {k: v for k, v in state.renamed.items() if v[1] > now}
         state.by_id = fresh
         state.fetched_at = now
+        state.generation += 1
         log.info("listed %d repos for %s", len(fresh), owner)
         return True
 
@@ -215,9 +224,24 @@ class RepoCatalog:
             return False
         return scope.include_forks or not repo.fork
 
-    def _discovered(self, channel_id: str) -> list[tuple[RepoPolicy, RepoDetails]]:
+    def _discovered(self, channel_id: str) -> list[_Found]:
         """The channel's discovered repos, with nicknames, newest push first."""
+        return self._build(channel_id)[0]
+
+    def _build(self, channel_id: str) -> tuple[list[_Found], dict[str, _Found]]:
+        # Built once per listing, not per call: help asks for a thousand repos' details.
         channel = self._channel(channel_id)
+        states = [self._fresh(scope.owner) for scope in channel.scopes]
+        key = tuple(None if s is None else (id(s), s.generation) for s in states)
+        built = self._built.get(channel_id)
+        if built is not None and built[0] == key:
+            return built[1], built[2]
+        out = self._found(channel)
+        by_name = {entry.repo.casefold(): (entry, details) for entry, details in out}
+        self._built[channel_id] = (key, out, by_name)
+        return out, by_name
+
+    def _found(self, channel: ChannelPolicy) -> list[_Found]:
         listed = {r.repo.casefold() for r in channel.repos}
         taken = {r.nickname for r in channel.repos}
         for scope in channel.scopes:
@@ -277,10 +301,8 @@ class RepoCatalog:
 
     def details(self, channel_id: str, repo: str) -> RepoDetails:
         """GitHub's own description and topics for a discovered repo, else nothing."""
-        for entry, details in self._discovered(channel_id):
-            if entry.repo.casefold() == repo.casefold():
-                return details
-        return RepoDetails()
+        found = self._build(channel_id)[1].get(repo.casefold())
+        return found[1] if found is not None else RepoDetails()
 
     def listed(
         self, channel_id: str, text: str, limit: int = PACKET_DISCOVERED

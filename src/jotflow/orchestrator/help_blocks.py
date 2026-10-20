@@ -28,19 +28,24 @@ from jotflow.orchestrator.help import (
     KEYWORD_LINES,
     MODE_LINES,
     NOT_SET_UP,
-    REPOS_CHANGE,
     REPOS_LIMIT,
+    REPOS_MORE,
     SECTION_LIMIT,
     UNLINK_OTHER_LINE,
+    RepoRow,
     _capped,
+    _named,
     _who_approves,
     as_text,
     channel_help,
     help_text,
+    plain_row,
     plain_sections,
+    repos_view,
 )
 from jotflow.orchestrator.keywords import KEYWORDS, REACTIONS
 from jotflow.policy import Policy
+from jotflow.repo_catalog import RepoCatalog
 
 # Slack's limits for one message.
 MAX_BLOCKS = 50
@@ -125,22 +130,27 @@ def _commands() -> list[str]:
 
 
 def help_reply(
-    policy: Policy | None, channel_id: str, mode: ChannelMode = ChannelMode.PROPOSE
+    policy: Policy | None,
+    channel_id: str,
+    mode: ChannelMode = ChannelMode.PROPOSE,
+    repos: RepoCatalog | None = None,
 ) -> tuple[str, Blocks]:
     """``/jotflow help``: the plain fallback text, and its headed sections."""
     if policy is not None and channel_id not in policy.channels:
         return NOT_SET_UP, plain_sections(NOT_SET_UP)
-    text = help_text() if policy is None else channel_help(policy, channel_id, mode)
+    text = help_text() if policy is None else channel_help(policy, channel_id, mode, repos)
     blocks: Blocks = [_header(":wave: JotFlow help")]
     blocks += _pack(f"*:label: Keywords*\n{INTRO}", _keywords())
     blocks += _pack("*:raised_hand: Reactions*", _reactions())
     if policy is not None:
-        repos = policy.channels[channel_id].repos
-        named = [f"{r.nickname} ({r.repo})" for r in repos]
+        catalog = repos if repos is not None else RepoCatalog.static(policy)
+        fed = catalog.repos(channel_id)
+        named = [_named(r.nickname, r.repo) for r in fed]
         shown = _shown(named, HELP_REPOS_LIMIT, "and {n} more; see /jotflow repos")
-        lines = [f"• {code(r.nickname)} {code(r.repo)}" for r in repos[:shown]]
-        if shown < len(repos):
-            lines.append(f"and {len(repos) - shown} more; see {code('/jotflow repos')}")
+        lines = [_bullet(r.nickname, r.repo) for r in fed[:shown]]
+        if shown < len(fed):
+            lines.append(f"and {len(fed) - shown} more; see {code('/jotflow repos')}")
+        lines += [escaped(s) for s in catalog.summaries(channel_id)]
         blocks += _pack("*:file_folder: Repos*", lines)
         approval = [MODE_LINES[mode]]
         if mode is ChannelMode.PROPOSE:
@@ -151,27 +161,46 @@ def help_reply(
     return text, blocks
 
 
-def repos_reply(policy: Policy, channel_id: str, argument: str) -> tuple[str, Blocks]:
+def _bullet(nickname: str, repo: str) -> str:
+    return f"• {code(nickname)} {code(repo)}" if nickname else f"• {code(repo)}"
+
+
+def _row_bullet(row: RepoRow) -> str:
+    head = _bullet(row.nickname, row.repo)
+    return f"{head}: {escaped(row.description)}" if row.description else head
+
+
+def repos_reply(
+    policy: Policy, channel_id: str, argument: str, repos: RepoCatalog | None = None
+) -> tuple[str, Blocks]:
     """``/jotflow repos``: every repo as a bullet, within Slack's limits."""
-    if channel_id not in policy.channels:
-        return NOT_SET_UP, plain_sections(NOT_SET_UP)
-    if argument.strip():
-        return REPOS_CHANGE, plain_sections(REPOS_CHANGE)
-    repos = policy.channels[channel_id].repos
-    heading = "*:file_folder: Repos this channel feeds*"
-    bullets = [f"• {code(r.nickname)} {code(r.repo)}: {escaped(r.description)}" for r in repos]
-    plain = [f"  {r.nickname}: {r.repo}. {as_text(r.description)}" for r in repos]
-    more = "and {n} more; jotflow.toml lists them all."
+    view = repos_view(policy, channel_id, argument, repos)
+    if isinstance(view, str):
+        return view, plain_sections(view)
+    rows = view.rows
+    title = view.heading.rstrip(":") if view.word else "Repos this channel feeds"
+    heading = f"*:file_folder: {escaped(title)}*"
+    bullets = [_row_bullet(row) for row in rows]
+    plain = [plain_row(row) for row in rows]
+    scopes_text = [as_text(s) for s in view.scopes]
+    scopes_blocks = [escaped(s) for s in view.scopes]
+
+    def build(shown: int) -> tuple[str, Blocks]:
+        cut = shown < len(rows)
+        more = [REPOS_MORE.format(n=len(rows) - shown)] if cut else []
+        lines = [*bullets[:shown], *more, *scopes_blocks]
+        text_lines = [*plain[:shown], *("  " + m for m in more), *scopes_text]
+        return "\n".join([as_text(view.heading), *text_lines]), _pack(heading, lines)
+
+    def fits(reply: tuple[str, Blocks]) -> bool:
+        return len(reply[1]) <= MAX_BLOCKS and len(reply[0]) <= REPOS_LIMIT
+
     # As many as fit both the plain text and the blocks, with room for the "more" line.
-    shown = len(repos)
-    while shown:
-        cut = shown < len(repos)
-        lines = bullets[:shown] + ([more.format(n=len(repos) - shown)] if cut else [])
-        text_lines = plain[:shown] + (["  " + more.format(n=len(repos) - shown)] if cut else [])
-        text = "\n".join(["This channel feeds:", *text_lines])
-        blocks = _pack(heading, lines)
-        if len(blocks) <= MAX_BLOCKS and len(text) <= REPOS_LIMIT:
-            return text, blocks
-        shown -= 1
-    text = "This channel feeds:\n  " + more.format(n=len(repos))
-    return text, _pack(heading, [more.format(n=len(repos))])
+    # A scope can find a thousand repos, so search rather than drop one at a time.
+    if fits(whole := build(len(rows))):
+        return whole
+    low, high = 0, len(rows)
+    while high - low > 1:
+        middle = (low + high) // 2
+        low, high = (middle, high) if fits(build(middle)) else (low, middle)
+    return build(low)
