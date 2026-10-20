@@ -2,7 +2,9 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
-## [Unreleased]
+## [0.1.1] - 2026-10-19
+
+A fix release. Upgrade by re-running setup with this version and replacing both Compose files when it asks: the DNS fix is in the Compose files, so changing only the image version in `.env` misses it. If `.env` sets `JOTFLOW_IMAGE_REF` or `JOTFLOW_AGENT_IMAGE_REF`, change both to 0.1.1 or remove them, since they override the Compose files' pins.
 
 ### Security
 
@@ -11,6 +13,12 @@ What changed in each JotFlow release, for the people who run it. The format foll
   - The Compose files set `dns_search: ["."]`, so a service that isn't running can't resolve through the host's search domain to a public host.
   - A missing runner now fails its startup check in about 15 seconds, not 2 minutes.
   - `JOTFLOW_RUNNER_ALLOW_PUBLIC` and `JOTFLOW_MCP_ALLOW_PUBLIC` opt in to public addresses.
+
+### Fixed
+
+- **Setup and `jotflow check` catch a model key the runner never passes (#239).** An agent env file kept from before setup ran could set `ANTHROPIC_API_KEY` without listing it in `JOTFLOW_AGENT_ENV_ALLOW`, so every run failed to sign in, and `check` still passed. Setup now adds the key to that line and says so. `check` fails, naming the file and the line to set. A Claude account login with no key is left alone.
+- **The "Agent model" prompt shows its default,** as `[default]` or the model already set, like setup's other prompts (#239).
+- **`/jotflow help` and `/jotflow repos` fit Slack's limits with many repos or long repo names (#231).** Both now reply in plain-text blocks of at most 3,000 characters, so nothing in them can ping or link. Help lists repos up to a length, then says how many more `/jotflow repos` shows. `/jotflow repos` lists every repo, up to Slack's message limit (#237, #238).
 
 ## [0.1.0] - 2026-10-19
 
@@ -75,4 +83,5 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
+[0.1.1]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.0
