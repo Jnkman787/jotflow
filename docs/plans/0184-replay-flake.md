@@ -35,4 +35,4 @@
 
 ## Handoff notes
 
-- A separate SQLite segfault under load, seen once, is tracked in its own issue.
+- A separate SQLite segfault under load, seen once, is tracked in #263.
