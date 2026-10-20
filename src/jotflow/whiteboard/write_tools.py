@@ -301,7 +301,9 @@ _URLISH = re.compile(
     r"|\b(?:mailto|slack|tel|data|javascript):[^\s<>|]*"
     r"|\bwww\.[^\s<>|]*"
     r"|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
-    r"|\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b(?:/[^\s<>|]*)?"
+    # Labels and the top-level domain in any script, so an IDN such as
+    # \u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444 counts.
+    r"|\b(?:[^\W_](?:[\w-]{0,61}[^\W_])?\.)+[^\W\d_]{2,63}\b(?:/[^\s<>|]*)?"
     r")"
 )
 # An issue reference, owner/name#42.

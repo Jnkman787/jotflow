@@ -275,6 +275,13 @@ REPOS = ["acme-co/web"]
         ("[click](https://evil.example)", "[click]([link removed]"),
         ("e.g. the CSV one.", "e.g. the CSV one."),
         ("<!<!here>channel> done", "channel&gt; done"),  # escaped text, no broadcast
+        ("\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444 now", "[link removed] now"),
+        (
+            "\u4f8b\u3048.\u30c6\u30b9\u30c8/x and m\u00fcnchen.de",
+            "[link removed] and [link removed]",
+        ),
+        ("ops@\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444", "[link removed]"),
+        ("version 1.2 and v2.0 stay", "version 1.2 and v2.0 stay"),
         ("@evil.example and @x.example/y", "[link removed] and [link removed]"),
     ],
 )
