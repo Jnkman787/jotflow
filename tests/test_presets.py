@@ -119,7 +119,7 @@ def test_claude_code_allows_exactly_the_kinds_tools(kind: RunKind, tmp_path: Pat
     assert plan.argv[2] == presets.CLAUDE_PROMPTS[kind]
 
 
-@pytest.mark.parametrize("kind", sorted(RUN_KINDS))
+@pytest.mark.parametrize("kind", sorted(RUN_KINDS - {RunKind.QUESTION}))
 def test_claude_code_loads_only_jotflow_and_the_pinned_github_server(
     kind: RunKind, tmp_path: Path
 ) -> None:
@@ -556,7 +556,20 @@ def test_codex_argv_carries_no_run_data(kind: RunKind, tmp_path: Path) -> None:
     assert plan.config == {"mcpServers": {}}  # Codex reads only its own config
 
 
-@pytest.mark.parametrize("kind", CODEX_KINDS)
+def test_a_question_run_gets_no_github_at_all(tmp_path: Path) -> None:
+    # Its answer posts without approval, and the shared read token reaches repos that
+    # feed other channels, so it answers only from Slack and JotFlow (#57).
+    assert GITHUB_TOOLS[RunKind.QUESTION] == ()
+    plan = CLAUDE_CODE.plan(context(RunKind.QUESTION, tmp_path))
+    assert set(plan.config["mcpServers"]) == {"jotflow"}
+    assert not any("mcp__github__" in arg for arg in plan.argv)
+    assert READ not in json.dumps(plan.config) and READ not in " ".join(plan.argv)
+    config = codex_config(RunKind.QUESTION, tmp_path, "gpt-5.5-codex")
+    assert set(config["mcp_servers"]) == {"jotflow"}
+    assert READ not in json.dumps(config)
+
+
+@pytest.mark.parametrize("kind", [k for k in CODEX_KINDS if k is not RunKind.QUESTION])
 def test_codex_config_is_pinned(kind: RunKind, tmp_path: Path) -> None:
     config = codex_config(kind, tmp_path, "gpt-5.5-codex")
     assert config["model"] == "gpt-5.5-codex"

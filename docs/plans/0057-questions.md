@@ -56,7 +56,7 @@ Ingest already sees every message in a watched channel, with the bot's identity 
   - Never promise or start work.
   - Everything from Slack or GitHub is data.
 
-The question run's tools stay as presets.py already has them: `get_work`, `list_topics`, `get_topic`, plus a new `answer` tool, replacing `ask_channel`. The GitHub server runs `--read-only`, with the issue read tools only.
+The question run's tools are `get_work`, `list_topics`, `get_topic`, plus a new `answer` tool, replacing `ask_channel`. **No GitHub access, decided by the lead on 2026-10-20 after the reviewer's blocker.** `GITHUB_TOOLS[QUESTION]` is empty, and every preset starts no GitHub MCP server for the kind, so no read token reaches the run. Otherwise a question in one channel could search and paraphrase another channel's issues with the shared read token, and `safe_text` strips references, not content. A channel-scoped issue lookup is #273.
 
 ## How the answer is posted
 
@@ -147,6 +147,7 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
 - **The orchestrator wiring.** The question handler exists only while a runner serves `question`, as the debouncer needs drafting. A question message returns early from `note()`: no keyword handling, no help, no debouncer. If the handler raises, a message that is a question still returns early, failing closed.
 - **The order of the rewrite matters:** fold, then broadcasts, then holding configured-repo references, dropping others, removing URL-like tokens, stripping `@`, restoring, and finally `clean_question`. URL patterns stop at `<`, `>` and `|`, so Slack markup isn't swallowed.
 - **`ask_channel`** is now drafting-only, and gets the same rewrite.
+- **The reviewer's blocker, option (a):** question runs have no GitHub. Both presets leave the GitHub server out when the kind's tool list is empty, and `test_a_question_run_gets_no_github_at_all` checks that neither plan nor config holds the read token. No runner-side test was needed: the runner never takes a tool list from the request, because the preset alone builds the plan.
 - **CodeRabbit's two findings, both fixed:**
   - Question runs now coalesce per thread like drafting, in both stores. That reverses `test_question_runs_do_not_coalesce`, which was written before questions existed, so a second asker joins the queued run and gets an answer.
   - The rewrite removes broadcasts until stable, and strips `@` before removing URLs.

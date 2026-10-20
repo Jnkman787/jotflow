@@ -211,7 +211,7 @@ People never need syntax: a plain message is classified by the agent. Keywords l
 | `idea:`, `bug:` | Agent, as a hint | Suggests the kind of issue. The agent may overrule it; the card says when it does. |
 | `re:` | JotFlow | Attaches the message to an existing topic or issue in this channel's repos. `re: 42` when unambiguous, `re: web#42` otherwise. |
 | `skip:` | JotFlow | Marks the message as not an idea. Its text is kept out of agent packets. On a top-level message it covers the whole thread. |
-| `ask:`, or an @-mention of the bot | Question run | A read-only question answered once in the thread from this channel's topics and repos, and from `/jotflow help` (D12, #57). Only this workspace's own members can ask. The answer is plain text, labelled as the agent's, with no links, pings, or other repos' references. The asking message is marked as the agent's chatter, so it is never drafted. |
+| `ask:`, or an @-mention of the bot | Question run | A question answered once in the thread from this channel's topics and from `/jotflow help` (D12, #57). A question run has no GitHub access: its answer posts without approval, and the shared read token reaches repos that feed other channels. Only this workspace's own members can ask. The answer is plain text, labelled as the agent's, with no links, pings, or other repos' references. The asking message is marked as the agent's chatter, so it is never drafted. |
 
 Post-v1: `hold:` and `go:` to lengthen or shorten the wait before drafting, and `new:` to split a reply off into its own topic.
 

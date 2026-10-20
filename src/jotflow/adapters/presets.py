@@ -60,7 +60,10 @@ JOTFLOW_TOOLS: Mapping[RunKind, tuple[str, ...]] = {
 GITHUB_READ_TOOLS = ("issue_read", "list_issues", "search_issues", "list_label", "get_label")
 GITHUB_TOOLS: Mapping[RunKind, tuple[str, ...]] = {
     RunKind.DRAFTING: GITHUB_READ_TOOLS,
-    RunKind.QUESTION: GITHUB_READ_TOOLS,
+    # A question run gets no GitHub at all (#57): its answer posts without approval,
+    # and the shared read token reaches repos that feed other channels. It answers
+    # from its thread, the channel's topics and /jotflow help.
+    RunKind.QUESTION: (),
     RunKind.EXECUTION: (
         "issue_read",
         "list_issues",
@@ -253,12 +256,10 @@ class ClaudeCodePreset:
         ]
         if run.model is not None:
             argv += ["--model", run.model]
-        config = {
-            "mcpServers": {
-                "jotflow": jotflow_server(run.mcp_url, run.mcp_token),
-                "github": github_server(run),
-            }
-        }
+        servers = {"jotflow": jotflow_server(run.mcp_url, run.mcp_token)}
+        if GITHUB_TOOLS[run.kind]:
+            servers["github"] = github_server(run)
+        config = {"mcpServers": servers}
         env = {
             "XDG_CACHE_HOME": str(run.run_dir / "cache"),
             "DISABLE_TELEMETRY": "1",
@@ -455,14 +456,20 @@ class CodexPreset:
                     "default_tools_approval_mode": "approve",
                     "required": True,
                 },
-                "github": {
-                    "command": github["command"],
-                    "args": github["args"],
-                    "env": github["env"],
-                    "enabled_tools": list(GITHUB_TOOLS[run.kind]),
-                    "default_tools_approval_mode": "approve",
-                    "required": True,
-                },
+                **(
+                    {
+                        "github": {
+                            "command": github["command"],
+                            "args": github["args"],
+                            "env": github["env"],
+                            "enabled_tools": list(GITHUB_TOOLS[run.kind]),
+                            "default_tools_approval_mode": "approve",
+                            "required": True,
+                        }
+                    }
+                    if GITHUB_TOOLS[run.kind]
+                    else {}
+                ),
             },
         }
         argv = (
