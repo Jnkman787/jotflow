@@ -4,18 +4,18 @@
 
 - Issue: #234
 - Draft PR: #235
-- Status: planning
-- Next safe action: the lead confirms the decisions below, then implement
+- Status: ready for review, for v0.1.1
+- Next safe action: review #235
 
 ## Objective and done-when
 
 A Compose service name that isn't running doesn't resolve on Docker's network. The resolver then falls back to the host's DNS search domain, and a wildcard resolver can answer with a public IP. JotFlow would then try to send that host the runner secret, and with `POST /runs` the run's MCP token too. The same can happen the other way: the agent CLI sends its run token to `http://jotflow:8765/mcp`.
 
-- [ ] JotFlow never connects to a runner at an address outside the private ranges below, unless the operator opts in. Tested with a fake resolver, and the connection goes to the address that was checked, never a second lookup.
-- [ ] A missing runner fails its startup check within a few seconds. That run kind stays off with a clear reason.
-- [ ] The runner refuses to start a run if JotFlow's MCP host resolves outside the private ranges, so the CLI is never handed a URL that points at a public host.
-- [ ] The published Compose files set `dns_search: ["."]` on every service. CI shows service names and public names still resolve.
-- [ ] docs/deployment.md and the threat model cover search-domain DNS.
+- [x] JotFlow never connects to a runner at an address outside the private ranges below, unless the operator opts in. Tested with a fake resolver, and the connection goes to the address that was checked, never a second lookup.
+- [x] A missing runner fails its startup check within a few seconds. That run kind stays off with a clear reason.
+- [x] The runner refuses to start a run if JotFlow's MCP host resolves outside the private ranges, so the CLI is never handed a URL that points at a public host.
+- [x] The published Compose files set `dns_search: ["."]` on every service. CI shows service names and public names still resolve.
+- [x] docs/deployment.md and the threat model cover search-domain DNS.
 
 **Out of scope:** TLS between JotFlow and runners, and the operator bridge, which always dials the literal `127.0.0.1`.
 
@@ -26,10 +26,10 @@ A Compose service name that isn't running doesn't resolve on Docker's network. T
 | JotFlow to a runner: `GET /info`, `POST /runs`, `GET` and `DELETE /runs/<id>` | JotFlow's `RunnerClient` | The runner secret on every call. The run token in `POST /runs`. | Exposed. httpx2 resolves `agent` and `agent-exec` itself, with no check. |
 | The agent to JotFlow's MCP server | The agent CLI, not our code | The run token, as a bearer token | Exposed in principle. If `jotflow` stops resolving through Docker's DNS, for example while JotFlow's container restarts, the CLI's lookup falls back the same way. Impact is lower: run tokens live only in JotFlow's memory, so a token sent while JotFlow is down is already dead. A token sent while JotFlow runs but its name fails to resolve would still be live, though that's unlikely. |
 
-## Decisions (defaults, for the lead to confirm)
+## Decisions (confirmed by the lead)
 
 1. **Which addresses count as private.** An explicit allowlist, not `ipaddress.is_private`, which is inconsistent: it counts 198.18/15 but not 100.64/10.
-   - IPv4: 10/8, 172.16/12, 192.168/16, 127/8 and 169.254/16.
+   - IPv4: 10/8, 172.16/12, 192.168/16, 100.64/10, 127/8 and 169.254/16. The lead added 100.64/10, shared address space: Tailscale and similar VPNs put nodes there, and a VPN is how the docs suggest reaching a remote runner.
    - IPv6: ::1, fc00::/7 and fe80::/10.
    - IPv4-mapped IPv6 is unwrapped first.
    - Every address a lookup returns must be in the allowlist. One public address refuses the whole lookup.
@@ -46,6 +46,7 @@ A Compose service name that isn't running doesn't resolve on Docker's network. T
 
 5. **The agent-to-JotFlow direction, in the runner.**
    - At startup and before each launch, the runner resolves the host in `JOTFLOW_MCP_URL` and refuses the run if any address is outside the allowlist. A literal IP is checked the same way. The runner's own opt-in, `JOTFLOW_MCP_ALLOW_PUBLIC=1` in the agent env files, is off by default.
+   - At runner startup, a public answer stops the runner. A name that doesn't resolve only warns, since JotFlow may still be starting, and each launch checks again, refusing with 502.
    - The CLI then does its own lookup, so a small window remains between the runner's check and the CLI's connection. `dns_search: ["."]` closes the search-domain route behind it. The threat model records what's left.
 
 6. **`dns_search: ["."]`** goes on all three services in both published Compose files and their templates.
@@ -71,16 +72,23 @@ A Compose service name that isn't running doesn't resolve on Docker's network. T
 ## Risks
 
 - A deployment that already runs a runner on a public address breaks until it sets the opt-in. The startup reason names the variable. Before v0.1.0 there were no such installs.
-- An odd Docker network on a range outside the allowlist, such as CGNAT 100.64/10 used by some VPNs, is refused until the operator opts in. The reason names the address range, not just "public". An operator who needs it can set the opt-in.
+- An odd Docker network on a range outside the allowlist is refused until the operator opts in. The reason names the host and the opt-in.
 - `dns_search: ["."]` could change how a host's resolver treats bare names. That's why CI checks real lookups before it ships.
 
 ## Progress checklist
 
-- [ ] Confirm the decisions
-- [ ] `netcheck` with tests: every range, mapped IPv6, a mixed answer refused, a literal IP, and the opt-in
-- [ ] `RunnerClient` dials the pinned address, with tests: a fake resolver returns a public address, so nothing is sent and the reason is fixed; the Host header is kept; the connect timeout applies
-- [ ] The startup check: refusals aren't retried, and the time budget ends a missing runner fast
-- [ ] The runner checks `mcp_url` at startup and per launch
-- [ ] `dns_search` and the CI lookup probes
-- [ ] Docs and threat model
-- [ ] `make check`, then mark ready
+- [x] Confirm the decisions
+- [x] `netcheck` with tests: every range, mapped IPv6, a mixed answer refused, a literal IP, and the opt-in
+- [x] `RunnerClient` dials the pinned address, with tests: a fake resolver returns a public address, so nothing is sent and the reason is fixed; the Host header is kept; the connect timeout applies
+- [x] The startup check: refusals aren't retried, and the time budget ends a missing runner fast
+- [x] The runner checks `mcp_url` at startup and per launch
+- [x] `dns_search` and the CI lookup probes
+- [x] Docs and threat model
+- [x] `make check`, then mark ready
+
+## Validation
+
+- `make check` passes locally. tests/test_netcheck.py covers the ranges, the client, the startup check and the runner's checks.
+- tests/compose/reach_check.sh passes locally on Docker Desktop with images built from this branch, run as a separate Compose project:
+  - both stub runs succeed through the pinned address;
+  - dns_probe.py passes in all three containers: no search domain, both runner names private, a missing name failing fast, and slack.com, github.com, api.anthropic.com and api.openai.com resolving.
