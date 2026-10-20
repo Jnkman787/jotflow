@@ -404,3 +404,12 @@ async def test_an_https_runner_keeps_its_name_for_tls() -> None:
     plain = Recorder(200, {"preset": "claude-code", "kinds": ["execution"]})
     await client(plain, FakeResolver({"agent-exec": ["172.20.0.3"]})).info(RunKind.EXECUTION)
     assert "sni_hostname" not in plain.requests[0].extensions
+
+
+async def test_a_kind_the_runner_does_not_serve_is_refused_before_any_lookup() -> None:
+    resolver = FakeResolver({})  # jotflow doesn't resolve, as when JotFlow isn't up
+    runner = Runner(runner_config("http://jotflow:8765/mcp"), environ={}, resolver=resolver)
+    with pytest.raises(LaunchRefused) as refused:
+        await runner.launch(LaunchRequest(run_id="run-1", kind=RunKind.EXECUTION, token=TOKEN))
+    assert refused.value.status == 403
+    assert resolver.lookups == []
