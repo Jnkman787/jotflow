@@ -35,8 +35,8 @@ SLOW = {
     "optional runs at the maximum": "a?" * 66 + "a" * 68,
     "optional alternations at the maximum": "(a|aa)?" * 28 + "bbbb",
 }
-# Generous, so a busy CI runner doesn't flake: the limit plus thread overhead.
-WITHIN = MATCH_TIMEOUT + 0.45
+# About 100 ms end to end: the limit plus thread and timer overhead.
+WITHIN = MATCH_TIMEOUT + 0.07
 
 
 @pytest.mark.parametrize(
@@ -87,6 +87,15 @@ def test_every_slow_shape_returns_refused_within_the_limit(pattern: str) -> None
         if title == "a" * 256:
             # None of these can match 256 a's, so it is a mismatch or a timeout.
             assert result is not Match.MATCH
+
+
+@pytest.mark.parametrize("pattern", SLOW.values(), ids=SLOW.keys())
+async def test_every_slow_shape_returns_within_the_limit_end_to_end(pattern: str) -> None:
+    # Through the worker thread, as propose_issue calls it.
+    start = time.perf_counter()
+    result = await match_title_async(pattern, "a" * 256)
+    assert time.perf_counter() - start < WITHIN
+    assert result is not Match.MATCH
 
 
 def test_a_match_that_runs_out_of_time_is_a_timeout_never_a_match(
