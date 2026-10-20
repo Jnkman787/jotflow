@@ -487,3 +487,12 @@ def test_a_line_longer_than_a_section_splits_at_a_space() -> None:
     assert "".join(texts).replace("\n", "").replace(" ", "") == (
         "first" + "word" * 1000 + "x" * 3500
     )
+
+
+@pytest.mark.parametrize("text", ["", "\n", "   ", "a" * 3000 + "\n", "a" * 3000 + "\n\n  "])
+def test_no_section_is_ever_blank(text: str) -> None:
+    from jotflow.orchestrator.help import plain_sections
+
+    blocks = plain_sections(text)
+    assert all(b["text"]["text"].strip() for b in blocks)
+    assert len(blocks) == (1 if text.strip() else 0)
