@@ -141,12 +141,21 @@ async def list_repos(
 async def reachable(
     owner: str, name: str, token: str, *, http: httpx2.AsyncClient, api: str = API
 ) -> bool:
-    """Whether ``token`` can see ``owner/name``. A fine-grained token sees only its repos."""
+    """Whether ``token`` can push to ``owner/name``, by GitHub's ``permissions.push``.
+
+    Seeing the repo isn't enough: any token sees a public repo. A fine-grained
+    token outside its repo list gets 404. Anything but ``push: true`` is a no.
+    """
     if not is_owner_name(owner) or not is_bare_repo_name(name):
         raise GithubError("not a GitHub repo")
-    status, _ = await _page(http, f"{api}/repos/{owner}/{name}", token, 64 * 1024)
-    if status == 200:
-        return True
+    status, body = await _page(http, f"{api}/repos/{owner}/{name}", token, 64 * 1024)
     if status in (403, 404):
         return False
-    raise GithubError(f"GitHub answered {status}")
+    if status != 200:
+        raise GithubError(f"GitHub answered {status}")
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        raise GithubError("GitHub's answer was not JSON") from None
+    permissions = answer.get("permissions") if isinstance(answer, dict) else None
+    return isinstance(permissions, dict) and permissions.get("push") is True

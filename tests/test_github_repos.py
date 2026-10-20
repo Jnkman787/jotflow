@@ -124,13 +124,36 @@ async def test_a_redirect_or_an_error_is_never_followed() -> None:
         await list_repos("example-*", READ, http=fake.client())
 
 
-async def test_write_access_is_whether_the_token_can_see_the_repo() -> None:
-    def one(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, json=repo(7))
+def answering(body: Any) -> Callable[[httpx2.Request], httpx2.Response]:
+    def answer(_: httpx2.Request) -> httpx2.Response:
+        if isinstance(body, str):
+            return httpx2.Response(200, text=body)
+        return httpx2.Response(200, json=body)
 
-    fake = FakeGithub({"/repos/example-org/web": one})
+    return answer
+
+
+async def test_write_access_needs_push_not_just_a_visible_repo() -> None:
+    can_push = {**repo(7), "permissions": {"pull": True, "push": True}}
+    read_only = {**repo(8), "permissions": {"pull": True, "push": False}}
+    fake = FakeGithub(
+        {
+            "/repos/example-org/web": answering(can_push),
+            # A read-only token on a public repo: GitHub still answers 200.
+            "/repos/example-org/site": answering(read_only),
+            "/repos/example-org/bare": answering(
+                {k: v for k, v in repo(9).items() if k != "permissions"}
+            ),
+            "/repos/example-org/odd": answering({**repo(10), "permissions": {"push": "yes"}}),
+            "/repos/example-org/list": answering([can_push]),
+            "/repos/example-org/junk": answering("not json"),
+        }
+    )
     assert await reachable("example-org", "web", WRITE, http=fake.client())
-    assert not await reachable("example-org", "api", WRITE, http=fake.client())
+    for refused in ("site", "bare", "odd", "list", "api"):  # api: 404, outside the token
+        assert not await reachable("example-org", refused, WRITE, http=fake.client()), refused
+    with pytest.raises(GithubError):
+        await reachable("example-org", "junk", WRITE, http=fake.client())
     with pytest.raises(GithubError):
         await reachable("example-org", "..", WRITE, http=fake.client())
 
@@ -173,13 +196,16 @@ async def test_the_drafting_runner_serves_discovery_and_not_access(tmp_path: Pat
 
 
 async def test_the_execution_runner_serves_access_and_not_discovery(tmp_path: Path) -> None:
-    def one(_: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, json=repo(7))
-
-    fake = FakeGithub({"/repos/example-org/web": one})
+    fake = FakeGithub(
+        {
+            "/repos/example-org/web": answering({**repo(7), "permissions": {"push": True}}),
+            "/repos/example-org/site": answering({**repo(8), "permissions": {"push": False}}),
+        }
+    )
     async with runner_http(tmp_path, fake, execution=True) as http:
         assert (await http.get("/repos/example-org/web/access")).json() == {"reachable": True}
         assert (await http.get("/repos/example-org/api/access")).json() == {"reachable": False}
+        assert (await http.get("/repos/example-org/site/access")).json() == {"reachable": False}
         assert (await http.get("/repos/example-org")).status_code == 404
         assert (await http.get("/repos/example-org/../access")).status_code in (400, 404)
     assert all(r.headers["Authorization"] == f"Bearer {WRITE}" for r in fake.seen)
