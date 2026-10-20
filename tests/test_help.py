@@ -130,8 +130,20 @@ def test_help_in_a_channel_names_its_repos_and_approval() -> None:
 
 def test_help_with_approvers_says_only_they_approve() -> None:
     text = channel_help(policy(approval={"approvers": ["U0LEAD"]}), CH, ChannelMode.PROPOSE)
-    assert "Only the channel's approvers can approve." in text
+    assert (
+        "Only the channel's approvers can approve, including proposals drawn from their "
+        "own messages."
+    ) in text
     assert "U0LEAD" not in text
+
+
+def test_help_with_a_second_approver_says_none_approves_their_own() -> None:
+    approval = {"approvers": ["U0LEAD"], "require_second_approver": True}
+    text = channel_help(policy(approval=approval), CH, ChannelMode.PROPOSE)
+    assert (
+        "Only the channel's approvers can approve, and never a proposal drawn from their "
+        "own messages."
+    ) in text
 
 
 @pytest.mark.parametrize(

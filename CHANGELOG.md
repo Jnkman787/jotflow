@@ -2,6 +2,12 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
+## [Unreleased]
+
+### Changed
+
+- **A listed approver may approve their own proposal (#244).** With approvers on, a listed approver can now approve, by button, reaction or Retry, a proposal drawn from their own messages. Until now that was always refused. To keep the old rule, set `[approval] require_second_approver = true`, which needs an approver list. With approvers off, nothing changes: anyone in the channel may approve.
+
 ## [0.1.1] - 2026-10-19
 
 A fix release. Upgrade by re-running setup with this version and replacing both Compose files when it asks: the DNS fix is in the Compose files, so changing only the image version in `.env` misses it. If `.env` sets `JOTFLOW_IMAGE_REF` or `JOTFLOW_AGENT_IMAGE_REF`, change both to 0.1.1 or remove them, since they override the Compose files' pins.

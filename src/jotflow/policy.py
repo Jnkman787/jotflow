@@ -287,6 +287,13 @@ class ApprovalPolicy(_Strict):
         default=(),
         description="Slack user ids; empty means anyone in the channel may approve",
     )
+    require_second_approver: bool = Field(
+        default=False,
+        description=(
+            "With approvers on, refuse a listed approver who wrote the thread's first message "
+            "or a cited source, so every write needs a second person. Off by default (#244)"
+        ),
+    )
     reactions: bool = Field(default=False, description="Whether a reaction counts as approval")
     reaction: EmojiName = Field(
         default=DEFAULT_APPROVAL,
@@ -315,6 +322,13 @@ class ApprovalPolicy(_Strict):
     def _unique_approvers(self) -> ApprovalPolicy:
         if dupes := _duplicates(self.approvers):
             raise ValueError(f"approvers listed more than once: {', '.join(dupes)}")
+        if self.require_second_approver and not self.approvers:
+            # Without a list anyone may approve, the poster included: refuse a
+            # setting a team could believe requires two people when it doesn't.
+            raise ValueError(
+                "require_second_approver needs [approval] approvers; list them, or remove "
+                "require_second_approver"
+            )
         return self
 
 
