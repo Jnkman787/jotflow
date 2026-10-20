@@ -4,7 +4,7 @@
 
 - Issue: #256 (M6), a follow-up to #38
 - Draft PR: to be opened
-- Status: plan only, for the lead before any code
+- Status: plan, approved by the lead on 2026-10-20. Waiting on security's review of the endpoint and the stored title
 - Last verified: 2026-10-20, against main
 - Next safe action: the lead's review, then security's on the new runner endpoint
 
@@ -85,13 +85,14 @@ docker compose start jotflow
    - Pages are bounded.
 
    Is a GitHub-written title acceptable in the store, given that topic titles are already agent-written untrusted text, cleaned the same way?
-2. **For the lead: the run kind #256 asked for.** I'd do a fixed endpoint instead, as above. I'll reword the box if you agree.
+2. **Decided by the lead on 2026-10-20: a fixed endpoint, not a run kind.** There's no model and no prompt to inject. #256's boxes are reworded, with a dated note.
 3. **Cost.** A repo with 5,000 issues is 50 calls, well inside the read token's 5,000 an hour. `--since` passes through to cut it.
 4. **A token that reaches more repos than one channel feeds.** Rebuild asks only for the channel's own repos, and applies sources only to the channel they name. The runner doesn't know channels, so the scoping is JotFlow's, as it is for discovery.
 
 ## Progress checklist
 
-- [ ] The lead reviews the plan, and questions 1 and 2 are answered
+- [x] The lead approves the plan and answers question 2
+- [ ] Security answers question 1
 - [ ] The runner endpoint, with `github_repos`-style client code and the marker and permalink parsing reused from execution
 - [ ] Rebuild's `--from-github`: the info check, the repo set with scopes, titles and lost threads
 - [ ] Tests: the endpoint, with a fake GitHub (paging, truncation, PRs excluded, no text returned, a 502); rebuild with a fake runner (titles, lost threads, other channels' sources ignored, issue_links none)
