@@ -500,3 +500,70 @@ def test_readiness_names_an_unreadable_dotenv(
 
     monkeypatch.setattr(check_command, "read_env", denied)
     assert check_command.agent_readiness(policy, tmp_path) == [".env can't be read by this user"]
+
+
+# A login key the runner would never pass (#239)
+
+
+def _drop_allow(path: Path, replacement: str = "") -> None:
+    lines = [
+        x for x in path.read_text().splitlines() if not x.startswith("JOTFLOW_AGENT_ENV_ALLOW=")
+    ]
+    path.write_text("\n".join([*lines, replacement]) + "\n")
+
+
+def test_a_set_key_the_runner_never_passes_fails_and_names_the_line(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace)
+    _drop_allow(workspace / "agent.env")
+    _drop_allow(workspace / "agent-exec.env", "JOTFLOW_AGENT_ENV_ALLOW=HTTPS_PROXY")
+    assert main(["check"]) == check_command.EXIT_FAILED
+    out = capsys.readouterr().out
+    assert (
+        "fail  agent: agent.env sets ANTHROPIC_API_KEY but doesn't pass it to the agent, so no "
+        "run can sign in. Set this line in agent.env: JOTFLOW_AGENT_ENV_ALLOW=ANTHROPIC_API_KEY"
+    ) in out
+    assert (
+        "Set this line in agent-exec.env: JOTFLOW_AGENT_ENV_ALLOW=HTTPS_PROXY,ANTHROPIC_API_KEY"
+    ) in out
+    assert "ok    agent" not in out and MODEL_KEY not in out
+
+
+def test_a_claude_account_login_needs_no_key_line(workspace: Path) -> None:
+    _with_preset(workspace)
+    _agent_folder(workspace)
+    for name in ("agent.env", "agent-exec.env"):
+        path = workspace / name
+        kept = [x for x in path.read_text().splitlines() if not x.startswith("ANTHROPIC_API_KEY=")]
+        path.write_text("\n".join(kept) + "\n")
+        _drop_allow(path)
+    assert main(["check"]) == 0
+
+
+def test_codex_fails_on_its_own_key_and_checks_execution_for_claude_code(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _with_preset(workspace, "codex")
+    _agent_folder(workspace)
+    agent = workspace / "agent.env"
+    agent.write_text(
+        agent.read_text().replace("JOTFLOW_AGENT_PRESET=claude-code", "JOTFLOW_AGENT_PRESET=codex")
+        + "OPENAI_API_KEY=sk-proj-SENTINEL\n"
+    )
+    # agent.env passes only ANTHROPIC_API_KEY, which codex doesn't read.
+    assert main(["check"]) == check_command.EXIT_FAILED
+    out = capsys.readouterr().out
+    assert "agent.env sets OPENAI_API_KEY but doesn't pass it" in out
+    assert "JOTFLOW_AGENT_ENV_ALLOW=ANTHROPIC_API_KEY,OPENAI_API_KEY" in out
+    assert "agent-exec.env sets" not in out and "SENTINEL" not in out
+
+
+def test_the_command_preset_has_no_login_to_check(workspace: Path) -> None:
+    from jotflow.policy import load_policy
+
+    _with_preset(workspace, "command")
+    _agent_folder(workspace)
+    _drop_allow(workspace / "agent.env")
+    assert check_command.agent_failures(load_policy(workspace / "jotflow.toml"), workspace) == []
