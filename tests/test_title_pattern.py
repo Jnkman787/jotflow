@@ -35,8 +35,9 @@ SLOW = {
     "optional runs at the maximum": "a?" * 66 + "a" * 68,
     "optional alternations at the maximum": "(a|aa)?" * 28 + "bbbb",
 }
-# About 100 ms end to end: the limit plus thread and timer overhead.
-WITHIN = MATCH_TIMEOUT + 0.07
+# The limit plus 200 ms, so a busy shared CI runner doesn't flake (as #204 did).
+# Locally they finish within about 50 ms; the strict check is "never a MATCH".
+WITHIN = MATCH_TIMEOUT + 0.2
 
 
 @pytest.mark.parametrize(
