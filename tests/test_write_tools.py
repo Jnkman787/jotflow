@@ -1055,3 +1055,80 @@ async def test_an_expired_topic_is_revived_by_linking_to_it(
     assert joined.topic_id == topic_id
     [active] = (await list_topics(store, POLICY, CH, now=clock())).topics
     assert active.id == topic_id and active.last_active == clock()
+
+
+# @-mentions (#250)
+
+
+@pytest.mark.parametrize(
+    ("text", "found"),
+    [
+        ("thanks @octo-cat", ["octo-cat"]),
+        ("ping @acme-co/web-team", ["acme-co/web-team"]),
+        ("(@paren) and @end.", ["paren", "end"]),
+        ("@a-b-c- trailing hyphen", ["a-b-c"]),
+        ("write to dev@example.com", []),
+        ("x@y and @-nope", []),
+        ("`@in-code` and ``@double`` only", []),
+        ("```\n@fenced\n```\nthen @after", ["after"]),
+        ("~~~python\n@decorator\n~~~", []),
+        ("an unclosed\n```\n@still-code", []),
+        ("@lo​gin", ["lo", "login"]),
+        ("@​hidden", ["hidden"]),
+    ],
+)
+def test_mentions_are_read_as_github_reads_them(text: str, found: list[str]) -> None:
+    assert wt.mentions(text) == found
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"title": "Fix login for @stranger"},
+        {"body": "As @stranger said, the page is slow."},
+        {"body": "cc @acme-co/web-team"},
+        {"body": "cc @acme-bob"},  # linked, but not a participant here
+        {"body": "@lo​gin"},
+    ],
+)
+async def test_an_unlinked_mention_is_refused(
+    tools: WriteTools, store: MemoryStore, fields: dict[str, Any]
+) -> None:
+    topic_id = await new_topic(tools)
+    await store.link_identity("U0BOB", "acme-bob")
+    with pytest.raises(ToolError, match="would ping someone on GitHub") as refused:
+        await tools.propose_issue(DRAFT, issue(topic_id, **fields))
+    assert "Write the name without @" in str(refused.value)
+
+
+async def test_a_linked_participant_may_be_mentioned_and_code_is_exempt(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    topic_id = await new_topic(tools)
+    await store.link_identity("U0BOB", "acme-bob")
+    body = "Thanks @Acme-Bob.\n\nUse `@decorator` here:\n\n```\n@app.route\n```\n"
+    result: Any = await tools.propose_issue(
+        DRAFT, issue(topic_id, participants=["U0BOB"], body=body)
+    )
+    assert result.state is ProposalState.PENDING
+
+
+async def test_an_email_address_is_not_a_mention(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(
+        DRAFT, issue(topic_id, body="Write to support@example.com for access.")
+    )
+    assert result.state is ProposalState.PENDING
+
+
+@pytest.mark.parametrize("field", ["body", "comment"])
+async def test_propose_update_mentions_follow_the_same_rule(
+    tools: WriteTools, store: MemoryStore, field: str
+) -> None:
+    topic_id = await new_topic(tools)
+    await store.set_topic_issue(topic_id, "acme-co/web", 42)
+    await store.link_identity("U0BOB", "acme-bob")
+    with pytest.raises(ToolError, match="would ping someone on GitHub"):
+        await tools.propose_update(DRAFT, update(topic_id, changes={field: "cc @stranger"}))
+    ok = update(topic_id, participants=["U0BOB"], changes={field: "cc @acme-bob"})
+    assert (await tools.propose_update(DRAFT, ok)).state is ProposalState.PENDING  # type: ignore[attr-defined]
