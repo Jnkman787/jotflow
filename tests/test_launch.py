@@ -152,7 +152,7 @@ async def test_each_kind_goes_to_its_own_runner_with_its_own_secret(
         ("DELETE", "/runs/run-1"),
     ]
     for request in recorder.requests:
-        assert request.url.host == host and request.url.port == 8766
+        assert request.headers["host"] == f"{host}:8766" and request.url.port == 8766
         assert request.headers["authorization"] == f"Bearer {secret}"
         assert other not in str(request.headers) and other not in request.content.decode()
     assert json.loads(recorder.requests[0].content) == {
@@ -283,7 +283,7 @@ class Runners(httpx2.AsyncBaseTransport):
         self._transports = {host: httpx2.ASGITransport(app=app) for host, app in apps.items()}
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        host = f"{request.url.host}:{request.url.port}"
+        host = request.headers["host"]  # the name; the URL holds the checked address
         return await self._transports[host].handle_async_request(request)
 
 
@@ -596,7 +596,7 @@ async def test_an_execution_run_goes_to_agent_exec(rig: Rig) -> None:
     original = rig.runner.__call__
 
     def watch(request: httpx2.Request) -> httpx2.Response:
-        hosts.append(str(request.url.host))
+        hosts.append(request.headers["host"].rsplit(":", 1)[0])
         assert request.headers["authorization"] == f"Bearer {EXEC_SECRET}"
         return original(request)
 
@@ -800,7 +800,12 @@ async def test_info_is_read_strictly_from_the_kinds_own_runner() -> None:
     info = await client.info(RunKind.EXECUTION)
     assert (info.preset, info.kinds) == ("claude-code", (RunKind.EXECUTION,))
     (request,) = recorder.requests
-    assert (request.method, request.url.host, request.url.path) == ("GET", "agent-exec", "/info")
+    assert (request.method, request.headers["host"], request.url.path) == (
+        "GET",
+        "agent-exec:8766",
+        "/info",
+    )
+    assert request.url.host == "172.20.0.3"  # the checked address, never a second lookup
     assert request.headers["authorization"] == f"Bearer {EXEC_SECRET}"
 
 

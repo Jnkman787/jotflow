@@ -2,6 +2,16 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
+## [Unreleased]
+
+### Security
+
+- **Runner secrets and run tokens go only to private addresses (#234).**
+  - JotFlow resolves each runner's name once, refuses unless every address is private, loopback or link-local (100.64/10 included, for VPNs such as Tailscale), and connects to the address it checked. The runner refuses a run unless JotFlow's MCP host resolves the same way.
+  - The Compose files set `dns_search: ["."]`, so a service that isn't running can't resolve through the host's search domain to a public host.
+  - A missing runner now fails its startup check in about 15 seconds, not 2 minutes.
+  - `JOTFLOW_RUNNER_ALLOW_PUBLIC` and `JOTFLOW_MCP_ALLOW_PUBLIC` opt in to public addresses.
+
 ## [0.1.0] - 2026-10-19
 
 The first release. JotFlow watches the Slack channels you choose, hands each quiet thread to your team's own agent, and posts what the agent proposes as a card. Nothing reaches GitHub until a person approves it, unless a channel is set to `auto`.

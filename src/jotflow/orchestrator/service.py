@@ -60,7 +60,7 @@ from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
 from jotflow.orchestrator.identity import LinkCommand, Notifier, PeopleLookup, SlackNote
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
-from jotflow.orchestrator.launch import UNREACHABLE, RunnerClient, RunnerError, RunSupervisor
+from jotflow.orchestrator.launch import RunnerClient, RunnerError, RunSupervisor
 from jotflow.orchestrator.modes import AutoApprover, BoltModeSlack, ModeCommand, ModeSlack
 from jotflow.orchestrator.notices import GiveUpNotice
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
@@ -131,6 +131,10 @@ def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
 # Runners start alongside JotFlow, so give them a moment to answer.
 INFO_ATTEMPTS = 10
 INFO_DELAY_SECONDS = 3.0
+# A runner whose name doesn't resolve isn't running: Docker's DNS knows a container's
+# name from the moment it starts. So stop asking after this long, not after every
+# attempt (#234). A runner that resolves but isn't listening yet keeps every attempt.
+UNRESOLVED_BUDGET_SECONDS = 15.0
 
 # Each runner serves exactly one group of kinds, asked about by its first kind.
 RUNNER_GROUPS: tuple[tuple[str, frozenset[RunKind]], ...] = (
@@ -172,18 +176,25 @@ async def _runner_mismatch(
     *,
     attempts: int,
     delay: float,
+    unresolved_budget: float = UNRESOLVED_BUDGET_SECONDS,
 ) -> str | None:
     kind = min(group, key=lambda k: list(RunKind).index(k))
     endpoint = client.endpoint_for(kind)
     where = endpoint.url if endpoint is not None else "its runner"
     problem = "no attempt was made"
+    started = asyncio.get_running_loop().time()
     for attempt in range(max(attempts, 1)):
         try:
             info = await client.info(kind)
         except RunnerError as exc:
             problem = str(exc)
-            if problem != UNREACHABLE:
-                break  # a refusal, such as a wrong secret, will not fix itself
+            if exc.retry is None:
+                # A refusal, such as a wrong secret or a public address (#234),
+                # will not fix itself.
+                break
+            elapsed = asyncio.get_running_loop().time() - started
+            if exc.retry == "unresolved" and elapsed + delay > unresolved_budget:
+                break
             if attempt + 1 < attempts:
                 await asyncio.sleep(delay)
             continue
@@ -388,6 +399,12 @@ class Orchestrator:
         await self._server.start()
         if self.kinds.on:
             self._runner = self._runner or RunnerClient.from_settings(self._settings)
+            for host in self._runner.public_hosts():
+                log.warning(
+                    "JOTFLOW_RUNNER_ALLOW_PUBLIC is on: runner secrets may go to %s even if it "
+                    "resolves to a public address (#234)",
+                    host,
+                )
             self.kinds = await check_runners(
                 self._runner,
                 self.kinds,

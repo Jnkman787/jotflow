@@ -231,6 +231,7 @@ jobs:
               assert not service.get("ports"), f"{name} publishes ports"
               assert service.get("network_mode") != "host", f"{name} uses the host network"
               assert not service.get("privileged"), f"{name} is privileged"
+              assert service.get("dns_search") == ["."], f"{name} keeps a DNS search domain"
               for volume in service.get("volumes") or []:
                   assert "docker.sock" not in str(volume.get("source", "")), f"{name} mounts the Docker socket"
           expected = {

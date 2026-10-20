@@ -40,6 +40,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # No DNS search domain (#234): a service name that isn't running must fail to
+    # resolve, not fall back to the host's search domain and a public address.
+    dns_search: ["."]
     # Healthy while JotFlow is connected to Slack: jotflow run rewrites a
     # heartbeat in /tmp every 30 s while connected, and jotflow health checks
     # its age with no network and no tokens (#133). Alert on "unhealthy".
@@ -89,6 +92,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # No DNS search domain (#234): a service name that isn't running must fail to
+    # resolve, not fall back to the host's search domain and a public address.
+    dns_search: ["."]
 
   agent-exec:
     profiles: [agent]
@@ -115,6 +121,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # No DNS search domain (#234): a service name that isn't running must fail to
+    # resolve, not fall back to the host's search domain and a public address.
+    dns_search: ["."]
 
 volumes:
   jotflow-data:
