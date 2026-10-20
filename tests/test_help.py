@@ -196,6 +196,8 @@ def _safe(reply: dict[str, Any]) -> None:
             assert "<" not in text["text"] and ">" not in text["text"]
         else:
             assert text["type"] == "plain_text"
+    # The notification fallback too: no <!here>, <@U…> or <url|label> markup (#259).
+    assert "<" not in reply["text"] and ">" not in reply["text"]
 
 
 async def _ask(app: FakeApp, channel: str) -> str:
@@ -597,8 +599,10 @@ async def test_an_admins_description_cannot_ping_link_or_reformat() -> None:
         assert mark not in description, mark
     star, grave = help_blocks.LOOKALIKES["*"], help_blocks.LOOKALIKES["`"]
     assert f"{star}bold{star}" in description and f"{grave}code{grave}" in description
-    # The plain fallback keeps the text as written: it is never rendered as mrkdwn.
-    assert NASTY in reply["text"]
+    # The plain fallback can't ping or link either: Slack reads <…> markup in it.
+    assert "<!here>" not in reply["text"] and "<@U123>" not in reply["text"]
+    assert "&lt;!here&gt; and &lt;@U123&gt;" in reply["text"]
+    assert "&amp; co" in reply["text"]
 
 
 def test_a_nickname_or_repo_with_a_backtick_is_escaped_not_put_in_code() -> None:

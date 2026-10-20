@@ -341,6 +341,18 @@ REPOS_CHANGE = (
 )
 
 
+_FALLBACK_ENTITIES = str.maketrans({"&": "&amp;", "<": "&lt;", ">": "&gt;"})
+
+
+def as_text(value: str) -> str:
+    """Admin-written text for a reply's plain ``text``: no ``<!here>``, ``<@U…>`` or link.
+
+    Slack still reads ``<…>`` markup in a message's top-level text, which it shows
+    in notifications, so escape it the same way the blocks do (#259).
+    """
+    return value.translate(_FALLBACK_ENTITIES)
+
+
 def channel_repos(policy: Policy, channel_id: str, argument: str) -> str:
     """``/jotflow repos``: list this channel's repos, or say how to change them."""
     if channel_id not in policy.channels:
@@ -348,7 +360,8 @@ def channel_repos(policy: Policy, channel_id: str, argument: str) -> str:
     if argument.strip():
         return REPOS_CHANGE
     listed = [
-        f"  {r.nickname}: {r.repo}. {r.description}" for r in policy.channels[channel_id].repos
+        f"  {r.nickname}: {r.repo}. {as_text(r.description)}"
+        for r in policy.channels[channel_id].repos
     ]
     more = "  and {n} more; jotflow.toml lists them all."
     return "\n".join(["This channel feeds:", *_capped(listed, REPOS_LIMIT, more)])
