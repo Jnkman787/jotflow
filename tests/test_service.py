@@ -22,7 +22,7 @@ from jotflow.commands.run import make_mcp_server
 from jotflow.config import Settings
 from jotflow.models import RUN_KINDS, MessageRef, ProposalState, RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Ignored
-from jotflow.orchestrator.launch import RunnerClient, RunnerEndpoint
+from jotflow.orchestrator.launch import RunnerClient, RunnerEndpoint, RunnerError
 from jotflow.orchestrator.service import Orchestrator, RunKinds, decide_run_kinds
 from jotflow.policy import Policy
 from jotflow.store import MemoryStore, Store
@@ -152,6 +152,11 @@ class Rig:
             if host == "agent-exec" and self.exec_preset is not None:
                 started = self.exec_preset
             return httpx2.Response(200, json={"preset": started, "kinds": kinds})
+        if request.url.path == "/repos/acme-co":
+            found = {"id": 7, "full_name": "acme-co/web-shop", "private": True}
+            return httpx2.Response(200, json={"repos": [found], "dropped": 0, "truncated": False})
+        if request.url.path.endswith("/access"):
+            return httpx2.Response(200, json={"reachable": True})
         if request.method == "POST":
             return httpx2.Response(202, json={})
         run_id = request.url.path.rsplit("/", 1)[1]
@@ -1273,3 +1278,80 @@ async def test_operator_tokens_reach_the_gate_and_stop_with_the_server() -> None
     assert gate.check(token) is None
     [saved] = await rig.store.operator_tokens()
     assert saved.last_used_at is not None
+
+
+# A channel's scopes find repos through the runners (#236)
+
+
+def _scoped(rig: Rig) -> Policy:
+    scoped = Policy.model_validate(
+        {
+            **rig.orchestrator._policy.model_dump(mode="json", exclude_none=True),
+            "channels": {
+                CH: {
+                    "repos": [{"repo": "acme-co/web", "nickname": "web", "description": "Web"}],
+                    "scopes": [{"owner": "acme-co", "match": ["web-*"]}],
+                }
+            },
+        }
+    )
+    return scoped
+
+
+async def test_a_scope_is_listed_through_the_drafting_runner_at_start() -> None:
+    rig = Rig()
+    scoped = _scoped(rig)
+    rig.orchestrator = Orchestrator(
+        settings(),
+        scoped,
+        AsyncWebClient(token="xoxb-test"),
+        IDENTITY,
+        make_server=rig._server,
+        open_store=rig._open,
+        runner=rig.runner,
+        keyword_slack=rig.slack,
+        help_slack=rig.help,
+        card_poster=rig.cards,
+        thread_slack=rig.threads,
+        people=FakePeople(),
+        info_attempts=1,
+        info_delay=0.0,
+    )
+    await rig.orchestrator.start()
+    repos = rig.orchestrator.repos
+
+    async def listed() -> bool:
+        return any(r.repo == "acme-co/web-shop" for r in repos.repos(CH))
+
+    await until(listed)
+    assert ("GET", "agent", "/repos/acme-co") in rig.calls
+    assert await repos.writable(CH, "acme-co/web-shop")
+    assert ("GET", "agent-exec", "/repos/acme-co/web-shop/access") in rig.calls
+    await rig.orchestrator.stop()
+
+
+async def test_with_runs_off_a_scope_finds_nothing_and_says_why(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rig = Rig()
+    scoped = _scoped(rig)
+    orchestrator = Orchestrator(
+        settings(),
+        scoped.model_copy(update={"agent": scoped.agent.model_copy(update={"preset": None})}),
+        AsyncWebClient(token="xoxb-test"),
+        IDENTITY,
+        make_server=rig._server,
+        open_store=rig._open,
+        keyword_slack=rig.slack,
+        help_slack=rig.help,
+        card_poster=rig.cards,
+        thread_slack=rig.threads,
+        people=FakePeople(),
+    )
+    with caplog.at_level(logging.WARNING, logger="jotflow.orchestrator"):
+        await orchestrator.start()
+    assert "jotflow.toml has scopes, but agent runs are off" in caplog.text
+    assert not await orchestrator.repos.refresh("acme-co")
+    with pytest.raises(RunnerError):
+        await orchestrator._write_reachable("acme-co", "web-shop")
+    await orchestrator.stop()

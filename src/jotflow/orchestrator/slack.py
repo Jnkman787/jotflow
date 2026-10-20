@@ -17,6 +17,7 @@ from jotflow.orchestrator.identity import LinkCommand
 from jotflow.orchestrator.ingest import BotIdentity, Decision, EventFilter, log_decision
 from jotflow.orchestrator.modes import ModeCommand
 from jotflow.policy import Policy
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.slack_manifest import SLASH_COMMAND
 
 log = logging.getLogger("jotflow.slack")
@@ -119,6 +120,7 @@ def register_commands(
     mode_for: Callable[[str], Awaitable[ChannelMode]] | None = None,
     modes: ModeCommand | None = None,
     links: LinkCommand | None = None,
+    repos: RepoCatalog | None = None,
 ) -> None:
     """Answer ``/jotflow`` privately: ``help``, ``mode``, and ``link`` and ``unlink``.
 
@@ -155,7 +157,9 @@ def register_commands(
             await respond(reply.text)
             return
         if word == "repos" and policy is not None:
-            await formatted(ack, repos_reply(policy, str(command.get("channel_id") or ""), rest))
+            await formatted(
+                ack, repos_reply(policy, str(command.get("channel_id") or ""), rest, repos)
+            )
             return
         if text in ("", "help"):
             channel = str(command.get("channel_id") or "")
@@ -165,7 +169,7 @@ def register_commands(
             mode = ChannelMode.PROPOSE
             if mode_for is not None and channel in policy.channels:
                 mode = await mode_for(channel)
-            await formatted(ack, help_reply(policy, channel, mode))
+            await formatted(ack, help_reply(policy, channel, mode, repos))
         else:
             await ack(
                 "Try /jotflow help for the keywords, /jotflow mode for this channel's mode, "
