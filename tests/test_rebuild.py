@@ -571,14 +571,32 @@ async def test_rebuild_refuses_where_flock_is_refused_unless_no_lock(
     path = str(tmp_path / "jotflow.db")
     with pytest.raises(LockUnsupportedError):
         await SqliteStore.open(path, exclusive=True)
-    store = await SqliteStore.open(path, exclusive=False)  # what --no-lock opens
-    await store.close()
+    # What --no-lock opens: unlocked, and it says so.
+    store = await SqliteStore.open(path, exclusive=True, unlocked_ok=True)
+    try:
+        assert not store.locked
+    finally:
+        await store.close()
+
+
+async def test_no_lock_still_refuses_while_jotflow_holds_the_lock(tmp_path: Path) -> None:
+    from jotflow.orchestrator.service import open_sqlite
+    from jotflow.store.lock import StoreBusyError
+
+    path = str(tmp_path / "jotflow.db")
+    running = await open_sqlite(path)
+    try:
+        assert running.locked
+        with pytest.raises(StoreBusyError):
+            await SqliteStore.open(path, exclusive=True, unlocked_ok=True)
+    finally:
+        await running.close()
 
 
 def test_the_no_lock_flag_says_it_skips_the_safety_check() -> None:
     parser = argparse.ArgumentParser()
     rebuild_command.add_arguments(parser)
-    assert "Skip the safety check" in parser.format_help()
+    assert "A running JotFlow is still refused" in " ".join(parser.format_help().split())
     assert parser.parse_args(["--no-lock"]).no_lock is True
 
 
