@@ -28,6 +28,7 @@ from jotflow.testing.threads import (
 PATHS = list(builtin_paths())
 REQUIRED = {
     "feature-request",
+    "repo-style",
     "bug-report",
     "chatter",
     "same-topic-two-threads",
@@ -86,7 +87,9 @@ def test_script_produces_the_expected_topics_and_proposals(path: Path) -> None:
     want = {t.topic: sorted(set(t.messages) - attached) for t in thread.expected.topics}
     assert {k: sorted(v) for k, v in outcome.topics.items()} == {k: v for k, v in want.items() if v}
     assert sorted(outcome.chatter) == sorted(thread.expected.chatter)
-    assert outcome.proposals == list(thread.expected.proposals)
+    assert [p.key() for p in outcome.proposals] == [p.key() for p in thread.expected.proposals]
+    for want, draft in zip(thread.expected.proposals, outcome.drafts, strict=True):
+        assert want.form_problems(*draft) == []
     assert outcome.asks == list(thread.expected.asks)
 
 
@@ -423,3 +426,62 @@ def test_a_new_topic_link_needs_a_title_and_only_it_takes_one() -> None:
     )
     other["title"] = "Not allowed"
     assert "only a link_message that starts a topic" in _problem(data)
+
+
+# How a drafted issue reads (#249)
+
+
+def test_a_fixture_cannot_expect_a_form_its_script_does_not_draft() -> None:
+    data = _base()
+    data["expected"]["proposals"][0]["body_sections"] = ["## Problem", "## Rollout"]
+    assert "the script's body has no '## Rollout'" in _problem(data)
+    data = _base()
+    data["expected"]["proposals"][0]["title_pattern"] = r"feat\(web\): "
+    assert "does not match" in _problem(data)
+
+
+def test_form_expectations_are_for_new_issues_and_valid_patterns() -> None:
+    data = _base()
+    data["expected"]["proposals"][0]["title_pattern"] = "("
+    assert "title_pattern is not a regular expression" in _problem(data)
+    update = json.loads((PATHS[0].parent / "existing-topic.json").read_text(encoding="utf-8"))
+    update["expected"]["proposals"][0]["body_sections"] = ["## Problem"]
+    assert "apply to create_issue only" in _problem(update)
+
+
+def test_sections_must_come_in_order() -> None:
+    from jotflow.testing.threads import ExpectedProposal
+
+    want = ExpectedProposal(
+        kind="create_issue", repo="acme-co/web", topic="key:x", body_sections=("## A", "## B")
+    )
+    assert want.form_problems("t", "## A\ntext\n## B") == []
+    assert want.form_problems("t", "## B\n## A") != []
+
+
+def test_a_number_in_acceptance_must_come_from_the_thread() -> None:
+    from jotflow.testing.threads import invented_numbers
+
+    body = (
+        "## Problem\nSlow, 9 times\n## Acceptance\n- [ ] loads in 2 s\n- [ ] see #42\n## Context\n7"
+    )
+    assert invented_numbers(body, "it takes 2 s") == []  # outside Acceptance doesn't count
+    assert invented_numbers(body, "it is slow") == ["2"]  # #42 is a reference, not a number
+
+
+def test_planted_assignees_and_labels_are_caught() -> None:
+    from jotflow.testing.threads import ExpectedProposal
+
+    want = ExpectedProposal(
+        kind="create_issue",
+        repo="acme-co/web",
+        topic="key:x",
+        assignees=(),
+        labels_exclude=("urgent",),
+    )
+    assert want.shaped
+    assert want.form_problems("t", "b", ("enhancement",), ()) == []
+    problems = want.form_problems("t", "b", ("Urgent",), ("acme-carol",))
+    assert any("must not be set" in p for p in problems)
+    assert any("expected []" in p for p in problems)
+    assert not ExpectedProposal(kind="create_issue", repo="acme-co/web", topic="key:x").shaped

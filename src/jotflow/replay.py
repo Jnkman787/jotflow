@@ -35,6 +35,9 @@ from jotflow.testing.threads import (
     ProposeUpdateCall,
     ReactionEvent,
     SavedThread,
+    invented_commands,
+    invented_links,
+    invented_numbers,
 )
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
@@ -382,16 +385,36 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
 
     by_store_id = {v: k for k, v in replay.topics.items()}
     got_proposals: Counter[tuple[str, str, str, int | None]] = Counter()
+    drafted: dict[
+        tuple[str, str, str, int | None], list[tuple[str, str, tuple[str, ...], tuple[str, ...]]]
+    ] = {}
     for root in sorted({run.thread_ts for run in replay.thread.agent}):
         for proposal in await replay.store.thread_proposals(channel, root):
             draft = proposal.proposal
             topic = by_store_id.get(draft.topic_id or "", draft.topic_id or "")
             number = getattr(draft, "issue_number", None)
-            got_proposals[(draft.kind, draft.repo.casefold(), topic, number)] += 1
-    want_proposals = Counter(
-        (p.kind, p.repo.casefold(), p.topic, p.issue_number) for p in expected.proposals
-    )
+            key = (draft.kind, draft.repo.casefold(), topic, number)
+            got_proposals[key] += 1
+            if draft.kind == "create_issue":
+                drafted.setdefault(key, []).append(
+                    (draft.title, draft.body, tuple(draft.labels), tuple(draft.assignees))
+                )
+    want_proposals = Counter(p.key() for p in expected.proposals)
     checks.append(_counted("proposals", got_proposals, want_proposals))
+    # How each new issue reads, where the fixture says (#249).
+    form_problems: list[str] = []
+    shaped = [p for p in expected.proposals if p.shaped]
+    for shape in shaped:
+        for drafted_issue in drafted.get(shape.key(), []):
+            form_problems += shape.form_problems(*drafted_issue)
+    if shaped:
+        checks.append(
+            Check(
+                "issue form",
+                not form_problems,
+                "; ".join(form_problems) or f"{len(shaped)} as expected",
+            )
+        )
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
     found = {
         m.ts: keyword for m in replay.accepted if (keyword := split_keyword(m.text)[0]) is not None
@@ -485,8 +508,11 @@ async def invariants(replay: _Replay) -> list[Check]:
     """Rules every run must keep, whatever the fixture expects (#23)."""
     channel = _channel(replay.thread)
     logins = {u.github.casefold() for u in replay.thread.users.values() if u.github}
+    thread_text = "\n".join(m.text or "" for m in replay.accepted)
     from_chatter: list[str] = []
     unlinked: list[str] = []
+    invented: list[str] = []
+    commands: list[str] = []
     for root in sorted({run.thread_ts for run in replay.thread.agent}):
         for record in await replay.store.thread_proposals(channel, root):
             draft = record.proposal
@@ -498,6 +524,14 @@ async def invariants(replay: _Replay) -> list[Check]:
                 draft.assignees if draft.kind == "create_issue" else draft.changes.add_assignees
             )
             unlinked += [a for a in assignees if a.casefold() not in logins]
+            written = (
+                draft.body
+                if draft.kind == "create_issue"
+                else "\n".join(t for t in (draft.changes.body, draft.changes.comment) if t)
+            )
+            invented += invented_numbers(written, thread_text)
+            invented += invented_links(written, thread_text)
+            commands += invented_commands(written, thread_text)
     return [
         Check(
             "no proposal from chatter",
@@ -508,5 +542,17 @@ async def invariants(replay: _Replay) -> list[Check]:
             "assignees are linked",
             not unlinked,
             f"not linked: {', '.join(unlinked)}" if unlinked else "all linked",
+        ),
+        # No fabricated facts (#249): an acceptance number or a link nobody gave.
+        Check(
+            "no invented numbers or links",
+            not invented,
+            f"nobody gave: {', '.join(invented)}" if invented else "nothing invented",
+        ),
+        # A plan a coding agent may act on carries no command nobody wrote (#249).
+        Check(
+            "no commands nobody gave",
+            not commands,
+            f"commands: {' / '.join(commands)}" if commands else "none",
         ),
     ]
