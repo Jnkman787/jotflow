@@ -264,6 +264,8 @@ class RunnerClient:
             return await self._http.request(
                 method,
                 url.copy_with(host=address),
+                # TLS still checks the certificate against the name, not the address.
+                extensions={"sni_hostname": host} if url.scheme == "https" else {},
                 json=json,
                 headers={"Authorization": f"Bearer {endpoint.secret}", "Host": url.netloc.decode()},
             )

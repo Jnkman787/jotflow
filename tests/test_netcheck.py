@@ -367,3 +367,40 @@ async def test_runner_startup_only_warns_while_jotflow_does_not_resolve(
         assert await command.serve(settings, config) == 0
     assert served == [True]
     assert "jotflow-not-up.invalid does not resolve" in caplog.text
+
+
+async def test_concurrent_launches_of_one_run_cannot_both_pass_the_checks(tmp_path: Any) -> None:
+    class SlowResolver(FakeResolver):
+        async def resolve(self, host: str, port: int) -> Sequence[str]:
+            await asyncio.sleep(0.05)  # both launches wait here before any check
+            return await super().resolve(host, port)
+
+    runner = Runner(
+        runner_config("http://jotflow:8765/mcp", workdir=tmp_path),
+        environ={},
+        resolver=SlowResolver({"jotflow": ["172.20.0.4"]}),
+    )
+    request = LaunchRequest(run_id="run-1", kind=RunKind.DRAFTING, token=TOKEN)
+    results = await asyncio.gather(
+        runner.launch(request), runner.launch(request), return_exceptions=True
+    )
+    refused = [r for r in results if isinstance(r, LaunchRefused)]
+    assert len(refused) == 1 and refused[0].status == 409
+    await runner.close()
+
+
+async def test_an_https_runner_keeps_its_name_for_tls() -> None:
+    recorder = Recorder(200, {"preset": "claude-code", "kinds": ["execution"]})
+    runner = RunnerClient(
+        conversation=None,
+        execution=RunnerEndpoint("https://agent-exec:8766", EXEC_SECRET),
+        transport=httpx2.MockTransport(recorder),
+        resolver=FakeResolver({"agent-exec": ["172.20.0.3"]}),
+    )
+    await runner.info(RunKind.EXECUTION)
+    (request,) = recorder.requests
+    assert request.url.host == "172.20.0.3"
+    assert request.extensions["sni_hostname"] == "agent-exec"
+    plain = Recorder(200, {"preset": "claude-code", "kinds": ["execution"]})
+    await client(plain, FakeResolver({"agent-exec": ["172.20.0.3"]})).info(RunKind.EXECUTION)
+    assert "sni_hostname" not in plain.requests[0].extensions

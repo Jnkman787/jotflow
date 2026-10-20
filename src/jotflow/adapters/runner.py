@@ -398,6 +398,14 @@ class Runner:
 
     async def launch(self, request: LaunchRequest) -> dict[str, Any]:
         """Start a run. Raises :class:`LaunchRefused` if it may not start."""
+        # The only await, first: nothing may suspend between the checks below and
+        # registering the run, or two launches could both pass them.
+        try:
+            await self.check_mcp_host()
+        except AddressRefused as refused:
+            # The agent would send its run token to that host (#234).
+            log.warning("run %s refused: %s", request.run_id, refused)
+            raise LaunchRefused(502, str(refused)) from None
         if request.kind not in self._config.kinds:
             served = " and ".join(sorted(k.value for k in self._config.kinds))
             raise LaunchRefused(403, f"this runner serves only {served} runs")
@@ -408,12 +416,6 @@ class Runner:
             raise LaunchRefused(429, "the runner is at its limit of live runs")
         if self._config.github_token(request.kind) is None:  # pragma: no cover - config refuses
             raise LaunchRefused(503, f"no GitHub token is configured for {request.kind.value} runs")
-        try:
-            await self.check_mcp_host()
-        except AddressRefused as refused:
-            # The agent would send its run token to that host (#234).
-            log.warning("run %s refused: %s", request.run_id, refused)
-            raise LaunchRefused(502, str(refused)) from None
         run = _Run(request.run_id, request.kind)
         self._runs[request.run_id] = run
         # Keep finished runs from growing without bound.
