@@ -54,6 +54,20 @@ def shown(value: str, limit: int = 40) -> str:
     return repr(value if len(value) <= limit else value[:limit] + "...")
 
 
+_OWNER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", re.ASCII)
+_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,100}", re.ASCII)
+
+
+def is_owner_name(value: str) -> bool:
+    """Whether ``value`` is a valid GitHub owner, an org or a user (#236)."""
+    return _OWNER_RE.fullmatch(value) is not None
+
+
+def is_bare_repo_name(value: str) -> bool:
+    """Whether ``value`` is a valid repo name, without its owner (#236)."""
+    return _NAME_RE.fullmatch(value) is not None and value not in {".", ".."}
+
+
 def is_repo_name(value: str) -> bool:
     """Whether ``value`` is a valid ``owner/name`` GitHub repo."""
     match = _REPO_RE.fullmatch(value)
