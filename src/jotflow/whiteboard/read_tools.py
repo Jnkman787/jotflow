@@ -216,6 +216,10 @@ class RepoBrief(BaseModel):
         default=None,
         description="A regular expression the title must fully match; propose_issue refuses others",
     )
+    has_docs: Literal[True] | None = Field(
+        default=None,
+        description="True when list_repo_docs and read_repo_doc may read this repo's docs (#209)",
+    )
 
 
 class ChannelBrief(BaseModel):
@@ -475,6 +479,7 @@ def read_tools(
                     ),
                     topics=list(found.topics),
                     pushed_at=found.pushed_at,
+                    has_docs=True if r.read_paths else None,
                 )
                 for r, found in catalog.listed(channel_id, text)
             ],

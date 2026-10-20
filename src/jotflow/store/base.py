@@ -1003,6 +1003,13 @@ class Store(Protocol):
         """How many of ``tools`` the run has called."""
         ...
 
+    async def tool_call_results(self, run_id: str, tools: Collection[str]) -> list[str]:
+        """The result JSON of the run's calls of ``tools``, in the order they were recorded.
+
+        For the card's doc lines (#209), which hold paths and shas, never content.
+        """
+        ...
+
     async def count_thread_calls(
         self, channel_id: str, thread_ts: str | None, tool: str, *, since: datetime
     ) -> int:

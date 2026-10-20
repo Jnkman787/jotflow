@@ -83,6 +83,11 @@ class CardContext:
     def channel_repos(self) -> tuple[RepoPolicy, ...]:
         return self.repos if self.repos is not None else tuple(self.channel.repos)
 
+    # The repo docs the drafting run read, as (owner/name, path), and those the
+    # draft copies a long passage from, as "owner/name:path" (#209).
+    docs_read: tuple[tuple[str, str], ...] = ()
+    docs_copied: tuple[str, ...] = ()
+
     def repo_visibility(self, repo: str) -> Visibility:
         for name, value in self.visibility.items():
             if name.casefold() == repo.casefold():
@@ -372,6 +377,48 @@ def _who(user_id: str) -> str:
     return f"<@{user_id}>" if _SLACK_USER.fullmatch(user_id) else "someone"
 
 
+def _docs_blocks(context: CardContext) -> list[Block]:
+    """Which repo docs the draft read, and any it copies at length (#209).
+
+    Plain text, so a path can't ping or link. The read list is never cut: it's
+    split across a context block's elements instead, which hold every path a
+    run can read.
+    """
+    blocks: list[Block] = []
+    if context.docs_read:
+        groups: dict[str, list[str]] = {}
+        for repo, path in context.docs_read:
+            groups.setdefault(_nickname(context, repo), []).append(path)
+        parts = [f"{name}: {', '.join(paths)}" for name, paths in groups.items()]
+        elements: list[str] = []
+        line = "Read:"
+        for part in parts:
+            for piece in _pieces(part, MAX_CONTEXT_TEXT - 10):
+                candidate = f"{line} {piece}" if line else piece
+                if len(candidate) > MAX_CONTEXT_TEXT:
+                    elements.append(line)
+                    line = piece
+                else:
+                    line = candidate
+        elements.append(line)
+        blocks.append(
+            {"type": "context", "elements": [plain(e, MAX_CONTEXT_TEXT) for e in elements[:10]]}
+        )
+    if context.docs_copied:
+        names = []
+        for key in context.docs_copied:
+            repo, _, path = key.partition(":")
+            names.append(f"{_nickname(context, repo)}: {path}")
+        blocks.append(
+            _context("Contains a long passage copied word for word from " + ", ".join(names))
+        )
+    return blocks
+
+
+def _pieces(text: str, size: int) -> list[str]:
+    return [text[i : i + size] for i in range(0, len(text), size)] or [""]
+
+
 def _related_block(record: ProposalRecord) -> Block | None:
     """The issues the agent found close to this one (#36), as pointers JotFlow links.
 
@@ -540,6 +587,7 @@ def _assemble(
         blocks.append(related)
     if (sources := _sources_block(record)) is not None:
         blocks.append(sources)
+    blocks += _docs_blocks(context)
     if (state := _state_block(record)) is not None:
         blocks.append(state)
     return blocks, header, shortened

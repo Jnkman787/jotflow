@@ -12,9 +12,9 @@ from jotflow.whiteboard.write_tools import write_tools
 
 def test_the_instructions_are_plain_bounded_ascii() -> None:
     assert DRAFTING_INSTRUCTIONS.isascii()
-    # Room for the repo-style rules (#249) and team conventions (#216), still small
-    # next to a thread.
-    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 9_000
+    # Room for the repo-style rules (#249), team conventions (#216), scopes (#236)
+    # and repo docs (#209), still small next to a thread.
+    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 9_500
     assert "\r" not in DRAFTING_INSTRUCTIONS
     # No template fields: nothing from Slack or the policy is ever put into this text.
     assert not re.search(r"\{[a-z_]+\}", DRAFTING_INSTRUCTIONS)
@@ -93,10 +93,17 @@ def test_every_rule_is_still_there(rule: str) -> None:
 def test_the_instructions_name_only_tools_that_exist() -> None:
     from jotflow.models import RunKind
     from jotflow.store import MemoryStore
+    from jotflow.whiteboard.doc_tools import DocReads, doc_tools
+    from tests.test_doc_tools import with_read_paths
     from tests.test_write_tools import POLICY, Poster
 
     store = MemoryStore()
-    specs = (*read_tools(store, POLICY), *write_tools(store, POLICY, Poster()))
+    docs = with_read_paths(POLICY)  # the doc tools exist only then (#209)
+    specs = (
+        *read_tools(store, POLICY),
+        *write_tools(store, POLICY, Poster()),
+        *doc_tools(store, docs, lambda: None, DocReads(store)),
+    )
     jotflow = {spec.name for spec in specs if RunKind.DRAFTING in spec.kinds}
     github = {"issue_read", "list_issues", "search_issues", "list_label", "get_label"}
     fields = {
@@ -111,6 +118,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "title_pattern",
         "github_description",  # packet fields for a scope (#236)
         "scope_total",
+        "has_docs",
     }
     named = set(re.findall(r"`([a-z]+(?:_[a-z]+)+)`", DRAFTING_INSTRUCTIONS)) - fields
     assert named <= jotflow | github, named - jotflow - github

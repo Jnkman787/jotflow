@@ -26,6 +26,7 @@ from mcp.client.streamable_http import streamable_http_client
 from jotflow.testing.threads import (
     TOPIC_KEY_PREFIX,
     LinkMessageCall,
+    ListRepoDocsCall,
     SavedThread,
     builtin_thread,
     load_thread,
@@ -86,6 +87,10 @@ async def play(thread: SavedThread, index: int, config_path: Path) -> int:
                     return EXIT_REFUSED
                 if result.is_error:
                     return EXIT_REFUSED
+                if isinstance(call, ListRepoDocsCall) and call.expect_paths is not None:
+                    content = result.structured_content or {}
+                    if content.get("paths") != list(call.expect_paths):
+                        return EXIT_REFUSED
                 if isinstance(call, LinkMessageCall) and call.topic_key:
                     content = result.structured_content or {}
                     topics[TOPIC_KEY_PREFIX + call.topic_key] = content.get("topic_id")

@@ -41,6 +41,7 @@ from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.title_pattern import times_out
+from jotflow.whiteboard.doc_tools import docs_conflict
 
 EXIT_OK = 0
 # Something JotFlow needs is wrong in a file check can name, such as an agent
@@ -272,6 +273,30 @@ def pattern_warnings(policy: Policy) -> list[str]:
     return found
 
 
+def doc_notes(policy: Policy) -> list[str]:
+    """What turning on read_paths means for the read token (#209), one line per repo.
+
+    Reading docs needs Contents: Read on the read token, and GitHub grants that
+    for every repo the token reaches, not only the paths read_paths allows.
+    """
+    repos = sorted(
+        {
+            repo.repo
+            for channel in policy.channels.values()
+            for repo in channel.repos
+            if repo.read_paths
+        }
+    )
+    if not repos:
+        return []
+    notes = [
+        f"{', '.join(repos)} set read_paths, so the read token needs Contents: Read. That "
+        "covers every repo the token reaches, not only these paths: limit the token to repos "
+        "where that's fine. JotFlow checks it can list each repo's files when it starts."
+    ]
+    return notes
+
+
 def _load() -> tuple[Settings, Policy]:
     settings = load_settings()
     return settings, load_policy(settings.config_path)
@@ -300,15 +325,21 @@ def run(args: argparse.Namespace) -> int:
     print(f"ok    configuration: {count} channel(s) in {settings.config_path}")
     for warning in pattern_warnings(policy):
         print(f"warn  policy: {warning}")
+    for note in doc_notes(policy):
+        print(f"note  docs: {note}")
     failures: list[str] = []
+    if (conflict := docs_conflict(policy)) is not None:
+        print(f"fail  policy: {conflict}")
+        failures.append(conflict)
     if policy.agent.preset:
-        failures = agent_failures(policy, Path("."))
+        agent = agent_failures(policy, Path("."))
+        failures += agent
         warnings = agent_readiness(policy, Path("."))
-        for failure in failures:
+        for failure in agent:
             print(f"fail  agent: {failure}")
         for warning in warnings:
             print(f"warn  agent: {warning}")
-        if not warnings and not failures:
+        if not warnings and not agent:
             print(f"ok    agent: {policy.agent.preset}, both agent files filled in")
     done = EXIT_FAILED if failures else EXIT_OK
     if not getattr(args, "live", False):

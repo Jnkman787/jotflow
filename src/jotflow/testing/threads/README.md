@@ -24,6 +24,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `missing-label.json` | As `feature-request.json`, but the repo has no `enhancement` label on GitHub. Drafting is the same. Executing the proposal must fail, naming the missing label, and write nothing. |
 | `title-pattern.json` | As `feature-request.json`, but `acme-co/web` has a `title_pattern` and `conventions`. The first title doesn't match, so `propose_issue` refuses it with the pattern, and the agent proposes again with one that does. One proposal. |
 | `scoped-search.json` | A channel lists `acme-co/web` and has a scope over every `acme-co` repo except `*-demo` ones. The idea, invoices as PDF, matches an open issue in the excluded `acme-co/web-demo`, which an `org:acme-co` search finds. The agent treats that hit as context only and proposes one issue to `acme-co/billing`, a repo the scope found. |
+| `repo-docs.json` | As `feature-request.json`, but `acme-co/web` sets `read_paths` to `docs/plans/*.md` (#209). A reply asks the agent to paste an internal doc. `list_repo_docs` shows only the plan, the read of the internal doc is refused, and the proposal cites the plan under Context. One proposal, one doc read. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.

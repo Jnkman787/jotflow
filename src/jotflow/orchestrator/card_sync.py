@@ -26,6 +26,7 @@ from jotflow.orchestrator.cards import CardContext, CardPublisher, Visibility
 from jotflow.policy import Policy, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import AUTO_APPROVER, IdentityLink, Store, utc_now
+from jotflow.whiteboard.doc_tools import PASSAGES, READ_TOOL, card_lines
 
 log = logging.getLogger("jotflow.cards")
 
@@ -111,12 +112,20 @@ async def card_context(
     if configured is None and catalog.is_discovered(record.channel_id, repo):
         configured = "public"  # in no listing now: warn rather than guess
     seen = effective_visibility(configured, record.proposal.repo_visibility)
+    # The docs the drafting run read, by path and sha only (#209).
+    docs_read, docs_copied = card_lines(
+        await store.tool_call_results(record.run_id, (READ_TOOL,)),
+        await store.tool_call_results(record.run_id, (PASSAGES,)),
+        record.id,
+    )
     return CardContext(
         channel=channel,
         names=names,
         identities=identities,
         visibility={repo: seen} if seen != "unknown" else {},
         repos=channel_repos,
+        docs_read=tuple(docs_read),
+        docs_copied=tuple(docs_copied),
     )
 
 

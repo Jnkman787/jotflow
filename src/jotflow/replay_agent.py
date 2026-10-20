@@ -190,6 +190,7 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
         started = await prepared.lifecycle.start_next(max_running=max_running)
         if started is None:
             raise ReplayError(f"the run for thread {run.thread_ts} did not start")
+        state.run_ids.append(started.run.id)
         preset = _preset(options, index)
         config = RunnerConfig(
             secret="replay-" + "x" * 32,

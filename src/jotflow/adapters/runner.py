@@ -51,7 +51,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from jotflow.adapters import github_proof, github_repos
+from jotflow.adapters import github_docs, github_proof, github_repos
 from jotflow.adapters import isolation as isolation_mod
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
@@ -653,12 +653,40 @@ class VerifyRequest(BaseModel):
     code_digest: str = Field(min_length=64, max_length=64)
 
 
+class DocsListRequest(BaseModel):
+    """What JotFlow sends to list a repo's text files (#209)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    repo: str = Field(min_length=3, max_length=140)
+
+
+class DocsReadRequest(BaseModel):
+    """What JotFlow sends to read one of them: the exact path from the listing (#209)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    repo: str = Field(min_length=3, max_length=140)
+    path: str = Field(min_length=1, max_length=400)
+
+
+async def _capped_body(request: Request) -> bytes | None:
+    """The request body, or None when it's over MAX_BODY_BYTES."""
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_BODY_BYTES:
+            return None
+    return body
+
+
 def build_runner_app(
     runner: Runner,
     config: RunnerConfig,
     *,
     github: Any = None,
     github_transport: Any = None,
+    docs: github_docs.DocReader | None = None,
 ) -> ASGIApp:
     """The runner's HTTP app: GET /info, POST /runs, GET /runs/{id}, DELETE /runs/{id},
     and, on the drafting runner, POST /verify (#195).
@@ -667,6 +695,9 @@ def build_runner_app(
     /repos/{owner}/{name}/access on the execution runner: the runner's own fixed
     GitHub calls for pattern scopes (#236). ``github`` is the HTTP client for
     them, for tests.
+
+    And POST /docs/list and /docs/read on the drafting runner, for repo docs
+    (#209). ``docs`` is the doc reader, for tests.
     """
     http = github if github is not None else github_repos.client()
 
@@ -706,6 +737,57 @@ def build_runner_app(
             log.warning("write access check for %s/%s failed: %s", owner, name, type(exc).__name__)
             return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
         return JSONResponse({"reachable": ok})
+
+    # POST /docs/list and /docs/read, on the drafting runner (#209).
+    reader = docs
+    if reader is None and config.read_token is not None and not config.serves_execution:
+        docs_http = github_docs.client(transport=github_transport) if github_transport else None
+        reader = github_docs.DocReader(config.read_token, http=docs_http)
+
+    async def docs_list(request: Request) -> Response:
+        # Only the drafting runner reads docs, with the read token. JotFlow has
+        # already matched the repo against the admin's read_paths.
+        if reader is None:
+            return JSONResponse({"error": "this runner doesn't read docs"}, status_code=403)
+        body = await _capped_body(request)
+        if body is None:
+            return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = DocsListRequest.model_validate_json(body)
+            tree = await reader.tree(asked.repo)
+        except ValidationError:
+            return JSONResponse({"error": "expected exactly a repo"}, status_code=400)
+        except github_docs.DocsError as failed:
+            log.warning("listing a repo's docs failed: %s", failed)
+            return JSONResponse({"error": str(failed)}, status_code=502)
+        return JSONResponse(
+            {
+                "paths": [entry.path for entry in tree.entries],
+                "truncated": tree.truncated,
+            }
+        )
+
+    async def docs_read(request: Request) -> Response:
+        if reader is None:
+            return JSONResponse({"error": "this runner doesn't read docs"}, status_code=403)
+        body = await _capped_body(request)
+        if body is None:
+            return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = DocsReadRequest.model_validate_json(body)
+            doc = await reader.read(asked.repo, asked.path)
+        except ValidationError:
+            return JSONResponse({"error": "expected exactly a repo and a path"}, status_code=400)
+        except github_docs.DocNotFound as missing:
+            return JSONResponse({"error": str(missing)}, status_code=404)
+        except github_docs.DocsError as failed:
+            log.warning("reading a repo doc failed: %s", failed)
+            return JSONResponse({"error": str(failed)}, status_code=502)
+        # The path and content are never logged; only that a read happened.
+        log.info("read one repo doc (%d characters)", len(doc.text))
+        return JSONResponse(
+            {"path": doc.path, "sha": doc.sha, "text": doc.text, "truncated": doc.truncated}
+        )
 
     async def launch(request: Request) -> Response:
         # Read with a cap, so a chunked body without a length cannot grow unbounded.
@@ -772,6 +854,8 @@ def build_runner_app(
         routes=[
             Route("/info", info, methods=["GET"]),
             Route("/verify", verify, methods=["POST"]),
+            Route("/docs/list", docs_list, methods=["POST"]),
+            Route("/docs/read", docs_read, methods=["POST"]),
             Route("/runs", launch, methods=["POST"]),
             Route("/runs/{run_id}", status, methods=["GET"]),
             Route("/runs/{run_id}", stop, methods=["DELETE"]),

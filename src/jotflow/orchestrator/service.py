@@ -84,6 +84,13 @@ from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import SqliteStore, Store
+from jotflow.whiteboard.doc_tools import (
+    DocReads,
+    DocSource,
+    doc_tools,
+    docs_conflict,
+    probe_docs,
+)
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.tokens import TokenCheck, TokenRegistry
@@ -135,6 +142,11 @@ def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
     off: list[str] = []
     if settings.runner_secret is None:
         off.append("drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set")
+    elif (conflict := docs_conflict(policy)) is not None:
+        # Fail closed (#209): a drafting run's read token would reach past
+        # read_paths. A question run has no GitHub server or token (#57), so it stays.
+        on.add(RunKind.QUESTION)
+        off.append(conflict)
     else:
         on |= CONVERSATION_KINDS
     if settings.runner_exec_secret is None:
@@ -176,7 +188,8 @@ async def check_runners(
     on = set(kinds.on)
     off = list(kinds.off)
     for label, group in RUNNER_GROUPS:
-        if not group <= on:
+        # Asked whenever any of its kinds is on, so one kind off can't skip the check.
+        if not group & on:
             continue
         reason = await _runner_mismatch(client, group, preset, attempts=attempts, delay=delay)
         if reason is not None:
@@ -324,7 +337,17 @@ class Orchestrator:
         return self._store
 
     def _verifier(self) -> Verifier | None:
-        """The drafting runner, when it's on, for checking a GitHub link's code (#195)."""
+        """The drafting runner, when it's on, for checking a GitHub link's code (#195).
+
+        It serves drafting and questions, so either kind being on is enough: the
+        check is anonymous, so a codex drafting refusal (#209) doesn't touch it.
+        """
+        if self._runner is None or not self.kinds.on & CONVERSATION_KINDS:
+            return None
+        return self._runner
+
+    def _doc_source(self) -> DocSource | None:
+        """The drafting runner, when it's on, for reading repo docs (#209)."""
         if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
             return None
         return self._runner
@@ -430,6 +453,9 @@ class Orchestrator:
             self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
+        # Repo docs for drafting (#209): no tools at all unless a repo sets read_paths.
+        # The runner client is made below, so the tools look it up when called.
+        doc_reads = DocReads(self._store)
         tools = (
             *read_tools(
                 self._store,
@@ -438,7 +464,8 @@ class Orchestrator:
                 attribution=SlackAttribution(slack_people, people.name),
                 repos=self.repos,
             ),
-            *write_tools(self._store, self._policy, poster, repos=self.repos),
+            *write_tools(self._store, self._policy, poster, repos=self.repos, docs=doc_reads),
+            *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
         self.operators = OperatorTokens(self._store)
@@ -477,6 +504,8 @@ class Orchestrator:
                 self._tasks.append(
                     asyncio.create_task(self.repos.run(self._stop), name="jotflow-repos")
                 )
+        if self._runner is not None and RunKind.DRAFTING in self.kinds.on:
+            await probe_docs(self._runner, self._policy)
         if not self.runs_on:
             return
         runner = self._runner

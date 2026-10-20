@@ -114,6 +114,14 @@ debounce_seconds = 60
 # lookarounds, backreferences, conditionals, more than three *, + or {n,m}
 # repeats, POSIX classes, and a { that doesn't start a repeat (write \{).
 # Single quotes keep backslashes.
+# read_paths is optional: the repo's text files a drafting run may read, such
+# as plans, ADRs or a roadmap (#209). Patterns are relative paths: * and ?
+# within a folder, ** for any depth. Hidden files, .git, .github/workflows and
+# .env files are never readable, and only .md, .markdown, .txt, .rst and .adoc
+# files are. The read token then needs Contents: Read-only on GitHub, which
+# covers every file in every repo it reaches, so only set this where that's
+# fine. The card lists every doc a draft read.
+# read_paths = ["README.md", "docs/plans/**/*.md", "docs/adr/*.md"]
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"
