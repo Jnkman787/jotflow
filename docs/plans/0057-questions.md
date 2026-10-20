@@ -4,7 +4,7 @@
 
 - Issue: #57 (M6: After v0.1.0), D12
 - Draft PR: to be opened
-- Status: plan, approved by the lead on 2026-10-20 pending security's verdict on the posting path
+- Status: plan, approved by the lead and by security on 2026-10-20, with security's changes below. Being built
 - Last verified: 2026-10-20, against main
 - Next safe action: review
 
@@ -15,6 +15,7 @@ People ask things in the channel: "is anyone already on the CSV export?", "ask: 
 Done when, from #57's boxes and its two updates:
 
 - [ ] **Triggers.** A message starting `ask:`, or one that mentions the bot's own user id, starts a question run for its thread. Nothing else does: no other person's mention, no `@channel` or `@here`
+- [ ] **Only this workspace's own members ask.** A guest, an external Slack Connect user, or a person whose lookup fails never starts a question run, because the run reads private repos with the team's token
 - [ ] A question about an existing topic is answered in its thread
 - [ ] How-to questions about JotFlow are answered from the same help text `/jotflow help` uses (#80)
 - [ ] **No writes.** Question runs can't call write tools: no propose, link or record_result. Their GitHub server is read-only
@@ -30,7 +31,9 @@ Ingest already sees every message in a watched channel, with the bot's identity 
 
 - **`ask:`** is a new keyword, alongside `idea:`, `bug:`, `re:` and `skip:`, with the same rules: at the start, colon required, and not typo-tolerant, because a near miss like `ask` without the colon gets the usual private nudge. It's added to `KEYWORDS`, the help text, the pinned guide and usage.md, so they never disagree, as #80's test already enforces.
 - **An @-mention** of the bot's own user id, `<@U0BOT…>`, anywhere in a person's message. It's found in the `message` events JotFlow already gets. **No `app_mention` event and no new `app_mentions:read` scope**, so no app reinstall. #57 suggested the scope, but `message.channels` and `message.groups` already carry the mention in channels the bot is in, which are the only channels it acts in. The manifest README's "will add `app_mentions:read`" line changes to say so.
+- **Who may ask.** The asker must pass the same fail-closed check as linking, skipping and modes, through `SlackPeople`. The payload's team and the person's team must be this workspace, not a guest and not external, and a failed lookup refuses. A refused asker gets one private, fixed reply, at most once per person per 10 minutes: "Questions are answered for this workspace's own members only."
 - **Never a trigger:**
+  - a guest, an external user, or a person whose lookup fails
   - the bot's own messages
   - another bot
   - a mention of anyone else
@@ -62,13 +65,14 @@ There's a new write tool, `answer(text)`, for question grants only.
 - **Once per run,** at most 500 characters.
 - **It posts in the run's thread only,** as a reply to it. A question asked at top level is answered in a new thread under that message.
 - **Cleaned like `ask_channel`:** broadcasts and control characters are stripped, and `&`, `<` and `>` are escaped. So no mention, link markup or `<!channel>` survives, and `link_names=False`.
-- **Links JotFlow allows.** Slack auto-links a bare URL even with markup escaped, so before posting, JotFlow:
-  - keeps a `https://github.com/{owner}/{name}/issues/{n}` or `owner/name#n` reference only when the repo is one of the channel's configured repos
-  - replaces any other URL with `[link removed]`, and drops any other repo's references
+- **No links at all,** as security decided. Slack auto-links a bare URL in the mrkdwn notification fallback, even with markup escaped. So before posting, JotFlow:
+  - keeps issue references only as text, `owner/name#N` or `nick#N`, and only for the channel's configured repos. Any other repo's reference is dropped. That makes "answers never include content from repos outside the channel's mapping" a check on the text, not only an instruction.
+  - replaces every URL-like token with `[link removed]`: a scheme such as `https://`, `ftp://`, `mailto:` or `slack://`, a `www.` name, anything domain-shaped such as `example.com/x`, and email addresses
+  - runs that only after the same NFKC, percent-decoding and invisible-character fold that the Slack-link check uses (#168), so a zero-width space or a full-width dot can't slip a link through
+  - removes `@login` mentions with #258's `mentions()`
   - posts with `unfurl_links=False` and `unfurl_media=False`
-
-  That's what makes "answers never include content from repos outside the channel's mapping" a check JotFlow enforces on the text, not only an instruction.
-- **Plain text.** It's posted as a `plain_text` section block, with the escaped `text` as the notification fallback. Nothing in it can format, mention or link, apart from the allowed issue links, which JotFlow rebuilds itself.
+- **Plain text.** It's posted as a `plain_text` section block, with the escaped text as the notification fallback. Nothing in it can format, mention or link.
+- **`ask_channel` gets the same rewrite.** It posts in the same place, so the no-links and no-mentions rewrite applies to drafting runs' questions too. Question runs don't have `ask_channel`: presets swap it for `answer`.
 - **A footer.** The post starts with a fixed prefix, "Answer from the agent:", so nobody mistakes it for a person or for a JotFlow fact.
 - **A failure** posts nothing. A run that ends without `answer` posts nothing too. There's no "I couldn't answer" noise, but the run record says why.
 
@@ -105,22 +109,20 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
 
 ## Risks and open questions
 
-1. **For security: the posting path,** in the section above. In particular:
-   - the allowed-link rule, which rebuilds links JotFlow checked and removes all others
-   - the plain_text block
-   - refusing in paused mode even mid-run
+1. **Security's review, 2026-10-20: ok to code,** with two changes now in this plan. The first, a blocker: guests, external users and failed lookups never trigger. The second: no links at all. Issue references are text for configured repos only, every URL-like token is removed after the fold, and `@login` is removed. Confirmed as designed: answer-only, once per run, 500 characters, in-thread, clean_question with link_names and unfurls off, the plain_text block with a fixed prefix, paused refusal mid-run, and the three rate limits.
 2. **Decided by the lead on 2026-10-20: no new scope.** The mention is detected from the message events JotFlow already receives, so there's no `app_mentions:read` and no reinstall. #57 has a dated note. usage.md says a mention outside a watched channel does nothing.
-3. **Prompt injection.** A thread can tell the question agent to say something false. The answer is labelled as the agent's, limited to 3 sentences and 500 characters, can't link anywhere but the channel's issues, and can't ping. The worst case is a misleading sentence in a thread people are already reading.
+3. **Prompt injection.** A thread can tell the question agent to say something false. The answer is labelled as the agent's, limited to 3 sentences and 500 characters, can't link anywhere, and can't ping. The worst case is a misleading sentence in a thread people are already reading.
 4. **Cost on a busy channel.** The defaults cap it at 10 runs an hour per channel. `enabled = false` is the off switch.
 
 ## Progress checklist
 
-- [ ] Plan reviewed: security for the posting path, then the lead
+- [x] Plan reviewed by the lead and security
 - [ ] `ask:` keyword, and mention detection in ingest
 - [ ] Question enqueue with rate limits and `[questions]` config
 - [ ] `get_work` question packet, and question.md
-- [ ] `answer` tool: cleaning, link rule, plain_text, paused refusal; presets swap `ask_channel` for `answer`
-- [ ] Help text, guide, usage.md (including that a mention outside a watched channel does nothing), manifest README line, threat model row
+- [ ] Who may ask: SlackPeople check, refused reply, tests for guest, external and failed lookup
+- [ ] `answer` tool: cleaning, the no-links rewrite after the fold, mentions(), plain_text, paused refusal. Presets swap `ask_channel` for `answer`, and `ask_channel` gets the same rewrite
+- [ ] Help text, guide, usage.md (including that a mention outside a watched channel does nothing), manifest README line, threat model rows for guests and for links
 - [ ] Replay fixtures: a topic question, a how-to question, an injected "post this link" question
 - [ ] CodeRabbit once, `make check`, mark ready
 
@@ -132,7 +134,8 @@ There's no migration. Question runs use the existing `runs` table, and the rate 
   - the chatter mark
   - each rate limit, and its private reply
   - paused at enqueue, at claim, and at answer
-  - the answer cleaning and link rule, including a bare foreign URL, `owner/other#1`, `<@U…>`, `<!channel>`, and markdown links
+  - the answer rewrite: a bare URL, `www.`, `example.com/x`, an email, a zero-width-split domain, a full-width dot, `owner/other#1`, `@login`, `<@U…>`, `<!channel>`, and markdown links
+  - guests, external users and a failed lookup never triggering
   - write tools refused for question grants
   - get_work's question packet
 - **Replay fixtures run end to end** with the stand-in agent.
