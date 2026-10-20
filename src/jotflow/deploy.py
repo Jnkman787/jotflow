@@ -21,8 +21,10 @@ from jotflow import __version__
 REGISTRY = "ghcr.io/jnkman787"
 COMPOSE = "docker-compose.yml"
 COMPOSE_POLICY = "docker-compose.policy.yml"
+# Per-run uids in the agent containers (#181), opt-in through COMPOSE_FILE.
+COMPOSE_ISOLATION = "docker-compose.isolation.yml"
 AGENT_EXAMPLES = ("agent.env.example", "agent-exec.env.example")
-TEMPLATES = (COMPOSE, COMPOSE_POLICY, *AGENT_EXAMPLES)
+TEMPLATES = (COMPOSE, COMPOSE_POLICY, COMPOSE_ISOLATION, *AGENT_EXAMPLES)
 
 # The image defaults in the checkout's Compose file, built locally.
 _LOCAL_IMAGES = {"jotflow:local": "jotflow", "jotflow-agent:local": "jotflow-agent"}

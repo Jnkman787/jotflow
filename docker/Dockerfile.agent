@@ -88,6 +88,14 @@ RUN groupadd --system --gid "${AGENT_UID}" agent \
         --home-dir /home/agent --create-home --shell /usr/sbin/nologin agent \
     && chmod 0700 /home/agent
 
+# The pool of per-run uids for JOTFLOW_RUNNER_ISOLATION=uid (#181): each with its
+# own group, no home and no shell. Unused unless docker-compose.isolation.yml is on.
+RUN for n in $(seq 20001 20064); do \
+        groupadd --system --gid "$n" "run$n" \
+        && useradd --system --uid "$n" --gid "$n" --no-create-home \
+            --home-dir /nonexistent --shell /usr/sbin/nologin "run$n"; \
+    done
+
 COPY --from=builder /app/.venv /app/.venv
 
 # JOTFLOW_AGENT_IMAGE marks this image; the runner checks nothing from JotFlow's.

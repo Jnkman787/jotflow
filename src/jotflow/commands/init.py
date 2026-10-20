@@ -1030,6 +1030,7 @@ def _plan_compose(console: Console, options: InitOptions) -> list[tuple[Path, st
             deploy.published_compose(deploy.template(deploy.COMPOSE), version),
         ),
         (folder / deploy.COMPOSE_POLICY, deploy.template(deploy.COMPOSE_POLICY)),
+        (folder / deploy.COMPOSE_ISOLATION, deploy.template(deploy.COMPOSE_ISOLATION)),
     ]
     planned: list[tuple[Path, str]] = []
     for path, text in wanted:

@@ -219,7 +219,9 @@ jobs:
           printf 'JOTFLOW_SLACK_BOT_TOKEN=ci-sentinel-bot\n' > .env
           printf 'JOTFLOW_RUNNER_SECRET=ci-runner-secret\nJOTFLOW_GITHUB_READ_TOKEN=ci-read\n' > agent.env
           printf 'JOTFLOW_RUNNER_SECRET=ci-exec-secret\nJOTFLOW_GITHUB_WRITE_TOKEN=ci-write\n' > agent-exec.env
-          for files in "-f docker/docker-compose.yml" "-f docker/docker-compose.yml -f docker/docker-compose.policy.yml"; do
+          for files in "-f docker/docker-compose.yml" "-f docker/docker-compose.yml -f docker/docker-compose.policy.yml" "-f docker/docker-compose.yml -f docker/docker-compose.isolation.yml"; do
+            export ISOLATION=0
+            case "$files" in *isolation*) export ISOLATION=1 ;; esac
             read -ra file_args <<< "$files"
             touch jotflow.toml
             docker compose --project-directory . "${file_args[@]}" --profile agent config --format json > compose.json
@@ -231,6 +233,14 @@ jobs:
               assert not service.get("ports"), f"{name} publishes ports"
               assert service.get("network_mode") != "host", f"{name} uses the host network"
               assert not service.get("privileged"), f"{name} is privileged"
+              # Per-run uids (#181) add exactly SETUID and SETGID to the agent runners
+              # and nothing else, and only with the opt-in override.
+              import os
+              wanted = ["SETUID", "SETGID"] if os.environ["ISOLATION"] == "1" and name != "jotflow" else []
+              assert sorted(service.get("cap_add") or []) == sorted(wanted), (name, service.get("cap_add"))
+              assert service.get("cap_drop") == ["ALL"], f"{name} keeps capabilities"
+              assert "no-new-privileges:true" in (service.get("security_opt") or []), name
+              assert service.get("read_only") is True, f"{name} has a writable root"
               assert service.get("dns_search") == ["."], f"{name} keeps a DNS search domain"
               for volume in service.get("volumes") or []:
                   assert "docker.sock" not in str(volume.get("source", "")), f"{name} mounts the Docker socket"
@@ -394,3 +404,6 @@ jobs:
 
       - name: JotFlow launches a run in each agent container
         run: tests/compose/reach_check.sh
+
+      - name: Per-run uids keep same-kind runs apart (#181)
+        run: tests/compose/isolation_check.sh
