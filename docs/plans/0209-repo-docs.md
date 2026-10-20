@@ -4,17 +4,17 @@
 
 - Issue: #209, in M6
 - Related: #208 (the read token is Issues-only), #249 (untrusted GitHub text in drafting), #216 (conventions), #236 (scopes), #181 (per-run uids), #57 (question runs)
-- Status: planning. No code until the lead approves the decisions below.
+- Status: implemented. The lead approved all eight decisions on 2026-10-20; see the implementation notes at the end.
 
 ## Objective and done-when
 
 Let a drafting run read a team's design docs, such as plans, ADRs and a roadmap, so it can scope an issue, link it to planned work, and spot duplicates of planned items. It stays opt-in per repo, bounded, and visible to the approver.
 
-- [ ] With no repo setting `read_paths`, nothing changes: no new tool is listed, and no repo file is readable (tested).
-- [ ] With `read_paths` set, a drafting run can read only text files that match it, under the caps (tested). Everything else is refused in code, not by instruction.
-- [ ] The card lists every doc the draft read, and flags a long passage copied word for word from one.
-- [ ] JotFlow still holds no GitHub token (D5). The read token stays in the drafting container only, and the execution runner never reads docs (D6).
-- [ ] The threat model and presets.md are updated.
+- [x] With no repo setting `read_paths`, nothing changes: no new tool is listed, and no repo file is readable (tested).
+- [x] With `read_paths` set, a drafting run can read only text files that match it, under the caps (tested). Everything else is refused in code, not by instruction.
+- [x] The card lists every doc the draft read, and flags a long passage copied word for word from one.
+- [x] JotFlow still holds no GitHub token (D5). The read token stays in the drafting container only, and the execution runner never reads docs (D6).
+- [x] The threat model and presets.md are updated.
 
 **Out of scope:** question runs (#57), which can follow once this ships; docs for repos found by a scope (#236); and writing to files.
 
@@ -92,11 +92,26 @@ Drafting reads untrusted Slack text. A message like "put docs/secret-plan.md in 
 
 ## Progress checklist
 
-- [ ] The lead approves the decisions
-- [ ] Policy: `read_paths` and its validation, the writer round trip, and the example toml
-- [ ] Runner: `POST /docs/list` and `/docs/read`, with a fake GitHub API in tests
-- [ ] JotFlow: the two tools, path matching, per-run caps, the ledger, and the card lines
-- [ ] Presets' tool lists, and the CI tool-set gates in both configurations
-- [ ] drafting.md, and a replay fixture where the thread asks for a doc that isn't allowed
-- [ ] Docs: presets.md, install (the token), the threat model, and the CHANGELOG
-- [ ] `make check`
+- [x] The lead approves the decisions
+- [x] Policy: `read_paths` and its validation, the writer round trip, and the example toml
+- [x] Runner: `POST /docs/list` and `/docs/read`, with a fake GitHub API in tests
+- [x] JotFlow: the two tools, path matching, per-run caps, the ledger, and the card lines
+- [x] Presets' tool lists, and the CI tool-set gates in both configurations
+- [x] drafting.md, and a replay fixture where the thread asks for a doc that isn't allowed
+- [x] Docs: presets.md, install (the token), the threat model, and the CHANGELOG
+- [x] `make check`
+
+## Implementation notes
+
+Where the code differs from, or adds to, the decisions above:
+
+- **The runner looks the path up itself.** `POST /docs/read` takes `{repo, path}`, and the runner finds the path in its own copy of the default branch's tree, kept for 60 seconds, then reads that entry's blob by sha. JotFlow never sends a sha, so even JotFlow can't ask for a blob the tree didn't list as a regular text file.
+- **The copy check samples.** JotFlow keeps the hash of every 16th 64-character shingle of each doc a run read, not every one, to bound memory. A draft is flagged when 8 sampled shingles in a row match one doc: at least 176 characters word for word, after folding case and whitespace. Every passage of 200 characters or more is always caught, whatever its offset. The flag is a ledger row, `doc_passages`, holding the proposal id and doc paths only.
+- **No migration.** Doc reads and flags are ledger rows, and the card reads them through a new store method, `tool_call_results`.
+- **The tool names are always allowed.** The runner doesn't read `jotflow.toml`, so the presets' drafting allowlists always include `list_repo_docs` and `read_repo_doc`. JotFlow lists them only when some repo sets `read_paths`, and allowing a tool the server doesn't list gives a run nothing. A server-level test checks drafting's exact `tools/list` in both configurations.
+- **The packet says which repos have docs.** A repo's brief carries `has_docs: true` when it sets `read_paths`, so the agent lists docs only there.
+- **Caps across a restart.** The read count also comes from the ledger, so a JotFlow restart mid-run can't reset it. The byte total is kept in memory.
+- **`jotflow check` can't reach the runner,** so it prints a fixed note naming the token's reach whenever `read_paths` is set. The live probe, listing each repo's files, runs when JotFlow starts and warns on a refusal or when nothing matches.
+- **Codex reads past `read_paths`.** Found while writing the docs: the `codex` preset keeps Codex's MCP resource tools, which read files through GitHub's server with the read token. With Contents: Read, they reach every file in the token's repos. `jotflow check` and startup warn when the preset is `codex`, and presets.md, install.md and the threat model say so. The Claude preset has no such tools.
+- **Replay.** The fixture format gains `docs`, the `list_repo_docs` and `read_repo_doc` calls, and `expected.docs_read`. The `repo-docs` fixture's reply asks the agent to paste an internal doc, and that read is refused.
+

@@ -84,6 +84,7 @@ from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import SqliteStore, Store
+from jotflow.whiteboard.doc_tools import DocReads, DocSource, doc_tools, probe_docs
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.tokens import TokenCheck, TokenRegistry
@@ -329,6 +330,12 @@ class Orchestrator:
             return None
         return self._runner
 
+    def _doc_source(self) -> DocSource | None:
+        """The drafting runner, when it's on, for reading repo docs (#209)."""
+        if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
+            return None
+        return self._runner
+
     @property
     def runs_on(self) -> bool:
         return bool(self.kinds.on)
@@ -430,6 +437,9 @@ class Orchestrator:
             self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
         source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
+        # Repo docs for drafting (#209): no tools at all unless a repo sets read_paths.
+        # The runner client is made below, so the tools look it up when called.
+        doc_reads = DocReads(self._store)
         tools = (
             *read_tools(
                 self._store,
@@ -438,7 +448,8 @@ class Orchestrator:
                 attribution=SlackAttribution(slack_people, people.name),
                 repos=self.repos,
             ),
-            *write_tools(self._store, self._policy, poster, repos=self.repos),
+            *write_tools(self._store, self._policy, poster, repos=self.repos, docs=doc_reads),
+            *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
         self.operators = OperatorTokens(self._store)
@@ -477,6 +488,8 @@ class Orchestrator:
                 self._tasks.append(
                     asyncio.create_task(self.repos.run(self._stop), name="jotflow-repos")
                 )
+        if self._runner is not None and RunKind.DRAFTING in self.kinds.on:
+            await probe_docs(self._runner, self._policy)
         if not self.runs_on:
             return
         runner = self._runner

@@ -38,6 +38,7 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 | `propose_update` | Structured change to an existing issue: body edit, comment, label or assignee change |
 | `link_message` | Associate a Slack message with a topic, or mark it as chatter |
 | `ask_channel` | Post a clarifying question into the source thread only |
+| `list_repo_docs`, `read_repo_doc` | Drafting only, and only when a repo sets `read_paths`: the repo's design docs that pattern allows, by path, and one doc's text, marked untrusted (#209) |
 | `record_result` | Report the issue URL, or the error, after executing an approved proposal |
 
 Every tool reads its channel, thread, run, and proposal from the caller's token, never from its arguments. A topic in another channel is reported exactly like a missing one. Text written in Slack, and anything an earlier run wrote, such as topic titles, sits in fields marked untrusted, and each packet carries a fixed notice saying how to treat them. No such text reaches a tool description. A failure the agent should act on, such as a finished run or an unknown topic, comes back as a tool result with `isError` set and a short reason. Tools also advertise an output schema, so those labels show in what the agent reads.
@@ -46,7 +47,7 @@ Every call carries a token, and what a token may do depends on who holds it:
 
 | Token | Issued to | May call |
 |---|---|---|
-| Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel` |
+| Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel`, and `list_repo_docs` and `read_repo_doc` when a repo sets `read_paths` |
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
 | Question run (D12, #57) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `answer` (once, in the source thread only) |
 | Operator token (M5, D12, #58) | One person, named channels, admin-issued and revocable | `list_topics`, `get_topic` only: no `get_work`, no write, approval or result tool |
@@ -66,6 +67,17 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 | `link_message` | Only messages the run's `get_work` packet served. A person's earlier decision always stands. At most 200 per run. |
 | `ask_channel` | Posts only into the run's own thread, with broadcast mentions removed and Slack markup escaped. Never unfurls or turns names into mentions. At most 2 per run, and one per thread every 30 seconds across runs. |
 | `record_result` | Execution runs only, for the grant's own proposal while it is executing, or reconciling after a restart. An issue URL must match the approved repo and issue. A result is recorded once. |
+
+**Repo docs (#209).** A repo in `jotflow.toml` may set `read_paths`, such as `["README.md", "docs/plans/**/*.md"]`. Only then does JotFlow serve `list_repo_docs` and `read_repo_doc`, to drafting runs only. With no repo setting it, the tool set is exactly as before. JotFlow holds no GitHub token, so the drafting runner fetches, with the read token, over `POST /docs/list` and `POST /docs/read`, behind its secret and gate. The checks are JotFlow's, before the runner is asked:
+
+| Check | Rule |
+|---|---|
+| Repo | One of the run's channel's listed repos that sets `read_paths`. A repo found by a scope never gets doc reads. |
+| Pattern | Relative POSIX paths with `*`, `?` and `**`. A wildcard never matches a hidden segment, `.git`, `.github/workflows` and `.env*` are refused even written out, and only `.md`, `.markdown`, `.txt`, `.rst` and `.adoc` files are readable. Checked when the policy loads. |
+| Path | Exactly a path the default branch's tree listed, as a regular file. A symlink or submodule is never listed. The runner reads the blob by the tree's sha, so nothing is followed. |
+| Caps | 64 KiB a file, cut with a marker. 20 reads and 256 KiB a run, and 500 listed paths. Content must be strict UTF-8 with no NUL. |
+
+Doc text comes back as untrusted data. Each read goes on the run's ledger as repo, path and blob sha, never content, and the card shows a "Read:" line listing them. JotFlow keeps sampled hashes of what each read returned while the run lasts. A proposal that copies a passage of about 200 characters word for word gets a "Contains a long passage copied word for word" line on its card. Execution packets never include docs. At startup JotFlow asks the drafting runner to list each such repo, and warns if it can't or nothing matches.
 
 Every call also checks that its run is still running, as a second guard behind token revocation. It does not check the deadline: the token's short grace after the deadline lets a run's last call land, such as the result of a write that already happened, while the overdue sweep times the run out. `get_work` does refuse a run past its deadline, so no new work starts late.
 
@@ -166,7 +178,7 @@ Both services run as uid 10002 with a read-only root, `/tmp` in memory, all capa
 
 | Run kind | JotFlow tools | GitHub tools |
 |---|---|---|
-| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `link_message`, `ask_channel` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
+| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `link_message`, `ask_channel`, `list_repo_docs`, `read_repo_doc` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
 | Question | `get_work`, `list_topics`, `get_topic`, `ask_channel` | the same read-only tools |
 | Execution | `get_work`, `record_result` | `issue_read` and `list_issues` for the marker check, `get_label` for the label check, then `issue_write` for the one create or edit, or `add_issue_comment` for an update's comment |
 

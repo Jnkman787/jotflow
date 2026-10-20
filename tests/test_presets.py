@@ -36,8 +36,10 @@ from jotflow.adapters.runner import (
 from jotflow.commands import runner as runner_command
 from jotflow.models import PARTIAL_PRESET_KINDS, RUN_KINDS, RunKind, expected_runner_preset
 from jotflow.store import MemoryStore
+from jotflow.whiteboard.doc_tools import DOC_TOOLS, DocReads, doc_tools
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.write_tools import write_tools
+from tests.test_doc_tools import with_read_paths
 from tests.test_write_tools import POLICY, Poster
 
 SECRET = "s" * 40
@@ -73,6 +75,7 @@ def test_claude_code_drafting_argv_is_locked_down(tmp_path: Path) -> None:
         "mcp__jotflow__get_work,mcp__jotflow__list_topics,mcp__jotflow__get_topic,"
         "mcp__jotflow__propose_issue,mcp__jotflow__propose_update,"
         "mcp__jotflow__link_message,mcp__jotflow__ask_channel,"
+        "mcp__jotflow__list_repo_docs,mcp__jotflow__read_repo_doc,"
         "mcp__github__issue_read,mcp__github__list_issues,mcp__github__search_issues,"
         "mcp__github__list_label,mcp__github__get_label"
     )
@@ -153,11 +156,30 @@ def test_only_execution_can_write_to_github() -> None:
 
 
 def test_the_jotflow_tool_table_matches_the_whiteboard() -> None:
+    # With a repo that sets read_paths, so the doc tools exist too (#209).
     store = MemoryStore()
-    specs = (*read_tools(store, POLICY), *write_tools(store, POLICY, Poster()))
+    policy = with_read_paths(POLICY)
+    reads = DocReads(store)
+    specs = (
+        *read_tools(store, policy),
+        *write_tools(store, policy, Poster(), docs=reads),
+        *doc_tools(store, policy, lambda: None, reads),
+    )
     for kind in sorted(RUN_KINDS):
         declared = {spec.name for spec in specs if kind in spec.kinds}
         assert set(JOTFLOW_TOOLS[kind]) == declared, kind
+
+
+def test_without_read_paths_the_doc_tools_do_not_exist() -> None:
+    store = MemoryStore()
+    assert not POLICY.reads_docs
+    assert doc_tools(store, POLICY, lambda: None, DocReads(store)) == ()
+    allowed = set(JOTFLOW_TOOLS[RunKind.DRAFTING]) - set(DOC_TOOLS)
+    specs = (*read_tools(store, POLICY), *write_tools(store, POLICY, Poster()))
+    assert {s.name for s in specs if RunKind.DRAFTING in s.kinds} == allowed
+    # Only drafting may ever call them.
+    for kind in (RunKind.QUESTION, RunKind.EXECUTION):
+        assert not set(DOC_TOOLS) & set(JOTFLOW_TOOLS[kind])
 
 
 @pytest.mark.parametrize("kind", sorted(RUN_KINDS))

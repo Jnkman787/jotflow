@@ -39,6 +39,7 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from jotflow.config import Settings
+from jotflow.doc_paths import MAX_FILE_BYTES
 from jotflow.models import (
     DiscoveredRepo,
     Run,
@@ -148,6 +149,36 @@ class VerifyAnswer(BaseModel):
     rate_limited: bool
     github_id: int | None = Field(default=None, ge=1)
     login: str | None = Field(default=None, max_length=39)
+
+
+# What the drafting runner may send back for repo docs (#209).
+MAX_DOC_PATHS = 10_000
+# 10,000 paths of up to 400 characters, as JSON.
+MAX_DOCS_REPLY_BYTES = 5 * 1024 * 1024
+
+
+class DocsListAnswer(BaseModel):
+    """The drafting runner's answer to ``POST /docs/list`` (#209), validated strictly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    paths: list[str] = Field(max_length=MAX_DOC_PATHS)
+    truncated: bool
+
+
+class DocsReadAnswer(BaseModel):
+    """The drafting runner's answer to ``POST /docs/read`` (#209), validated strictly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    path: str = Field(min_length=1, max_length=400)
+    sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    text: str = Field(max_length=MAX_FILE_BYTES)
+    truncated: bool
+
+
+class DocMissing(RunnerError):
+    """The path isn't a readable text file in the repo's default branch."""
 
 
 class RunnerInfoWire(BaseModel):
@@ -321,6 +352,46 @@ class RunnerClient:
             raise RunnerError("the runner's reply was not a verification answer") from None
         if answer.verified and (answer.github_id is None or answer.login is None):
             raise RunnerError("the runner's reply was not a verification answer")
+        return answer
+
+    async def docs_list(self, repo: str) -> DocsListAnswer:
+        """The text files in ``repo``'s default branch, from the drafting runner (#209).
+
+        JotFlow matches these against the repo's ``read_paths``; the runner doesn't.
+        """
+        response = await self._call("POST", RunKind.DRAFTING, "/docs/list", json={"repo": repo})
+        if response.status_code == 502:
+            raise RunnerError(
+                "GitHub didn't list the repo's files: check the read token has Contents: Read"
+            )
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_DOCS_REPLY_BYTES:
+            raise RunnerError("the runner's file list was too large")
+        try:
+            return DocsListAnswer.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a file list") from None
+
+    async def docs_read(self, repo: str, path: str) -> DocsReadAnswer:
+        """One text file's content, from the drafting runner (#209). Untrusted."""
+        response = await self._call(
+            "POST", RunKind.DRAFTING, "/docs/read", json={"repo": repo, "path": path}
+        )
+        if response.status_code == 404:
+            raise DocMissing("no such text file in the repo's default branch")
+        if response.status_code == 502:
+            raise RunnerError("GitHub didn't return the file")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_DOCS_REPLY_BYTES:
+            raise RunnerError("the runner's reply was too large")
+        try:
+            answer = DocsReadAnswer.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a file") from None
+        if answer.path != path:
+            raise RunnerError("the runner returned a different file")
         return answer
 
     async def stop(self, run_id: str, kind: RunKind) -> None:

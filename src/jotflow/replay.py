@@ -11,6 +11,8 @@ The report names messages by ``ts`` only, never by what they say.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -31,16 +33,19 @@ from jotflow.testing.threads import (
     TOPIC_KEY_PREFIX,
     AskChannelCall,
     LinkMessageCall,
+    ListRepoDocsCall,
     MessageEvent,
     ProposeIssueCall,
     ProposeUpdateCall,
     ReactionEvent,
+    ReadRepoDocCall,
     SavedThread,
     fixture_catalog,
     invented_commands,
     invented_links,
     invented_numbers,
 )
+from jotflow.whiteboard.doc_tools import READ_TOOL, DocReads, doc_tools
 from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolError, ToolSpec
@@ -210,6 +215,7 @@ class _Replay:
     topics: dict[str, str] = field(default_factory=dict)  # key:<name> or fixture id -> store id
     accepted: list[MessageEvent] = field(default_factory=list)  # messages ingest accepted
     attribution: FixtureAttribution | None = None
+    run_ids: list[str] = field(default_factory=list)  # the scripted runs, in order
 
     def resolve(self, topic: str | None) -> str | None:
         if topic is None:
@@ -219,7 +225,10 @@ class _Replay:
         return self.topics[topic]
 
     async def call(self, grant: Grant, tool: str, arguments: dict[str, Any]) -> BaseModel:
-        spec = self.specs[tool]
+        spec = self.specs.get(tool)
+        if spec is None:
+            # Such as a doc tool when no repo sets read_paths (#209).
+            raise ReplayError(f"there is no {tool} tool with this fixture's policy")
         if grant.kind not in spec.kinds:
             raise ReplayError(f"a {grant.kind.value} run may not call {tool}")
         # Reports name messages by ts only, so no error text that could quote
@@ -237,6 +246,46 @@ class _Replay:
         except Exception as exc:
             raise ReplayError(f"{tool} failed: {type(exc).__name__}") from None
         return result
+
+
+class FixtureDocs:
+    """A fixture's repo files, served as the drafting runner's doc endpoints would."""
+
+    def __init__(self, docs: Mapping[str, Mapping[str, str]]) -> None:
+        self._docs = {repo.casefold(): files for repo, files in docs.items()}
+
+    async def docs_list(self, repo: str) -> _Listed:
+        return _Listed(paths=sorted(self._docs.get(repo.casefold(), {})))
+
+    async def docs_read(self, repo: str, path: str) -> _Fetched:
+        text = self._docs.get(repo.casefold(), {}).get(path)
+        if text is None:
+            raise ReplayError("the fixture has no such doc")
+        # A stand-in for git's blob sha: a fixture has no repo.
+        sha = hashlib.sha1(text.encode(), usedforsecurity=False).hexdigest()
+        return _Fetched(path=path, sha=sha, text=text)
+
+
+@dataclass(frozen=True)
+class _Listed:
+    paths: list[str]
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class _Fetched:
+    path: str
+    sha: str
+    text: str
+    truncated: bool = False
+
+
+def _doc_keys(rows: Sequence[str]) -> list[str]:
+    keys = []
+    for row in rows:
+        data = json.loads(row)
+        keys.append(f"{data['repo']}:{data['path']}")
+    return keys
 
 
 def _ingest(thread: SavedThread) -> tuple[list[str], dict[str, str], list[MessageEvent]]:
@@ -306,6 +355,7 @@ async def run_script(
         grant = registry.check(started.token)
         if grant is None:  # pragma: no cover - the token was issued a moment ago
             raise ReplayError("the run's token was refused")
+        replay.run_ids.append(started.run.id)
         try:
             await replay.call(grant, "get_work", {})
             participants = _participants(replay.thread, accepted, run.thread_ts)
@@ -338,6 +388,10 @@ def scripted_call(
         return tool, arguments
     if isinstance(call, AskChannelCall):
         return "ask_channel", call.arguments.model_dump()
+    if isinstance(call, ListRepoDocsCall):
+        return "list_repo_docs", {"repo": call.arguments.repo}
+    if isinstance(call, ReadRepoDocCall):
+        return "read_repo_doc", {"repo": call.arguments.repo, "path": call.arguments.path}
     raise ReplayError(f"unknown scripted call {call!r}")  # pragma: no cover - four types only
 
 
@@ -354,6 +408,10 @@ async def _make_call(replay: _Replay, grant: Grant, call: Any, participants: lis
             return
         raise ReplayError(f"{tool} was accepted, but the script expected it refused: {expected}")
     result = await replay.call(grant, tool, arguments)
+    if isinstance(call, ListRepoDocsCall) and call.expect_paths is not None:
+        got = result.model_dump()["paths"]
+        if got != list(call.expect_paths):
+            raise ReplayError(f"list_repo_docs returned {got}, expected {list(call.expect_paths)}")
     if isinstance(call, LinkMessageCall) and call.topic_key:
         replay.topics[TOPIC_KEY_PREFIX + call.topic_key] = result.model_dump()["topic_id"]
 
@@ -434,6 +492,10 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
             )
         )
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
+    docs_read = []
+    for run_id in replay.run_ids:
+        docs_read += _doc_keys(await replay.store.tool_call_results(run_id, (READ_TOOL,)))
+    checks.append(_equal("docs read", docs_read, list(expected.docs_read)))
     found = {
         m.ts: keyword for m in replay.accepted if (keyword := split_keyword(m.text)[0]) is not None
     }
@@ -483,13 +545,17 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
         _FixtureReader(thread, messages), active, bot=BotIdentity(bot.user_id, bot.bot_id)
     )
     repos = fixture_catalog(thread, clock)
+    # Repo docs (#209): the fixture's files stand in for the drafting runner.
+    docs = DocReads(active)
+    fixture_docs = FixtureDocs(thread.docs)
     specs = {
         spec.name: spec
         for spec in (
             *read_tools(
                 active, thread.policy, source, clock=clock, attribution=attribution, repos=repos
             ),
-            *write_tools(active, thread.policy, poster, clock=clock, repos=repos),
+            *write_tools(active, thread.policy, poster, clock=clock, repos=repos, docs=docs),
+            *doc_tools(active, thread.policy, lambda: fixture_docs, docs, clock=clock),
         )
     }
     state = _Replay(

@@ -41,6 +41,7 @@ from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.title_pattern import times_out
+from jotflow.whiteboard.doc_tools import CODEX_READS_ALL
 
 EXIT_OK = 0
 # Something JotFlow needs is wrong in a file check can name, such as an agent
@@ -272,6 +273,32 @@ def pattern_warnings(policy: Policy) -> list[str]:
     return found
 
 
+def doc_notes(policy: Policy) -> list[str]:
+    """What turning on read_paths means for the read token (#209), one line per repo.
+
+    Reading docs needs Contents: Read on the read token, and GitHub grants that
+    for every repo the token reaches, not only the paths read_paths allows.
+    """
+    repos = sorted(
+        {
+            repo.repo
+            for channel in policy.channels.values()
+            for repo in channel.repos
+            if repo.read_paths
+        }
+    )
+    if not repos:
+        return []
+    notes = [
+        f"{', '.join(repos)} set read_paths, so the read token needs Contents: Read. That "
+        "covers every repo the token reaches, not only these paths: limit the token to repos "
+        "where that's fine. JotFlow checks it can list each repo's files when it starts."
+    ]
+    if policy.agent.preset == "codex":
+        notes.append(CODEX_READS_ALL[0].upper() + CODEX_READS_ALL[1:])
+    return notes
+
+
 def _load() -> tuple[Settings, Policy]:
     settings = load_settings()
     return settings, load_policy(settings.config_path)
@@ -300,6 +327,8 @@ def run(args: argparse.Namespace) -> int:
     print(f"ok    configuration: {count} channel(s) in {settings.config_path}")
     for warning in pattern_warnings(policy):
         print(f"warn  policy: {warning}")
+    for note in doc_notes(policy):
+        print(f"note  docs: {note}")
     failures: list[str] = []
     if policy.agent.preset:
         failures = agent_failures(policy, Path("."))

@@ -37,7 +37,10 @@ MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}")
 GITHUB_TOKEN_CHARS = re.compile(r"[A-Za-z0-9_]{1,255}")
 
 # JotFlow's tools by run kind, matching each tool's declared kinds in the
-# whiteboard (a test keeps the two in step).
+# whiteboard (a test keeps the two in step). The runner doesn't read
+# jotflow.toml, so drafting always allows the two doc tools (#209); JotFlow
+# serves them only when some repo sets read_paths, and allowing a tool the
+# server doesn't list gives a run nothing.
 JOTFLOW_TOOLS: Mapping[RunKind, tuple[str, ...]] = {
     RunKind.DRAFTING: (
         "get_work",
@@ -47,6 +50,8 @@ JOTFLOW_TOOLS: Mapping[RunKind, tuple[str, ...]] = {
         "propose_update",
         "link_message",
         "ask_channel",
+        "list_repo_docs",
+        "read_repo_doc",
     ),
     RunKind.QUESTION: ("get_work", "list_topics", "get_topic", "answer"),
     RunKind.EXECUTION: ("get_work", "record_result"),

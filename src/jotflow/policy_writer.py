@@ -111,6 +111,9 @@ def render_policy(policy: Policy) -> str:
                 lines.append(f"title_pattern = {toml_string(repo.title_pattern)}")
             if repo.conventions is not None:
                 lines.append(f"conventions = {toml_string(repo.conventions)}")
+            # Docs a drafting run may read (#209).
+            if repo.read_paths is not None:
+                lines.append(f"read_paths = {_array(repo.read_paths)}")
         for scope in channel.scopes:
             # Pattern scopes (#236): every field, so a rewrite keeps what was written.
             lines += [

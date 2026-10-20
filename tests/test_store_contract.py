@@ -740,6 +740,21 @@ async def test_the_same_call_cannot_be_recorded_twice(store: Store, clock: Clock
         await store.record_tool_call(call(clock, result_json="{}"))
 
 
+async def test_tool_call_results_come_back_per_run_in_order(store: Store, clock: Clock) -> None:
+    # The card's doc lines read these (#209).
+    await store.record_tool_call(call(clock, tool="read_repo_doc", result_json='{"n": 1}'))
+    await store.record_tool_call(call(clock, tool="propose_issue", args_hash="sha256:p"))
+    await store.record_tool_call(
+        call(clock, tool="read_repo_doc", args_hash="sha256:bb", result_json='{"n": 2}')
+    )
+    await store.record_tool_call(
+        call(clock, run_id="run-2", tool="read_repo_doc", result_json='{"n": 3}')
+    )
+    assert await store.tool_call_results("run-1", ["read_repo_doc"]) == ['{"n": 1}', '{"n": 2}']
+    assert await store.tool_call_results("run-1", []) == []
+    assert await store.tool_call_results("run-9", ["read_repo_doc"]) == []
+
+
 async def test_tool_calls_are_counted_per_run_and_per_thread(store: Store, clock: Clock) -> None:
     start = clock()
     await store.record_tool_call(call(clock))

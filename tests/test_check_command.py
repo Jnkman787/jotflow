@@ -596,3 +596,23 @@ def test_check_names_a_title_pattern_that_runs_out_of_time() -> None:
     policy = Policy.model_validate({"channels": {"C0TEST1": {"repos": repos}}})
     [warning] = check_command.pattern_warnings(policy)
     assert warning.startswith("acme-co/web's title_pattern ran out of time on a test title")
+
+
+def test_check_names_what_read_paths_needs_from_the_read_token() -> None:
+    from tests.test_doc_tools import with_read_paths
+    from tests.test_write_tools import POLICY
+
+    assert check_command.doc_notes(POLICY) == []
+    [note] = check_command.doc_notes(with_read_paths(POLICY))
+    assert note.startswith("acme-co/web set read_paths, so the read token needs Contents: Read")
+    assert "covers every repo the token reaches" in note
+
+
+def test_check_warns_that_codex_can_read_past_read_paths() -> None:
+    from tests.test_doc_tools import with_read_paths
+    from tests.test_write_tools import POLICY
+
+    policy = with_read_paths(POLICY)
+    codex = policy.model_copy(update={"agent": policy.agent.model_copy(update={"preset": "codex"})})
+    _, warning = check_command.doc_notes(codex)
+    assert warning.startswith("The codex preset keeps Codex's MCP resource tools")
