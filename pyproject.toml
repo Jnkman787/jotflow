@@ -28,7 +28,7 @@ dependencies = [
   "uvicorn>=0.40",
   "slack-sdk>=3.33",
   "httpx2>=2.0",
-  "regex>=2026.9.29",
+  "regex==2026.9.29",
 ]
 
 [project.urls]

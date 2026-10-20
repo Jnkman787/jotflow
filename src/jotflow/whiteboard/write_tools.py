@@ -42,6 +42,7 @@ from jotflow.models import (
     MessageRef,
     ProposalRecord,
     ProposalState,
+    RelatedIssue,
     RunKind,
     RunStatus,
     UpdateProposal,
@@ -172,6 +173,11 @@ class ProposeResult(BaseModel):
     proposal_id: str
     state: ProposalState
     superseded: list[str]
+    dropped_related: int = Field(
+        default=0,
+        description="Related issues left off the card: not in this channel's repos, repeated, "
+        "or the issue an update is for",
+    )
 
 
 class LinkResult(BaseModel):
@@ -479,6 +485,31 @@ class WriteTools:
             if text and _SLACK_LINK.search(_for_link_check(text)):
                 raise ToolError(NO_SLACK_LINKS)
 
+    def _related(
+        self, grant: Grant, related: list[RelatedIssue], *, own: tuple[str, int] | None = None
+    ) -> tuple[list[RelatedIssue], int]:
+        """The related issues the card may show (#36): this channel's repos only, each once.
+
+        Each repo is written as jotflow.toml spells it. Anything else is dropped, not
+        refused, so a stray search hit doesn't cost the whole draft, and the count
+        goes back to the agent.
+        """
+        kept: list[RelatedIssue] = []
+        seen: set[tuple[str, int]] = set()
+        if own is not None:
+            seen.add((own[0].casefold(), own[1]))
+        for entry in related:
+            try:
+                repo = self._policy.repo(grant.channel_id, entry.repo).repo
+            except PolicyViolation:
+                continue
+            key = (repo.casefold(), entry.number)
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(entry.model_copy(update={"repo": repo}))
+        return kept, len(related) - len(kept)
+
     def _repo_and_labels(self, grant: Grant, repo: str, labels: list[str]) -> tuple[str, list[str]]:
         try:
             policy = self._policy.repo(grant.channel_id, repo)
@@ -533,15 +564,18 @@ class WriteTools:
             self._check_no_slack_links(args.title, args.body)
             await self._check_mentions(args.participants, args.title, args.body)
             await self._check_assignees(args.assignees, args.participants)
+            related, dropped = self._related(grant, args.related)
             draft = IssueProposal.model_validate(
                 {
                     **args.model_dump(exclude={"participants"}),
                     "repo": repo,
                     "labels": labels,
                     "sources": await self._sources(grant, args.sources),
+                    "related": [r.model_dump() for r in related],
                 }
             )
-            return await self._add(grant, draft, args.participants)
+            result = await self._add(grant, draft, args.participants)
+            return result.model_copy(update={"dropped_related": dropped})
 
         return await self._once(grant, "propose_issue", args, ProposeResult, act)
 
@@ -564,15 +598,18 @@ class WriteTools:
             await self._check_assignees(args.changes.add_assignees, args.participants)
             _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
             changes = args.changes.model_copy(update={"add_labels": labels})
+            related, dropped = self._related(grant, args.related, own=(repo, args.issue_number))
             draft = UpdateProposal.model_validate(
                 {
                     **args.model_dump(exclude={"participants"}),
                     "repo": repo,
                     "changes": changes.model_dump(),
                     "sources": await self._sources(grant, args.sources),
+                    "related": [r.model_dump() for r in related],
                 }
             )
-            return await self._add(grant, draft, args.participants)
+            result = await self._add(grant, draft, args.participants)
+            return result.model_copy(update={"dropped_related": dropped})
 
         return await self._once(grant, "propose_update", args, ProposeResult, act)
 

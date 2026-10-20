@@ -32,8 +32,10 @@ from jotflow.models import ChannelMode, MessageRef, ProposalRecord, ProposalStat
 from jotflow.orchestrator.cards import (
     ACTION_APPROVE,
     ACTION_DISCARD,
+    ACTION_NOT_DUPLICATE,
     ACTION_REQUEST_CHANGES,
     ACTION_RETRY,
+    ACTION_SAME_AS,
     CardContext,
     approvable,
 )
@@ -43,6 +45,7 @@ from jotflow.store import content_hash
 from jotflow.store.base import (
     ContentChangedError,
     DraftClearedError,
+    DuplicateRefusedError,
     Store,
     TransitionError,
 )
@@ -58,6 +61,9 @@ MAX_CHANGES_CHARS = 2000
 
 _PROPOSAL_ID = re.compile(r"[0-9a-f]{16}")
 _APPROVE_VALUE = re.compile(r"([0-9a-f]{16}):(sha256:[0-9a-f]{64})")
+# "Same as" (#36): the proposal, the hash of the draft the card showed, and which
+# related issue. The issue itself is read from the stored draft, never from here.
+_SAME_AS_VALUE = re.compile(r"([0-9a-f]{16}):(sha256:[0-9a-f]{64}):([0-9])")
 _SLACK_ID = re.compile(r"[A-Z0-9]{2,24}")
 _TS = re.compile(r"[0-9]{1,12}\.[0-9]{1,8}")
 
@@ -74,6 +80,7 @@ MAX_AUTHOR_LOOKUPS = 25
 NOT_THIS_CARD = "This card no longer matches a proposal JotFlow knows about."
 STALE = "This card was out of date, so nothing was approved. It now shows the current draft."
 DISCARDED = "This draft was discarded, so it can no longer be approved."
+STALE_SAME_AS = "This card was out of date, so nothing was marked. It now shows the current draft."
 CHANGES_EMPTY = "There was nothing to post once mentions and markup were removed."
 CARD_UPDATING = "This card is being updated, so nothing was approved. React again in a moment."
 TOO_LONG_TO_REACT = (
@@ -169,6 +176,14 @@ class ApprovalHandler:
     async def on_approve(self, body: Mapping[str, Any]) -> str:
         """Approve, or Retry a failed proposal: both lock the card's hash. Returns the outcome."""
         return await self._guarded(body, self._approve)
+
+    async def on_same_as(self, body: Mapping[str, Any]) -> str:
+        """Mark a pending proposal the same as its best related issue (#36)."""
+        return await self._guarded(body, self._same_as)
+
+    async def on_not_duplicate(self, body: Mapping[str, Any]) -> str:
+        """Take back a "same as", and draft the thread again (#36)."""
+        return await self._guarded(body, self._not_duplicate)
 
     async def on_discard(self, body: Mapping[str, Any]) -> str:
         """Clear a failed proposal's draft, so it can no longer be retried."""
@@ -360,10 +375,8 @@ class ApprovalHandler:
             raise Refused(NOT_THIS_CARD)
         return record
 
-    async def _approve(self, click: Click, record: ProposalRecord) -> str:
-        match = _APPROVE_VALUE.fullmatch(click.value)
-        if match is None:
-            raise Refused(NOT_THIS_CARD)
+    async def _check_may_approve(self, click: Click, record: ProposalRecord) -> None:
+        """Who may approve: Approve's rule, which "same as" and its undo share (#36)."""
         approval = self._policy.approval
         if approval.approvers_enabled:
             if click.user_id not in approval.approvers:
@@ -374,6 +387,12 @@ class ApprovalHandler:
                 record
             ):
                 raise Refused(OWN_PROPOSAL)
+
+    async def _approve(self, click: Click, record: ProposalRecord) -> str:
+        match = _APPROVE_VALUE.fullmatch(click.value)
+        if match is None:
+            raise Refused(NOT_THIS_CARD)
+        await self._check_may_approve(click, record)
         if record.state not in (ProposalState.PENDING, ProposalState.FAILED):
             raise Refused(_already(record.state))
         try:
@@ -419,6 +438,40 @@ class ApprovalHandler:
         except Exception:
             log.warning("proposal %s: could not look up its source authors", record.id)
             raise Refused(AUTHORS_UNKNOWN) from None
+
+    async def _same_as(self, click: Click, record: ProposalRecord) -> str:
+        match = _SAME_AS_VALUE.fullmatch(click.value)
+        if match is None:
+            raise Refused(NOT_THIS_CARD)
+        await self._check_may_approve(click, record)
+        try:
+            marked = await self._store.mark_duplicate(
+                record.id, index=int(match.group(3)), expected_hash=match.group(2), by=click.user_id
+            )
+        except ContentChangedError:
+            await self._show(record)
+            raise Refused(STALE_SAME_AS) from None
+        except DraftClearedError:
+            raise Refused(DISCARDED) from None
+        except DuplicateRefusedError as refused:
+            raise Refused(str(refused)) from None
+        log.info("proposal %s marked a duplicate by user %s", record.id, click.user_id)
+        await self._show(marked)
+        return "same_as"
+
+    async def _not_duplicate(self, click: Click, record: ProposalRecord) -> str:
+        if click.value != record.id:
+            raise Refused(NOT_THIS_CARD)
+        await self._check_may_approve(click, record)
+        try:
+            undone = await self._store.undo_duplicate(record.id, by=click.user_id)
+        except DuplicateRefusedError as refused:
+            raise Refused(str(refused)) from None
+        # The thread is drafted again, so a real issue isn't lost to a wrong click.
+        await self._store.enqueue_run(RunKind.DRAFTING, undone.channel_id, undone.thread_ts)
+        log.info("proposal %s: duplicate undone by user %s", record.id, click.user_id)
+        await self._show(undone)
+        return "not_duplicate"
 
     async def _discard(self, click: Click, record: ProposalRecord) -> str:
         if record.state is not ProposalState.FAILED:
@@ -563,6 +616,14 @@ def register_actions(app: Any, handler: ApprovalHandler) -> None:
         await ack()
         await run("an approval", handler.on_approve(body))
 
+    async def same_as(ack: Any, body: dict[str, Any]) -> None:
+        await ack()
+        await run("a same as", handler.on_same_as(body))
+
+    async def not_duplicate(ack: Any, body: dict[str, Any]) -> None:
+        await ack()
+        await run("an undo of same as", handler.on_not_duplicate(body))
+
     async def discard(ack: Any, body: dict[str, Any]) -> None:
         await ack()
         await run("a discard", handler.on_discard(body))
@@ -587,5 +648,7 @@ def register_actions(app: Any, handler: ApprovalHandler) -> None:
     app.action(ACTION_APPROVE)(approve)
     app.action(ACTION_RETRY)(approve)
     app.action(ACTION_DISCARD)(discard)
+    app.action(ACTION_SAME_AS)(same_as)
+    app.action(ACTION_NOT_DUPLICATE)(not_duplicate)
     app.action(ACTION_REQUEST_CHANGES)(request_changes)
     app.view(CALLBACK_CHANGES)(changes_submitted)

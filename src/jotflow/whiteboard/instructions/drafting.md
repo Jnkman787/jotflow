@@ -71,6 +71,8 @@ classify the message, then ask in the thread whether it is the same request,
 naming the issue (for example `owner/name#55`), instead of proposing. Never
 propose a second issue for an idea that already has one.
 
+In `related`, list up to 3 close but different issues, most similar first.
+
 ## 6. Propose
 
 If a topic in `topics` has `issue_proposed`, its issue is already proposed

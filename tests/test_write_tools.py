@@ -9,6 +9,7 @@ from typing import Any
 
 import anyio
 import pytest
+from pydantic import ValidationError
 from slack_sdk.errors import SlackApiError
 
 from jotflow.models import MessageRef, ProposalState, Run, RunKind, RunStatus
@@ -1253,3 +1254,50 @@ async def test_a_title_check_that_runs_out_of_time_fails_closed_and_logs_no_titl
     assert "SENTINEL" not in caplog.text
     with pytest.raises(ToolError, match="stop proposing"):
         await patterned.propose_issue(DRAFT, issue(topic_id, title=sentinel))
+
+
+# related issues (#36)
+
+
+async def test_related_keeps_only_this_channels_repos_once_in_their_own_spelling(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    topic_id = await new_topic(tools)
+    related = [
+        {"repo": "ACME-CO/WEB", "number": 42, "state": "closed"},
+        {"repo": "someone/else", "number": 1, "state": "open"},
+        {"repo": "acme-co/web", "number": 42, "state": "open"},
+    ]
+    result: Any = await tools.propose_issue(DRAFT, issue(topic_id, related=related))
+    assert result.dropped_related == 2
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None
+    assert [(r.repo, r.number, r.state) for r in record.proposal.related] == [
+        ("acme-co/web", 42, "closed")
+    ]
+
+
+async def test_an_update_never_lists_its_own_issue_as_related(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    topic_id = await new_topic(tools)
+    await store.set_topic_issue(topic_id, "acme-co/web", 42)
+    related = [
+        {"repo": "acme-co/web", "number": 42, "state": "open"},
+        {"repo": "acme-co/api", "number": 7, "state": "closed"},
+    ]
+    result: Any = await tools.propose_update(DRAFT, update(topic_id, related=related))
+    assert result.dropped_related == 1
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None
+    assert [(r.repo, r.number) for r in record.proposal.related] == [("acme-co/api", 7)]
+
+
+def test_related_holds_at_most_three_and_no_free_text() -> None:
+    four = [{"repo": "acme-co/web", "number": n, "state": "open"} for n in range(1, 5)]
+    with pytest.raises(ValidationError):
+        issue("t", related=four)
+    with pytest.raises(ValidationError):
+        issue("t", related=[{"repo": "acme-co/web", "number": 1, "state": "open", "title": "x"}])
+    with pytest.raises(ValidationError):
+        issue("t", related=[{"repo": "acme-co/web", "number": 1, "state": "wontfix"}])
