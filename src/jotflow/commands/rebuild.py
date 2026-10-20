@@ -137,7 +137,7 @@ async def rebuild(
     results: list[tuple[ChannelPlan, Restored | None]] = []
     for channel in channels:
         say(f"{channel}: reading history")
-        repos = [entry.repo for entry in policy.channels[channel].repos]
+        repos = policy.channels[channel].reaches
         plan = await collect(slack, channel, bot, oldest=oldest, repos=repos, progress=say)
         restored = None if dry_run else await apply(store, policy, plan, bot)
         results.append((plan, restored))

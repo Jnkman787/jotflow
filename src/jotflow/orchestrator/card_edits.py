@@ -21,7 +21,8 @@ from typing import Any, Protocol
 from jotflow.models import IssueProposal, ProposalRecord, UpdateProposal
 from jotflow.orchestrator.approval import Click, Refused
 from jotflow.orchestrator.cards import ACTION_ASSIGN, ACTION_REPO, ACTION_UNASSIGN
-from jotflow.policy import Policy, RepoPolicy
+from jotflow.policy import Policy, PolicyViolation, RepoPolicy
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import EDITABLE_STATES, EditField, Store, TransitionError
 
 log = logging.getLogger("jotflow.edits")
@@ -69,9 +70,11 @@ class CardEdits:
         tell: Tell,
         *,
         refresh: Refresh | None = None,
+        repos: RepoCatalog | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
+        self._repos = repos if repos is not None else RepoCatalog.static(policy)
         self._guarded = guarded
         self._tell = tell
         self._refresh = refresh
@@ -145,10 +148,14 @@ class CardEdits:
 
     def _channel_repo(self, channel_id: str, nickname: str) -> RepoPolicy:
         """The dropdown carries a nickname, unique in the channel. Nothing else is accepted:
-        not an owner/name, and not a nickname this channel's policy does not list."""
-        for entry in self._policy.channel(channel_id).repos:
-            if entry.nickname == nickname:
-                return entry
+        not an owner/name, and not a nickname the channel's repos and scopes don't give.
+        A found repo is checked again, so an archived one is refused (#236)."""
+        for entry in self._repos.repos(channel_id):
+            if entry.nickname and entry.nickname == nickname:
+                try:
+                    return self._repos.repo(channel_id, entry.repo)
+                except PolicyViolation as refused:
+                    raise Refused(str(refused)) from None
         raise Refused(NOT_A_CHANNEL_REPO)
 
     @staticmethod

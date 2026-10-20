@@ -23,6 +23,7 @@ from typing import Any, Protocol
 
 from jotflow.models import ProposalRecord
 from jotflow.policy import Policy
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import Store, utc_now
 
 log = logging.getLogger("jotflow.thread")
@@ -61,7 +62,9 @@ def slack_error(exc: Exception) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def reply_text(policy: Policy, record: ProposalRecord) -> str | None:
+def reply_text(
+    policy: Policy, record: ProposalRecord, repos: RepoCatalog | None = None
+) -> str | None:
     """The thread reply, or None if the stored URL is not a GitHub issue URL."""
     url = record.result.issue_url if record.result else None
     match = _ISSUE_URL.fullmatch(url or "")
@@ -69,10 +72,10 @@ def reply_text(policy: Policy, record: ProposalRecord) -> str | None:
         return None
     repo, number = match["repo"], match["number"]
     label = repo
-    channel = policy.channels.get(record.channel_id)
-    if channel is not None:
-        for entry in channel.repos:
-            if entry.repo.casefold() == repo.casefold():
+    if record.channel_id in policy.channels:
+        catalog = repos if repos is not None else RepoCatalog.static(policy)
+        for entry in catalog.repos(record.channel_id):
+            if entry.repo.casefold() == repo.casefold() and entry.nickname:
                 label = entry.nickname
     verb = "Updated" if record.proposal.kind == "update_issue" else "Created"
     return f"{verb} <{match.group(0)}|{label}#{number}>"
@@ -88,11 +91,13 @@ class ThreadNotice:
         slack: ThreadSlack,
         *,
         clock: Callable[[], datetime] = utc_now,
+        repos: RepoCatalog | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
         self._slack = slack
         self._clock = clock
+        self._repos = repos
         self._waiting: dict[str, tuple[datetime, timedelta]] = {}
 
     async def tell(self) -> int:
@@ -108,7 +113,7 @@ class ThreadNotice:
         return told
 
     async def _tell(self, record: ProposalRecord) -> bool:
-        text = reply_text(self._policy, record)
+        text = reply_text(self._policy, record, self._repos)
         if text is None:
             log.warning(
                 "proposal %s: applied without a GitHub issue URL; nothing to say", record.id

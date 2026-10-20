@@ -24,6 +24,7 @@ from typing import Any, Protocol
 from jotflow.models import ProposalRecord, ProposalState, RepoVisibility
 from jotflow.orchestrator.cards import CardContext, CardPublisher, Visibility
 from jotflow.policy import Policy, UnknownChannelError
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import AUTO_APPROVER, IdentityLink, Store, utc_now
 
 log = logging.getLogger("jotflow.cards")
@@ -82,7 +83,11 @@ def effective_visibility(policy: RepoVisibility | None, agent: RepoVisibility | 
 
 
 async def card_context(
-    policy: Policy, store: Store, people: People, record: ProposalRecord
+    policy: Policy,
+    store: Store,
+    people: People,
+    record: ProposalRecord,
+    repos: RepoCatalog | None = None,
 ) -> CardContext:
     """Everything the card shows besides the proposal: names, identities, the channel."""
     users = list(dict.fromkeys(record.participants))
@@ -96,16 +101,22 @@ async def card_context(
         if (link := await store.get_identity(user)) is not None:
             identities[user] = link
     channel = policy.channel(record.channel_id)
+    catalog = repos if repos is not None else RepoCatalog.static(policy)
+    channel_repos = catalog.repos(record.channel_id)
     repo = record.proposal.repo
+    # A found repo says "private" only when GitHub did, so anything else warns (#236).
     configured = next(
-        (r.visibility for r in channel.repos if r.repo.casefold() == repo.casefold()), None
+        (r.visibility for r in channel_repos if r.repo.casefold() == repo.casefold()), None
     )
+    if configured is None and catalog.is_discovered(record.channel_id, repo):
+        configured = "public"  # in no listing now: warn rather than guess
     seen = effective_visibility(configured, record.proposal.repo_visibility)
     return CardContext(
         channel=channel,
         names=names,
         identities=identities,
         visibility={repo: seen} if seen != "unknown" else {},
+        repos=channel_repos,
     )
 
 
@@ -120,9 +131,11 @@ class CardSync:
         people: People,
         *,
         clock: Callable[[], datetime] = utc_now,
+        repos: RepoCatalog | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
+        self._repos = repos
         self._publisher = publisher
         self._people = people
         self._clock = clock
@@ -166,7 +179,9 @@ class CardSync:
                 return False
             if record.card_ts is None and record.approved_by == AUTO and record.state in _WRITING:
                 return False  # stays due: posted once the write is applied or failed
-            context = await card_context(self._policy, self._store, self._people, record)
+            context = await card_context(
+                self._policy, self._store, self._people, record, self._repos
+            )
             await self._publisher.show(record, context)
             await self._store.mark_card_shown(record.id, record.revision)
         except UnknownChannelError:

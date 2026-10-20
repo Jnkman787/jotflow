@@ -390,6 +390,17 @@ class ChannelPolicy(_Strict):
                 return repo
         raise RepoNotAllowedError(channel_id, ref)
 
+    def reaches(self, repo: str) -> bool:
+        """Whether ``owner/name`` is listed, or a scope's globs cover it.
+
+        Offline only: it can't tell a fork or an archived repo. For what may be
+        written, ask the repo catalog.
+        """
+        owner, _, name = repo.partition("/")
+        if any(r.repo.casefold() == repo.casefold() for r in self.repos):
+            return True
+        return any(s.owner.casefold() == owner.casefold() and s.covers(name) for s in self.scopes)
+
 
 MAX_CONCURRENT_RUNS = 32
 
