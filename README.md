@@ -4,7 +4,7 @@
 
 JotFlow is a self-hosted, agent-agnostic bridge between a shared Slack channel and your GitHub repositories. Anyone on the team, engineer or not, drops an idea, bug, or request into the channel. JotFlow watches the conversation, connects follow-up messages and replies to the same topic, and has *your* AI agent draft the corresponding GitHub issue. A human approves it, or the channel is configured to let it through automatically. Either way, the result is posted back to Slack so everyone sees what was created.
 
-> **Status: 0.2.0.** Setup, drafting, approval cards, and GitHub writes all work: follow the Quickstart below to connect JotFlow to your Slack workspace. The [roadmap](https://github.com/Jnkman787/jotflow/blob/main/docs/roadmap.md) says what's left, and [docs/architecture.md](https://github.com/Jnkman787/jotflow/blob/main/docs/architecture.md) is the full design.
+> **Status: 0.3.0.** Setup, drafting, approval cards, and GitHub writes all work: follow the Quickstart below to connect JotFlow to your Slack workspace. The [roadmap](https://github.com/Jnkman787/jotflow/blob/main/docs/roadmap.md) says what's left, and [docs/architecture.md](https://github.com/Jnkman787/jotflow/blob/main/docs/architecture.md) is the full design.
 
 ## Why
 
