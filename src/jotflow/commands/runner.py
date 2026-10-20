@@ -13,12 +13,15 @@ import contextlib
 import logging
 import os
 import sys
-from pathlib import PurePosixPath
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
+from typing import Literal
 
 import uvicorn
 from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from jotflow.adapters import isolation
 from jotflow.adapters.presets import DEFAULT_GITHUB_MCP, EXPERIMENTAL
 from jotflow.adapters.runner import (
     RUNNER_PORT,
@@ -65,6 +68,10 @@ class RunnerSettings(BaseSettings):
     mcp_allow_public: bool = Field(
         default=False,
         description="Allow an MCP URL whose host resolves to a public address (#234)",
+    )
+    runner_isolation: Literal["none", "uid"] = Field(
+        default="none",
+        description="Per-run uids (#181): none, or uid, which needs docker-compose.isolation.yml",
     )
     runner_host: str = "0.0.0.0"  # the internal Compose network only; no port is published
     runner_port: int = Field(default=RUNNER_PORT, ge=1, le=65535)
@@ -114,6 +121,7 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
         secret=settings.runner_secret.get_secret_value(),
         mcp_url=settings.mcp_url,
         mcp_allow_public=settings.mcp_allow_public,
+        isolation=settings.runner_isolation,
         command=() if settings.agent_command is None else parse_command(settings.agent_command),
         preset=preset,
         models=_models(settings, kinds),
@@ -136,11 +144,12 @@ def startup_line(config: RunnerConfig) -> str:
     ``[agent] preset`` in JotFlow's jotflow.toml must name the same agent.
     """
     kinds = ", ".join(k.value for k in RunKind if k in config.kinds)
+    uids = ", each run as its own uid" if config.isolation == "uid" else ""
     if config.preset is not None:
         note = " (experimental)" if config.preset.name in EXPERIMENTAL else ""
-        return f"runner serving {kinds} with preset {config.preset.name}{note}"
+        return f"runner serving {kinds} with preset {config.preset.name}{note}{uids}"
     program = PurePosixPath(config.command[0]).name if config.command else "?"
-    return f"runner serving {kinds} with command {program}"
+    return f"runner serving {kinds} with command {program}{uids}"
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -152,7 +161,27 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def start_isolation(config: RunnerConfig, environ: Mapping[str, str], status: str) -> None:
+    """With per-run uids (#181), refuse unless they can work here, then join the run groups."""
+    if config.isolation != "uid":
+        return
+    isolation.check_startup(
+        preset=config.agent.name,
+        env_allow=config.env_allow,
+        environ=environ,
+        status=status,
+    )
+    isolation.join_run_groups(isolation.UidPool())
+
+
 async def serve(settings: RunnerSettings, config: RunnerConfig) -> int:
+    try:
+        start_isolation(config, os.environ, Path("/proc/self/status").read_text())
+    except isolation.IsolationError as refused:
+        print(f"jotflow runner: configuration problem: {refused}", file=sys.stderr)
+        return EXIT_CONFIG
+    if config.isolation == "uid":
+        await isolation.sweep_stale(config.workdir)
     removed = remove_stale(config.workdir)
     if removed:
         print(f"jotflow runner: removed {removed} leftover run directories", file=sys.stderr)

@@ -60,6 +60,14 @@ docker compose up -d
 
 Setup writes `.env` and the agent file together, so the two can't be left disagreeing. The restart lets every container pick up the new value.
 
+**Per-run uids (#181), optional.** By default, runs of one kind share their agent container's uid, so a run that gained a file or shell tool could read another run's environment, or the runner's, which holds that kind's GitHub token. To keep same-kind runs apart:
+
+1. In `agent.env` and `agent-exec.env`, set `JOTFLOW_RUNNER_ISOLATION=uid`, and give the agent an API key, listed in `JOTFLOW_AGENT_ENV_ALLOW`. A CLI login kept in the agent's home can't be used in this mode, because each run gets its own home.
+2. Add `docker-compose.isolation.yml` to `COMPOSE_FILE` in `.env`, after the other Compose files. `jotflow init` writes it next to them.
+3. Run `docker compose up -d`. The runner's startup line ends "each run as its own uid".
+
+The runner then starts as root with only SETUID and SETGID, and keeps a read-only root, no-new-privileges and Docker's default seccomp. It refuses to start in this mode without the override, and it refuses a run whose agent didn't drop to its own uid with no capabilities. CI runs this mode on rootful Docker only. Rootless Docker and Podman map the pool's uids, 20001 to 20064, into the host's subuid range, which fits the default 65,536.
+
 **A leaked Slack token** is revoked in Slack itself, which [manifests/README.md](../manifests/README.md) explains. Then run `uvx jotflow init` again to save the new one. A leaked GitHub token is revoked on GitHub, then replaced in its agent env file, followed by `docker compose up -d`.
 
 ## Data, backups, and restore
