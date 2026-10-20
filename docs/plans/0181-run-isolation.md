@@ -61,7 +61,9 @@ From the issue, refined:
    - `JOTFLOW_RUNNER_ISOLATION` in each agent env file takes `none`, the default, or `uid`. The runner reads it at startup, and its startup line says which mode is on.
    - With `none`, nothing changes from today: one uid, the shared `agent-home`, and CLI logins work.
    - With `uid`, each run gets a per-run home inside its run directory, and the runner refuses to start if the preset's model login isn't an API key in the environment. That's `ANTHROPIC_API_KEY` for claude-code, and `CODEX_API_KEY` or `OPENAI_API_KEY` for codex. The reason names the setting and the key.
-   - Compose has to allow both modes, so the agent services always run the runner as uid 0 with only SETUID and SETGID. In `none` mode, the runner drops itself and every run to uid 10002 at startup, right after the checks. It doesn't keep the capabilities, so `none` is no more privileged than today once started.
+   - **How Compose allows the two modes** is open for the lead. Recommended is (b).
+     - (a) The agent services always start the runner as uid 0 with only SETUID and SETGID. In `none` mode, the runner drops itself to 10002 for good at startup. One Compose file serves both modes, but the default deployment starts as root, which it doesn't today.
+     - (b) The default Compose files stay exactly as today: uid 10002 and no capabilities. Turning `uid` on means adding a small override, `docker-compose.isolation.yml`, shipped next to the policy override. It adds `user: "0:0"` and `cap_add: [SETUID, SETGID]` to the agent services, and `COMPOSE_FILE` lists it. The runner fails closed if `uid` is set but it didn't start as uid 0 with exactly those two capabilities, and the reason names the override. The default footprint doesn't change at all.
    - `jotflow init` asks nothing new yet, and writes `none`. `jotflow check` reports the mode, and warns in `uid` mode if the login isn't an API key.
    - Making `uid` the default is left for a later minor release, and the CHANGELOG will say so ahead of time.
 
@@ -99,7 +101,7 @@ From the issue, refined:
 - **A CLI that refuses to run as a uid with no passwd home,** or that needs a writable home outside the run directory. The per-run `HOME` covers the known presets, and the stand-in test catches a regression.
 - **Root in the container,** even with two capabilities, is a change from today's non-root user. That's why decision 6 checks the drop every time, and the runner stays as small as it is today.
 - **A CLI login in `agent-home`** keeps working, because isolation is off by default. A team that turns `uid` on must switch to an API key first, and the runner refuses to start until it has.
-- **`none` mode starts as uid 0 too,** so Compose is the same for both modes. The runner drops to 10002 for good before serving. The cross-container test covers both modes: in `none`, CapEff is 0 after startup and runs share 10002, as today.
+- **With (a), `none` mode starts as uid 0 too.** The runner drops to 10002 for good before serving. With (b), `none` is today's container unchanged. Either way, the cross-container test covers both modes: in `none`, CapEff is 0 and runs share 10002, as today.
 
 ## Progress checklist
 
