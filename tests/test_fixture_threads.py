@@ -36,6 +36,7 @@ REQUIRED = {
     "keywords",
     "mentions",
     "mention-without-ownership",
+    "scoped-search",
 }
 
 
@@ -485,3 +486,42 @@ def test_planted_assignees_and_labels_are_caught() -> None:
     assert any("must not be set" in p for p in problems)
     assert any("expected []" in p for p in problems)
     assert not ExpectedProposal(kind="create_issue", repo="acme-co/web", topic="key:x").shaped
+
+
+# A scope's found repos (#236)
+
+
+def _scoped() -> dict[str, Any]:
+    return json.loads((PATHS[0].parent / "scoped-search.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    ("repo", "reason"),
+    [
+        ("acme-co/web-demo", "is not one of channel C0EXAMPLE1's repos"),  # excluded by glob
+        ("acme-co/billing-old", "isn't in channel C0EXAMPLE1's repo list yet"),  # not on GitHub
+    ],
+)
+def test_a_scoped_proposal_must_target_a_found_repo(repo: str, reason: str) -> None:
+    data = _scoped()
+    data["agent"][0]["calls"][2]["arguments"]["repo"] = repo
+    assert reason in _problem(data)
+
+
+def test_an_archived_found_repo_is_refused_and_github_needs_a_scope_owner() -> None:
+    data = _scoped()
+    data["github"]["acme-co/billing"]["archived"] = True
+    assert "is archived" in _problem(data)
+    data = _scoped()
+    data["github"]["example-org/billing"] = {"labels": []}
+    assert "github.example-org/billing: not a repo in policy" in _problem(data)
+
+
+def test_the_org_wide_search_surfaces_the_excluded_repos_issue() -> None:
+    from jotflow.testing.fake_github_mcp import FakeGithub
+
+    thread = load_thread(PATHS[0].parent / "scoped-search.json")
+    server = FakeGithub(thread.github)
+    result = server.call("search_issues", {"query": "org:acme-co invoices pdf"})
+    found = json.loads(result["content"][0]["text"])
+    assert found["items"][0]["html_url"] == "https://github.com/acme-co/web-demo/issues/9"

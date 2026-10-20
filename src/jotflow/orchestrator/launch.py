@@ -39,7 +39,15 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from jotflow.config import Settings
-from jotflow.models import Run, RunKind, RunStatus
+from jotflow.models import (
+    DiscoveredRepo,
+    Run,
+    RunKind,
+    RunStatus,
+    is_bare_repo_name,
+    is_owner_name,
+    under_owner,
+)
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.store.base import Store
@@ -157,6 +165,25 @@ class RunnerEndpoint:
     secret: str = field(repr=False)
 
 
+# What the drafting runner's discovery may send back (#236).
+MAX_DISCOVERED = 1000
+MAX_DISCOVERY_BYTES = 2_000_000
+
+
+class DiscoveryWire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repos: list[DiscoveredRepo] = Field(max_length=MAX_DISCOVERED)
+    dropped: int = Field(ge=0)
+    truncated: bool
+
+
+class AccessWire(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    reachable: bool
+
+
 class RunnerClient:
     """Calls the runner that serves each run's kind."""
 
@@ -243,6 +270,36 @@ class RunnerClient:
             return RunnerInfo(preset=raw.preset, kinds=tuple(RunKind(k) for k in raw.kinds))
         except (ValidationError, ValueError):
             raise RunnerError("the runner's reply was not its info") from None
+
+    async def repos(self, owner: str) -> list[DiscoveredRepo]:
+        """``owner``'s repos, from the drafting runner's own GitHub call (#236).
+
+        Checked again here: a repo under another owner, or with a bad name, is dropped.
+        """
+        if not is_owner_name(owner):
+            raise RunnerError("not a GitHub owner")
+        response = await self._call("GET", RunKind.DRAFTING, f"/repos/{owner}")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_DISCOVERY_BYTES:
+            raise RunnerError("the runner's repo list was too large")
+        try:
+            raw = DiscoveryWire.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a repo list") from None
+        return [r for r in raw.repos[:MAX_DISCOVERED] if under_owner(r.full_name, owner)]
+
+    async def write_reachable(self, owner: str, name: str) -> bool:
+        """Whether the execution runner's write token can see ``owner/name`` (#236)."""
+        if not is_owner_name(owner) or not is_bare_repo_name(name):
+            raise RunnerError("not a GitHub repo")
+        response = await self._call("GET", RunKind.EXECUTION, f"/repos/{owner}/{name}/access")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        try:
+            return AccessWire.model_validate_json(response.content).reachable
+        except ValidationError:
+            raise RunnerError("the runner's reply was not an access answer") from None
 
     async def verify(self, login: str, code_digest: str) -> VerifyAnswer:
         """Ask the drafting runner whether ``login``'s GitHub account carries the code (#195).

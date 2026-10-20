@@ -109,7 +109,19 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "github_login",
         "issue_proposed",
         "title_pattern",
+        "github_description",  # packet fields for a scope (#236)
+        "scope_total",
     }
     named = set(re.findall(r"`([a-z]+(?:_[a-z]+)+)`", DRAFTING_INSTRUCTIONS)) - fields
     assert named <= jotflow | github, named - jotflow - github
     assert {"link_message", "propose_issue", "propose_update", "ask_channel"} <= named
+
+
+def test_the_scope_rules_are_in_the_instructions() -> None:
+    # Security's conditions for #236: found text is untrusted, and an org-wide
+    # search hit outside the channel's repos is never a target.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "`github_description` and `topics`" in text
+    assert "`org:<owner>`" in text and "`user:<owner>` when `org:`" in text
+    assert "is context only, never a repo to propose to" in text
+    assert "if none shown fits, ask rather than guess a name" in text

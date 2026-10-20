@@ -44,7 +44,13 @@ from typing import Any, Protocol
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.config import Settings
-from jotflow.models import ChannelMode, ProposalRecord, RunKind, expected_runner_preset
+from jotflow.models import (
+    ChannelMode,
+    DiscoveredRepo,
+    ProposalRecord,
+    RunKind,
+    expected_runner_preset,
+)
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
 from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
@@ -70,6 +76,7 @@ from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import SqliteStore, Store
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
 from jotflow.whiteboard.read_tools import read_tools
@@ -288,6 +295,18 @@ class Orchestrator:
         self._stop = asyncio.Event()
         self.operators: OperatorTokens | None = None
         self._tasks: list[asyncio.Task[None]] = []
+        # Listed repos, and those a channel's scopes find through the runners (#236).
+        self.repos = RepoCatalog(policy, lister=self._list_repos, access=self._write_reachable)
+
+    async def _list_repos(self, owner: str) -> list[DiscoveredRepo]:
+        if self._runner is None:
+            raise RunnerError("no runner to ask")
+        return await self._runner.repos(owner)
+
+    async def _write_reachable(self, owner: str, name: str) -> bool:
+        if self._runner is None:
+            raise RunnerError("no runner to ask")
+        return await self._runner.write_reachable(owner, name)
 
     @property
     def store(self) -> Store:
@@ -329,12 +348,16 @@ class Orchestrator:
             self._policy,
             CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
             people,
+            repos=self.repos,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode)
         # Once an issue is written, its thread hears where it went (#32).
         self.threads = ThreadNotice(
-            self._store, self._policy, self._thread_slack or BoltThreadSlack(self._client)
+            self._store,
+            self._policy,
+            self._thread_slack or BoltThreadSlack(self._client),
+            repos=self.repos,
         )
         # Each person links only their own GitHub login (#35); approvers and
         # identity admins can remove someone else's (#173).
@@ -357,11 +380,11 @@ class Orchestrator:
             self._policy,
             self._mode_slack or BoltModeSlack(self._client, slack_people, people),
         )
-        store, policy = self._store, self._policy
+        store, policy, repos = self._store, self._policy, self.repos
 
         async def drawn_with(record: ProposalRecord) -> CardContext:
             # The context the card loop draws with, so length rules agree (#34).
-            return await card_context(policy, store, people, record)
+            return await card_context(policy, store, people, record, repos)
 
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
@@ -376,6 +399,7 @@ class Orchestrator:
             refresh=self.cards.refresh,
             arm_thread=self._arm_thread,
             context_for=drawn_with,
+            repos=self.repos,
         )
         # The card's repo dropdown and assign buttons pass the same gate (#160).
         self.edits = CardEdits(
@@ -384,12 +408,14 @@ class Orchestrator:
             self.approval.guarded,
             approval_slack,
             refresh=self.cards.refresh,
+            repos=self.repos,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
             self._store,
             self._policy,
             self._keyword_slack or BoltKeywordSlack(self._client, people=slack_people),
+            repos=self.repos,
         )
         self._help = HelpHandler(
             self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
@@ -401,8 +427,9 @@ class Orchestrator:
                 self._policy,
                 source,
                 attribution=SlackAttribution(slack_people, people.name),
+                repos=self.repos,
             ),
-            *write_tools(self._store, self._policy, poster),
+            *write_tools(self._store, self._policy, poster, repos=self.repos),
         )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
         self.operators = OperatorTokens(self._store)
@@ -431,6 +458,16 @@ class Orchestrator:
             )
         for reason in self.kinds.off:
             log.warning("%s", reason)
+        if self.repos.owners:
+            if self._runner is None:
+                log.warning(
+                    "jotflow.toml has scopes, but agent runs are off, so no repo is found "
+                    "for them; listed repos still work (#236)"
+                )
+            else:
+                self._tasks.append(
+                    asyncio.create_task(self.repos.run(self._stop), name="jotflow-repos")
+                )
         if not self.runs_on:
             return
         runner = self._runner

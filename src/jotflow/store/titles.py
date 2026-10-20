@@ -45,8 +45,12 @@ def _visible(text: str) -> str:
     )
 
 
-def clean_title(text: str) -> str:
-    """Return ``text`` as a safe, short topic title. Raises ValueError if nothing is left."""
+def clean_title(text: str, limit: int = MAX_TITLE_LENGTH) -> str:
+    """Return ``text`` as a safe, short topic title. Raises ValueError if nothing is left.
+
+    ``limit`` lets other untrusted one-liners use the same cleaning, such as a
+    discovered repo's GitHub description (#236).
+    """
     # Slack sends &lt; &gt; &amp; escaped; unescape first, until stable, so
     # "&lt;!channel&gt;" at any depth is caught as a Slack token.
     cleaned = text
@@ -64,12 +68,12 @@ def clean_title(text: str) -> str:
     cleaned = _MENTION.sub(" ", cleaned)
     cleaned = _MARKUP.sub(" ", cleaned)
     cleaned = _SPACE.sub(" ", cleaned).strip(" -:;,.")
-    if len(cleaned) > MAX_TITLE_LENGTH:
+    if len(cleaned) > limit:
         # Cut at the last space that fits, unless that would lose more than half.
-        head = cleaned[: MAX_TITLE_LENGTH + 1]
+        head = cleaned[: limit + 1]
         cut = head.rsplit(" ", 1)[0] if " " in head else ""
-        if len(cut) < MAX_TITLE_LENGTH // 2:
-            cut = cleaned[:MAX_TITLE_LENGTH]
+        if len(cut) < limit // 2:
+            cut = cleaned[:limit]
         cleaned = cut.rstrip()
     if not cleaned:
         raise ValueError(

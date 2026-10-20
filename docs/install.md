@@ -283,6 +283,8 @@ There are two agent containers, so the GitHub token that can write never sits wh
 
 When a channel later feeds a new repo, add it to both tokens on GitHub too. [docs/presets.md](presets.md) explains what each token can reach.
 
+**For a channel with a scope,** the read token decides what JotFlow finds, and the write token decides what it may write. Give both the same repos. A found repo the write token can't see is refused at approval with a message saying so, and approved once you add it to the token. That check can't tell whether the token may write, and any token sees a public repo. If the token can't file the issue, the write fails at GitHub, and the card says so. With **All repositories** instead, the scope's patterns are the only limit on where JotFlow writes, so keep them narrow. The tokens need no extra permission: listing an owner's repos only needs **Metadata**, which GitHub adds by itself.
+
 **The model login**, for `claude-code`, is either of these:
 
 - **An Anthropic API key**, from <https://console.anthropic.com/settings/keys>. Put it in both files as `ANTHROPIC_API_KEY`. Separate keys let you track spend per run kind.

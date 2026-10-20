@@ -21,6 +21,7 @@ ordinary text too, and ``re:`` and ``bug:`` must be exact.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -119,8 +120,25 @@ class IssueReference:
         return f"{self.repo.nickname}#{self.number}"
 
 
-def parse_reference(text: str, channel: ChannelPolicy) -> IssueReference:
-    """Resolve the start of an ``re:`` message's text to an issue in ``channel``."""
+# How many repos a refusal names: a scope can find hundreds (#236).
+NAMED_IN_REFUSAL = 5
+
+
+def _some(names: list[str]) -> str:
+    shown = ", ".join(names[:NAMED_IN_REFUSAL])
+    more = len(names) - NAMED_IN_REFUSAL
+    return f"{shown} and {more} more" if more > 0 else shown
+
+
+def parse_reference(
+    text: str, channel: ChannelPolicy, repos: Sequence[RepoPolicy] | None = None
+) -> IssueReference:
+    """Resolve the start of an ``re:`` message's text to an issue in ``channel``.
+
+    ``repos`` is every repo the channel may feed now, found by its scopes too;
+    it defaults to the channel's listed repos.
+    """
+    usable = [r for r in (channel.repos if repos is None else repos) if r.nickname]
     words = text.split(maxsplit=1)
     match = _REFERENCE.fullmatch(words[0].rstrip(".,:;")) if words else None
     if match is None:
@@ -132,13 +150,13 @@ def parse_reference(text: str, channel: ChannelPolicy) -> IssueReference:
         raise ReferenceError("an issue number starts at 1")
     name = match["repo"]
     if name is None:
-        if len(channel.repos) > 1:
-            handles = ", ".join(f"{r.nickname}#{number}" for r in channel.repos)
+        if len(usable) != 1:
+            handles = _some([f"{r.nickname}#{number}" for r in usable])
             raise ReferenceError(f"this channel feeds several repos; say which, such as {handles}")
-        return IssueReference(channel.repos[0], number)
+        return IssueReference(usable[0], number)
     wanted = name.casefold()
-    for repo in channel.repos:
+    for repo in usable:
         if wanted in (repo.nickname, repo.repo.casefold()):
             return IssueReference(repo, number)
-    nicknames = ", ".join(r.nickname for r in channel.repos)
+    nicknames = _some([r.nickname for r in usable])
     raise ReferenceError(f"{name} is not one of this channel's repos ({nicknames})")

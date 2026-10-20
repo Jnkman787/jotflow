@@ -11,6 +11,7 @@ See ``examples/jotflow.example.toml`` for a complete file.
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import tomllib
 from collections.abc import Iterable
@@ -27,7 +28,7 @@ from pydantic import (
     model_validator,
 )
 
-from jotflow.models import RepoName, RepoVisibility, shown
+from jotflow.models import RepoName, RepoVisibility, shown, under_owner
 from jotflow.reactions import DEFAULT_APPROVAL, DEFAULT_ISSUE_REACTION, KEYWORD_REACTIONS, reserved
 from jotflow.text import unsafe_text_problem
 from jotflow.title_pattern import check_title_pattern
@@ -273,10 +274,96 @@ class ChannelHelp(_Strict):
     near_miss_nudge: bool | None = None
 
 
+# A GitHub owner, written out: never a pattern, so a scope can't reach another (#236).
+_OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
+# A repo name as GitHub allows it, for an alias's target.
+_REPO_NAME = re.compile(r"[A-Za-z0-9._-]{1,100}")
+# A glob on a repo name: its characters, plus *, ?, [, ] and !.
+_GLOB = re.compile(r"[A-Za-z0-9._*?\[\]!-]{1,100}")
+MAX_SCOPES = 5
+MAX_GLOBS = 20
+
+Owner = Annotated[str, _matching(_OWNER, "a GitHub owner such as example-org, not a pattern")]
+NameGlob = Annotated[str, _matching(_GLOB, "a glob on a repo name, such as web-*")]
+RepoBareName = Annotated[str, _matching(_REPO_NAME, "a repo name such as website-v2")]
+
+
+class ScopePolicy(_Strict):
+    """Every repo of one owner whose name matches, found live (#236).
+
+    The policy stays the write allowlist: the owner is fixed, and only names the
+    globs match, and none excludes, are allowed.
+    """
+
+    owner: Owner = Field(description="The GitHub org or user, written out")
+    match: tuple[NameGlob, ...] = Field(
+        default=("*",), min_length=1, max_length=MAX_GLOBS, description="Globs on repo names"
+    )
+    exclude: tuple[NameGlob, ...] = Field(
+        default=(), max_length=MAX_GLOBS, description="Globs on repo names to leave out"
+    )
+    include_forks: bool = Field(default=False, description="Whether forks are in scope")
+    include_archived: bool = Field(default=False, description="Whether archived repos are")
+    labels: tuple[Label, ...] | None = Field(
+        default=None, description="Optional. Narrows the labels for every repo in the scope"
+    )
+    aliases: dict[Nickname, RepoBareName] = Field(
+        default_factory=dict, description="Optional nicknames, mapped to repo names"
+    )
+    description: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Optional. The team's own words for the scope's repos, shown first",
+    )
+
+    @field_validator("labels")
+    @classmethod
+    def _no_empty_labels(cls, labels: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if labels is not None and not labels:
+            raise ValueError("an empty labels list is ambiguous; remove the line to allow any")
+        return labels
+
+    @field_validator("description")
+    @classmethod
+    def _plain_description(cls, value: str | None) -> str | None:
+        if value is not None and (problem := unsafe_text_problem(value)):
+            raise ValueError(f"description {problem}")
+        return value
+
+    def covers(self, name: str) -> bool:
+        """Whether a repo ``name`` under :attr:`owner` is in this scope by its globs.
+
+        Case is ignored, as GitHub ignores it in repo names: ``exclude = ["payroll*"]``
+        leaves out ``Payroll-api`` too. Names and globs are ASCII by their checks.
+        """
+        wanted = name.lower()
+        return any(fnmatch.fnmatchcase(wanted, g.lower()) for g in self.match) and not any(
+            fnmatch.fnmatchcase(wanted, g.lower()) for g in self.exclude
+        )
+
+    def summary(self) -> str:
+        """One line for help: what the scope reaches."""
+        parts = [f"every repo in {self.owner} matching {', '.join(self.match)}"]
+        left_out = list(self.exclude)
+        if not self.include_forks:
+            left_out.append("forks")
+        if not self.include_archived:
+            left_out.append("archived repos")
+        if left_out:
+            parts.append("except " + ", ".join(left_out))
+        return " ".join(parts)
+
+
 class ChannelPolicy(_Strict):
     """A Slack channel JotFlow watches and the repos it may feed."""
 
-    repos: tuple[RepoPolicy, ...] = Field(min_length=1)
+    repos: tuple[RepoPolicy, ...] = Field(default=())
+    scopes: tuple[ScopePolicy, ...] = Field(
+        default=(),
+        max_length=MAX_SCOPES,
+        description="Owners whose matching repos are found live, beside the listed repos (#236)",
+    )
     debounce_seconds: int | None = Field(
         default=None, ge=1, le=86_400, description="Overrides the top-level debounce window"
     )
@@ -286,9 +373,14 @@ class ChannelPolicy(_Strict):
 
     @model_validator(mode="after")
     def _unique_repos(self) -> ChannelPolicy:
+        if not self.repos and not self.scopes:
+            raise ValueError("a channel needs at least one repo or one scope")
         if dupes := _duplicates(r.repo for r in self.repos):
             raise ValueError(f"repos listed more than once: {', '.join(dupes)}")
-        if dupes := _duplicates(r.nickname for r in self.repos):
+        if dupes := _duplicates(s.owner for s in self.scopes):
+            raise ValueError(f"scopes given more than once for: {', '.join(dupes)}")
+        aliases = [alias for scope in self.scopes for alias in scope.aliases]
+        if dupes := _duplicates([*(r.nickname for r in self.repos), *aliases]):
             raise ValueError(f"nicknames used more than once: {', '.join(dupes)}")
         return self
 
@@ -302,6 +394,17 @@ class ChannelPolicy(_Strict):
             if wanted in (repo.repo.casefold(), repo.nickname):
                 return repo
         raise RepoNotAllowedError(channel_id, ref)
+
+    def reaches(self, repo: str) -> bool:
+        """Whether ``owner/name`` is listed, or a scope's globs cover it.
+
+        Offline only: it can't tell a fork or an archived repo. For what may be
+        written, ask the repo catalog.
+        """
+        name = repo.partition("/")[2]
+        if any(r.repo.casefold() == repo.casefold() for r in self.repos):
+            return True
+        return any(under_owner(repo, s.owner) and s.covers(name) for s in self.scopes)
 
 
 MAX_CONCURRENT_RUNS = 32

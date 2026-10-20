@@ -284,7 +284,7 @@ async def test_an_applied_proposal_without_a_url_is_marked_and_skipped(
 
     slack = FakeThreadSlack()
     await applied(store)
-    monkeypatch.setattr(thread_notice, "reply_text", lambda policy, record: None)
+    monkeypatch.setattr(thread_notice, "reply_text", lambda policy, record, repos=None: None)
     assert await notice(store, slack).tell() == 0
     assert slack.replies == [] and await store.threads_due() == []
 

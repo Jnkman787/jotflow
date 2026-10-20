@@ -17,8 +17,11 @@ What changed in each JotFlow release, for the people who run it. The format foll
 - **`jotflow rebuild`** restores topics, message links, channel modes and the guide flag from JotFlow's own Slack replies, after the database is lost without a backup. It stores pointers only, never message text, and doesn't touch GitHub. [docs/deployment.md](docs/deployment.md#rebuild-from-slack-without-a-backup) lists what it can't restore (#38).
 - **Related issues on the card, and Same as (#36).** The card lists up to three issues the agent found close to the idea, marking each open or closed as the agent's claim. **Same as** links the conversation to the first one instead of writing a new issue, under Approve's rules for who may click. **Not a duplicate** takes it back and drafts again. The store gains migration 14, with pointers and Slack ids only.
 
+- **A channel can feed every repo an owner has, or those matching a pattern (#236).** A channel's `[[channels.<id>.scopes]]` names an owner, `match` and `exclude` patterns that ignore case, and optional labels, aliases and a description. JotFlow lists the owner's repos through the drafting runner every 15 minutes, so a new or renamed repo needs no restart. Forks and archived repos are left out unless the scope says otherwise. Approval checks a found repo again, and refuses one the write token can't see, saying how to fix it. Both runners gain one fixed GitHub call each, so update the agent images with JotFlow's. Before rolling back, remove every scope, because older versions refuse the key.
+
 ### Changed
 
+- **`/jotflow repos <word>` now filters the list (#236).** It shows the repos whose nickname, name, description or topics contain the word. How to change the repos moved to `/jotflow repos change`, and `/jotflow repos add …` and `remove …` still show it. Before, any word after `/jotflow repos` showed that text.
 - **`/jotflow help` and `/jotflow repos` are easier to read (#257).** Each reply has short headed sections, for keywords, reactions, repos, approval and commands. Repos are a bulleted list with the nickname and `owner/name` in code. They still can't ping or link: Slack is told to show the text verbatim, and every name and description from `jotflow.toml` is escaped. A long list still fits Slack's limits, and ends "and N more" when it doesn't.
 
 ### Security

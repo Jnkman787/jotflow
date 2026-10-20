@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -27,6 +27,7 @@ from jotflow.orchestrator.packet import SlackWorkSource
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.store import MemoryStore, Store
 from jotflow.testing.threads import (
+    FIXTURE_LISTED_AT,
     TOPIC_KEY_PREFIX,
     AskChannelCall,
     LinkMessageCall,
@@ -35,6 +36,7 @@ from jotflow.testing.threads import (
     ProposeUpdateCall,
     ReactionEvent,
     SavedThread,
+    fixture_catalog,
     invented_commands,
     invented_links,
     invented_numbers,
@@ -45,7 +47,7 @@ from jotflow.whiteboard.tools import ToolError, ToolSpec
 from jotflow.whiteboard.write_tools import write_tools
 
 # Replay runs at a fixed time, so every run of a fixture is identical.
-REPLAY_START = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
+REPLAY_START = FIXTURE_LISTED_AT
 __all__ = ["Check", "ReplayError", "ReplayReport", "replay"]
 
 
@@ -474,11 +476,14 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
     source = SlackWorkSource(
         _FixtureReader(thread, messages), active, bot=BotIdentity(bot.user_id, bot.bot_id)
     )
+    repos = fixture_catalog(thread, clock)
     specs = {
         spec.name: spec
         for spec in (
-            *read_tools(active, thread.policy, source, clock=clock, attribution=attribution),
-            *write_tools(active, thread.policy, poster, clock=clock),
+            *read_tools(
+                active, thread.policy, source, clock=clock, attribution=attribution, repos=repos
+            ),
+            *write_tools(active, thread.policy, poster, clock=clock, repos=repos),
         )
     }
     state = _Replay(

@@ -17,20 +17,30 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from jotflow.models import Classification, IssueProposal, Topic, UpdateProposal
+from jotflow.models import (
+    Classification,
+    DiscoveredRepo,
+    IssueProposal,
+    Topic,
+    UpdateProposal,
+)
 from jotflow.policy import Policy, PolicyViolation
+from jotflow.repo_catalog import RepoCatalog
 
 FORMAT = "jotflow-thread/1"
 TOPIC_KEY_PREFIX = "key:"
 KEYWORDS = ("idea", "bug", "re", "skip")
+# When a fixture's scope listings are taken: replay's own start, so they are fresh.
+FIXTURE_LISTED_AT = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
 
 _MENTION = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]*)?>")
 
@@ -331,10 +341,45 @@ class GithubIssue(_Strict):
 
 
 class GithubRepo(_Strict):
-    """A repo's labels and issues, for the fake GitHub MCP server."""
+    """A repo's labels and issues, for the fake GitHub MCP server.
+
+    The other fields are what GitHub's repo listing says, for a channel whose
+    scope finds the repo instead of listing it (#236).
+    """
 
     labels: tuple[str, ...] = ()
     issues: tuple[GithubIssue, ...] = ()
+    description: str | None = None
+    topics: tuple[str, ...] = ()
+    pushed_at: str | None = None
+    private: bool = True
+    archived: bool = False
+    fork: bool = False
+
+
+def fixture_catalog(
+    thread: SavedThread, clock: Callable[[], datetime] | None = None
+) -> RepoCatalog:
+    """The channel repos a fixture's run sees: listed ones, and its ``github`` as each
+    scope owner's listing, as the runner would report it."""
+    catalog = RepoCatalog(thread.policy, clock=clock or (lambda: FIXTURE_LISTED_AT))
+    for owner in catalog.owners:
+        listing = [
+            DiscoveredRepo(
+                id=index,
+                full_name=name,
+                description=repo.description,
+                topics=repo.topics,
+                pushed_at=repo.pushed_at,
+                private=repo.private,
+                archived=repo.archived,
+                fork=repo.fork,
+            )
+            for index, (name, repo) in enumerate(thread.github.items(), start=1)
+            if name.partition("/")[0].casefold() == owner.casefold()
+        ]
+        catalog.load(owner, listing)
+    return catalog
 
 
 class SavedThread(_Strict):
@@ -411,9 +456,11 @@ def _event_problems(thread: SavedThread) -> list[str]:
 def _github_problems(thread: SavedThread) -> list[str]:
     problems: list[str] = []
     repos = {r.repo.casefold() for c in thread.policy.channels.values() for r in c.repos}
+    # Under a scope's owner, any repo may be there, an excluded one too (#236).
+    owners = {s.owner.casefold() for c in thread.policy.channels.values() for s in c.scopes}
     for name, repo in thread.github.items():
         where = f"github.{name}"
-        if name.casefold() not in repos:
+        if name.casefold() not in repos and name.partition("/")[0].casefold() not in owners:
             problems.append(f"{where}: not a repo in policy")
         numbers = [issue.number for issue in repo.issues]
         if len(numbers) != len(set(numbers)):
@@ -472,7 +519,7 @@ def _proposal_problems(
     problems: list[str] = []
     proposal = call.arguments
     try:
-        repo = thread.policy.repo(channel, proposal.repo)
+        repo = fixture_catalog(thread).repo(channel, proposal.repo)
         labels = (
             proposal.labels if isinstance(proposal, IssueProposal) else proposal.changes.add_labels
         )

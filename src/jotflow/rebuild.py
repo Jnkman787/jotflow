@@ -141,16 +141,17 @@ def plan_thread(
     thread_ts: str,
     messages: Sequence[Mapping[str, Any]],
     bot: BotIdentity,
-    repos: Collection[str] | None = None,
+    repos: Collection[str] | Callable[[str], bool] | None = None,
 ) -> ThreadPlan:
     """Each person's message goes to the issue of the first JotFlow reply at or after it.
 
     Messages after the last reply go to that last issue: they are follow-ups,
     which JotFlow would have proposed as updates to it. With ``repos``, a reply
     naming any other repo is skipped and counted, so a repo since removed from
-    jotflow.toml doesn't come back.
+    jotflow.toml doesn't come back. ``repos`` may instead be a test, for a channel
+    whose scopes reach repos it doesn't list (#236).
     """
-    allowed = None if repos is None else {r.casefold() for r in repos}
+    allowed = _allowed(repos)
     plan = ThreadPlan(thread_ts)
     waiting: list[str] = []
     ordered = sorted(messages, key=lambda m: float(str(m.get("ts") or 0)))
@@ -161,7 +162,7 @@ def plan_thread(
             match = _REPLY.search(_text(message))
             if match is None:
                 continue
-            if allowed is not None and match["repo"].casefold() not in allowed:
+            if allowed is not None and not allowed(match["repo"]):
                 plan.unknown_repos += 1
                 continue
             issue = (match["repo"], int(match["number"]))
@@ -188,7 +189,7 @@ async def collect(
     bot: BotIdentity,
     *,
     oldest: str | None = None,
-    repos: Collection[str] | None = None,
+    repos: Collection[str] | Callable[[str], bool] | None = None,
     progress: Callable[[str], None] = lambda _: None,
     sleep: Sleep | None = None,
 ) -> ChannelPlan:
@@ -249,6 +250,13 @@ def _replies(
         return await slack.replies(channel_id, ts, cursor=cursor, limit=PAGE_SIZE)
 
     return fetch
+
+
+def _allowed(repos: Collection[str] | Callable[[str], bool] | None) -> Callable[[str], bool] | None:
+    if repos is None or callable(repos):
+        return repos
+    names = {r.casefold() for r in repos}
+    return lambda repo: repo.casefold() in names
 
 
 def _title(policy: Policy, channel_id: str, repo: str, number: int) -> str:

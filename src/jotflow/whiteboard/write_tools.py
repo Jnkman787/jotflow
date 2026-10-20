@@ -48,6 +48,7 @@ from jotflow.models import (
     UpdateProposal,
 )
 from jotflow.policy import Policy, PolicyViolation, label_problem
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
 from jotflow.store.base import check_github_login, utc_now
 from jotflow.title_pattern import Match, match_title_async
@@ -332,12 +333,15 @@ class WriteTools:
         *,
         clock: Callable[[], datetime] = utc_now,
         new_id: Callable[[], str] = lambda: secrets.token_hex(8),
+        repos: RepoCatalog | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
         self._poster = poster
         self._clock = clock
         self._new_id = new_id
+        # The channel's repos, listed and found by scopes: the write allowlist (#236).
+        self._repos = repos if repos is not None else RepoCatalog.static(policy)
         self._locks = _RunLocks()
         self._title_refusals: dict[str, int] = {}
         # Matches that ran out of time, by repo: a sign the pattern itself is broken.
@@ -351,7 +355,7 @@ class WriteTools:
         refused = self._title_refusals.get(grant.run_id, 0)
         if refused >= MAX_TITLE_REFUSALS:
             raise ToolError(TOO_MANY_TITLES.format(n=refused))
-        pattern = self._policy.repo(grant.channel_id, repo).title_pattern
+        pattern = self._repos.repo(grant.channel_id, repo).title_pattern
         if pattern is None:
             return
         result = await match_title_async(pattern, title)
@@ -500,7 +504,7 @@ class WriteTools:
             seen.add((own[0].casefold(), own[1]))
         for entry in related:
             try:
-                repo = self._policy.repo(grant.channel_id, entry.repo).repo
+                repo = self._repos.repo(grant.channel_id, entry.repo).repo
             except PolicyViolation:
                 continue
             key = (repo.casefold(), entry.number)
@@ -512,7 +516,7 @@ class WriteTools:
 
     def _repo_and_labels(self, grant: Grant, repo: str, labels: list[str]) -> tuple[str, list[str]]:
         try:
-            policy = self._policy.repo(grant.channel_id, repo)
+            policy = self._repos.repo(grant.channel_id, repo)
             return policy.repo, policy.check_labels(labels)
         except PolicyViolation as refused:
             raise ToolError(str(refused)) from None
@@ -747,9 +751,10 @@ def write_tools(
     *,
     clock: Callable[[], datetime] = utc_now,
     new_id: Callable[[], str] = lambda: secrets.token_hex(8),
+    repos: RepoCatalog | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
-    tools = WriteTools(store, policy, poster, clock=clock, new_id=new_id)
+    tools = WriteTools(store, policy, poster, clock=clock, new_id=new_id, repos=repos)
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
         ("propose_issue", ProposeIssueArgs, DRAFTING),
         ("propose_update", ProposeUpdateArgs, DRAFTING),

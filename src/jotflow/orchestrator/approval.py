@@ -40,7 +40,8 @@ from jotflow.orchestrator.cards import (
     approvable,
 )
 from jotflow.orchestrator.people import Person, SlackPeople
-from jotflow.policy import Policy, UnknownChannelError
+from jotflow.policy import Policy, PolicyViolation, UnknownChannelError
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import content_hash
 from jotflow.store.base import (
     ContentChangedError,
@@ -85,6 +86,15 @@ CHANGES_EMPTY = "There was nothing to post once mentions and markup were removed
 CARD_UPDATING = "This card is being updated, so nothing was approved. React again in a moment."
 TOO_LONG_TO_REACT = (
     "This draft is too long to show in full on the card, so it can't be approved here."
+)
+# A repo a channel's scope found (#236): checked again at approval, failing closed.
+REPO_GONE = "This repo can't be used here any more, so nothing was approved: {reason}"
+NOT_WRITABLE = (
+    "JotFlow's write token can't reach {repo}. Give the token access to that repo on "
+    "GitHub, then approve again."
+)
+WRITE_UNCHECKED = (
+    "JotFlow couldn't check write access to {repo}, so nothing was approved. Try again."
 )
 PAUSED = "JotFlow is paused in this channel. Nothing is written until someone sets it back."
 
@@ -163,10 +173,12 @@ class ApprovalHandler:
         refresh: Refresh | None = None,
         arm_thread: ArmThread | None = None,
         context_for: ContextFor | None = None,
+        repos: RepoCatalog | None = None,
     ) -> None:
         self._context_for = context_for
         self._store = store
         self._policy = policy
+        self._repos = repos if repos is not None else RepoCatalog.static(policy)
         self._slack = slack
         self._refresh = refresh
         self._arm_thread = arm_thread
@@ -395,6 +407,7 @@ class ApprovalHandler:
         await self._check_may_approve(click, record)
         if record.state not in (ProposalState.PENDING, ProposalState.FAILED):
             raise Refused(_already(record.state))
+        await self._check_repo(record)
         try:
             approved = await self._store.transition(
                 record.id,
@@ -417,6 +430,26 @@ class ApprovalHandler:
         log.info("proposal %s approved by user %s; execution queued", approved.id, click.user_id)
         await self._show(approved)
         return "approved"
+
+    async def _check_repo(self, record: ProposalRecord) -> None:
+        """A found repo must still be in scope, and reachable by the write token (#236).
+
+        A listed repo isn't checked, so channels without scopes approve as before.
+        """
+        channel, repo = record.channel_id, record.proposal.repo
+        if not self._repos.is_discovered(channel, repo):
+            return
+        try:
+            self._repos.repo(channel, repo)
+        except PolicyViolation as gone:
+            raise Refused(REPO_GONE.format(reason=gone)) from None
+        try:
+            reachable = await self._repos.writable(channel, repo)
+        except Exception as exc:
+            log.warning("could not check write access to %s: %s", repo, type(exc).__name__)
+            raise Refused(WRITE_UNCHECKED.format(repo=repo)) from None
+        if not reachable:
+            raise Refused(NOT_WRITABLE.format(repo=repo))
 
     async def _source_authors(self, record: ProposalRecord) -> set[str]:
         """Who wrote the messages the proposal was drawn from, and its thread's first one.

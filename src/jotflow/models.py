@@ -54,6 +54,49 @@ def shown(value: str, limit: int = 40) -> str:
     return repr(value if len(value) <= limit else value[:limit] + "...")
 
 
+_OWNER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", re.ASCII)
+_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,100}", re.ASCII)
+
+
+def is_owner_name(value: str) -> bool:
+    """Whether ``value`` is a valid GitHub owner, an org or a user (#236)."""
+    return _OWNER_RE.fullmatch(value) is not None
+
+
+def is_bare_repo_name(value: str) -> bool:
+    """Whether ``value`` is a valid repo name, without its owner (#236)."""
+    return _NAME_RE.fullmatch(value) is not None and value not in {".", ".."}
+
+
+def under_owner(full_name: str, owner: str) -> bool:
+    """Whether ``full_name`` is a valid ``owner/name`` under ``owner``, ignoring case.
+
+    Both halves are checked first, so the comparison only ever sees ASCII (#236).
+    """
+    found, _, name = full_name.partition("/")
+    if not (is_owner_name(found) and is_owner_name(owner) and is_bare_repo_name(name)):
+        return False
+    return found.lower() == owner.lower()
+
+
+class DiscoveredRepo(BaseModel):
+    """One repo as the runner's discovery reports it (#236): these eight fields only.
+
+    Its text, description and topics, is GitHub's and untrusted.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    id: int = Field(gt=0)
+    full_name: str = Field(min_length=3, max_length=140)
+    description: str | None = Field(default=None, max_length=1000)
+    topics: tuple[str, ...] = Field(default=(), max_length=50)
+    pushed_at: str | None = Field(default=None, max_length=40)
+    archived: bool = False
+    fork: bool = False
+    private: bool = False
+
+
 def is_repo_name(value: str) -> bool:
     """Whether ``value`` is a valid ``owner/name`` GitHub repo."""
     match = _REPO_RE.fullmatch(value)

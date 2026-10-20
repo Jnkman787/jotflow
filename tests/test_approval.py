@@ -1129,3 +1129,71 @@ def test_a_second_approver_needs_an_approver_list() -> None:
             '[channels.C0TEST1]\nrepos = [{repo = "acme-co/web", nickname = "web", '
             'description = "Web"}]\n'
         )
+
+
+# A repo a channel's scope found (#236)
+
+
+def _scoped(access: Any) -> tuple[Rig, Any]:
+    from jotflow.models import DiscoveredRepo
+    from jotflow.repo_catalog import RepoCatalog
+
+    rig = Rig()
+    scoped = Policy.model_validate(
+        {
+            "channels": {
+                CH: {
+                    "repos": [{"repo": "acme-co/docs", "nickname": "docs", "description": "Docs"}],
+                    "scopes": [{"owner": "acme-co", "match": ["web*"]}],
+                }
+            }
+        }
+    )
+    found = DiscoveredRepo.model_validate(
+        {"id": 1, "full_name": "acme-co/web", "pushed_at": "2026-10-19T00:00:00Z"}
+    )
+    listing = [found]
+
+    async def lister(owner: str) -> list[DiscoveredRepo]:
+        return list(listing)
+
+    repos = RepoCatalog(scoped, lister=lister, access=access)
+    rig._policy = scoped
+    rig.handler = ApprovalHandler(
+        rig.store, scoped, rig.slack, refresh=rig._refresh, arm_thread=rig._arm, repos=repos
+    )
+    return rig, (repos, listing)
+
+
+async def test_a_found_repo_is_approved_only_when_the_write_token_reaches_it() -> None:
+    reachable = {"acme-co/web": False}
+
+    async def access(owner: str, name: str) -> bool:
+        return reachable[f"{owner}/{name}"]
+
+    rig, (repos, _) = _scoped(access)
+    await repos.refresh("acme-co")
+    pid = await rig.proposal()
+    good = f"{pid}:{await rig.hash(pid)}"
+    assert await rig.handler.on_approve(click(good)) == "refused"
+    assert rig.slack.ephemerals[-1][2] == approval_module.NOT_WRITABLE.format(repo="acme-co/web")
+    assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0
+    reachable["acme-co/web"] = True
+    assert await rig.handler.on_approve(click(good)) == "approved"
+
+
+async def test_a_failed_access_check_or_a_repo_gone_from_scope_approves_nothing() -> None:
+    async def down(owner: str, name: str) -> bool:
+        raise ConnectionError("down")
+
+    rig, (repos, listing) = _scoped(down)
+    await repos.refresh("acme-co")
+    pid = await rig.proposal()
+    good = f"{pid}:{await rig.hash(pid)}"
+    assert await rig.handler.on_approve(click(good)) == "refused"
+    assert rig.slack.ephemerals[-1][2] == approval_module.WRITE_UNCHECKED.format(repo="acme-co/web")
+    listing[0] = listing[0].model_copy(update={"archived": True})
+    await repos.refresh("acme-co")
+    assert await rig.handler.on_approve(click(good)) == "refused"
+    assert "is archived" in rig.slack.ephemerals[-1][2]
+    assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0

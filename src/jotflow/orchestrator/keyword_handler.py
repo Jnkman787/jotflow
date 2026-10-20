@@ -46,6 +46,7 @@ from jotflow.orchestrator.people import Person as Person  # re-exported: callers
 from jotflow.orchestrator.people import SlackPeople
 from jotflow.policy import Policy
 from jotflow.reactions import CONFIRM as REACTION_CONFIRM
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import TEXT_MARK, Store
 
 log = logging.getLogger("jotflow.keywords")
@@ -79,10 +80,18 @@ def _mention(user_id: str | None) -> str:
 
 
 class KeywordHandler:
-    def __init__(self, store: Store, policy: Policy, slack: KeywordSlack) -> None:
+    def __init__(
+        self,
+        store: Store,
+        policy: Policy,
+        slack: KeywordSlack,
+        *,
+        repos: RepoCatalog | None = None,
+    ) -> None:
         self._store = store
         self._policy = policy
         self._slack = slack
+        self._repos = repos if repos is not None else RepoCatalog.static(policy)
 
     async def on_message(self, event: Mapping[str, Any]) -> Outcome:
         """Handle an accepted message that may start with a keyword."""
@@ -110,7 +119,9 @@ class KeywordHandler:
 
     async def _attach(self, ref: MessageRef, rest: str) -> Outcome:
         try:
-            reference = parse_reference(rest, self._policy.channel(ref.channel_id))
+            reference = parse_reference(
+                rest, self._policy.channel(ref.channel_id), self._repos.repos(ref.channel_id)
+            )
         except ReferenceError as exc:
             await self._slack.reply(
                 ref.channel_id,

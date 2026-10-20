@@ -41,6 +41,7 @@ MAX_HEADER_TEXT = 150
 MAX_CONTEXT_TEXT = 2000
 MAX_BUTTON_TEXT = 75
 MAX_OPTION_TEXT = 75
+MAX_OPTIONS = 100  # Slack's limit for a static_select
 
 ACTION_APPROVE = "jotflow_approve"
 ACTION_REQUEST_CHANGES = "jotflow_request_changes"
@@ -74,6 +75,13 @@ class CardContext:
     names: Mapping[str, str] = field(default_factory=dict)  # Slack user id -> display name
     identities: Mapping[str, IdentityLink] = field(default_factory=dict)  # by Slack user id
     visibility: Mapping[str, Visibility] = field(default_factory=dict)  # by owner/name, any case
+    # Every repo the channel may feed now, listed and found by a scope (#236).
+    # None means the channel's listed repos only.
+    repos: tuple[RepoPolicy, ...] | None = None
+
+    @property
+    def channel_repos(self) -> tuple[RepoPolicy, ...]:
+        return self.repos if self.repos is not None else tuple(self.channel.repos)
 
     def repo_visibility(self, repo: str) -> Visibility:
         for name, value in self.visibility.items():
@@ -138,18 +146,29 @@ def _chunks(text: str, size: int = MAX_SECTION_TEXT) -> list[str]:
     return [text[i : i + size] for i in range(0, len(text), size)] or [""]
 
 
-def _nickname(channel: ChannelPolicy, repo: str) -> str:
-    for entry in channel.repos:
-        if entry.repo.casefold() == repo.casefold():
-            return entry.nickname
-    return repo
+def _nickname(context: CardContext, repo: str) -> str:
+    entry = _repo_entry(context, repo)
+    return entry.nickname if entry is not None and entry.nickname else repo
 
 
-def _repo_entry(channel: ChannelPolicy, repo: str) -> RepoPolicy | None:
-    for entry in channel.repos:
+def _repo_entry(context: CardContext, repo: str) -> RepoPolicy | None:
+    for entry in context.channel_repos:
         if entry.repo.casefold() == repo.casefold():
             return entry
     return None
+
+
+def _picker_repos(context: CardContext, current: RepoPolicy) -> list[RepoPolicy]:
+    """What the repo dropdown offers: repos with a nickname, at most Slack's 100.
+
+    Listed repos come first, then found ones by last push, and the current one is
+    always kept. A found repo with no free nickname is left out: an owner/name may
+    not fit in the option's value.
+    """
+    named = [r for r in context.channel_repos if r.nickname]
+    if current not in named[:MAX_OPTIONS]:
+        named = [current, *[r for r in named if r is not current]]
+    return named[:MAX_OPTIONS]
 
 
 def _repo_option(record: ProposalRecord, entry: RepoPolicy) -> dict[str, Any]:
@@ -165,9 +184,9 @@ def _repo_option(record: ProposalRecord, entry: RepoPolicy) -> dict[str, Any]:
 
 def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) -> list[Block]:
     repo = record.proposal.repo
-    entry = _repo_entry(context.channel, repo)
+    entry = _repo_entry(context, repo)
     blocks: list[Block] = []
-    if pending and entry is not None and len(context.channel.repos) > 1:
+    if pending and entry is not None and entry.nickname and len(context.channel_repos) > 1:
         blocks.append(
             {
                 "type": "section",
@@ -176,7 +195,7 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
                     "type": "static_select",
                     "action_id": ACTION_REPO,
                     "initial_option": _repo_option(record, entry),
-                    "options": [_repo_option(record, r) for r in context.channel.repos],
+                    "options": [_repo_option(record, r) for r in _picker_repos(context, entry)],
                 },
             }
         )
@@ -268,7 +287,7 @@ def _draft_blocks(
 ) -> tuple[list[Block], str]:
     """The blocks for the draft's content, and the header text."""
     draft = record.proposal
-    entry = _repo_entry(context.channel, draft.repo)
+    entry = _repo_entry(context, draft.repo)
     if isinstance(draft, IssueProposal):
         header = "Proposed issue"
         blocks: list[Block] = []
@@ -283,7 +302,7 @@ def _draft_blocks(
         blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
         return blocks, header
-    header = f"Proposed update to {_nickname(context.channel, draft.repo)}#{draft.issue_number}"
+    header = f"Proposed update to {_nickname(context, draft.repo)}#{draft.issue_number}"
     return _update_blocks(record, draft, context, entry, pending, show_body, compact), header
 
 

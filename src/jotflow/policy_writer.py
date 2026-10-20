@@ -102,6 +102,25 @@ def render_policy(policy: Policy) -> str:
                 lines.append(f"title_pattern = {toml_string(repo.title_pattern)}")
             if repo.conventions is not None:
                 lines.append(f"conventions = {toml_string(repo.conventions)}")
+        for scope in channel.scopes:
+            # Pattern scopes (#236): every field, so a rewrite keeps what was written.
+            lines += [
+                "",
+                f"[[channels.{channel_id}.scopes]]",
+                f"owner = {toml_string(scope.owner)}",
+                f"match = {_array(scope.match)}",
+                f"exclude = {_array(scope.exclude)}",
+                f"include_forks = {_bool(scope.include_forks)}",
+                f"include_archived = {_bool(scope.include_archived)}",
+            ]
+            if scope.labels is not None:
+                lines.append(f"labels = {_array(scope.labels)}")
+            if scope.description is not None:
+                lines.append(f"description = {toml_string(scope.description)}")
+            if scope.aliases:
+                # Nicknames are [a-z0-9_-], so they are bare keys.
+                pairs = ", ".join(f"{k} = {toml_string(v)}" for k, v in scope.aliases.items())
+                lines.append(f"aliases = {{ {pairs} }}")
         own_help = channel.help.model_dump(exclude_none=True)
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]

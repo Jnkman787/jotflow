@@ -43,6 +43,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -50,7 +51,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from jotflow.adapters import github_proof
+from jotflow.adapters import github_proof, github_repos
 from jotflow.adapters import isolation as isolation_mod
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
@@ -61,7 +62,7 @@ from jotflow.adapters.presets import (
     Preset,
     RunContext,
 )
-from jotflow.models import RunKind
+from jotflow.models import RunKind, is_bare_repo_name, is_owner_name
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.store.base import DEFAULT_RUN_TIMEOUTS
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, MAX_TOKEN_TTL_SECONDS, TOKEN_PREFIX
@@ -157,6 +158,8 @@ class RunnerConfig:
     # Hand the agent an MCP URL whose host resolves to a public address (#234). Off:
     # the run token goes only to a private, loopback or link-local address.
     mcp_allow_public: bool = False
+    # Where the runner's own repo discovery and access checks call GitHub (#236).
+    github_api: str = github_repos.API
     # Per-run uids (#181): "none", the default, or "uid", which needs the runner to
     # start as root with only SETUID and SETGID (docker-compose.isolation.yml).
     isolation: isolation_mod.Mode = "none"
@@ -654,10 +657,55 @@ def build_runner_app(
     runner: Runner,
     config: RunnerConfig,
     *,
+    github: Any = None,
     github_transport: Any = None,
 ) -> ASGIApp:
     """The runner's HTTP app: GET /info, POST /runs, GET /runs/{id}, DELETE /runs/{id},
-    and, on the drafting runner, POST /verify (#195)."""
+    and, on the drafting runner, POST /verify (#195).
+
+    Also GET /repos/{owner} on the drafting runner, and GET
+    /repos/{owner}/{name}/access on the execution runner: the runner's own fixed
+    GitHub calls for pattern scopes (#236). ``github`` is the HTTP client for
+    them, for tests.
+    """
+    http = github if github is not None else github_repos.client()
+
+    async def repos(request: Request) -> Response:
+        if config.read_token is None:
+            return JSONResponse({"error": "repo discovery is the drafting runner's"}, 404)
+        owner = request.path_params["owner"]
+        if not is_owner_name(owner):
+            return JSONResponse({"error": "not a GitHub owner"}, status_code=400)
+        try:
+            listing = await github_repos.list_repos(
+                owner, config.read_token, http=http, api=config.github_api
+            )
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("repo discovery for %s failed: %s", owner, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not list the repos"}, status_code=502)
+        log.info(
+            "discovered %d repos for %s, dropped %d%s",
+            len(listing.repos),
+            owner,
+            listing.dropped,
+            ", truncated" if listing.truncated else "",
+        )
+        return JSONResponse(listing.as_json())
+
+    async def access(request: Request) -> Response:
+        if config.write_token is None:
+            return JSONResponse({"error": "write access is the execution runner's"}, 404)
+        owner, name = request.path_params["owner"], request.path_params["name"]
+        if not is_owner_name(owner) or not is_bare_repo_name(name):
+            return JSONResponse({"error": "not a GitHub repo"}, status_code=400)
+        try:
+            ok = await github_repos.reachable(
+                owner, name, config.write_token, http=http, api=config.github_api
+            )
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("write access check for %s/%s failed: %s", owner, name, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        return JSONResponse({"reachable": ok})
 
     async def launch(request: Request) -> Response:
         # Read with a cap, so a chunked body without a length cannot grow unbounded.
@@ -727,6 +775,8 @@ def build_runner_app(
             Route("/runs", launch, methods=["POST"]),
             Route("/runs/{run_id}", status, methods=["GET"]),
             Route("/runs/{run_id}", stop, methods=["DELETE"]),
+            Route("/repos/{owner}", repos, methods=["GET"]),
+            Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
         ]
     )
     return RunnerGate(app, secret=config.secret, allowed_hosts=config.allowed_hosts)
