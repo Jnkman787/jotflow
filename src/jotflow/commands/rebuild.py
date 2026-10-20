@@ -133,7 +133,7 @@ async def rebuild(
         plan = await collect(slack, channel, bot, oldest=oldest, progress=say)
         restored = None if dry_run else await apply(store, policy, plan, bot)
         results.append((plan, restored))
-        say(_summary(plan, restored))
+        say(_summary(plan, restored, windowed=oldest is not None))
     return results
 
 
@@ -141,13 +141,21 @@ class RefusedError(Exception):
     """Rebuild refuses to run; the message says why and what to do."""
 
 
-def _summary(plan: ChannelPlan, restored: Restored | None) -> str:
+def _summary(plan: ChannelPlan, restored: Restored | None, *, windowed: bool = False) -> str:
     head = (
         f"{plan.channel_id}: {plan.messages_read} messages read, "
         f"{len(plan.threads)} threads with issues, {plan.issue_count} issues"
     )
+    # A mode set before --since is outside the window: the channel falls back to
+    # propose, so a paused or auto channel must be checked by hand.
+    unsure = (
+        f"; no mode announcement since --since, "
+        f"so check {plan.channel_id}'s mode with /jotflow mode"
+        if windowed and plan.mode is None
+        else ""
+    )
     if restored is None:
-        return head + " (dry run, nothing written)"
+        return head + " (dry run, nothing written)" + unsure
     parts = [
         f"{restored.topics} topics restored",
         f"{restored.linked} messages linked",
@@ -159,7 +167,7 @@ def _summary(plan: ChannelPlan, restored: Restored | None) -> str:
         parts.append(f"mode {plan.mode.value if plan.mode else ''}")
     if restored.guide:
         parts.append("guide noted")
-    return f"{head}; " + ", ".join(parts)
+    return f"{head}; " + ", ".join(parts) + unsure
 
 
 async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) -> int:

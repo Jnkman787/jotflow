@@ -108,7 +108,7 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 
 **Options.**
 - `--dry-run` reads Slack and prints what it would restore, writing nothing.
-- `--since 90d` reads only the last 90 days. The default is all history.
+- `--since 90d` reads only the last 90 days. The default is all history. A mode set before that window isn't seen, so the channel falls back to `propose`, and rebuild says to check it with `/jotflow mode`.
 - `--channel C0IDEAS01` rebuilds one channel, and can be repeated.
 - `--merge` adds to a store that already has topics, never overwriting what's there. Without it, rebuild refuses a store with topics in a configured channel.
 

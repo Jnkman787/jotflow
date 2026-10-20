@@ -425,3 +425,23 @@ async def test_the_slack_adapter_passes_oldest_only_when_given() -> None:
         {"history": {"channel": CH, "cursor": "c", "limit": 200, "oldest": "5.0"}},
         {"replies": {"channel": CH, "ts": "1.0", "cursor": None, "limit": 200}},
     ]
+
+
+async def test_a_windowed_rebuild_that_finds_no_mode_says_to_check_it(tmp_path: Path) -> None:
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    lines: list[str] = []
+    try:
+        await rebuild(
+            store,
+            POLICY,
+            workspace(),
+            BOT,
+            [CH],
+            oldest="1150.0",
+            merge=False,
+            dry_run=False,
+            say=lines.append,
+        )
+    finally:
+        await store.close()
+    assert "check C0IDEAS01's mode with /jotflow mode" in lines[-1]
