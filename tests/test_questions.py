@@ -344,3 +344,36 @@ async def test_two_askers_in_one_thread_share_one_queued_question_run(tmp_path: 
             assert [r.kind for r in runs] == [RunKind.QUESTION]
         finally:
             await store.close()
+
+
+async def test_an_answer_may_name_a_repo_found_by_a_channels_scope(clock: Clock) -> None:
+    from jotflow.models import DiscoveredRepo
+    from jotflow.repo_catalog import RepoCatalog
+
+    scoped = Policy.model_validate(
+        {
+            "channels": {
+                CH: {
+                    "repos": [{"repo": "acme-co/docs", "nickname": "docs", "description": "D"}],
+                    "scopes": [{"owner": "acme-co", "match": ["web*"]}],
+                }
+            }
+        }
+    )
+    found = DiscoveredRepo.model_validate(
+        {"id": 1, "full_name": "acme-co/web", "pushed_at": "2026-10-19T00:00:00Z"}
+    )
+
+    async def lister(owner: str) -> list[DiscoveredRepo]:
+        return [found]
+
+    async def access(owner: str, name: str) -> bool:
+        return True
+
+    repos = RepoCatalog(scoped, lister=lister, access=access)
+    await repos.refresh("acme-co")
+    store, poster = LiveStore(clock), Poster()
+    store.register(QUESTION)
+    write = WriteTools(store, scoped, poster, clock=clock, repos=repos)
+    await write.answer(QUESTION, AnswerArgs(text="See acme-co/web#7, acme-co/docs#2, other/x#1."))
+    assert poster.plain == [(CH, ROOT, f"{ANSWER_PREFIX} See acme-co/web#7, acme-co/docs#2, .")]

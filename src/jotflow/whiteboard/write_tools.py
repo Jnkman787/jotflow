@@ -782,7 +782,8 @@ class WriteTools:
         return await self._once(grant, "answer", args, AnswerResult, act)
 
     def _channel_repos(self, grant: Grant) -> list[str]:
-        return [entry.repo for entry in self._policy.channel(grant.channel_id).repos]
+        """The repos an answer may name: listed and found by scope, as propose_issue resolves."""
+        return [entry.repo for entry in self._repos.repos(grant.channel_id)]
 
     async def record_result(self, grant: Grant, arguments: Any) -> BaseModel:
         args: RecordResultArgs = arguments
