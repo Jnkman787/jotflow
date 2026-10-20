@@ -2,6 +2,16 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
+## [Unreleased]
+
+### Added
+
+- **Per-repo house rules for issues (#216).**
+  - A repo in `jotflow.toml` can have `conventions`, the team's own rules for its issues, which the drafting agent follows over the style of recent issues.
+  - A repo can also have a `title_pattern` that every proposed title must fully match. JotFlow refuses a title that doesn't, and the agent tries again, up to three times per run.
+  - Only patterns that always match quickly are accepted.
+  - Setup keeps both settings when it rewrites `jotflow.toml`.
+
 ## [0.3.0] - 2026-10-20
 
 A minor release: drafted issues are fuller and follow each repo's own style. Upgrading only needs the new image version. The Compose files, the Slack app and `jotflow.toml` are unchanged since 0.2.0, and rolling back is a plain image swap.

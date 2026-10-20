@@ -1055,3 +1055,61 @@ async def test_an_expired_topic_is_revived_by_linking_to_it(
     assert joined.topic_id == topic_id
     [active] = (await list_topics(store, POLICY, CH, now=clock())).topics
     assert active.id == topic_id and active.last_active == clock()
+
+
+# A repo's title_pattern (#216)
+
+PATTERNED = parse_policy(
+    f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The web app"
+labels = ["bug", "enhancement"]
+title_pattern = '^(feat|fix)(\\([a-z-]+\\))?: .+$'
+"""
+)
+
+
+@pytest.fixture
+def patterned(tools: WriteTools, store: MemoryStore, poster: Poster, clock: Clock) -> WriteTools:
+    """The write tools, with the packet recorded, for a repo with a title_pattern."""
+    return WriteTools(store, PATTERNED, poster, clock=clock, new_id=Ids())
+
+
+async def test_a_title_off_the_repos_pattern_is_refused_with_the_pattern(
+    tools: WriteTools, patterned: WriteTools, store: MemoryStore
+) -> None:
+    from jotflow.whiteboard.write_tools import TITLE_REFUSED
+
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError) as refused:
+        await patterned.propose_issue(DRAFT, issue(topic_id))
+    assert refused.value.reason == TITLE_REFUSED.format(pattern=r"^(feat|fix)(\([a-z-]+\))?: .+$")
+    result: Any = await patterned.propose_issue(
+        DRAFT, issue(topic_id, title="feat(dashboard): export the table as CSV")
+    )
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.title.startswith("feat(dashboard)")
+
+
+async def test_after_three_refused_titles_a_run_stops_proposing(
+    tools: WriteTools, patterned: WriteTools
+) -> None:
+    from jotflow.whiteboard.write_tools import MAX_TITLE_REFUSALS, TOO_MANY_TITLES
+
+    topic_id = await new_topic(tools)
+    for n in range(MAX_TITLE_REFUSALS):
+        with pytest.raises(ToolError):
+            await patterned.propose_issue(DRAFT, issue(topic_id, title=f"Try {n}"))
+    with pytest.raises(ToolError) as stopped:
+        await patterned.propose_issue(DRAFT, issue(topic_id, title="feat: now it matches"))
+    assert stopped.value.reason == TOO_MANY_TITLES.format(n=MAX_TITLE_REFUSALS)
+
+
+async def test_without_a_pattern_any_title_is_proposed_as_before(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(DRAFT, issue(topic_id, title="Any plain title"))
+    assert result.proposal_id

@@ -186,6 +186,17 @@ class RepoBrief(BaseModel):
         default=None,
         description="The only labels a proposal may use; null means any label the repo has",
     )
+    conventions: str | None = Field(
+        default=None,
+        description=(
+            "The team's own rules for this repo's issues, from its policy file. They shape "
+            "the title and body and take precedence over recent issues' style"
+        ),
+    )
+    title_pattern: str | None = Field(
+        default=None,
+        description="A regular expression the title must fully match; propose_issue refuses others",
+    )
 
 
 class ChannelBrief(BaseModel):
@@ -421,6 +432,8 @@ def read_tools(
                     nickname=r.nickname,
                     description=r.description,
                     labels=None if r.labels is None else list(r.labels),
+                    conventions=r.conventions,
+                    title_pattern=r.title_pattern,
                 )
                 for r in channel.repos
             ],

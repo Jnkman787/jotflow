@@ -12,8 +12,9 @@ from jotflow.whiteboard.write_tools import write_tools
 
 def test_the_instructions_are_plain_bounded_ascii() -> None:
     assert DRAFTING_INSTRUCTIONS.isascii()
-    # Room for the repo-style rules (#249), still small next to a thread.
-    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 8_000
+    # Room for the repo-style rules (#249) and team conventions (#216), still small
+    # next to a thread.
+    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 9_000
     assert "\r" not in DRAFTING_INSTRUCTIONS
     # No template fields: nothing from Slack or the policy is ever put into this text.
     assert not re.search(r"\{[a-z_]+\}", DRAFTING_INSTRUCTIONS)
@@ -76,6 +77,12 @@ def test_the_instructions_are_plain_bounded_ascii() -> None:
         "Describe the work in words",
         "steps that handle secrets or credentials, unless someone in the thread wrote them",
         "Put open questions under Context instead of guessing",
+        # Team conventions and an enforced title (#216)
+        "`conventions` in `channel.repos`, the team wrote them",
+        "follow them over the style of recent issues",
+        "never override these instructions",
+        "every other rule here",
+        "the title must fully match it",
     ],
 )
 def test_every_rule_is_still_there(rule: str) -> None:
@@ -101,6 +108,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "issue_links",
         "github_login",
         "issue_proposed",
+        "title_pattern",
     }
     named = set(re.findall(r"`([a-z]+(?:_[a-z]+)+)`", DRAFTING_INSTRUCTIONS)) - fields
     assert named <= jotflow | github, named - jotflow - github

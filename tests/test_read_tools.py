@@ -670,3 +670,37 @@ async def test_an_execution_packet_leaves_out_the_agents_visibility_report(
     grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
     work: Work = await call(tools(store, clock)["get_work"], grant)
     assert work.execution is not None and work.execution.proposal.repo_visibility is None
+
+
+async def test_a_repos_conventions_and_title_pattern_reach_the_brief(
+    store: MemoryStore, clock: Clock
+) -> None:
+    # Team policy (#216): it reaches the agent beside the repo's description and labels.
+    policy = parse_policy(
+        f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+title_pattern = '^(feat|fix): .+$'
+conventions = "Every issue needs an ## Acceptance checklist."
+"""
+    )
+    by_name = checked_registry(read_tools(store, policy, FakeSource(), clock=clock))
+    work: Work = await call(by_name["get_work"], await running(store))
+    assert work.conversation is not None and work.conversation.channel is not None
+    [repo] = work.conversation.channel.repos
+    assert repo.title_pattern == "^(feat|fix): .+$"
+    assert repo.conventions == "Every issue needs an ## Acceptance checklist."
+
+
+async def test_without_either_setting_the_brief_is_as_before(
+    store: MemoryStore, clock: Clock
+) -> None:
+    grant = await running(store)
+    work: Work = await call(tools(store, clock)["get_work"], grant)
+    assert work.conversation is not None and work.conversation.channel is not None
+    [repo] = work.conversation.channel.repos
+    assert repo.conventions is None and repo.title_pattern is None

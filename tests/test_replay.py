@@ -401,3 +401,27 @@ async def test_a_command_copied_into_the_plan_fails_the_replay() -> None:
     report = await replay(parse_thread(_broken("repo-style", copied), source="test"))
     check = {c.name: c for c in report.checks}["no commands nobody gave"]
     assert check.ok is False and "curl" in check.detail
+
+
+# A refusal the script expects (#216)
+
+
+async def test_a_call_expected_refused_that_is_accepted_fails_the_replay() -> None:
+    def matching(data: dict[str, Any]) -> None:
+        # The first title now matches, so the expected refusal never comes.
+        data["agent"][0]["calls"][2]["arguments"]["title"] = "feat: export the table as CSV"
+
+    report = await replay(parse_thread(_broken("title-pattern", matching), source="test"))
+    script = {c.name: c for c in report.checks}["script"]
+    assert (
+        script.ok is False and "was accepted, but the script expected it refused" in script.detail
+    )
+
+
+async def test_a_different_refusal_than_expected_fails_the_replay() -> None:
+    def other(data: dict[str, Any]) -> None:
+        data["agent"][0]["calls"][2]["expect_error"] = "some other reason"
+
+    report = await replay(parse_thread(_broken("title-pattern", other), source="test"))
+    script = {c.name: c for c in report.checks}["script"]
+    assert script.ok is False and "must match title_pattern" in script.detail

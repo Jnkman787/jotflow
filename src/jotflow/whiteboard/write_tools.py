@@ -47,10 +47,19 @@ from jotflow.models import (
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
 from jotflow.store.base import check_github_login, utc_now
+from jotflow.title_pattern import title_matches
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
 
 MAX_PROPOSALS_PER_RUN = 3
+# A run may propose a title its repo's title_pattern refuses this many times (#216).
+MAX_TITLE_REFUSALS = 3
+TITLE_REFUSED = (
+    "this repo's titles must match title_pattern {pattern}; propose again with a title that matches"
+)
+TOO_MANY_TITLES = (
+    "this run's titles were refused {n} times; stop proposing and leave the title to a person"
+)
 MAX_QUESTIONS_PER_RUN = 2
 MAX_LINKS_PER_RUN = 200
 QUESTION_INTERVAL = timedelta(seconds=30)
@@ -285,6 +294,21 @@ class WriteTools:
         self._clock = clock
         self._new_id = new_id
         self._locks = _RunLocks()
+        self._title_refusals: dict[str, int] = {}
+
+    def _check_title(self, grant: Grant, repo: str, title: str) -> None:
+        """Refuse a title the repo's title_pattern doesn't fully match (#216).
+
+        Updates never change a title, so only propose_issue calls this.
+        """
+        refused = self._title_refusals.get(grant.run_id, 0)
+        if refused >= MAX_TITLE_REFUSALS:
+            raise ToolError(TOO_MANY_TITLES.format(n=refused))
+        pattern = self._policy.repo(grant.channel_id, repo).title_pattern
+        if pattern is None or title_matches(pattern, title):
+            return
+        self._title_refusals[grant.run_id] = refused + 1
+        raise ToolError(TITLE_REFUSED.format(pattern=pattern))
 
     async def _once(
         self,
@@ -435,6 +459,7 @@ class WriteTools:
                     "use propose_update"
                 )
             repo, labels = self._repo_and_labels(grant, args.repo, args.labels)
+            self._check_title(grant, repo, args.title)
             self._check_no_slack_links(args.title, args.body)
             await self._check_assignees(args.assignees, args.participants)
             draft = IssueProposal.model_validate(

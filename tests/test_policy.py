@@ -467,3 +467,49 @@ def test_a_repo_visibility_is_public_or_private() -> None:
     for bad in ("internal", "PUBLIC", ""):
         with pytest.raises(ValueError):
             Policy.model_validate(repo(visibility=bad))
+
+
+# A repo's conventions and title_pattern (#216)
+
+ONE_REPO = """
+[channels.C0TEST1]
+
+[[channels.C0TEST1.repos]]
+repo = "acme/web"
+nickname = "web"
+description = "The web app"
+"""
+
+
+def test_conventions_may_span_lines_and_are_trimmed() -> None:
+    text = (
+        ONE_REPO
+        + 'conventions = "  Every issue needs a checklist.\\n- Bugs get the bug label.  "\n'
+    )
+    [repo] = parse_policy(text).channels["C0TEST1"].repos
+    assert repo.conventions == "Every issue needs a checklist.\n- Bugs get the bug label."
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ('"   "', "conventions is empty"),
+        ('"Hidden\\u200bmark"', "invisible characters"),
+        ('"Bidi \\u202e trick"', "control characters"),
+        (f'"{"x" * 2001}"', "at most 2000 characters"),
+    ],
+)
+def test_conventions_must_be_plain_and_short(value: str, reason: str) -> None:
+    found = problems(ONE_REPO + f"conventions = {value}\n")
+    assert any(reason in p for p in found), found
+
+
+def test_a_slow_title_pattern_is_refused_when_the_policy_loads() -> None:
+    found = problems(ONE_REPO + "title_pattern = '(a|ab)*'\n")
+    assert any("title_pattern" in p and "a group may take only ?" in p for p in found), found
+
+
+def test_the_example_title_pattern_loads() -> None:
+    text = ONE_REPO + "title_pattern = '^(feat|fix|docs)(\\([a-z-]+\\))?: .+$'\n"
+    [repo] = parse_policy(text).channels["C0TEST1"].repos
+    assert repo.title_pattern == r"^(feat|fix|docs)(\([a-z-]+\))?: .+$"
