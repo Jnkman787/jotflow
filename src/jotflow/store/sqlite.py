@@ -26,6 +26,7 @@ from pydantic import TypeAdapter
 
 from jotflow.models import (
     ChannelMode,
+    Duplicate,
     ExecutionResult,
     IssueProposal,
     MessageRef,
@@ -41,9 +42,13 @@ from jotflow.models import (
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
     DEFAULT_RUN_TIMEOUTS,
+    DUPLICATE_MOVED_ON,
+    DUPLICATE_NOT_NEW,
+    DUPLICATE_TOPIC_LINKED,
     ChannelModeSetting,
     Clock,
     ConflictError,
+    DuplicateRefusedError,
     EditField,
     IdentityLink,
     IdentityUnlink,
@@ -72,7 +77,9 @@ from jotflow.store.base import (
     cleared_draft,
     edited_draft,
     from_text,
+    plan_duplicate,
     plan_transition,
+    plan_undo,
     to_text,
     utc_now,
 )
@@ -401,6 +408,7 @@ class SqliteStore:
             draft_cleared_at=None
             if row["draft_cleared_at"] is None
             else from_text(row["draft_cleared_at"]),
+            duplicate=_duplicate(row),
             created_at=from_text(row["created_at"]),
         )
 
@@ -685,6 +693,70 @@ class SqliteStore:
             updated = await self._get_proposal(proposal_id)
         if cleared:
             await self._scrub_wal()
+        return _found(updated)
+
+    async def mark_duplicate(
+        self, proposal_id: str, *, index: int, expected_hash: str, by: str
+    ) -> ProposalRecord:
+        check_id(by, "Slack user id")
+        async with self._write():
+            record = await self._get_proposal(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            related = plan_duplicate(record, index, expected_hash)
+            topic_id = record.proposal.topic_id
+            topic = None if topic_id is None else await self._get_topic(topic_id)
+            if topic is None or topic.topic.channel_id != record.channel_id:
+                raise DuplicateRefusedError(DUPLICATE_NOT_NEW)
+            if topic.topic.issue_number is not None:
+                raise DuplicateRefusedError(DUPLICATE_TOPIC_LINKED)
+            now = to_text(self._clock())
+            await self._db.execute(
+                "UPDATE proposals SET state = 'rejected', duplicate_repo = ?,"
+                " duplicate_number = ?, duplicate_by = ?, duplicate_at = ?, updated_at = ?,"
+                " revision = revision + 1 WHERE id = ? AND state = 'pending'",
+                (related.repo, related.number, by, now, now, proposal_id),
+            )
+            await self._db.execute(
+                "UPDATE topics SET repo = ?, issue_number = ?, last_activity_at = ? WHERE id = ?",
+                (related.repo, related.number, now, topic.topic.id),
+            )
+            await self._clear(proposal_id, record.proposal, now)
+            updated = await self._get_proposal(proposal_id)
+        await self._scrub_wal()
+        return _found(updated)
+
+    async def undo_duplicate(self, proposal_id: str, *, by: str) -> ProposalRecord:
+        check_id(by, "Slack user id")
+        async with self._write():
+            record = await self._get_proposal(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            duplicate = plan_undo(record)
+            topic_id = record.proposal.topic_id
+            topic = None if topic_id is None else await self._get_topic(topic_id)
+            if topic is None or not _bound_to(topic.topic, duplicate):
+                raise DuplicateRefusedError(DUPLICATE_MOVED_ON)
+            written = await self._one(
+                # Drafted after the "same as" and still live or written: it relies on
+                # the binding, so unbinding would strand it or contradict its write.
+                "SELECT 1 FROM proposals WHERE topic_id = ? AND created_at > ?"
+                " AND state IN ('pending', 'approved', 'executing', 'reconciling', 'applied')",
+                (topic.topic.id, to_text(duplicate.at)),
+            )
+            if written is not None:
+                raise DuplicateRefusedError(DUPLICATE_MOVED_ON)
+            now = to_text(self._clock())
+            await self._db.execute(
+                "UPDATE topics SET repo = NULL, issue_number = NULL WHERE id = ?",
+                (topic.topic.id,),
+            )
+            await self._db.execute(
+                "UPDATE proposals SET duplicate_undone_by = ?, duplicate_undone_at = ?,"
+                " updated_at = ?, revision = revision + 1 WHERE id = ?",
+                (by, now, now, proposal_id),
+            )
+            updated = await self._get_proposal(proposal_id)
         return _found(updated)
 
     # Identity links
@@ -1356,3 +1428,26 @@ async def migrate(db: aiosqlite.Connection, migrations: Sequence[Migration] = MI
             raise
         await db.execute("COMMIT")
     return await schema_version(db)
+
+
+def _duplicate(row: aiosqlite.Row) -> Duplicate | None:
+    if row["duplicate_repo"] is None:
+        return None
+    return Duplicate(
+        repo=row["duplicate_repo"],
+        number=row["duplicate_number"],
+        by=row["duplicate_by"],
+        at=from_text(row["duplicate_at"]),
+        undone_by=row["duplicate_undone_by"],
+        undone_at=None
+        if row["duplicate_undone_at"] is None
+        else from_text(row["duplicate_undone_at"]),
+    )
+
+
+def _bound_to(topic: Topic, duplicate: Duplicate) -> bool:
+    return (
+        topic.repo is not None
+        and topic.repo.casefold() == duplicate.repo.casefold()
+        and topic.issue_number == duplicate.number
+    )

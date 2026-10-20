@@ -8,7 +8,7 @@ import json
 from jotflow.models import IssueProposal, UpdateProposal
 
 # Optional fields added after #23; see canonical_json.
-LATER_FIELDS = ("hint_overruled",)
+LATER_FIELDS = ("hint_overruled", "related")
 # Advisory fields that are never written to GitHub, so never part of what approval locks.
 UNHASHED_FIELDS = ("repo_visibility",)
 
@@ -24,7 +24,7 @@ def canonical_json(proposal: IssueProposal | UpdateProposal, *, hashed: bool = F
     """
     data = proposal.model_dump(mode="json")
     for name in LATER_FIELDS:
-        if data.get(name) is None:
+        if data.get(name) in (None, []):
             data.pop(name, None)
     if hashed:
         for name in UNHASHED_FIELDS:

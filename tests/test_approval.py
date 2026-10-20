@@ -30,8 +30,10 @@ from jotflow.orchestrator.approval import (
 from jotflow.orchestrator.cards import (
     ACTION_APPROVE,
     ACTION_DISCARD,
+    ACTION_NOT_DUPLICATE,
     ACTION_REQUEST_CHANGES,
     ACTION_RETRY,
+    ACTION_SAME_AS,
     Card,
     CardContext,
     CardPublisher,
@@ -521,6 +523,8 @@ async def test_the_actions_ack_first_and_errors_go_back_to_the_dialog(
         ACTION_RETRY,
         ACTION_DISCARD,
         ACTION_REQUEST_CHANGES,
+        ACTION_SAME_AS,
+        ACTION_NOT_DUPLICATE,
     }
     ack = Ack()
     await app.actions[ACTION_APPROVE](ack, click(f"{pid}:{await rig.hash(pid)}"))
