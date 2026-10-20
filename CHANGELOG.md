@@ -12,6 +12,11 @@ What changed in each JotFlow release, for the people who run it. The format foll
   - A missing runner now fails its startup check in about 15 seconds, not 2 minutes.
   - `JOTFLOW_RUNNER_ALLOW_PUBLIC` and `JOTFLOW_MCP_ALLOW_PUBLIC` opt in to public addresses.
 
+### Fixed
+
+- **A model login the runner would never pass is caught (#239).** Setup adds the preset's key to `JOTFLOW_AGENT_ENV_ALLOW` in a kept agent env file that sets the key but doesn't list it, and says it did. `jotflow check` fails on such a file, naming the file and the line to set, and exits 1. The `Agent model` prompt shows its default in brackets, like the other prompts.
+- **`/jotflow help` and `/jotflow repos` fit Slack's block limits with more than 20 repos (#231).** Both replies are plain text, split so no block passes 3,000 characters. Help names as many repos as fit, then points to `/jotflow repos`, which lists them all (#237, #238).
+
 ## [0.1.0] - 2026-10-19
 
 The first release. JotFlow watches the Slack channels you choose, hands each quiet thread to your team's own agent, and posts what the agent proposes as a card. Nothing reaches GitHub until a person approves it, unless a channel is set to `auto`.
