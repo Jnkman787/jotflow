@@ -35,6 +35,7 @@ from jotflow.testing.threads import (
     ProposeUpdateCall,
     ReactionEvent,
     SavedThread,
+    invented_links,
     invented_numbers,
 )
 from jotflow.whiteboard.read_tools import read_tools
@@ -523,6 +524,7 @@ async def invariants(replay: _Replay) -> list[Check]:
                 else "\n".join(t for t in (draft.changes.body, draft.changes.comment) if t)
             )
             invented += invented_numbers(written, thread_text)
+            invented += invented_links(written, thread_text)
     return [
         Check(
             "no proposal from chatter",
@@ -534,10 +536,10 @@ async def invariants(replay: _Replay) -> list[Check]:
             not unlinked,
             f"not linked: {', '.join(unlinked)}" if unlinked else "all linked",
         ),
-        # Acceptance comes from the thread (#249): a number nobody gave was invented.
+        # No fabricated facts (#249): an acceptance number or a link nobody gave.
         Check(
-            "acceptance from the thread",
+            "no invented numbers or links",
             not invented,
-            f"numbers nobody gave: {', '.join(invented)}" if invented else "nothing invented",
+            f"nobody gave: {', '.join(invented)}" if invented else "nothing invented",
         ),
     ]

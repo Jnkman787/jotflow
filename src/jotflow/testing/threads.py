@@ -226,6 +226,14 @@ def invented_numbers(body: str, thread_text: str) -> list[str]:
     return [n for n in _NUMBER.findall(acceptance_section(body)) if n not in given]
 
 
+_LINK = re.compile(r"https?://[^\s<>()\[\]|]+")
+
+
+def invented_links(body: str, thread_text: str) -> list[str]:
+    """Links anywhere in the body that the thread never gave, such as one copied from an issue."""
+    return [link for link in _LINK.findall(body) if link.rstrip(".,;:") not in thread_text]
+
+
 class Expected(_Strict):
     summary: str = Field(min_length=1)
     accepted: tuple[str, ...] = Field(
