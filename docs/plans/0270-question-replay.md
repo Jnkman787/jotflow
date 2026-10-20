@@ -4,7 +4,7 @@
 
 - Issue: #270 (M6)
 - Also serves: #57, whose question runs this replays
-- Draft PR: to be opened with this plan
+- Draft PR: #272
 - Status: planning. The code waits for #57's PR #269, which adds the `answer` tool, question packets and the question handler
 - Last verified: origin/main 42b46af, 2026-10-20, with #269 at its open head
 - Next safe action: the lead and the reviewer review this plan; code starts once #269 merges
@@ -91,7 +91,7 @@ All are fictional: Acme Co, `C0EXAMPLE1` and `acme-co` repos.
 ## Progress checklist
 
 - [x] Confirm the issue is ready: bounded objective, testable done-when, no open decision
-- [ ] Commit this plan and open the draft PR
+- [x] Commit this plan and open the draft PR
 - [ ] The lead and the reviewer review this plan
 - [ ] Wait for #269 to merge, then rebase
 - [ ] Schema: `kind`, `AnswerCall`, validator rules, `answers` and `whispers`
