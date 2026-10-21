@@ -305,13 +305,15 @@ async def test_the_trace_sees_a_contact_copilot_would_make(
     """The control: with a remote model address, the trace shows the lookup and the gate's
     rules refuse it, so the network check can't pass because it sees nothing."""
     if STRACE is None:
+        assert not REQUIRED, "the gate's network check needs strace"
         pytest.skip("needs strace")
     run = await gate_run(
         RunKind.QUESTION,
         tmp_path,
         caplog,
         function_call("bash", {"command": "true"}),
-        provider_url="https://api.example.com/v1",
+        # A reserved name (RFC 2606): the lookup still shows, and the key reaches nobody.
+        provider_url="https://api.jotflow-gate.invalid/v1",
     )
     assert run.api.requests == []  # the fake model was never asked
-    assert run.strangers(), "the trace saw no contact with api.example.com"
+    assert run.strangers(), "the trace saw no lookup of api.jotflow-gate.invalid"
