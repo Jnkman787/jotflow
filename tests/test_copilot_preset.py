@@ -268,6 +268,12 @@ def test_the_type_and_wire_are_compared_exactly_as_copilot_gets_them(stray: str)
     assert COPILOT.check_env(ALLOW, leading) is not None
 
 
+@pytest.mark.parametrize("url", ["https://[::1", "https://[zz]/v1"])
+def test_a_malformed_address_is_refused_not_a_crash(url: str) -> None:
+    found = COPILOT.check_env(ALLOW, {**PROVIDER, "COPILOT_PROVIDER_BASE_URL": url})
+    assert found == "COPILOT_PROVIDER_BASE_URL must be an https:// address with a host, no login"
+
+
 def test_every_provider_name_must_be_listed() -> None:
     for name in ALLOW:
         listed = tuple(n for n in ALLOW if n != name)
