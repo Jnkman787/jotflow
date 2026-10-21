@@ -135,6 +135,7 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 - applied proposals' history: who approved, and the run records
 - identity links, operator tokens and identity unlinks, which Slack only showed privately. People run `/jotflow link` again, and admins reissue tokens.
 - old reaction marks
+- whether a link was a person's choice. A message a person attached before the loss, for example with `re: web#42`, comes back linked as the agent's decision, so a later drafting run could move it. Attach it again with `re:` to make it a person's choice again. A `skip:` stays a person's, since it's in the message itself.
 - the agent's own "not an idea" marks. Only `skip:` is visible in Slack, so a message the agent had marked as chatter comes back linked to the thread's issue.
 - real topic titles, unless `--from-github` is given
 - messages deleted in Slack, threads older than the workspace's history retention or `--since`, and threads JotFlow never wrote an issue for
