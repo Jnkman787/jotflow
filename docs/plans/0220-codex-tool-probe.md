@@ -5,9 +5,9 @@
 - Issue: #220 (M6)
 - Also serves: #274, which the same evidence unblocks
 - Draft PR: #283
-- Status: planning. Decisions 1 to 4 below need the lead before any code
+- Status: plan approved. The lead approved decisions 1 to 4. The discovery fix shipped separately as #284 and #289
 - Last verified: origin/main at the time of writing, 2026-10-21, with Codex 0.163.0 and github-mcp-server 2.0.2, both run offline in a network namespace with only loopback
-- Next safe action: the lead decides 1 to 4; security reviews the findings
+- Next safe action: once #289 merges, build the probe and the #274 server check on main
 
 ## Objective and done-when
 
@@ -100,7 +100,7 @@ The reason goes in the runner's log and in `/info`, as other startup refusals do
 - **Threat model:** the codex accepted-gap row describes the probe and the discovery fix. If #274 is folded in, it also says resource tools reach nothing under the preset's GitHub server, as the probe checks.
 - **install.md and the CHANGELOG.**
 
-## Decisions for the lead
+## Decisions (all four approved by the lead, 2026-10-21)
 
 1. **Ship the discovery fix now, on its own.** It's one config line and a gate test. It closes a live gap: today a remote catalog update could put the codex preset into code mode. I'd send it as a small PR ahead of the rest, with security's review. The alternative is to wait for #220's PR.
 2. **Probe at startup only, not per run.** That's my recommendation, for the reason under "When it runs". The cost of being wrong is a Codex CLI that changes its tools without a version change, which the version pin rules out.
@@ -117,8 +117,8 @@ The reason goes in the runner's log and in `/info`, as other startup refusals do
 
 - [x] Confirm the issue is ready, by running the spike
 - [x] Commit this plan and open the draft PR
-- [ ] The lead decides 1 to 4, and security reviews the findings
-- [ ] (Decision 1) The discovery fix in its own PR
+- [x] The lead decides 1 to 4 (all approved), and security has the findings
+- [x] (Decision 1) The discovery fix in its own PR: #289, for #284
 - [ ] The probe module, the runner wiring, and removal of the allowlist
 - [ ] (Decision 4) The server-side resource check and lifting `docs_conflict`
 - [ ] CI gate tests
