@@ -4,7 +4,7 @@
 
 - Issue: #288 (M6), a follow-up to #59 and #285
 - Draft PR: #297
-- Status: planning. The lead and security review this plan before any code
+- Status: implementing. The lead approved the plan on 2026-10-21, and security approved it the same day with the condition below
 - Last verified: 2026-10-21, Copilot CLI 1.0.101 in a throwaway agent image, with `--network none`, against JotFlow's real MCP server and a scripted fake of Anthropic's Messages API
 - Next safe action: review
 
@@ -46,17 +46,29 @@ On 2026-10-21, Copilot CLI 1.0.101 ran this preset's drafting command with `COPI
   So `COPILOT_PROVIDER_WIRE_API` becomes required for `openai` and `azure`, and refused for `anthropic`. The base URL is still `https://` only, and the other three provider names are still required.
 - **Docs:** presets.md's copilot section gives an Anthropic example (`https://api.anthropic.com`, type `anthropic`, no wire setting). The CHANGELOG, and the threat-model row's "only the provider wire the gate checks", say both wires.
 
+## Security's answer and condition
+
+Security approved on 2026-10-21.
+
+- **The wire setting:** accept `anthropic` only with `COPILOT_PROVIDER_WIRE_API` unset, and refuse it if it's listed, whatever its value. `check_env()`'s "every provider name set and listed" rule lets that one name be absent for `anthropic`.
+- **Added condition, provider-side tools and betas.** Anthropic's API can run tools on its own side: web search, web fetch, code execution, and the MCP connector, which makes the API connect to a remote MCP server itself. They never touch the agent container, so strace can't see them. For every Anthropic request the gate asserts:
+  1. every `tools` entry is a plain client tool, with a `name` and an `input_schema` and no server `type`, and the offered set is exactly the kind's tools
+  2. there's no `mcp_servers` field, and no `container` or other server-execution field
+  3. each `anthropic-beta` value is in a list pinned in the test, reviewed now, so a new beta in a later Copilot release fails the gate until someone looks at it
+- **The Responses wire gets the same explicit check:** every tool is a `function` tool, never a hosted type such as `web_search`, `file_search`, `code_interpreter` or `mcp`, as well as the exact set.
+
 ## Risks and open questions
 
-1. **For security:** is refusing `COPILOT_PROVIDER_WIRE_API` for `anthropic` right, rather than ignoring it? Refusing keeps the run to exactly what the gate tested.
+1. **Decided by security:** `COPILOT_PROVIDER_WIRE_API` is refused for `anthropic`.
 2. **Copilot's `anthropic-beta` header** names a beta feature. Nothing in the gate depends on it, but a later release could change the beta, which only the pin and the gate catch, as for any Copilot change.
 3. **The control PR #296** adds the remote-contact case. This builds on it, so #296 should merge first.
 
 ## Progress checklist
 
-- [ ] The lead and security approve this plan
-- [ ] Commit this plan and open the draft PR
-- [ ] `FakeMessagesApi`, with its own unit tests
+- [x] The lead and security approve this plan
+- [x] Commit this plan and open the draft PR
+- [x] `FakeMessagesApi`, with its own unit tests
+- [ ] The provider-side checks: plain client tools only, no `mcp_servers` or `container`, pinned `anthropic-beta` values, and no hosted tool types on the Responses wire
 - [ ] The gate parametrized over both wires
 - [ ] `check_env()` and its tests
 - [ ] presets.md, the threat-model row, the CHANGELOG
