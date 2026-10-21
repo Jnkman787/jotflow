@@ -4,7 +4,7 @@
 
 - Issue: #273 (M6), a follow-up to #57 and #269
 - Draft PR: to be opened
-- Status: plan only, for security and the lead before any code
+- Status: plan, approved by the lead on 2026-10-21, pending security
 - Last verified: 2026-10-21, against main
 - Next safe action: review
 
@@ -37,7 +37,11 @@ Done when, from #273's boxes:
    - `comments`, the count only
    - `updated_at`, a timestamp
    - **Never** the body, comments' text, assignees, author or URLs
-5. **Errors.** A 404 or a 410 from GitHub is answered 404. Anything else is a fixed 502. Logs give the repo and number, never text.
+5. **Errors.**
+   - A 404 or a 410 from GitHub is answered 404.
+   - **A rate limit, a 429 or a 403 with no requests left, is answered 503,** never 404, because it says nothing about whether the issue exists. This uses `_page`'s existing rate-limit check, as #266 does.
+   - Anything else is a fixed 502.
+   - Logs give the repo and number, never text.
 
 ### JotFlow: a question-only MCP tool
 
@@ -46,7 +50,7 @@ Done when, from #273's boxes:
 1. **The channel comes from the run's token.** The grant names its channel, and the agent never chooses it.
 2. **The repo must be in that channel's catalog.** `repo` resolves through `RepoCatalog.repo(grant.channel_id, repo)`, which is what `propose_issue` and `re:` already use. That accepts `owner/name` or a nickname, in any case, and covers listed and scope-found repos. Anything else is refused before any runner call, with a fixed reason: "not one of this channel's repos". The call then goes out with the catalog's own spelling.
 3. **One runner call.** `RunnerClient.issue(owner, name, number)` reads a strict reply model with a size cap, and cleans the title again.
-4. **The result,** to the agent: `repo`, `number`, `state`, `state_reason`, `comments`, `updated_at`, plus `title` and `labels` as `UntrustedText`. A 404 becomes "no such issue in this repo", so the agent can say so.
+4. **The result,** to the agent: `repo`, `number`, `state`, `state_reason`, `comments`, `updated_at`, plus `title` and `labels` as `UntrustedText`. A 404 becomes "no such issue in this repo", so the agent can say so. A 503 or a 502 becomes "couldn't check GitHub right now", never "not found", and question.md says to answer that way.
 5. **Capped at 5 calls per run,** through the existing tool-call ledger, so a looping agent can't spend the read token's hourly limit.
 
 The presets add `get_issue` to `JOTFLOW_TOOLS[QUESTION]`. `GITHUB_TOOLS[QUESTION]` stays empty, so there's still no GitHub MCP server in a question run.
@@ -78,17 +82,18 @@ A new step, "Is it open? What's it labelled?", says to call `get_issue` for an i
    - the title capped and labels filtered
    - the repo checked against the token-bound channel's catalog before any call
 2. **For security: is the title acceptable in an answer at all,** given that safe_text runs? The alternative is to return state and labels only.
-3. **For the lead: no caching.** Each call reads GitHub live, so answers say "just now". A short cache, around 60 seconds, could come later if the cost shows.
+3. **Decided by the lead on 2026-10-21: no caching.** Fresh is better for status questions, and 50 reads per channel per hour is well within the read token's limits.
 4. **Rate.** At most 5 calls per question run, and question runs are already capped at 10 per channel per hour, so at most 50 reads an hour per channel.
 
 ## Progress checklist
 
-- [ ] Plan reviewed by security and the lead
+- [x] The lead approves the plan
+- [ ] Security reviews it
 - [ ] Runner endpoint and `github_issues`-style call
 - [ ] `RunnerClient.issue`, the strict model, and the title re-cleaned
 - [ ] The `get_issue` read tool for question runs, with the catalog check and the per-run cap; presets
 - [ ] question.md, usage.md (the #273 line becomes real), architecture.md, threat model, CHANGELOG
-- [ ] Tests: the endpoint against a fake GitHub (PR 404, no body in the reply, a 502), the client's strict model, two channels refusing each other's repos, the cap, and a hostile title and label through safe_text
+- [ ] Tests: the endpoint against a fake GitHub (PR 404, no body in the reply, a 502, and a rate limit as 503, never 404), the client's strict model, two channels refusing each other's repos, the cap, and a hostile title and label through safe_text
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
