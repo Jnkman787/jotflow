@@ -1,0 +1,58 @@
+"""The codex gate's reading of strace's output (#290). Runs everywhere: no strace needed."""
+
+# The fixtures are real strace lines, kept whole.
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from tests.outbound_trace import refused_contacts, strace_argv, trace_lines
+
+API, MCP = 38999, 57045
+MODEL = 'connect(36, {sa_family=AF_INET, sin_port=htons(38999), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 EINPROGRESS (Operation now in progress)'
+JOTFLOW = 'connect(39, {sa_family=AF_INET, sin_port=htons(57045), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 EINPROGRESS (Operation now in progress)'
+NSCD_MISSING = 'connect(3, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT (No such file or directory)'
+NETLINK = "sendto(4, [{nlmsg_len=32, nlmsg_type=RTM_GETADDR, nlmsg_flags=NLM_F_REQUEST|NLM_F_DUMP, nlmsg_seq=1, nlmsg_pid=0}, {ifa_family=AF_UNSPEC}], 32, 0, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 32"
+CONNECTED = 'sendto(36, "POST /v1/responses HTTP/1.1"..., 512, MSG_NOSIGNAL, NULL, 0) = 512'
+UNSPEC = 'connect(5, {sa_family=AF_UNSPEC, sa_data=""}, 16) = 0'
+
+
+def test_the_model_jotflow_and_local_plumbing_are_allowed() -> None:
+    lines = [MODEL, JOTFLOW, NSCD_MISSING, NETLINK, CONNECTED, UNSPEC, "+++ exited with 0 +++"]
+    assert refused_contacts(lines, {API, MCP}) == []
+
+
+def test_every_other_contact_is_refused() -> None:
+    other = [
+        # A real host, by IPv4 and IPv6.
+        'connect(7, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("104.18.33.45")}, 16) = -1 EINPROGRESS',
+        'connect(7, {sa_family=AF_INET6, sin6_port=htons(443), sin6_flowinfo=htonl(0), inet_pton(AF_INET6, "2606:4700::6812:212d", &sin6_addr), sin6_scope_id=0}, 28) = -1 EINPROGRESS',
+        # DNS, to a stub resolver on loopback or a real one.
+        'connect(5, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("127.0.0.53")}, 16) = 0',
+        'sendto(5, "\\x12\\x34"..., 40, MSG_NOSIGNAL, {sa_family=AF_INET, sin_port=htons(53), sin_addr=inet_addr("10.255.255.254")}, 16) = 40',
+        # Loopback, but not one of the allowed ports.
+        'connect(8, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr("127.0.0.1")}, 16) = 0',
+        'connect(8, {sa_family=AF_INET6, sin6_port=htons(38999), sin6_flowinfo=htonl(0), inet_pton(AF_INET6, "fe80::1", &sin6_addr), sin6_scope_id=0}, 28) = 0',
+        # A lookup service that answered, which would hide the host asked for.
+        'connect(3, {sa_family=AF_UNIX, sun_path="/run/systemd/resolve/io.systemd.Resolve"}, 110) = 0',
+        # A family nobody expects, and io_uring, which hides its connects.
+        "connect(9, {sa_family=AF_PACKET, sll_protocol=htons(ETH_P_ALL)}, 20) = 0",
+        "io_uring_setup(8, 0x7ffd0c8a8f10) = 5",
+    ]
+    assert refused_contacts(other, {API, MCP}) == other
+
+
+def test_a_line_with_no_parsable_address_is_refused() -> None:
+    odd = "connect(7, {sa_family=AF_INET, sin_port=htons(443), ...}, 16) = 0"
+    assert refused_contacts([odd], {443}) == [odd]
+
+
+def test_trace_files_are_read_per_process(tmp_path: Path) -> None:
+    prefix = tmp_path / "trace"
+    (tmp_path / "trace.101").write_text(MODEL + "\n")
+    (tmp_path / "trace.202").write_text(NSCD_MISSING + "\n")
+    (tmp_path / "unrelated").write_text("connect(...)\n")
+    assert trace_lines(prefix) == [MODEL, NSCD_MISSING]
+    argv = strace_argv("/usr/bin/strace", prefix)
+    assert argv[:3] == ["/usr/bin/strace", "-f", "-ff"] and argv[-2:] == ["-o", str(prefix)]
