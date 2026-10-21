@@ -4,7 +4,7 @@
 
 - Issue: #256 (M6), a follow-up to #38
 - Draft PR: to be opened
-- Status: plan, approved by the lead and by security on 2026-10-20, with security's changes below. Being built
+- Status: built, ready for review
 - Last verified: 2026-10-20, against main
 - Next safe action: the lead's review, then security's on the new runner endpoint
 
@@ -112,10 +112,10 @@ These change the design above where they differ.
 
 - [x] The lead approves the plan and answers question 2
 - [x] Security answers question 1, with two blockers and four conditions, all taken
-- [ ] The runner endpoint, with `github_repos`-style client code and the marker and permalink parsing reused from execution
-- [ ] Rebuild's `--from-github`: the info check, the repo set with scopes, titles and lost threads
-- [ ] Tests: the endpoint, with a fake GitHub (paging, truncation, PRs excluded, no text returned, a 502); rebuild with a fake runner (titles, lost threads, other channels' sources ignored, issue_links none)
-- [ ] Docs: deployment.md's rebuild section, the threat model row, architecture.md's runner endpoints, the CHANGELOG
+- [x] The runner endpoint, with `github_repos`-style client code and the marker and permalink parsing reused from execution
+- [x] Rebuild's `--from-github`: the info check, the repo set with scopes, titles and lost threads
+- [x] Tests: the endpoint, with a fake GitHub (paging, truncation, PRs excluded, no text returned, a 502); rebuild with a fake runner (titles, lost threads, other channels' sources ignored, issue_links none)
+- [x] Docs: deployment.md's rebuild section, the threat model row, architecture.md's runner endpoints, the CHANGELOG
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
@@ -129,4 +129,11 @@ These change the design above where they differ.
 
 ## Handoff notes
 
-None yet.
+- **The modules:**
+  - `adapters/github_issues.py`, on the runner side: `marked_issues`, `parse_issue` and `token_login`, reusing `github_repos`' client and `_page`
+  - two runner routes: `POST /repos/jotflow-issues`, routed before `/repos/{owner}` so it isn't taken for an owner, and `GET /identity`
+  - `RunnerClient.marked_issues` and `write_login`, with strict wire models in models.py and the title cleaned again
+  - `rebuild.apply_github`, with `ChannelPlan.seen`, every person's message the walk saw, mapped to its thread
+- **Login checks** use Python's `re` in validators, `is_github_login`, because pydantic's pattern engine has no lookahead.
+- **Restored links take their thread from the Slack walk,** not from the issue's permalink.
+- **For security's follow-up question.** Plain `rebuild` links its Slack-reply threads with `by="person"`, from #255. `--from-github` uses `by="agent"`, as security asked. Whether plain rebuild should also use the agent's level is a separate change, if wanted.
