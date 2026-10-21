@@ -17,6 +17,7 @@ from jotflow.store import (
     SqliteStore,
     Store,
 )
+from tests.sqlite_db import opened
 from tests.test_store_contract import CH, OTHER, Clock, clock, record, store
 
 __all__ = ["clock", "store"]  # pytest fixtures, imported for use here
@@ -430,7 +431,7 @@ async def test_the_database_refuses_two_running_runs_on_one_thread(tmp_path: Pat
         ("r1", "running", "1760781600.000100"),
         ("r2", "running", "1760781600.000100"),
     ]
-    with sqlite3.connect(tmp_path / "jotflow.db") as db:
+    with opened(tmp_path / "jotflow.db") as db:
         insert = (
             "INSERT INTO runs (id, kind, status, channel_id, thread_ts, timeout_seconds,"
             " created_at, deadline, started_at) VALUES (?, 'drafting', ?, ?, ?, 60, ?, ?, ?)"
@@ -445,7 +446,7 @@ async def test_the_database_refuses_an_execution_run_without_a_proposal(tmp_path
     store = await SqliteStore.open(tmp_path / "jotflow.db")
     await store.close()
     when = "2026-10-18T09:00:00.000000+00:00"
-    with sqlite3.connect(tmp_path / "jotflow.db") as db, pytest.raises(sqlite3.IntegrityError):
+    with opened(tmp_path / "jotflow.db") as db, pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO runs (id, kind, status, channel_id, timeout_seconds, created_at,"
             " deadline) VALUES ('r1', 'execution', 'queued', ?, 60, ?, ?)",

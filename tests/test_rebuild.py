@@ -648,6 +648,9 @@ def test_a_lock_held_by_a_killed_process_is_free_again(tmp_path: Path) -> None:
     finally:
         if child.poll() is None:
             child.kill()
+            child.wait(timeout=10)
+        if child.stdout is not None:
+            child.stdout.close()
 
 
 # --- --from-github (#256) --------------------------------------------------------------------

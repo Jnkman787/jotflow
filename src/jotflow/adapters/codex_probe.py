@@ -288,6 +288,8 @@ def _ask_server(
     finally:
         proc.kill()
         proc.wait(timeout=5)
+        proc.stdin.close()
+        proc.stdout.close()
 
 
 def _send(proc: subprocess.Popen[bytes], message: Mapping[str, Any]) -> None:
