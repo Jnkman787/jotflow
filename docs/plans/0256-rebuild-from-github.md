@@ -4,7 +4,7 @@
 
 - Issue: #256 (M6), a follow-up to #38
 - Draft PR: to be opened
-- Status: plan, approved by the lead on 2026-10-20. Waiting on security's review of the endpoint and the stored title
+- Status: plan, approved by the lead and by security on 2026-10-20, with security's changes below. Being built
 - Last verified: 2026-10-20, against main
 - Next safe action: the lead's review, then security's on the new runner endpoint
 
@@ -76,6 +76,25 @@ docker compose start jotflow
 
 `--no-deps` keeps the run from starting other services, so the drafting runner (`agent`) must already be running. Rebuild checks `GET /info` first. If the runner isn't reachable, or doesn't serve drafting, it refuses by name before reading Slack. Without `--from-github`, it never contacts a runner.
 
+## Security's review, 2026-10-20
+
+These change the design above where they differ.
+
+- **Blocker 1: no query string.** The runner gate refuses any query string on runner endpoints (#236 condition 1). The endpoint is therefore `POST /repos/jotflow-issues`, with a strict body `{owner, name, since}`, extra fields forbidden. GitHub's own `?state=all&page=N&since=` is built outbound by the runner, which is fine.
+- **Blocker 2: forged markers.** Anyone who can open an issue, which on a public repo is anyone, can write a body with a marker line and permalinks to this channel's messages. Two fixes:
+  - **Only JotFlow's own issues count.** The runner returns each issue's `user.login` and `user.type`. JotFlow accepts only issues authored by the write token's account, which it learns from a new fixed call on the execution runner, `GET /identity`. That returns only the login, from GitHub's `GET /user`, and the write token never leaves the runner. Any other issue is skipped and counted.
+  - **Restored links are the agent's,** with `by="agent"`, not a person's, so a real person's later decision still wins.
+- **Condition 1.** Link only messages the Slack walk saw in that channel's history and threads. A permalink naming any other ts is skipped, so a footer can't bind a message id that doesn't exist.
+- **Condition 2: #236's GitHub client.** That means no redirects, `trust_env=False`, a timeout, a byte cap while each page streams, `page=N` built locally rather than read from the Link header, and pull requests dropped by their `pull_request` key.
+- **Condition 3: strict validation on JotFlow's side.**
+  - an `extra="forbid"` wire model
+  - caps on issues, on sources and on bytes
+  - numbers greater than 0, and state open or closed
+  - marker ids, channel ids and ts checked by their existing patterns
+  - the title cleaned again
+- **Condition 4: a threat-model row.** Forged markers are refused by the author check. A collaborator who edits a JotFlow-authored body can still change its permalinks, but that's within the repo's write trust, and condition 1 bounds it to messages that exist in the channel.
+- **The stored title is acceptable,** given the author check. A JotFlow-authored issue's title was approved by a person, and only triage-or-higher users can edit it. It's cleaned, capped, marked untrusted in the packet, and only ever replaces a `nick#N`.
+
 ## Risks and open questions
 
 1. **For security: the new endpoint.** It's the read token reaching GitHub on JotFlow's request, for any configured or scoped repo. The safeguards:
@@ -92,7 +111,7 @@ docker compose start jotflow
 ## Progress checklist
 
 - [x] The lead approves the plan and answers question 2
-- [ ] Security answers question 1
+- [x] Security answers question 1, with two blockers and four conditions, all taken
 - [ ] The runner endpoint, with `github_repos`-style client code and the marker and permalink parsing reused from execution
 - [ ] Rebuild's `--from-github`: the info check, the repo set with scopes, titles and lost threads
 - [ ] Tests: the endpoint, with a fake GitHub (paging, truncation, PRs excluded, no text returned, a 502); rebuild with a fake runner (titles, lost threads, other channels' sources ignored, issue_links none)
