@@ -10,10 +10,10 @@ What counts, per traced call that names an address (connect, sendto, sendmsg):
 - IPv4 or IPv6 loopback, on one of the allowed ports: allowed
 - netlink: allowed, since it's the kernel, as getifaddrs asks
 - AF_UNSPEC: allowed, since it only dissolves a datagram socket's association
-- a Unix socket that refused the connection: allowed, as glibc tries nscd first
-  and then does any lookup itself, where it shows up as an address. One that
-  connects is refused, since a lookup service such as nscd or systemd-resolved
-  would hide which host was asked for
+- a Unix socket with nothing behind it, ENOENT or ECONNREFUSED: allowed, as glibc
+  tries nscd first and then does any lookup itself, where it shows up as an
+  address. Any other result is refused, a connection or EAGAIN alike, since a
+  lookup service such as nscd or systemd-resolved would hide which host was asked for
 - anything else, a DNS server included: refused
 
 An ``io_uring_setup`` that succeeds is refused too, since a connect submitted
@@ -36,6 +36,7 @@ _PORT = re.compile(r"sin6?_port=htons\((\d+)\)")
 _V4 = re.compile(r'sin_addr=inet_addr\("([0-9.]+)"\)')
 _V6 = re.compile(r'inet_pton\(AF_INET6, "([0-9a-fA-F:.]+)"')
 _RESULT = re.compile(r"\)\s*=\s*(-?\d+)")
+_UNIX_NOBODY = re.compile(r"\)\s*=\s*-1 (ENOENT|ECONNREFUSED) ")
 # Exactly these, so a wildcard such as 0.0.0.0 or ::, which reaches the host's own
 # loopback on Linux, is refused too.
 LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
@@ -90,9 +91,10 @@ def refused_contacts(lines: Iterable[str], allowed_ports: Iterable[int]) -> list
         if kind in ("AF_NETLINK", "AF_UNSPEC"):
             continue
         if kind == "AF_UNIX":
-            result = _RESULT.search(line)
-            if result is not None and int(result.group(1)) < 0:
-                continue  # refused: nothing behind it, so any lookup is done in-process
+            # Nothing listening, so any lookup is done in-process and shows up as DNS.
+            # Any other failure, such as EAGAIN, means a listener is there.
+            if _UNIX_NOBODY.search(line):
+                continue
             refused.append(line)
             continue
         if kind in ("AF_INET", "AF_INET6"):

@@ -29,6 +29,7 @@ def test_the_model_jotflow_and_local_plumbing_are_allowed() -> None:
         NETLINK,
         CONNECTED,
         UNSPEC,
+        'connect(3, {sa_family=AF_UNIX, sun_path="/run/x.sock"}, 110) = -1 ECONNREFUSED (Connection refused)',
         IO_URING_OFF,  # the kernel refused it, so Codex falls back to plain sockets
         f"[4242 codex] {IO_URING_OFF}",
         "+++ exited with 0 +++",
@@ -55,6 +56,8 @@ def test_every_other_contact_is_refused() -> None:
         # A lookup service that answered, which would hide the host asked for, and an
         # abstract socket that answered.
         'connect(3, {sa_family=AF_UNIX, sun_path=@"/tmp/dbus-AbC"}, 20) = 0',
+        # A listener with a full backlog is still a listener.
+        'connect(3, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 EAGAIN (Resource temporarily unavailable)',
         'connect(3, {sa_family=AF_UNIX, sun_path="/run/systemd/resolve/io.systemd.Resolve"}, 110) = 0',
         # A family nobody expects, and io_uring, which hides its connects.
         "connect(9, {sa_family=AF_PACKET, sll_protocol=htons(ETH_P_ALL)}, 20) = 0",
