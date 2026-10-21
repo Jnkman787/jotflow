@@ -558,6 +558,20 @@ async def test_a_taken_port_is_a_clear_start_error() -> None:
             await server.start()
 
 
+async def test_a_startup_that_fails_closes_the_socket_it_was_handed() -> None:
+    async def fails(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            await receive()
+            await send({"type": "lifespan.startup.failed", "message": "no"})
+
+    sock = bound_socket()
+    port = int(sock.getsockname()[1])
+    server = McpServer(fails, "127.0.0.1", port, startup_timeout=5, sock=sock)
+    with pytest.raises(McpStartError):
+        await server.start()
+    assert sock.fileno() == -1  # closed, not left for garbage collection (#263)
+
+
 async def test_a_startup_that_hangs_is_a_clear_start_error() -> None:
     async def hangs(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -569,6 +583,7 @@ async def test_a_startup_that_hangs_is_a_clear_start_error() -> None:
     server = McpServer(hangs, "127.0.0.1", port, startup_timeout=0.2, sock=sock)
     with pytest.raises(McpStartError, match=r"did not start within 0\.2 seconds"):
         await server.start()
+    assert sock.fileno() == -1
 
 
 # Per-run tokens through the real endpoint (#16).

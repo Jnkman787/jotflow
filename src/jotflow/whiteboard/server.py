@@ -247,6 +247,7 @@ class McpServer:
         deadline = asyncio.get_running_loop().time() + self.startup_timeout
         while not server.started:
             if self._task.done():
+                self._close_handed_socket()
                 self._task.result()  # raises McpStartError
                 raise McpStartError(f"MCP server on {self.host}:{self.port} stopped at startup")
             if asyncio.get_running_loop().time() > deadline:
@@ -256,15 +257,18 @@ class McpServer:
                     await self._task
                 self._server = None
                 self._task = None
-                if self.sock is not None:
-                    # uvicorn never got to close the socket it was handed.
-                    self.sock.close()
+                self._close_handed_socket()
                 raise McpStartError(
                     f"MCP server on {self.host}:{self.port} did not start within "
                     f"{self.startup_timeout:g} seconds"
                 )
             await asyncio.sleep(0.01)
         log.info("MCP server listening on %s:%d%s", self.host, self.port, PATH)
+
+    def _close_handed_socket(self) -> None:
+        """A start that failed may leave the socket it was handed open: close it (#263)."""
+        if self.sock is not None:
+            self.sock.close()  # closing one uvicorn already closed is harmless
 
     async def stop(self) -> None:
         if self._server is None or self._task is None:

@@ -55,7 +55,7 @@ def test_no_test_connects_without_closing() -> None:
     here = Path(__file__).parent
     offenders = [
         f"{path.name}:{number}"
-        for path in sorted(here.glob("*.py"))
+        for path in sorted(here.rglob("*.py"))
         if path.name not in {"sqlite_db.py", Path(__file__).name}
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         if "sqlite3.connect(" in line
