@@ -4,7 +4,7 @@
 
 - Issue: #220 (M6)
 - Also serves: #274, which the same evidence unblocks
-- Draft PR: to be opened with this plan
+- Draft PR: #283
 - Status: planning. Decisions 1 to 4 below need the lead before any code
 - Last verified: origin/main at the time of writing, 2026-10-21, with Codex 0.163.0 and github-mcp-server 2.0.2, both run offline in a network namespace with only loopback
 - Next safe action: the lead decides 1 to 4; security reviews the findings
@@ -116,7 +116,7 @@ The reason goes in the runner's log and in `/info`, as other startup refusals do
 ## Progress checklist
 
 - [x] Confirm the issue is ready, by running the spike
-- [ ] Commit this plan and open the draft PR
+- [x] Commit this plan and open the draft PR
 - [ ] The lead decides 1 to 4, and security reviews the findings
 - [ ] (Decision 1) The discovery fix in its own PR
 - [ ] The probe module, the runner wiring, and removal of the allowlist
