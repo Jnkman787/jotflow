@@ -129,7 +129,7 @@ def test_the_request_must_be_for_the_configured_model() -> None:
 
 def test_a_server_with_no_repository_resources_passes() -> None:
     check_server(
-        {"error": {"code": -32601}},
+        {"error": {"code": -32601, "message": "Method not found"}},
         {"result": {"resources": [{"uri": "ui://github-mcp-server/get-me"}]}},
         {"error": {"code": -32602, "message": "Resource not found"}},
     )
@@ -359,3 +359,15 @@ def test_a_codex_that_does_not_know_the_discovery_flag_is_refused(
 
     found = CODEX.check_install(which=lambda _: "/usr/bin/codex", run=run)
     assert found == problem or (problem is not None and found is not None and problem in found)
+
+
+@pytest.mark.parametrize("code", [-32603, -32000, None])
+def test_a_failed_list_refuses_the_start(code: int | None) -> None:
+    # Only "method not found" means no resources; a rate limit or a crash is no proof.
+    failed = {"error": {"code": code, "message": "internal error"}}
+    refused = {"error": {"code": -32602, "message": "Resource not found"}}
+    with pytest.raises(ProbeError, match="resourceTemplates list failed"):
+        check_server(failed, {"result": {}}, refused)
+    with pytest.raises(ProbeError, match="resources list failed"):
+        check_server({"result": {}}, failed, refused)
+    check_server({"error": {"code": -32601}}, {"error": {"code": -32601}}, refused)

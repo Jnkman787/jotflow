@@ -199,8 +199,10 @@ def check_server(
 ) -> None:
     """Raise :class:`ProbeError` unless the server serves no repository resources.
 
-    An error answer to a list means the server serves none of that kind. A result
-    must be one complete page, of the shape MCP gives it: anything else is refused.
+    Only "method not found" (-32601), meaning no resources capability at all, counts
+    as serving none. Any other error, such as a rate limit or a transient failure,
+    refuses the start. A result must be one complete page, of the shape MCP gives
+    it: anything else is refused.
     """
     found = _listed(templates, "resourceTemplates")
     if found:
@@ -225,8 +227,12 @@ def _not_found(answer: Mapping[str, Any]) -> bool:
 
 
 def _listed(answer: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
-    if "error" in answer and "result" not in answer:
-        return []
+    if "error" in answer:
+        error = answer["error"]
+        code = error.get("code") if isinstance(error, dict) else None
+        if code == -32601 and "result" not in answer:
+            return []  # the server has no resources capability
+        raise ProbeError(f"the GitHub MCP server's {key} list failed (error {code})")
     result = answer.get("result")
     if not isinstance(result, dict):
         raise ProbeError(f"the GitHub MCP server's {key} answer could not be read")
