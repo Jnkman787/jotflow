@@ -21,17 +21,21 @@ import sqlite3
 import sys
 import time
 from collections.abc import Mapping
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import Any, Protocol
 
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
 from jotflow.commands.run import SettingsError, load_settings
+from jotflow.models import DiscoveredRepo, MarkedIssue, MarkedIssues, RunKind
 from jotflow.orchestrator.health import MAX_AGE_SECONDS, heartbeat_age, heartbeat_path
 from jotflow.orchestrator.ingest import BotIdentity
+from jotflow.orchestrator.launch import RunnerClient, RunnerError
 from jotflow.orchestrator.packet import SlackFetchError
 from jotflow.policy import Policy, PolicyError, load_policy
-from jotflow.rebuild import ChannelPlan, RebuildSlack, Restored, apply, collect
+from jotflow.rebuild import ChannelPlan, RebuildSlack, Restored, apply, apply_github, collect
+from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import SqliteStore, Store, StoreError
 from jotflow.store.lock import UNSUPPORTED, LockUnsupportedError, StoreBusyError
 
@@ -66,6 +70,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         help="On a filesystem that can't lock, run without the check that JotFlow isn't "
         "running. Stop JotFlow yourself first. A running JotFlow is still refused where "
         "locking works",
+    )
+    parser.add_argument(
+        "--from-github",
+        action="store_true",
+        help="Also read JotFlow's own issues through the agent runners, for real topic "
+        "titles and threads whose Slack reply was lost. Needs the agent containers running",
     )
     parser.add_argument(
         "--dry-run",
@@ -124,9 +134,15 @@ async def rebuild(
     oldest: str | None,
     merge: bool,
     dry_run: bool,
+    github: GithubSource | None = None,
     say: Any = print,
 ) -> list[tuple[ChannelPlan, Restored | None]]:
-    """Plan each channel, then write it unless this is a dry run. Raises nothing new."""
+    """Plan each channel, then write it unless this is a dry run. Raises nothing new.
+
+    With ``github`` (``--from-github``, #256), each channel's listed and scoped repos
+    are read through the drafting runner after its Slack walk, for real titles and
+    threads whose Slack reply was lost.
+    """
     if not merge and not dry_run:
         busy = await _refuse_non_empty(store, channels)
         if busy is not None:
@@ -134,6 +150,14 @@ async def rebuild(
                 f"the store already has topics in {busy}; "
                 "use --merge to add only what's missing, or start from an empty database"
             )
+    login = catalog = None
+    read: dict[str, MarkedIssues] = {}
+    if github is not None:
+        login = await github.write_login()
+        catalog = RepoCatalog(policy, lister=github.repos)
+        for owner in catalog.owners:
+            await catalog.refresh(owner)
+    since = None if oldest is None else datetime.fromtimestamp(float(oldest), UTC).date()
     results: list[tuple[ChannelPlan, Restored | None]] = []
     for channel in channels:
         say(f"{channel}: reading history")
@@ -142,7 +166,39 @@ async def rebuild(
         restored = None if dry_run else await apply(store, policy, plan, bot)
         results.append((plan, restored))
         say(_summary(plan, restored, windowed=oldest is not None))
+        if github is None or catalog is None or login is None:
+            continue
+        issues: dict[str, tuple[MarkedIssue, ...]] = {}
+        for entry in catalog.repos(channel):
+            key = entry.repo.casefold()
+            if key not in read:
+                owner, name = entry.repo.split("/", 1)
+                say(f"{channel}: reading {entry.repo}'s issues")
+                read[key] = await github.marked_issues(owner, name, since=since)
+            issues[entry.repo] = read[key].issues
+        if dry_run:
+            ours = sum(1 for found in issues.values() for i in found if i.author == login)
+            say(f"{channel}: {ours} of JotFlow's issues on GitHub (dry run, nothing written)")
+            continue
+        done = await apply_github(store, policy, plan, issues, login)
+        say(
+            f"{channel}: from GitHub, {done.titles} titles set, {done.topics} topics and "
+            f"{done.linked} messages restored, {done.not_ours} issues by others skipped, "
+            f"{done.no_source} without a message here"
+        )
     return results
+
+
+class GithubSource(Protocol):
+    """What --from-github reads, through the agent runners (#256)."""
+
+    async def repos(self, owner: str) -> list[DiscoveredRepo]: ...
+
+    async def marked_issues(
+        self, owner: str, name: str, *, since: date | None = None
+    ) -> MarkedIssues: ...
+
+    async def write_login(self) -> str: ...
 
 
 class RefusedError(Exception):
@@ -211,6 +267,21 @@ async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) ->
         return EXIT_REFUSED
     if not store.locked:
         print(f"jotflow rebuild: running without the safety check: {UNSUPPORTED}", file=sys.stderr)
+    github: RunnerClient | None = None
+    if getattr(args, "from_github", False):
+        github = RunnerClient.from_settings(settings)
+        try:
+            # Both runners first, so nothing is read from Slack for a rebuild that can't finish.
+            await github.info(RunKind.DRAFTING)
+            await github.info(RunKind.EXECUTION)
+        except RunnerError:
+            await store.close()
+            print(
+                "jotflow rebuild: refusing: --from-github needs both agent containers "
+                "running; start them with docker compose up -d agent agent-exec",
+                file=sys.stderr,
+            )
+            return EXIT_REFUSED
     try:
         await rebuild(
             store,
@@ -221,7 +292,15 @@ async def _run(args: argparse.Namespace, policy: Policy, channels: list[str]) ->
             oldest=_oldest(args.since, time.time()),
             merge=args.merge,
             dry_run=args.dry_run,
+            github=github,
         )
+    except RunnerError as exc:
+        print(
+            f"jotflow rebuild: stopped: an agent runner refused ({exc}). What was restored "
+            "is kept; run it again with --merge to continue",
+            file=sys.stderr,
+        )
+        return EXIT_SLACK
     except RefusedError as exc:
         print(f"jotflow rebuild: refusing: {exc}", file=sys.stderr)
         return EXIT_REFUSED

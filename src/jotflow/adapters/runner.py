@@ -38,6 +38,7 @@ import signal
 import tempfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -51,7 +52,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from jotflow.adapters import github_docs, github_proof, github_repos
+from jotflow.adapters import github_docs, github_issues, github_proof, github_repos
 from jotflow.adapters import isolation as isolation_mod
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
@@ -644,6 +645,16 @@ def runner_info(config: RunnerConfig) -> dict[str, Any]:
     }
 
 
+class MarkedIssuesRequest(BaseModel):
+    """What JotFlow sends to read one repo's marked issues (#256): a body, no query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: str = Field(min_length=1, max_length=39)
+    name: str = Field(min_length=1, max_length=100)
+    since: date | None = None
+
+
 class VerifyRequest(BaseModel):
     """What JotFlow sends to check a GitHub link's one-time code (#195)."""
 
@@ -722,6 +733,57 @@ def build_runner_app(
             ", truncated" if listing.truncated else "",
         )
         return JSONResponse(listing.as_json())
+
+    async def marked(request: Request) -> Response:
+        # The drafting runner's read token only: the execution runner reads nothing here.
+        if config.read_token is None:
+            return JSONResponse({"error": "marked issues are the drafting runner's"}, 404)
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = MarkedIssuesRequest.model_validate_json(body)
+        except ValidationError:
+            return JSONResponse({"error": "expected exactly owner, name and since"}, 400)
+        if not is_owner_name(asked.owner) or not is_bare_repo_name(asked.name):
+            return JSONResponse({"error": "not a GitHub repo"}, status_code=400)
+        try:
+            found = await github_issues.marked_issues(
+                asked.owner,
+                asked.name,
+                config.read_token,
+                since=asked.since,
+                http=http,
+                api=config.github_api,
+            )
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning(
+                "marked issues for %s/%s failed: %s", asked.owner, asked.name, type(exc).__name__
+            )
+            return JSONResponse({"error": "GitHub could not list the issues"}, status_code=502)
+        log.info(
+            "found %d marked issues in %s/%s%s",
+            len(found.issues),
+            asked.owner,
+            asked.name,
+            ", truncated" if found.truncated else "",
+        )
+        return JSONResponse(found.model_dump(mode="json"))
+
+    async def identity(_: Request) -> Response:
+        # The write token's own login, so JotFlow trusts only issues it wrote (#256).
+        if config.write_token is None:
+            return JSONResponse({"error": "the write token is the execution runner's"}, 404)
+        try:
+            login = await github_issues.token_login(
+                config.write_token, http=http, api=config.github_api
+            )
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("the write token's login could not be read: %s", type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        return JSONResponse({"login": login})
 
     async def access(request: Request) -> Response:
         if config.write_token is None:
@@ -859,6 +921,9 @@ def build_runner_app(
             Route("/runs", launch, methods=["POST"]),
             Route("/runs/{run_id}", status, methods=["GET"]),
             Route("/runs/{run_id}", stop, methods=["DELETE"]),
+            # Before /repos/{owner}, which would otherwise take "jotflow-issues" as an owner.
+            Route("/repos/jotflow-issues", marked, methods=["POST"]),
+            Route("/identity", identity, methods=["GET"]),
             Route("/repos/{owner}", repos, methods=["GET"]),
             Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
         ]
