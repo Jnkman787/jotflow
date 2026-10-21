@@ -209,8 +209,14 @@ def test_any_other_copilot_name_is_refused(name: str) -> None:
         ({"COPILOT_PROVIDER_BASE_URL": "https:///v1"}, "with a host"),
         ({"COPILOT_PROVIDER_BASE_URL": "https://user:pw@api.example.com/v1"}, "no login"),
         ({"COPILOT_PROVIDER_BASE_URL": "https://@evil.example/v1"}, "no login"),
-        ({"COPILOT_PROVIDER_BASE_URL": "https://api.example.com/v1\nX: y"}, "https://"),
-        ({"COPILOT_PROVIDER_BASE_URL": "HTTPS-ish://api.example.com"}, "https://"),
+        ({"COPILOT_PROVIDER_BASE_URL": "https://api.example.com/v1\nX: y"}, "no spaces or control"),
+        ({"COPILOT_PROVIDER_BASE_URL": "https://api.exa\tmple.com/v1"}, "no spaces or control"),
+        ({"COPILOT_PROVIDER_BASE_URL": " https://api.example.com/v1"}, "no spaces or control"),
+        ({"COPILOT_PROVIDER_BASE_URL": "http://api.example.com/v1"}, "must be an https:// address"),
+        (
+            {"COPILOT_PROVIDER_BASE_URL": "HTTPS-ish://api.example.com"},
+            "must be an https:// address",
+        ),
         ({"COPILOT_PROVIDER_API_KEY": ""}, "needs COPILOT_PROVIDER_API_KEY"),
     ],
 )

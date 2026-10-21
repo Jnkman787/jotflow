@@ -612,13 +612,16 @@ class CopilotPreset:
             )
         if environ["COPILOT_PROVIDER_WIRE_API"].strip() != COPILOT_WIRE_API:
             return f"COPILOT_PROVIDER_WIRE_API must be {COPILOT_WIRE_API}"
-        base = urlsplit(environ["COPILOT_PROVIDER_BASE_URL"].strip())
+        raw = environ["COPILOT_PROVIDER_BASE_URL"]
+        # Checked before parsing: urlsplit drops tabs and newlines without a word.
+        if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
+            return "COPILOT_PROVIDER_BASE_URL must have no spaces or control characters"
+        base = urlsplit(raw)
         if (
             base.scheme != "https"
             or not base.hostname
             or base.username is not None
             or base.password is not None
-            or any(ch.isspace() or ord(ch) < 0x20 for ch in base.geturl())
         ):
             return "COPILOT_PROVIDER_BASE_URL must be an https:// address with a host, no login"
         return None
