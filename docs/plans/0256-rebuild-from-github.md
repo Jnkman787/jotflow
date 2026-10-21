@@ -19,7 +19,7 @@ GitHub still has both. Every issue JotFlow wrote carries `<!-- jotflow:proposal:
 Done when, from #256's boxes:
 
 - [ ] **The command.** `jotflow rebuild --from-github` asks the drafting runner for JotFlow's own issues in each channel's repos. It sets real titles on the topics rebuild restored, and restores topics and message links for issues whose Slack reply was lost
-- [ ] **No token in JotFlow.** JotFlow still holds no GitHub token. The runner makes one fixed, read-only GitHub call per page, with the read token, and returns pointers and a cleaned title only, never issue text. The threat model has a row for it
+- [ ] **No token in JotFlow.** JotFlow still holds no GitHub token. The runner makes one fixed, read-only GitHub call per page, with the read token, and returns pointers, the author's login and a cleaned title only. It never returns the body or comment text. The threat model has a row for it
 - [ ] **Optional.** It's off by default, documented as optional, and plain `jotflow rebuild` is unchanged
 - [ ] **Tests:** a fake runner and a fake GitHub, a round trip, every refusal, and no issue body or comment text in the store, the logs or the HTTP reply. `make check` passes
 
@@ -34,12 +34,13 @@ Done when, from #256's boxes:
 
 ### The runner endpoint
 
-**`GET /repos/{owner}/{name}/jotflow-issues?since=<ISO date>`** is on the drafting runner only. The execution runner returns 404, as `/repos/{owner}` does. It sits behind the same secret gate.
+**`POST /repos/jotflow-issues`, with a strict body `{owner, name, since}`** and no query string, since the runner gate refuses one. It's on the drafting runner only: the execution runner returns 404, as `/repos/{owner}` does. It sits behind the same secret gate. This replaces the GET with `?since=` first drafted here, per security's blocker 1. A second fixed call, **`GET /identity`** on the execution runner, returns only its write token's login, from GitHub's `GET /user`.
 
 1. **It checks the name** against `is_owner_name` and `is_bare_repo_name`, refusing with 400 otherwise.
 2. **It pages GitHub's `GET /repos/{owner}/{name}/issues?state=all&per_page=100`,** pull requests excluded, newest first. It's bounded: at most 50 pages (5,000 issues), plus GitHub's `since` when given, so a giant repo answers with `"truncated": true` rather than running forever.
 3. **For each issue whose body holds a JotFlow marker line,** matched with the exact `_MARKER_LINE` pattern execution uses, it returns only:
    - `number`, and `state`: open or closed
+   - `author`: the issue author's login, so JotFlow can keep only issues its write token wrote
    - `title`, cleaned with `clean_title` and cut to 80 characters, the same rule as every topic title
    - `markers`: the proposal ids, `[A-Za-z0-9_-]{1,64}`
    - `sources`: each Slack permalink in the footer, matched with the exact `_PERMALINK` pattern and parsed to `{channel_id, ts, thread_ts}`. The workspace host is dropped. At most 50 per issue.
@@ -55,11 +56,11 @@ Done when, from #256's boxes:
 
 1. **The repos** are the channel's listed repos, plus the repos its #236 scopes find through the same runner's `GET /repos/{owner}`.
 2. **Each repo** is asked once, so a repo that feeds two channels is read once and applied to each.
-3. **Each marked issue** is applied:
+3. **Each marked issue** is applied, but only if its `author` is the write token's login from `/identity`. Anyone can write a marker line, so any other issue is skipped and counted.
    - **A real title.** If a topic in this channel is already bound to `repo#number`, its `nick#N` title is replaced. A title a person or the agent already gave, anything not of the form `nick#N`, is never overwritten.
-   - **A lost thread.** If no topic is bound to the issue, and some of its `sources` are in this channel, rebuild creates one, titled with the issue's title and bound to it. It links each source message as a person's decision, via `link_message` with `by="person"`, skipping any message that's already linked.
+   - **A lost thread.** If no topic is bound to the issue, and some of its `sources` are in this channel, rebuild creates one, titled with the issue's title and bound to it. It links each source message as the agent's decision, via `link_message` with `by="agent"`, so a person's later decision still wins, skipping any message that's already linked. It links only messages the Slack walk saw in this channel, using the thread Slack reported. Plain rebuild's own Slack-reply links keep their `by="person"`.
    - **Another channel's sources** are never used for this channel.
-4. **Its own summary line** gives titles set, topics restored, messages linked, and issues skipped because they named no source in this channel.
+4. **Its own summary line** gives titles set, topics restored, messages linked, issues skipped because someone other than JotFlow wrote them, and issues skipped because they named no source the walk saw in this channel.
 
 **Limits it documents:**
 - **With `issue_links = "none",`** bodies carry the marker but no permalinks, so `--from-github` can set titles but can't restore a lost thread.
