@@ -108,7 +108,7 @@ docker compose start jotflow
 
 It restores:
 - **a topic per issue**, titled by its nickname and number, such as `web#42`
-- **the people's messages** in each such thread, linked to their topic, or marked as not an idea when they start with `skip:`
+- **the people's messages** in each such thread, linked to their topic as the agent's decision, so a person's later choice still wins, or marked as not an idea when they start with `skip:`, which stays a person's decision
 - **each channel's mode,** from JotFlow's latest mode announcement
 - **whether the channel's guide was already posted,** so it isn't posted and pinned twice
 
@@ -135,6 +135,7 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 - applied proposals' history: who approved, and the run records
 - identity links, operator tokens and identity unlinks, which Slack only showed privately. People run `/jotflow link` again, and admins reissue tokens.
 - old reaction marks
+- whether a link was a person's choice. A message a person attached before the loss, for example with `re: web#42`, comes back linked as the agent's decision, so a later drafting run could move it. Attach it again with `re:` to make it a person's choice again. A `skip:` stays a person's, since it's in the message itself.
 - the agent's own "not an idea" marks. Only `skip:` is visible in Slack, so a message the agent had marked as chatter comes back linked to the thread's issue.
 - real topic titles, unless `--from-github` is given
 - messages deleted in Slack, threads older than the workspace's history retention or `--since`, and threads JotFlow never wrote an issue for
