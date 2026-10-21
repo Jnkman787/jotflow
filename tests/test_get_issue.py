@@ -389,7 +389,8 @@ async def test_an_issue_comes_back_with_github_text_marked_untrusted() -> None:
     found = await ask(lookup(reader), "web")
     assert isinstance(found, IssueFound)
     assert (found.repo, found.number, found.state) == ("acme-co/web", 42, "open")
-    assert found.url == "https://github.com/acme-co/web/issues/42"
+    # No link: the agent names the issue as owner/name#42, and safe_text would strip one.
+    assert "url" not in found.model_dump()
     assert found.title.text == "Progress bar" and [x.text for x in found.labels] == ["bug"]
     assert found.model_dump()["title"] == {"untrusted": True, "text": "Progress bar"}
     assert reader.asked == [("acme-co", "web", 42)]
