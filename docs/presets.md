@@ -131,7 +131,7 @@ The command carries no run data. `CODEX_HOME` points at `<run dir>/codex` (0700)
 - **The JotFlow server,** with the run's token as an `Authorization` header, and **the pinned GitHub server,** with the GitHub token in its own environment. Each server is limited to the kind's tools with `enabled_tools`, set to `default_tools_approval_mode = "approve"`, and `required`. GitHub's server also has its own `--read-only` and `--tools` flags, as with claude-code.
 - **`approval_policy = "never"` and `sandbox_mode = "read-only"`,** so nothing prompts and no file can be written.
 - **Off:** `web_search`, update checks, history (`persistence = "none"`), analytics, feedback, and `request_user_input`.
-- **`[features]`:** the shell (`shell_tool`, `unified_exec`) and every other built-in that acts outside the run are off: apps, browser and computer use, image generation, multi-agent, plugins, skills, hooks, memories, goals, and the code-mode host.
+- **`[features]`:** the shell (`shell_tool`, `unified_exec`) and every other built-in that acts outside the run are off: apps, browser and computer use, image generation, multi-agent, plugins, skills, hooks, memories, goals, and the code-mode host. So is `api_key_model_discovery`. With an API key, it fetches OpenAI's model catalog on every run, and that catalog sets each model's tools: a remote change could switch `gpt-5.5` into code mode, with an `exec` tool. Off, Codex uses the catalog bundled with the pinned release (#284).
 - **`mcp_2026_07_28 = true`.** JotFlow serves only MCP 2026-07-28, and Codex speaks it only with this flag, which Codex 0.163.0 marks "under development". Without the flag, Codex sees no JotFlow tools.
 
 Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so the runner removes them with the run. Neither token is in the command line or the environment.
@@ -141,6 +141,8 @@ Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so the runner
 - a scripted `apply_patch` call is refused ("writing is blocked by read-only sandbox; rejected by user approval settings"), no file is written, and no prompt holds the run
 - JotFlow's MCP server is reached
 - neither token reaches the model
+
+A further test runs Codex with this config and OpenAI's own provider, as a deployment does, but in a network namespace with no network. It shows Codex never tries to fetch the remote model catalog, and that it would with `api_key_model_discovery` on. The CI job allows unprivileged namespaces for it.
 
 Codex talks only to `jotflow.testing.fake_responses_api` on 127.0.0.1, so it costs nothing. Further tests show a code-mode model would get `exec` and `spawn_agent`, that the startup probe passes `gpt-5.5` and refuses `gpt-6.1-sol`, and that the pinned GitHub server, fetched by the same checksum as the image, serves no repository content.
 
@@ -153,9 +155,8 @@ Codex talks only to `jotflow.testing.fake_responses_api` on 127.0.0.1, so it cos
 **Not yet confirmed.** These need a real model run:
 - that `tool_search` finds JotFlow's tools. Only GitHub, which sends server instructions, was listed as a search source.
 - that MCP calls run without an approval prompt
-- that the real model's metadata, which Codex may fetch from OpenAI, still gives `gpt-5.5` the flat tool set
 
-The `apply_patch` refusal is already shown, by the gate.
+The `apply_patch` refusal is already shown, by the gate. Whether Codex fetches model metadata from OpenAI is settled. It did, on every run, until #284 turned that off, so `gpt-5.5`'s tools now come from the pinned release's own catalog.
 
 **Codex's MCP resource tools** would let a drafting run read repository files if a server served them, and with `read_paths` (#209) the read token can read any file in any repo it reaches, not only the allowed paths. A question run has no GitHub server (#57). Codex can't turn those tools off. But nothing behind them serves a repository file: JotFlow's own server declares no resources, and the GitHub server, started with this preset's `--read-only --tools` flags, registers no `repo://` templates and refuses a repository read without making a network call. The runner checks that at every start, with a dummy token, and won't start otherwise. So `read_paths` works with `codex` too (#274). A later GitHub server release that served repository content would stop the runner, failing closed. Execution never runs on Codex, so the write token never meets them. Files the drafting run does read, through JotFlow's own doc tools within `read_paths`, are untrusted text, like Slack messages. The drafting instructions treat every field and tool result outside JotFlow's own instructions as data, and drafts still need approval.
 

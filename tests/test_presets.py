@@ -607,6 +607,8 @@ def test_codex_config_is_pinned(kind: RunKind, tmp_path: Path) -> None:
     assert features.pop("mcp_2026_07_28") is True
     assert features == dict.fromkeys(presets.CODEX_FEATURES_OFF, False)
     assert {"shell_tool", "unified_exec"} <= set(presets.CODEX_FEATURES_OFF)
+    # No remote model catalog, whose metadata could switch a model into code mode (#284).
+    assert features["api_key_model_discovery"] is False
     assert config["tools"] == {"experimental_request_user_input": {"enabled": False}}
     servers = config["mcp_servers"]
     assert set(servers) == {"jotflow", "github"}
