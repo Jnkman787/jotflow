@@ -115,6 +115,7 @@ class HttpSlackApi:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
                 header = response.headers.get("X-OAuth-Scopes")
         except urllib.error.HTTPError as exc:
+            exc.close()  # it holds the response body, which nothing here reads
             if exc.code == 429:
                 return ApiResult({"ok": False, "error": "ratelimited"})
             if 300 <= exc.code < 400:

@@ -256,6 +256,9 @@ class McpServer:
                     await self._task
                 self._server = None
                 self._task = None
+                if self.sock is not None:
+                    # uvicorn never got to close the socket it was handed.
+                    self.sock.close()
                 raise McpStartError(
                     f"MCP server on {self.host}:{self.port} did not start within "
                     f"{self.startup_timeout:g} seconds"

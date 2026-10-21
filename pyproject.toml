@@ -71,6 +71,13 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# A leaked file, socket or SQLite connection fails the test that leaked it (#263).
+# Python 3.13 and later warn about an unclosed sqlite3 connection, as CI's 3.13
+# and 3.14 jobs run; a finalizer that warns surfaces as an unraisable exception.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 
 [tool.coverage.run]
 source_pkgs = ["jotflow"]

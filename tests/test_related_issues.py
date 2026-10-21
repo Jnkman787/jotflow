@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -37,6 +36,7 @@ from jotflow.store.base import (
 )
 from jotflow.store.hashing import canonical_json
 from jotflow.store.migrations import MIGRATIONS
+from tests.sqlite_db import opened
 from tests.test_approval import ALICE, BOB, CARD_TS, Rig, click
 from tests.test_runs import CH, START, THREAD
 
@@ -215,7 +215,7 @@ async def test_migration_14_keeps_existing_proposals(tmp_path: Path) -> None:
     old = await SqliteStore.open(path, migrations=MIGRATIONS[:13])
     await old.close()
     draft = IssueProposal(repo="acme-co/web", title="T", body="B", confidence=0.5)
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         db.execute(
             "INSERT INTO proposals (id, channel_id, thread_ts, run_id, state, kind, repo,"
             " draft_json, created_at, updated_at)"

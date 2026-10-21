@@ -16,6 +16,7 @@ import pytest
 from jotflow.store import SchemaVersionError, SqliteStore
 from jotflow.store.migrations import LATEST_VERSION, MIGRATIONS, Migration
 from jotflow.store.sqlite import migrate
+from tests.sqlite_db import opened
 
 # A column is suspect if its name is, or contains as a word, one of these.
 _BODY_WORDS = {"body", "text", "content", "message", "msg", "words"}
@@ -104,12 +105,12 @@ async def db_path(tmp_path: Path) -> Path:
 
 
 def test_no_column_holds_a_message_body(db_path: Path) -> None:
-    with sqlite3.connect(db_path) as db:
+    with opened(db_path) as db:
         assert problems(db) == []
 
 
 def test_every_table_is_checked(db_path: Path) -> None:
-    with sqlite3.connect(db_path) as db:
+    with opened(db_path) as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert tables == {
             "topics",
@@ -148,7 +149,7 @@ def test_every_table_is_checked(db_path: Path) -> None:
     ],
 )
 def test_the_check_catches_a_message_column(column: str, complaint: str) -> None:
-    with sqlite3.connect(":memory:") as db:
+    with opened(":memory:") as db:
         sql = "\n".join(
             [
                 "CREATE TABLE bad (",
@@ -164,7 +165,7 @@ def test_the_check_catches_a_message_column(column: str, complaint: str) -> None
 
 
 async def test_the_check_reads_added_columns() -> None:
-    with sqlite3.connect(":memory:") as db:
+    with opened(":memory:") as db:
         db.execute("CREATE TABLE t (\n    id TEXT PRIMARY KEY -- an id\n)")
         db.execute("ALTER TABLE t ADD COLUMN cleared_at TEXT /* when cleared */")
         db.execute("ALTER TABLE t ADD COLUMN note TEXT /* the message's text */")
@@ -176,7 +177,7 @@ async def test_the_check_reads_added_columns() -> None:
 
 
 def test_fresh_database_reaches_latest_version(db_path: Path) -> None:
-    with sqlite3.connect(db_path) as db:
+    with opened(db_path) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
@@ -192,7 +193,7 @@ async def test_reopening_is_a_no_op_and_keeps_data(db_path: Path) -> None:
 
 
 async def test_a_newer_database_is_refused(db_path: Path) -> None:
-    with sqlite3.connect(db_path) as db:
+    with opened(db_path) as db:
         db.execute(f"PRAGMA user_version = {LATEST_VERSION + 1}")
     with pytest.raises(SchemaVersionError):
         await SqliteStore.open(db_path)
@@ -209,7 +210,7 @@ async def test_a_failing_migration_rolls_back(tmp_path: Path) -> None:
     path = tmp_path / "jotflow.db"
     with pytest.raises(sqlite3.OperationalError):
         await SqliteStore.open(path, migrations=broken)
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION
         assert db.execute("SELECT name FROM sqlite_master WHERE name = 'extra'").fetchone() is None
 
@@ -250,7 +251,7 @@ async def test_an_existing_database_keeps_its_mode(tmp_path: Path) -> None:
 
 
 def test_comments_stay_with_their_columns_after_add_column(db_path: Path) -> None:
-    with sqlite3.connect(db_path) as db:
+    with opened(db_path) as db:
         (sql,) = db.execute("SELECT sql FROM sqlite_master WHERE name = 'proposals'").fetchone()
     found = {name: comment for name, _, comment in columns(sql)}
     assert found["updated_at"] == "UTC, ISO 8601"
@@ -270,7 +271,7 @@ async def test_after_the_upgrade_only_waiting_proposals_get_a_card(tmp_path: Pat
     path = tmp_path / "jotflow.db"
     old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 8])
     await old.close()
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         rows = (
             ("posted", "pending", "1760781900.000100"),
             ("waiting", "pending", None),
@@ -301,7 +302,7 @@ async def test_after_the_upgrade_old_applied_threads_are_not_told_again(tmp_path
     path = tmp_path / "jotflow.db"
     old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 9])
     await old.close()
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         db.execute(
             "INSERT INTO proposals (id, channel_id, thread_ts, run_id, state, kind, repo,"
             " draft_json, created_at, updated_at, content_hash, result_json)"
@@ -352,7 +353,7 @@ async def test_the_operator_tokens_upgrade_keeps_existing_rows(tmp_path: Path) -
     topic = await old.create_topic("C0IDEAS01", "Progress bar")
     await old.link_message(MessageRef(channel_id="C0IDEAS01", ts="1.1"), topic.topic.id)
     await old.close()
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         assert db.execute("PRAGMA user_version").fetchone() == (11,)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "operator_tokens" not in tables
@@ -377,7 +378,7 @@ async def test_the_operator_tokens_upgrade_keeps_existing_rows(tmp_path: Path) -
         assert await store.operator_tokens() == [made]
     finally:
         await store.close()
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         assert db.execute("PRAGMA user_version").fetchone() == (LATEST_VERSION,)
 
 
@@ -387,7 +388,7 @@ async def test_the_identity_unlinks_upgrade_keeps_links(tmp_path: Path) -> None:
     old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 13])
     await old.close()
     # The row as that version wrote it: today's code expects later columns.
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         db.execute(
             "INSERT INTO identity_links (slack_user_id, github_login, verified, linked_at)"
             " VALUES ('U0BOB', 'octo-cat', 0, '2026-10-19T09:00:00+00:00')"
@@ -408,7 +409,7 @@ async def test_the_identity_codes_upgrade_keeps_links_unverified(tmp_path: Path)
     version = max(m.version for m in MIGRATIONS if any("identity_codes" in s for s in m.statements))
     old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < version])
     await old.close()
-    with sqlite3.connect(path) as db:
+    with opened(path) as db:
         db.execute(
             "INSERT INTO identity_links (slack_user_id, github_login, verified, linked_at)"
             " VALUES ('U0BOB', 'octo-cat', 0, '2026-10-19T09:00:00+00:00')"
