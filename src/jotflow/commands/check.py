@@ -41,7 +41,6 @@ from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.title_pattern import times_out
-from jotflow.whiteboard.doc_tools import docs_conflict
 
 EXIT_OK = 0
 # Something JotFlow needs is wrong in a file check can name, such as an agent
@@ -328,9 +327,6 @@ def run(args: argparse.Namespace) -> int:
     for note in doc_notes(policy):
         print(f"note  docs: {note}")
     failures: list[str] = []
-    if (conflict := docs_conflict(policy)) is not None:
-        print(f"fail  policy: {conflict}")
-        failures.append(conflict)
     if policy.agent.preset:
         agent = agent_failures(policy, Path("."))
         failures += agent

@@ -179,7 +179,7 @@ async def _run(argv: list[str], env: dict[str, str], cwd: Path) -> subprocess.Co
 
 
 async def test_a_code_mode_model_would_offer_an_exec_tool(tmp_path: Path) -> None:
-    """Why the preset refuses other models: Codex 0.163.0 runs them in code mode,
+    """Why the startup probe matters: Codex 0.163.0 runs most models in code mode,
     which adds a JavaScript exec tool and sub-agents whatever the config says."""
     run_dir = tmp_path / "run"
     run_dir.mkdir(mode=0o700)
@@ -212,3 +212,35 @@ async def test_a_code_mode_model_would_offer_an_exec_tool(tmp_path: Path) -> Non
     extra = next(i for i in api.requests[0]["input"] if i.get("type") == "additional_tools")
     nested = {t["name"] for ns in extra["tools"] for t in ns.get("tools", [])}
     assert "exec" in nested and "spawn_agent" in nested
+
+
+# The startup probe (#220, #274), with the real Codex
+
+
+def test_the_probe_passes_the_default_model_and_refuses_code_mode(tmp_path: Path) -> None:
+    from jotflow.adapters.codex_probe import ProbeError, probe_model
+    from jotflow.adapters.presets import CODEX_DEFAULT_MODEL
+
+    github = str(_fake_github(tmp_path))
+    for kind in sorted(CODEX_RUN_KINDS):
+        probe_model(kind, CODEX_DEFAULT_MODEL, github_mcp=github)
+    with pytest.raises(ProbeError, match="exec") as refused:
+        probe_model(RunKind.DRAFTING, "gpt-6.1-sol", github_mcp=github)
+    assert "spawn_agent" in str(refused.value)
+
+
+# CI's gate job downloads the pinned github-mcp-server by checksum and names it here.
+GITHUB_MCP = os.environ.get("JOTFLOW_GITHUB_MCP_BINARY")
+
+
+@pytest.mark.skipif(
+    not REQUIRED and not GITHUB_MCP, reason="needs the pinned github-mcp-server binary"
+)
+def test_the_pinned_github_server_serves_no_repository_content() -> None:
+    """#274: Codex's resource tools can't be turned off, but the GitHub server, started
+    as the preset starts it, serves no repository content behind them."""
+    from jotflow.adapters.codex_probe import probe_github_server
+
+    assert GITHUB_MCP, "JOTFLOW_GITHUB_MCP_BINARY is not set"
+    for kind in sorted(CODEX_RUN_KINDS):
+        probe_github_server(kind, github_mcp=GITHUB_MCP)

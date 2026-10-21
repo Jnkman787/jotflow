@@ -79,25 +79,11 @@ TOO_MANY_BYTES = (
 )
 UNAVAILABLE = "repo docs can't be read right now; draft without them"
 NOT_RUNNING = "run {run} is not running"
-# Codex keeps MCP resource tools that read files through GitHub's server with the
-# read token. With Contents: Read they reach every file the token does, so
-# read_paths can't bound them: the two are refused together, failing closed.
-# Only drafting: a question run has no GitHub server and no read token (#57).
-# Lifted when Codex can drop those tools (#274, with #220).
-CODEX_CONFLICT = (
-    "drafting runs are off: jotflow.toml sets read_paths and the preset is "
-    "codex, whose MCP resource tools would read any file the read token reaches once it "
-    "has Contents: Read, not only read_paths. Use claude-code, or remove read_paths"
-)
 
 
-def docs_conflict(policy: Policy) -> str | None:
-    """Why this policy's doc reads can't run safely with its preset, or None (#209)."""
-    if policy.reads_docs and policy.agent.preset == "codex":
-        return CODEX_CONFLICT
-    return None
-
-
+# Codex keeps MCP resource tools, but the GitHub server, started as the preset starts
+# it, serves no repository content behind them, and the runner checks that at every
+# start (#274, adapters/codex_probe.py). So read_paths works under codex too.
 class ListedDocs(Protocol):
     @property
     def paths(self) -> list[str]: ...

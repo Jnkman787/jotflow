@@ -220,14 +220,6 @@ class RunnerConfig:
                 )
             if not MODEL_NAME.fullmatch(model):
                 raise ConfigError(f"{model!r} is not a model name")
-        verified = getattr(self.preset, "verified_models", None)
-        if verified is not None:
-            for kind, model in self.models.items():
-                if model not in verified:
-                    raise ConfigError(
-                        f"the {self.agent.name} preset accepts only these models, whose tools "
-                        f"were checked: {', '.join(verified)}; {kind.value} names {model!r}"
-                    )
         if self.preset is not None and self.preset.github_token_in_config:
             for token in (self.read_token, self.write_token):
                 if token is not None and not GITHUB_TOKEN_CHARS.fullmatch(token):

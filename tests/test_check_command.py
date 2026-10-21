@@ -608,14 +608,14 @@ def test_check_names_what_read_paths_needs_from_the_read_token() -> None:
     assert "covers every repo the token reaches" in note
 
 
-def test_codex_with_read_paths_fails_check(
+def test_codex_with_read_paths_is_no_longer_refused(
     workspace: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Codex's resource tools would read past read_paths, so it's refused, not warned (#209).
+    # #274: the codex runner checks at startup that its GitHub server serves no
+    # repository content, so check no longer fails the pair.
     _with_preset(workspace, "codex")
     toml = workspace / "jotflow.toml"
     toml.write_text(toml.read_text() + 'read_paths = ["docs/*.md"]\n')
-    assert main(["check"]) == check_command.EXIT_FAILED
+    main(["check"])
     out = capsys.readouterr().out
-    assert "fail  policy: drafting runs are off" in out
-    assert "codex, whose MCP resource tools would read any file" in out
+    assert "fail  policy" not in out and "drafting runs are off" not in out

@@ -1568,7 +1568,8 @@ def test_switching_to_codex_drops_the_claude_model_and_names_what_it_keeps(
     assert agent[ALLOW] == "ANTHROPIC_API_KEY,CODEX_API_KEY"
     assert "still passes ANTHROPIC_API_KEY to the agent, which codex doesn't use" in script.text
     assert agent["JOTFLOW_AGENT_MODEL_DRAFTING"] == "claude-opus-5-5"
-    assert "sets JOTFLOW_AGENT_MODEL_DRAFTING, which codex refuses" in script.text
+    assert "sets JOTFLOW_AGENT_MODEL_DRAFTING to claude-opus-5-5" in script.text
+    assert "remove the line unless it's an OpenAI model" in script.text
     # Execution keeps claude-code and the model chosen for it.
     assert agent_exec["JOTFLOW_AGENT_PRESET"] == "claude-code"
     assert agent_exec["JOTFLOW_AGENT_MODEL"] == "claude-opus-5-5"

@@ -5,9 +5,9 @@
 - Issue: #220 (M6)
 - Also serves: #274, which the same evidence unblocks
 - Draft PR: #283
-- Status: plan approved. The lead approved decisions 1 to 4. The discovery fix shipped separately as #284 and #289
+- Status: ready for review. The lead approved decisions 1 to 4. The discovery fix shipped separately as #289, for #284
 - Last verified: origin/main at the time of writing, 2026-10-21, with Codex 0.163.0 and github-mcp-server 2.0.2, both run offline in a network namespace with only loopback
-- Next safe action: once #289 merges, build the probe and the #274 server check on main
+- Next safe action: review and security review of #283
 
 ## Objective and done-when
 
@@ -119,11 +119,11 @@ The reason goes in the runner's log and in `/info`, as other startup refusals do
 - [x] Commit this plan and open the draft PR
 - [x] The lead decides 1 to 4 (all approved), and security has the findings
 - [x] (Decision 1) The discovery fix in its own PR: #289, for #284
-- [ ] The probe module, the runner wiring, and removal of the allowlist
-- [ ] (Decision 4) The server-side resource check and lifting `docs_conflict`
-- [ ] CI gate tests
-- [ ] Docs
-- [ ] `make check` passes
+- [x] The probe module, the runner wiring, and removal of the allowlist
+- [x] (Decision 4) The server-side resource check and lifting `docs_conflict`
+- [x] CI gate tests
+- [x] Docs
+- [x] `make check` passes
 - [ ] Mark the PR ready for review
 
 ## Validation
@@ -131,5 +131,9 @@ The reason goes in the runner's log and in `/info`, as other startup refusals do
 The spike scripts and their output are summarised under Spike findings. They ran from the job's scratch space against Codex 0.163.0, installed from npm, and github-mcp-server 2.0.2, from its release tarball, under `unshare -rn`.
 
 ## Handoff notes
+
+- **Two changes from the plan, both on the side of simplicity:**
+  - **A subset check, not an exact set.** The probe refuses any tool outside the safe set, but not a missing one. The probe leaves out the JotFlow server, which needs a run token, so a question run, with no GitHub server either, is offered only `apply_patch`. A missing tool is no danger, and the CLI version is pinned anyway.
+  - **The fake Responses API stays in `jotflow.testing`.** That package already ships in the image, since replay uses it.
 
 - No model spend. The one stray request was a 401 with a dummy key, before the network namespace was in place.

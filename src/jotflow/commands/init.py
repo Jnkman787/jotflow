@@ -27,7 +27,7 @@ from typing import Any, TextIO, cast
 from pydantic import TypeAdapter, ValidationError
 
 from jotflow import __version__, agent_setup, deploy
-from jotflow.adapters.presets import CODEX_VERIFIED_MODELS
+from jotflow.adapters.presets import CODEX_DEFAULT_MODEL
 from jotflow.envfile import EnvChange, parse_env, read_env, write_envs
 from jotflow.github_cli import ListedRepo, gh_login, gh_repos, gh_visibility
 from jotflow.models import RepoName, RepoVisibility, RunKind, expected_runner_preset
@@ -198,8 +198,9 @@ EXPLAIN_CODEX_KEY = (
     "Codex logs in with an OpenAI API key, from https://platform.openai.com/api-keys.",
     f"Setup saves it in agent.env as {agent_setup.CODEX_KEYS[0]}, "
     "which the runner passes to Codex.",
-    f"JotFlow runs Codex only on {CODEX_VERIFIED_MODELS[0]}, the model its tool checks cover, so",
-    "there is no model to choose.",
+    f"JotFlow runs Codex on {CODEX_DEFAULT_MODEL}. Another model works only if the runner's",
+    "startup check finds it offers Codex no code-execution tool; set JOTFLOW_AGENT_MODEL",
+    "in agent.env by hand to try one.",
 )
 EXPLAIN_MODEL = (
     "Which model should the agent use? Press Enter for the preset's defaults: a stronger",
@@ -1203,16 +1204,18 @@ def _codex_updates(
             updates[anthropic] = None
     if allow != agent_setup.allowed(values):
         updates[agent_setup.ENV_ALLOW_KEY] = ",".join(allow)
-    # The runner refuses any model but the verified one, so a claude-code name goes.
+    # A model name left from claude-code means nothing to Codex, so it goes. Codex
+    # runs its default, and the runner's startup probe checks any model set later (#220).
     if values.get(agent_setup.MODEL_KEY):
         updates[agent_setup.MODEL_KEY] = None
     for kind in ("DRAFTING", "QUESTION"):
         model_key = f"{agent_setup.MODEL_KEY}_{kind}"
         model = values.get(model_key, "").strip()
-        if model and model not in CODEX_VERIFIED_MODELS:
+        if model:
             notes.append(
-                f"  {path} sets {model_key}, which codex refuses: it runs only "
-                f"{CODEX_VERIFIED_MODELS[0]}. Remove that line."
+                f"  {path} sets {model_key} to {model}. Codex sends that name to OpenAI, so "
+                "remove the line unless it's an OpenAI model. The runner checks that model's "
+                "Codex tools at startup and won't start if it offers a code-execution tool."
             )
     return updates
 

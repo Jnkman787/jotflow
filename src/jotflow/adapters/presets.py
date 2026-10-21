@@ -296,11 +296,11 @@ CLAUDE_CODE = ClaudeCodePreset()
 
 # Codex CLI (#22). Verified, without a model call, against this release.
 CODEX_VERSION = "0.163.0"
-# Models whose Codex tool set was checked to hold no shell or exec tool. Codex
-# 0.163.0 runs most current models in "code mode", which adds a JavaScript
-# ``exec`` tool and a sub-agent namespace whatever the config says, so only
-# these are accepted; any other is refused at startup.
-CODEX_VERIFIED_MODELS = ("gpt-5.5",)
+# The default model. Codex 0.163.0 runs most current models in "code mode", which
+# adds a JavaScript ``exec`` tool and a sub-agent namespace whatever the config
+# says. So the runner probes every configured model's tools at startup and refuses
+# any that adds one (#220, :mod:`jotflow.adapters.codex_probe`); this one passes.
+CODEX_DEFAULT_MODEL = "gpt-5.5"
 # Codex keeps read_mcp_resource and list_mcp_resource_templates, which can pull any
 # repository text into the agent's context. That's acceptable for drafting, whose
 # input is untrusted anyway, but an execution run holds the write token and must see
@@ -394,9 +394,8 @@ class CodexPreset:
 
     name: str = "codex"
     default_models: Mapping[RunKind, str] = field(
-        default_factory=lambda: dict.fromkeys(CODEX_RUN_KINDS, CODEX_VERIFIED_MODELS[0])
+        default_factory=lambda: dict.fromkeys(CODEX_RUN_KINDS, CODEX_DEFAULT_MODEL)
     )
-    verified_models: tuple[str, ...] = CODEX_VERIFIED_MODELS
     # The run kinds this preset may serve; a runner serving any other refuses to start.
     run_kinds: frozenset[RunKind] = CODEX_RUN_KINDS
     needs_github_mcp: bool = True

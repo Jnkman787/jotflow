@@ -76,9 +76,8 @@ Then add it to `PRESETS`, and to `EXPERIMENTAL` until the maintainer drops the l
 - **`github_token_env`**, which says whether `GITHUB_TOKEN` and `GH_TOKEN` are set. Keep it false when the token is in the config.
 - **`files`**, more private files by path inside the run directory, such as a CLI's own config file. See the Codex preset's `codex/config.toml`. Codex is a drafting and question preset only, and it's refused for execution.
 
-Three optional members, which the runner looks for:
+Two optional members, which the runner looks for:
 - **`check_install()`** returns why the installed CLI can't honour the preset, or None. The runner calls it at startup and refuses to start on a problem: a different version, a missing feature flag, or a missing binary.
-- **`verified_models`** is the models whose tool set was checked. The runner refuses any other model. Use it when a CLI's tool set depends on the model, as Codex's does.
 - **`run_kinds`** is the run kinds the preset may serve. A runner serving any other kind refuses to start. The codex preset serves drafting and question only, because Codex can't drop its MCP resource-read tools, and an execution run must never have them.
 
 Rules for the code:
@@ -104,7 +103,7 @@ Rules for the code:
 | No run data in the prompt | The prompt is the same for everyone. Run data comes through `get_work`. | A test like `test_no_prompt_carries_run_data` |
 | The CLI's state stays in the run directory, or is off | Nothing outlives the run | An end-to-end test that the run directory, and so the state, is gone afterwards |
 | Nothing prompts, and nothing waits | A headless run would hang until its time limit | The gate asserts the CLI ended by itself |
-| Fail closed on an unverified CLI version, feature, or model | A new release can change the tool set | `check_install()` and `verified_models`, with tests for each refusal |
+| Fail closed on an unverified CLI version, feature, or model | A new release can change the tool set | `check_install()`, and a startup probe of the offered tools where they depend on the model, as `adapters/codex_probe.py` does for Codex, with tests for each refusal |
 
 ## Proving it
 
@@ -146,7 +145,7 @@ Both print the run count and the model before they start, and refuse without `--
 - [ ] No token is in `argv` or the CLI's environment
 - [ ] The CLI's home, cache, logs, and transcripts are in the run directory, or off, and an end-to-end test shows them removed
 - [ ] The gate runs in CI: the exact tool set, no shell or exec, write tools refused, and no prompt
-- [ ] `check_install()` fails closed on version and flags, and `verified_models` is set if the tool set depends on the model
+- [ ] `check_install()` fails closed on version and flags, and the runner probes the offered tools at startup if they depend on the model
 - [ ] `jotflow replay --agent scripted` and `--execute` pass
 - [ ] presets.md has the preset's section: command, config, login, what was checked, and what's unconfirmed
 - [ ] A real pass is recorded, or presets.md says none is, and the preset stays experimental unless the maintainer has dropped the label

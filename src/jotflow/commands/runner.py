@@ -22,7 +22,8 @@ from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from jotflow.adapters import isolation
-from jotflow.adapters.presets import DEFAULT_GITHUB_MCP, EXPERIMENTAL
+from jotflow.adapters.codex_probe import ProbeError, probe_runner
+from jotflow.adapters.presets import DEFAULT_GITHUB_MCP, EXPERIMENTAL, CodexPreset
 from jotflow.adapters.runner import (
     RUNNER_PORT,
     ConfigError,
@@ -117,7 +118,7 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
     port = settings.runner_port
     names = [h.strip() for h in settings.runner_allowed_hosts.split(",") if h.strip()]
     hosts = {f"{name}:{port}" for name in [*names, "127.0.0.1", "localhost"]}
-    return RunnerConfig(
+    config = RunnerConfig(
         secret=settings.runner_secret.get_secret_value(),
         mcp_url=settings.mcp_url,
         mcp_allow_public=settings.mcp_allow_public,
@@ -136,6 +137,17 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
         kinds=kinds,
         allowed_hosts=frozenset(hosts),
     )
+    if isinstance(preset, CodexPreset):
+        # Codex's tools depend on the model's metadata: ask Codex itself (#220, #274).
+        try:
+            probe_runner(
+                {kind: config.model(kind) for kind in kinds},
+                github_mcp=settings.github_mcp_command,
+                preset=preset,
+            )
+        except ProbeError as refused:
+            raise ConfigError(str(refused)) from None
+    return config
 
 
 def startup_line(config: RunnerConfig) -> str:
