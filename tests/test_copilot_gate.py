@@ -141,6 +141,7 @@ async def gate_run(
     caplog: pytest.LogCaptureFixture,
     first: dict[str, Any],
     mutate: Mutate | None = None,
+    provider_url: str | None = None,
 ) -> GateRun:
     caplog.set_level("INFO", logger="jotflow.mcp.audit")
     store = MemoryStore()
@@ -189,7 +190,7 @@ async def gate_run(
                 "HOME": str(tmp_path / "home"),
                 "TMPDIR": str(run_dir),
                 **plan.env,
-                "COPILOT_PROVIDER_BASE_URL": api.base_url,
+                "COPILOT_PROVIDER_BASE_URL": provider_url or api.base_url,
                 "COPILOT_PROVIDER_TYPE": "openai",
                 "COPILOT_PROVIDER_WIRE_API": "responses",
                 "COPILOT_PROVIDER_API_KEY": "gate",
@@ -296,3 +297,23 @@ async def test_a_read_only_tool_outside_the_kind_is_never_offered(
     assert "search_issues" not in GITHUB_TOOLS[RunKind.EXECUTION]
     assert_clean(run, RunKind.EXECUTION)
     assert REFUSED in run.output()
+
+
+async def test_the_trace_sees_a_contact_copilot_would_make(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The control: with a remote model address, the trace shows the lookup and the gate's
+    rules refuse it, so the network check can't pass because it sees nothing."""
+    if STRACE is None:
+        assert not REQUIRED, "the gate's network check needs strace"
+        pytest.skip("needs strace")
+    run = await gate_run(
+        RunKind.QUESTION,
+        tmp_path,
+        caplog,
+        function_call("bash", {"command": "true"}),
+        # A reserved name (RFC 2606): the lookup still shows, and the key reaches nobody.
+        provider_url="https://api.jotflow-gate.invalid/v1",
+    )
+    assert run.api.requests == []  # the fake model was never asked
+    assert run.strangers(), "the trace saw no lookup of api.jotflow-gate.invalid"
