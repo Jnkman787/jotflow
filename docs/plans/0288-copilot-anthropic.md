@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #288 (M6), a follow-up to #59 and #285
-- Draft PR: to be opened
+- Draft PR: #297
 - Status: planning. The lead and security review this plan before any code
 - Last verified: 2026-10-21, Copilot CLI 1.0.101 in a throwaway agent image, with `--network none`, against JotFlow's real MCP server and a scripted fake of Anthropic's Messages API
 - Next safe action: review
