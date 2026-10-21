@@ -50,3 +50,8 @@ The gate job installs `strace` from Ubuntu's archive with `apt-get install --no-
 - [x] The reviewer's look at this plan: process names in failures, exact loopback only, and the GitHub-server limit stated
 - [x] Test 2, start-up exactly as deployed, with its control
 - [x] CI installs strace; docs; `make check`
+
+## Implementation notes
+
+- **io_uring.** On the GitHub runner's kernel, the pinned Codex sets up io_uring, so the first CI run failed on it, as intended: a connect submitted through io_uring bypasses connect(), and the trace couldn't prove anything. Locally, Codex never used it. The gate runner now sets `kernel.io_uring_disabled=2`, as Docker's default seccomp profile already refuses io_uring in the agent containers, and Codex falls back to plain sockets. An io_uring setup the kernel refuses is fine, and one that succeeds still fails the gate. The cross-container job checks that both agent containers refuse `io_uring_setup`.
+

@@ -16,8 +16,10 @@ What counts, per traced call that names an address (connect, sendto, sendmsg):
   would hide which host was asked for
 - anything else, a DNS server included: refused
 
-``io_uring_setup`` is refused too, since a connect submitted through io_uring
-never shows up as a system call.
+An ``io_uring_setup`` that succeeds is refused too, since a connect submitted
+through io_uring never shows up as a system call. One the kernel refuses is fine:
+the gate runs with io_uring off, as Docker's default seccomp profile has it for
+the agent containers, and Codex then uses plain sockets that strace sees.
 """
 
 from __future__ import annotations
@@ -77,7 +79,9 @@ def refused_contacts(lines: Iterable[str], allowed_ports: Iterable[int]) -> list
     for line in lines:
         call = _CALL.sub("", line, count=1)
         if call.startswith("io_uring_setup("):
-            refused.append(line)
+            result = _RESULT.search(call)
+            if result is None or int(result.group(1)) >= 0:
+                refused.append(line)  # io_uring is live: its connects would go unseen
             continue
         family = _FAMILY.search(line)
         if family is None:

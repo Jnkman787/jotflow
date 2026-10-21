@@ -18,8 +18,21 @@ CONNECTED = 'sendto(36, "POST /v1/responses HTTP/1.1"..., 512, MSG_NOSIGNAL, NUL
 UNSPEC = 'connect(5, {sa_family=AF_UNSPEC, sa_data=""}, 16) = 0'
 
 
+IO_URING_OFF = "io_uring_setup(256, {flags=IORING_SETUP_NO_SQARRAY, sq_thread_cpu=0}, 0x7f) = -1 EPERM (Operation not permitted)"
+
+
 def test_the_model_jotflow_and_local_plumbing_are_allowed() -> None:
-    lines = [MODEL, JOTFLOW, NSCD_MISSING, NETLINK, CONNECTED, UNSPEC, "+++ exited with 0 +++"]
+    lines = [
+        MODEL,
+        JOTFLOW,
+        NSCD_MISSING,
+        NETLINK,
+        CONNECTED,
+        UNSPEC,
+        IO_URING_OFF,  # the kernel refused it, so Codex falls back to plain sockets
+        f"[4242 codex] {IO_URING_OFF}",
+        "+++ exited with 0 +++",
+    ]
     assert refused_contacts(lines, {API, MCP}) == []
 
 
@@ -46,6 +59,7 @@ def test_every_other_contact_is_refused() -> None:
         # A family nobody expects, and io_uring, which hides its connects.
         "connect(9, {sa_family=AF_PACKET, sll_protocol=htons(ETH_P_ALL)}, 20) = 0",
         "io_uring_setup(8, 0x7ffd0c8a8f10) = 5",
+        "[4242 codex] io_uring_setup(256, {flags=IORING_SETUP_NO_SQARRAY, sq_thread_cpu=0}) = 11",
     ]
     assert refused_contacts(other, {API, MCP}) == other
 
