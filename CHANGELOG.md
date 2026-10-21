@@ -4,7 +4,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ## [0.4.0] - 2026-10-20
 
-A minor release with new features, all off by default except the readable help, related issues on the card, and the @-mention check. Upgrade both images: the agent image changed too. The default Compose files are unchanged, so an image bump is enough, and `docker-compose.isolation.yml` is new and only for teams turning on per-run uids. It adds store migrations 14 and 15, so rolling back means restoring the backup from before the upgrade, then removing any new keys from `jotflow.toml` (`scopes`, `read_paths`, `conventions`, `title_pattern`, `[questions]`), which older versions refuse. No Slack app change is needed.
+A minor release with new features, all off by default except the readable help, related issues on the card, and the @-mention check. Upgrade both images: the agent image changed too. The default Compose files are unchanged, so an image bump is enough, and `docker-compose.isolation.yml` is new and only for teams turning on per-run uids. It adds store migrations 14 and 15, so rolling back means restoring the backup from before the upgrade, then removing any new keys from `jotflow.toml` (`scopes`, `read_paths`, `conventions`, `title_pattern`, `[questions]` and any `[channels.<id>.questions]`), which older versions refuse. No Slack app change is needed.
 
 ### Added
 
