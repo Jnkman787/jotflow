@@ -370,7 +370,7 @@ def test_expected_must_place_each_message_once() -> None:
     data = _base()
     data["expected"]["chatter"] = [data["events"][0]["ts"]]
     problem = _problem(data)
-    assert "must be in exactly one topic, chatter, or skipped thread; found 2" in problem
+    assert "must be in exactly one topic, chatter, skipped thread, or questions; found 2" in problem
     assert "expected.chatter: lists" in problem
 
 

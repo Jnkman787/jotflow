@@ -6,6 +6,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Added
 
+- **`jotflow replay` plays question runs (#270).** Fixtures can script a question run's answer and expect what JotFlow posts after its no-links rewrite. Four new fixtures cover a question about an existing topic, a how-to question, an injected link-and-ping request, and a guest who is refused privately.
 - **A question can check an issue's status (#273).** The agent can look up an issue in the asking channel's repos, so an answer can say whether `owner/name#42` is open or closed, why it was closed, how it's labelled, and when it last changed. It reads through the drafting runner with the read token, at most 5 issues a question, and never sees an issue's body or comments. Another channel's repos are refused. A rate limit makes the answer say GitHub couldn't be checked, never that the issue doesn't exist. The question run itself still has no GitHub access. Update both images: the drafting runner gains one fixed GitHub call.
 - **`jotflow rebuild --from-github` (#256).** It's optional. It reads JotFlow's own issues through the agent runners, so JotFlow still holds no GitHub token. It restores real topic titles, and threads whose Slack reply was lost. Only issues the write token's own account wrote count, and only messages the Slack walk saw are linked, at the agent's level.
 

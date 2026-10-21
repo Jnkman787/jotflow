@@ -1,0 +1,100 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "question-how-to",
+  "description": "Carol mentions the bot and asks how to add a message to an existing issue. The question run's packet carries the help text, and the answer explains re: web#42. No topic and no proposal.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792321800.000100",
+      "user": "U0CAROL",
+      "text": "<@U0JOTBOT> how do I add my message to an existing issue?"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792321800.000100",
+      "kind": "question",
+      "calls": [
+        {
+          "tool": "answer",
+          "arguments": {
+            "text": "Start your message with re: and the issue, such as re: web#42, and JotFlow adds it to that issue."
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One question, answered once with how re: works. No topic and no proposal.",
+    "accepted": [
+      "1792321800.000100"
+    ],
+    "questions": [
+      "1792321800.000100"
+    ],
+    "answers": [
+      {
+        "thread": "1792321800.000100",
+        "text": "Answer from the agent: Start your message with re: and the issue, such as re: web#42, and JotFlow adds it to that issue.",
+        "removed": 0,
+        "contains": [
+          "re:"
+        ]
+      }
+    ]
+  }
+}

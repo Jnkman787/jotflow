@@ -1,0 +1,151 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "question-existing-topic",
+  "description": "Carol asks with ask: how the CSV export is going. The topic exists, linked to acme-co/web#42. A question run answers once in the thread, naming acme-co/web#42, which is kept. Alice's reply is drafted as usual and joins the topic, and the question itself is set aside, never drafted.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [
+    {
+      "id": "topic-csv-export",
+      "channel_id": "C0EXAMPLE1",
+      "title": "Export the dashboard table as CSV",
+      "repo": "acme-co/web",
+      "issue_number": 42,
+      "messages": [
+        {
+          "channel_id": "C0EXAMPLE1",
+          "ts": "1792224000.000100"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792321200.000100",
+      "user": "U0CAROL",
+      "text": "ask: how is the CSV export going?"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792321320.000100",
+      "user": "U0ALICE",
+      "thread_ts": "1792321200.000100",
+      "text": "Finance still needs the CSV export before the month ends."
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792321200.000100",
+      "kind": "question",
+      "calls": [
+        {
+          "tool": "answer",
+          "arguments": {
+            "text": "The CSV export is tracked in acme-co/web#42, which is still open."
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792321200.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792321320.000100",
+              "thread_ts": "1792321200.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.85,
+            "topic_id": "topic-csv-export"
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One question set aside and answered once, naming acme-co/web#42. Alice's reply joins the existing topic. No proposal.",
+    "accepted": [
+      "1792321200.000100",
+      "1792321320.000100"
+    ],
+    "topics": [
+      {
+        "topic": "topic-csv-export",
+        "messages": [
+          "1792321320.000100"
+        ]
+      }
+    ],
+    "questions": [
+      "1792321200.000100"
+    ],
+    "answers": [
+      {
+        "thread": "1792321200.000100",
+        "text": "Answer from the agent: The CSV export is tracked in acme-co/web#42, which is still open.",
+        "removed": 0,
+        "contains": [
+          "acme-co/web#42"
+        ]
+      }
+    ]
+  }
+}

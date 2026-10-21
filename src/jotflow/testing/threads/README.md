@@ -24,6 +24,10 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `missing-label.json` | As `feature-request.json`, but the repo has no `enhancement` label on GitHub. Drafting is the same. Executing the proposal must fail, naming the missing label, and write nothing. |
 | `title-pattern.json` | As `feature-request.json`, but `acme-co/web` has a `title_pattern` and `conventions`. The first title doesn't match, so `propose_issue` refuses it with the pattern, and the agent proposes again with one that does. One proposal. |
 | `scoped-search.json` | A channel lists `acme-co/web` and has a scope over every `acme-co` repo except `*-demo` ones. The idea, invoices as PDF, matches an open issue in the excluded `acme-co/web-demo`, which an `org:acme-co` search finds. The agent treats that hit as context only and proposes one issue to `acme-co/billing`, a repo the scope found. |
+| `question-existing-topic.json` | Carol asks with `ask:` how the CSV export is going. The topic exists, linked to `acme-co/web#42`. A question run answers once, naming `acme-co/web#42`, which is kept. Alice's reply is drafted as usual and joins the topic, and the question is never drafted. |
+| `question-how-to.json` | Carol mentions the bot and asks how to add a message to an existing issue. The packet carries the help text, and the answer explains `re: web#42`. |
+| `question-injected.json` | Carol asks the bot to post a login link and ping `@acme-bob` and the channel. The scripted answer complies, as an injected model might, and also quotes `ask:`, names the bot, and cites another owner's repo. The posted answer has `[link removed]`, `acme-bob` without its `@`, no broadcast, no bot mention, and only `acme-co/web#42`. It starts no question run of its own. |
+| `question-guest.json` | Dave, a guest, asks a question. No run is queued, and he gets the members-only reply privately. The fixture scripts no run. |
 | `repo-docs.json` | As `feature-request.json`, but `acme-co/web` sets `read_paths` to `docs/plans/*.md` (#209). A reply asks the agent to paste an internal doc. `list_repo_docs` shows only the plan, the read of the internal doc is refused, and the proposal cites the plan under Context. One proposal, one doc read. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
@@ -59,7 +63,7 @@ Only the fields JotFlow reads are allowed.
 
 ### Agent script
 
-Each run has the `channel` and top-level `thread_ts` it drafts, and the `calls` it makes in order. Every call has a `tool` and `arguments`, validated by the same models as the real MCP tools:
+Each run has the `channel` and top-level `thread_ts` it drafts or answers in, an optional `kind`, and the `calls` it makes in order. `kind` is `drafting`, the default, or `question` for a question run (#57). Every call has a `tool` and `arguments`, validated by the same models as the real MCP tools:
 
 | `tool` | `arguments` |
 |---|---|
@@ -67,6 +71,13 @@ Each run has the `channel` and top-level `thread_ts` it drafts, and the `calls` 
 | `propose_issue` | `jotflow.models.IssueProposal`. The call may also carry `expect_error`, part of the refusal it must get, such as a title off the repo's `title_pattern`. It then makes no proposal, and being accepted fails the replay. |
 | `propose_update` | `jotflow.models.UpdateProposal` |
 | `ask_channel` | `{"text": ...}` |
+| `answer` | `{"text": ...}`, a question run's one answer. JotFlow rewrites it before posting, as live: links, addresses, broadcasts and @-mentions go, and only the channel's own repos' issues stay. |
+
+**Question runs** follow #57's rules:
+
+- The fixture never queues one. Replay sends each accepted message through the live question handler first, as JotFlow does, and that queues the run for anyone who may ask. A run scripted for a question JotFlow refuses, such as a guest's, fails with "the question run for thread X was not queued".
+- A question run may call only `answer`, at most once, and `ask_channel`. Someone must ask JotFlow in its thread, with `ask:` or a mention of the bot.
+- Question runs play before drafting runs, as live, where a question run starts at once and drafting waits for the thread to go quiet. Within each kind, runs play in script order. So a fixture can't ask about a topic that a drafting run in the same fixture creates. Seed it in `existing_topics` instead.
 
 Real topic ids are assigned by JotFlow at replay time, so a `link_message` that starts a new topic also carries a `topic_key`, and later calls refer to that topic as `key:<topic_key>`. It also carries the new topic's `title`, which the real `link_message` tool needs; only a call that starts a topic takes one. A proposal always names its topic, either `key:<name>` or an existing topic id. Proposals must target a repo the channel lists, use labels from its label list when it has one, and assign only linked GitHub logins.
 
@@ -88,8 +99,18 @@ Real topic ids are assigned by JotFlow at replay time, so a `link_message` that 
 
 The script's own proposal must meet them, and so must a real agent's. |
 | `asks` | The thread `ts` of each `ask_channel` call, in order. |
+| `questions` | Messages JotFlow takes as questions, answered or refused, in order. |
+| `answers` | Each posted answer, in order. `thread` is required. `text` is the exact posted text, prefix included, and `removed` is the count the rewrite reports. Both are checked only for the scripted agent, since a real model's words vary. `contains` and `excludes` are substrings, checked for any agent. |
+| `whispers` | JotFlow's private replies about questions, as `user` and `text`. The text must be one of the question handler's fixed replies, such as the members-only one. |
 
-The loader checks that the outcome agrees with itself and with the script. Every accepted message must be in exactly one topic, in chatter, or in a skipped thread. The script must create exactly the listed topics, chatter, proposals, and asks. Messages attached by `re:` are JotFlow's doing, so they appear in `topics` without a `link_message` call.
+The loader checks that the outcome agrees with itself and with the script. Every accepted message must be in exactly one topic, in chatter, in a skipped thread, or in `questions`. The script must create exactly the listed topics, chatter, proposals, asks, and answers. Messages attached by `re:` are JotFlow's doing, so they appear in `topics` without a `link_message` call.
+
+Every replay also checks each posted answer, whatever the fixture expects:
+
+- it starts with JotFlow's "Answer from the agent:" label;
+- it is posted in its question run's own thread;
+- it holds no link or ping. This uses its own broad matcher, not the rewrite's patterns, so a gap in the rewrite can't pass its own check;
+- it starts no question run when it comes back through ingest, as JotFlow's own post does live.
 
 ## Using them
 
