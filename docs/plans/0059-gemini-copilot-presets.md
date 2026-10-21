@@ -107,7 +107,7 @@ This needs a small runner change: a preset's optional `refused_env` set, checked
 ## Design, for the copilot preset
 
 - **`CopilotPreset`** in `adapters/presets.py`, next to `CodexPreset`. `plan()` writes `mcp.json` in Copilot's shape: `type: "http"` with `headers` for JotFlow, and `type: "local"` with `command`, `args`, `env` and `tools` for GitHub. It returns the argv above, the env above, and `github_token_env=False`. `check_install()` checks the exact version. `default_models` is empty, and the runner refuses a copilot runner with no model. `run_kinds` is all three.
-- **Provider types.** The runner refuses a copilot runner whose `COPILOT_PROVIDER_TYPE` isn't `openai` or `azure`, and one with none set, since Copilot then falls back to its GitHub login.
+- **Provider types.** The runner refuses a copilot runner whose `COPILOT_PROVIDER_TYPE` isn't `openai` or `azure`, and one with none set: an unset type is refused rather than left to Copilot's default.
 - **`refused_env`,** an optional preset member. The runner reads it at startup and refuses to start if `JOTFLOW_AGENT_ENV_ALLOW` names any of those names. Codex and claude-code don't set it.
 - **`PRESETS` and `EXPERIMENTAL`** gain `copilot`. `PARTIAL_PRESET_KINDS` is unchanged, because copilot serves every kind.
 - **The gate.** `tests/test_copilot_gate.py`, in a new "Copilot preset gate" CI job with the CLI from a lockfile in `.github/ci/copilot`. It reuses `FakeResponsesApi`, extended so its stream carries the full event sequence and the output in `response.completed`, which Copilot needs. For each of the three kinds it checks:
