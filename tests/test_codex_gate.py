@@ -21,7 +21,10 @@ import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -36,6 +39,7 @@ from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.server import PATH, McpServer, bound_socket, build_app
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.write_tools import write_tools
+from tests.outbound_trace import refused_contacts, strace_argv, trace_lines
 
 CH = "C0EXAMPLE1"
 POLICY = parse_policy(
@@ -99,11 +103,23 @@ def _fake_github(root: Path) -> Path:
     return wrapper
 
 
-@pytest.mark.parametrize("kind", sorted(CODEX_RUN_KINDS))
-async def test_codex_offers_no_shell_and_refuses_apply_patch(
-    kind: RunKind, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level("INFO", logger="jotflow.mcp.audit")
+@dataclass
+class GateRun:
+    done: subprocess.CompletedProcess[str]
+    api: FakeResponsesApi
+    token: str
+    ports: tuple[int, int]  # the fake model's and JotFlow's MCP server's
+    run_dir: Path
+
+
+async def _gate_run(
+    kind: RunKind, tmp_path: Path, *, wrap: Sequence[str] = (), builtin: bool = False
+) -> GateRun:
+    """Codex with the preset's own config, JotFlow's real MCP server and the fake
+    GitHub server, against the fake model, which asks for apply_patch once.
+
+    ``builtin`` uses OpenAI's own provider pointed at the fake model, as a
+    deployment does, rather than a custom one."""
     store = MemoryStore()
     registry = TokenRegistry()
     grant = Grant("run-gate", kind, CH, thread_ts="1792310400.000100")
@@ -134,17 +150,31 @@ async def test_codex_offers_no_shell_and_refuses_apply_patch(
             write_private(run_dir, relative, text)
         with FakeResponsesApi(first=apply_patch_call()) as api:
             # Only the model provider is overridden, so the rest is the preset's own config.
-            argv = [*plan.argv[:2], *api.provider_overrides(), *plan.argv[2:]]
+            overrides = api.builtin_overrides() if builtin else api.provider_overrides()
+            argv = [*wrap, *plan.argv[:2], *overrides, *plan.argv[2:]]
+            key = {"CODEX_API_KEY": "sk-gate-not-a-key"} if builtin else {"FAKE_MODEL_KEY": "gate"}
             env = {
                 "PATH": os.environ["PATH"],
                 "HOME": str(tmp_path / "home"),
                 "TMPDIR": str(run_dir),
-                "FAKE_MODEL_KEY": "gate",
+                **key,
                 **plan.env,
             }
             done = await _run(argv, env, run_dir)
     finally:
         await server.stop()
+    api_port = urlsplit(api.base_url).port
+    assert api_port is not None
+    return GateRun(done, api, token, (api_port, port), run_dir)
+
+
+@pytest.mark.parametrize("kind", sorted(CODEX_RUN_KINDS))
+async def test_codex_offers_no_shell_and_refuses_apply_patch(
+    kind: RunKind, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger="jotflow.mcp.audit")
+    run = await _gate_run(kind, tmp_path)
+    done, api, token, run_dir = run.done, run.api, run.token, run.run_dir
 
     # No prompt held the run: it ended by itself, cleanly, within the timeout.
     assert done.returncode == 0, done.stderr[-2000:]
@@ -159,6 +189,37 @@ async def test_codex_offers_no_shell_and_refuses_apply_patch(
     # Neither token reached the model.
     sent = json.dumps(api.requests)
     assert token not in sent and "github_pat_gate" not in sent
+
+
+# No host but the model (#290). CI's gate job installs strace, so there a missing
+# one fails, not skips.
+STRACE = shutil.which("strace")
+
+
+@pytest.mark.skipif(not REQUIRED and STRACE is None, reason="needs strace")
+@pytest.mark.parametrize("kind", sorted(CODEX_RUN_KINDS))
+async def test_codex_contacts_nothing_but_the_model_and_jotflow(
+    kind: RunKind, tmp_path: Path
+) -> None:
+    """Codex's tools could change from anything it fetches, as the model catalog
+    could (#284). So with OpenAI's own provider, as a deployment uses it, pointed at
+    the fake model, every contact the whole process tree attempts, refused or not,
+    must be the fake model or JotFlow's MCP server on loopback. A fetch that fails
+    and falls back quietly still fails here."""
+    assert STRACE is not None, "strace is not on PATH"
+    prefix = tmp_path / "trace" / "codex"
+    prefix.parent.mkdir()
+    run = await _gate_run(kind, tmp_path, wrap=strace_argv(STRACE, prefix), builtin=True)
+    assert run.done.returncode == 0, run.done.stderr[-2000:]
+    # OpenAI's own provider asked the fake model for responses and nothing else, such
+    # as a model list, which openai_base_url would also have sent here. The GETs are
+    # its WebSocket attempt on the same endpoint, before it falls back to POST.
+    assert "POST /v1/responses" in run.api.calls
+    assert set(run.api.calls) <= {"GET /v1/responses", "POST /v1/responses"}, run.api.calls
+    lines = trace_lines(prefix)
+    # The trace saw the run: Codex's calls to the fake model are in it.
+    assert any(f"htons({run.ports[0]})" in line for line in lines), "strace traced nothing"
+    assert refused_contacts(lines, run.ports) == []
 
 
 async def _run(argv: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -294,6 +355,132 @@ async def _offline(argv: list[str], env: dict[str, str], cwd: Path) -> str:
         return done.stderr
 
     return await asyncio.to_thread(blocking)
+
+
+@pytest.mark.skipif(
+    not REQUIRED and (STRACE is None or not _no_network_available()),
+    reason="needs strace and unshare -rn",
+)
+async def test_the_trace_sees_a_contact_codex_would_make(tmp_path: Path) -> None:
+    """The control: with OpenAI's own provider and the model catalog forced back on,
+    Codex tries to reach OpenAI, and the trace refuses it. It runs with no network,
+    so nothing leaves the machine."""
+    assert STRACE is not None and _no_network_available(), "needs strace and unshare -rn"
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(mode=0o700)
+    context = RunContext(
+        kind=RunKind.DRAFTING,
+        run_id="run-gate",
+        run_dir=run_dir,
+        config_path=run_dir / "mcp.json",
+        mcp_url="http://127.0.0.1:9/mcp",
+        mcp_token="jfr_gate",
+        github_token="github_pat_gate",
+        github_mcp=str(_fake_github(tmp_path)),
+        model="gpt-5.5",
+    )
+    plan = CODEX.plan(context)
+    for relative, text in plan.files.items():
+        write_private(run_dir, relative, text)
+    prefix = tmp_path / "trace" / "codex"
+    prefix.parent.mkdir()
+    overrides = [
+        "-c",
+        "mcp_servers.jotflow.enabled=false",
+        "-c",
+        "features.api_key_model_discovery=true",
+    ]
+    argv = [
+        "unshare",
+        "-rn",
+        *strace_argv(STRACE, prefix),
+        *plan.argv[:2],
+        *overrides,
+        *plan.argv[2:],
+    ]
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path / "home"),
+        "TMPDIR": str(run_dir),
+        "CODEX_API_KEY": "sk-gate-not-a-key",
+        **plan.env,
+    }
+    await _offline(argv, env, run_dir)
+    found = refused_contacts(trace_lines(prefix), ())
+    assert found != []
+
+
+# Start-up exactly as deployed (#290): no override, so OpenAI's default address. A
+# custom base address makes Codex skip fetches it makes only for the default one.
+MODEL_HOST = "api.openai.com"
+
+
+def _startup_names(tmp_path: Path, overrides: Sequence[str] = ()) -> dict[str, list[str]]:
+    """Run tests/codex_startup_trace.py offline, with every lookup made plain DNS to
+    a recording listener on 127.0.0.1, and return what Codex asked for."""
+    assert STRACE is not None
+    nsswitch = tmp_path / "nsswitch.conf"
+    nsswitch.write_text("hosts: files dns\n")
+    resolv = tmp_path / "resolv.conf"
+    resolv.write_text("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    script = (
+        'mount --bind "$1" /etc/nsswitch.conf && mount --bind "$2" /etc/resolv.conf'
+        ' && ip link set lo up && shift 2 && exec "$@"'
+    )
+    argv = [
+        "unshare",
+        "-rnm",
+        "sh",
+        "-c",
+        script,
+        "sh",
+        str(nsswitch),
+        str(resolv),
+        sys.executable,
+        "-m",
+        "tests.codex_startup_trace",
+        STRACE,
+        str(work),
+        *overrides,
+    ]
+    done = subprocess.run(
+        argv,
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    result: dict[str, list[str]] = json.loads(done.stdout.strip().splitlines()[-1])
+    return result
+
+
+@pytest.mark.skipif(
+    not REQUIRED and (STRACE is None or not _no_network_available()),
+    reason="needs strace and unshare -rn",
+)
+async def test_codex_as_deployed_asks_for_no_host_but_the_model(tmp_path: Path) -> None:
+    """With the preset's exact config, Codex looks up only OpenAI's API host, and
+    contacts nothing but the DNS listener. Offline, no model answer arrives, so this
+    covers everything Codex does before one; the fake-model test covers the rest."""
+    assert STRACE is not None and _no_network_available(), "needs strace and unshare -rn"
+    found = _startup_names(tmp_path)
+    assert found["names"] == [MODEL_HOST], found
+    assert found["refused"] == [], found["refused"]
+
+
+@pytest.mark.skipif(
+    not REQUIRED and (STRACE is None or not _no_network_available()),
+    reason="needs strace and unshare -rn",
+)
+async def test_the_start_up_trace_sees_the_model_catalog(tmp_path: Path) -> None:
+    """The control: with the model catalog forced back on (#284), the same run asks
+    for another host, so the test above would fail on it."""
+    found = _startup_names(tmp_path, ["-c", "features.api_key_model_discovery=true"])
+    assert set(found["names"]) - {MODEL_HOST}, found
 
 
 # The startup probe (#220, #274), with the real Codex

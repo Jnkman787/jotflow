@@ -9,8 +9,9 @@ it shows:
 - a scripted ``bash`` or ``read_mcp_resource`` call is refused and writes no file
 - Copilot ends by itself, and reaches JotFlow's MCP server
 - neither token reaches the model
-- under strace, Copilot connects to nothing but the fake model and JotFlow (no
-  DNS, flags, model list or experiments), with the network reachable
+- under strace, Copilot contacts nothing but the fake model and JotFlow (no DNS,
+  flags, model list or experiments), with the network reachable, and io_uring,
+  which strace can't see into, never starts
 
 It also pins two behaviours: an offered tool outside ``--allow-tool`` is denied
 without a prompt, and a read-only-hinted tool outside the kind's list is never
@@ -25,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -54,6 +54,7 @@ from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.server import PATH, McpServer, bound_socket, build_app
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.write_tools import write_tools
+from tests.outbound_trace import refused_contacts, strace_argv, trace_lines
 
 CH = "C0EXAMPLE1"
 POLICY = parse_policy(
@@ -64,20 +65,6 @@ GITHUB_TOKEN = "github_pat_gate"
 MODEL = "gpt-5.5"
 PROBE_FILE = "jotflow-copilot-probe"
 REFUSED = "does not exist"
-# Every call that names a destination: connect, and a datagram sent without one,
-# such as a DNS query, through sendto, sendmsg or sendmmsg.
-TRACED = "trace=connect,sendto,sendmsg,sendmmsg"
-_CALL = re.compile(r"^\d+\s+(connect|sendto|sendmsg|sendmmsg)\(")
-_ADDRESS = re.compile(r"\{(?P<addr>sa_family=[^}]*)\}")
-
-
-def destinations(lines: list[str]) -> list[str]:
-    """The socket addresses each traced call names, in order."""
-    return [m.group("addr") for line in lines if _CALL.match(line) for m in _ADDRESS.finditer(line)]
-
-
-_INET = re.compile(r'sa_family=AF_INET, sin_port=htons\((\d+)\), sin_addr=inet_addr\("([^"]+)"\)')
-
 REQUIRED = os.environ.get("JOTFLOW_REQUIRE_COPILOT") == "1"
 STRACE = shutil.which("strace")
 
@@ -121,18 +108,13 @@ def offered_for(kind: RunKind) -> list[str]:
     return sorted([f"jotflow-{t}" for t in served] + [f"github-{t}" for t in GITHUB_TOOLS[kind]])
 
 
-def _ours(address: str, ports: set[int]) -> bool:
-    inet = _INET.search(address)
-    return inet is not None and inet.group(2) == "127.0.0.1" and int(inet.group(1)) in ports
-
-
 @dataclass
 class GateRun:
     done: subprocess.CompletedProcess[str]
     api: FakeResponsesApi
     audit: str
     token: str
-    connects: list[str] | None
+    trace: list[str] | None
     allowed_ports: set[int]
     probe: Path
 
@@ -145,8 +127,9 @@ class GateRun:
         return result
 
     def strangers(self) -> list[str]:
-        """Every connection but the fake model's and JotFlow's, on loopback."""
-        return [a for a in self.connects or [] if not _ours(a, self.allowed_ports)]
+        """Every contact but the fake model's and JotFlow's on loopback, and any live
+        io_uring, through the codex gate's shared rules (#290)."""
+        return refused_contacts(self.trace or [], self.allowed_ports)
 
 
 Mutate = Callable[[list[str], dict[str, Any]], None]
@@ -177,7 +160,8 @@ async def gate_run(
     run_dir = tmp_path / "run"
     run_dir.mkdir(mode=0o700)
     probe = tmp_path / PROBE_FILE
-    trace = tmp_path / "connect.log"
+    prefix = tmp_path / "trace" / "strace"
+    prefix.parent.mkdir()
     try:
         context = RunContext(
             kind=kind,
@@ -211,7 +195,7 @@ async def gate_run(
                 "COPILOT_PROVIDER_API_KEY": "gate",
             }
             if STRACE is not None:
-                argv = [STRACE, "-f", "-qq", "-e", TRACED, "-o", str(trace), *argv]
+                argv = [*strace_argv(STRACE, prefix), *argv]
             done = await asyncio.to_thread(
                 subprocess.run,
                 argv,
@@ -224,11 +208,8 @@ async def gate_run(
             )
     finally:
         await server.stop()
-    connects = None
-    if STRACE is not None:
-        lines = trace.read_text().splitlines() if trace.exists() else []
-        connects = destinations(lines)
-    return GateRun(done, api, caplog.text, token, connects, {port, model_port}, probe)
+    trace = trace_lines(prefix) if STRACE is not None else None
+    return GateRun(done, api, caplog.text, token, trace, {port, model_port}, probe)
 
 
 def assert_clean(run: GateRun, kind: RunKind) -> None:
@@ -240,7 +221,7 @@ def assert_clean(run: GateRun, kind: RunKind) -> None:
     assert run.token not in sent and GITHUB_TOKEN not in sent
     assert not run.probe.exists()
     if STRACE is not None:
-        assert run.connects, "strace saw no connection at all"
+        assert any("connect(" in line for line in run.trace or []), "strace saw no connection"
         assert run.strangers() == [], run.strangers()
 
 
