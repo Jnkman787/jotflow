@@ -4,7 +4,7 @@
 
 - Issue: #59 (M6)
 - Draft PR: #285
-- Status: planning. The lead approved the plan on 2026-10-21 with the decisions below. Code waits for security
+- Status: implementing. The lead approved the plan on 2026-10-21 with the decisions below, and security approved it the same day with four conditions
 - Last verified: 2026-10-21, both CLIs in a throwaway build of `docker/Dockerfile.agent` from main, run with `--network none` against JotFlow's real MCP server and scripted fake model APIs
 - Next safe action: review
 
@@ -80,7 +80,7 @@ copilot -p <the kind's fixed prompt>
 - `COPILOT_HOME`, `COPILOT_OFFLINE` and the `XDG_*` names, which the preset sets
 - `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`, `COPILOT_EDITOR`, `OTEL_*` and `COPILOT_OTEL_*`
 
-This needs a small runner change: a preset's optional `refused_env` set, checked at startup like `run_kinds`.
+Security's condition 1 below makes this an allowlist instead, through a small runner change: a preset's optional `check_env()`, run at startup like `check_install()`.
 
 **Run kinds:** drafting, question and execution. A question run gets no GitHub server, as for every preset (#57).
 
@@ -108,7 +108,7 @@ This needs a small runner change: a preset's optional `refused_env` set, checked
 
 - **`CopilotPreset`** in `adapters/presets.py`, next to `CodexPreset`. `plan()` writes `mcp.json` in Copilot's shape: `type: "http"` with `headers` for JotFlow, and `type: "local"` with `command`, `args`, `env` and `tools` for GitHub. It returns the argv above, the env above, and `github_token_env=False`. `check_install()` checks the exact version. `default_models` is empty, and the runner refuses a copilot runner with no model. `run_kinds` is all three.
 - **Provider types.** The runner refuses a copilot runner whose `COPILOT_PROVIDER_TYPE` isn't `openai` or `azure`, and one with none set: an unset type is refused rather than left to Copilot's default.
-- **`refused_env`,** an optional preset member. The runner reads it at startup and refuses to start if `JOTFLOW_AGENT_ENV_ALLOW` names any of those names. Codex and claude-code don't set it.
+- **`check_env(allowed)`,** an optional preset member. The runner calls it at startup with `JOTFLOW_AGENT_ENV_ALLOW`'s names and the values the runner would pass, and refuses to start on a problem. For copilot it applies security's condition 1. Codex and claude-code don't set it.
 - **`PRESETS` and `EXPERIMENTAL`** gain `copilot`. `PARTIAL_PRESET_KINDS` is unchanged, because copilot serves every kind.
 - **The gate.** `tests/test_copilot_gate.py`, in a new "Copilot preset gate" CI job with the CLI from a lockfile in `.github/ci/copilot`. It reuses `FakeResponsesApi`, extended so its stream carries the full event sequence and the output in `response.completed`, which Copilot needs. For each of the three kinds it checks:
   - the exact offered set
@@ -129,6 +129,15 @@ The lead decided on 2026-10-21, following this plan's recommendations:
 
 So #59 is scoped to the copilot preset, and the implementation PR says Fixes #59.
 
+## Security's conditions
+
+Security approved on 2026-10-21, agreeing with all three decisions, on four conditions:
+
+1. **An allowlist of Copilot's names, not a denylist.** For the copilot preset, the runner refuses to start if `JOTFLOW_AGENT_ENV_ALLOW` names any `COPILOT_*` or `GH_*` name other than `COPILOT_PROVIDER_BASE_URL`, `COPILOT_PROVIDER_TYPE`, `COPILOT_PROVIDER_WIRE_API` and `COPILOT_PROVIDER_API_KEY`. That refuses `COPILOT_ALLOW_ALL`, `COPILOT_PROVIDER_API_KEY_COMMAND`, and whatever a later release adds, by construction. The provider type must be `openai` or `azure` and the wire API `responses`, checked at startup, failing closed.
+2. **No remote tool or config source.** One gate pass runs Copilot under `strace -f -e trace=connect`, with the network reachable, and fails on any connection except the gate's own loopback ports: no DNS, feature flags, model list or experiments. Tried in the lab on 2026-10-21: with `COPILOT_OFFLINE=true`, Copilot connected only to the MCP server and the fake model on 127.0.0.1. A positive control with a remote model URL showed the DNS lookups on port 53, so the trace sees them.
+3. **Execution is gated in CI, and never skipped there.** For execution, the gate shows the exact offered set, refused `bash` and `read_mcp_resource` calls, and no file written. Like codex's gate, a missing or wrong binary fails when `JOTFLOW_REQUIRE_COPILOT=1`, which the CI job sets.
+4. **The read-only-hint behaviour is pinned.** A gate case uses a server that lists an extra tool marked read-only, outside the kind's tools, and checks it's never offered under `--available-tools` and is refused if called. The threat model gains a row: the boundary is `--available-tools`, and any CLI upgrade reruns the gate.
+
 ## Risks and open questions
 
 1. **Decided: Copilot's own login is out for now (#287).** Most teams would use Copilot with their Copilot subscription, which is a GitHub token (`COPILOT_GITHUB_TOKEN`) for a licensed account. The runner refuses `*_TOKEN` and `GITHUB_*` names, rightly, so this plan supports only bring-your-own-key. Allowing a third GitHub token into the agent container would need its own review: what it can reach, and that `--disable-builtin-mcps` keeps it away from the model's tools. Proposed: BYOK only now, and a separate issue for the subscription login if teams ask.
@@ -140,12 +149,12 @@ So #59 is scoped to the copilot preset, and the implementation PR says Fixes #59
 ## Progress checklist
 
 - [x] The lead approves this plan and decides open questions 1, 2 and 5
-- [ ] Security approves it
+- [x] Security approves it, with the four conditions above
 - [x] Commit this plan and open the draft PR
 - [x] Open the follow-ups: #286 (Gemini), #287 (subscription login), #288 (Anthropic's API)
-- [ ] `CopilotPreset`, `refused_env` in the runner, and `PRESETS` and `EXPERIMENTAL`
-- [ ] Unit tests: argv and `mcp.json` pinned per kind, no run data in the prompt or argv, no token in argv or env, `check_install()`, a model required, `refused_env` refusals, and an end-to-end run with a fake CLI
-- [ ] The gate, its lockfile, and the CI job
+- [ ] `CopilotPreset`, `check_env()` in the runner, and `PRESETS` and `EXPERIMENTAL`
+- [ ] Unit tests: argv and `mcp.json` pinned per kind, no run data in the prompt or argv, no token in argv or env, `check_install()`, a model required, `check_env()` refusals, and an end-to-end run with a fake CLI
+- [ ] The gate, its lockfile, and the CI job, with all three kinds, the connect trace, and the read-only-hint case
 - [ ] The Dockerfile drops the musl binary when Copilot is installed
 - [ ] presets.md, agent-adapters.md, the threat model, the CHANGELOG
 - [ ] `jotflow replay --all --agent scripted` and `--execute` pass
