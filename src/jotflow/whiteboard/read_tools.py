@@ -146,7 +146,6 @@ class IssueFound(BaseModel):
 
     repo: str
     number: int
-    url: str
     state: Literal["open", "closed"]
     state_reason: Literal["completed", "not_planned", "reopened", "duplicate"] | None = Field(
         description="Why it was closed, or reopened; null if GitHub gives no reason"
@@ -547,7 +546,6 @@ def read_tools(
         return IssueFound(
             repo=entry.repo,
             number=found.number,
-            url=f"https://github.com/{entry.repo}/issues/{found.number}",
             state=found.state,
             state_reason=found.state_reason,
             title=UntrustedText(text=found.title),
