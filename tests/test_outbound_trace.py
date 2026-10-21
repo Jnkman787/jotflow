@@ -56,3 +56,15 @@ def test_trace_files_are_read_per_process(tmp_path: Path) -> None:
     assert trace_lines(prefix) == [MODEL, NSCD_MISSING]
     argv = strace_argv("/usr/bin/strace", prefix)
     assert argv[:3] == ["/usr/bin/strace", "-f", "-ff"] and argv[-2:] == ["-o", str(prefix)]
+
+
+def test_the_listener_reads_a_query_name_and_refuses_it() -> None:
+    from tests.codex_startup_trace import REFUSED, qname, refusal
+
+    query = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03api\x06openai\x03com\x00\x00\x01\x00\x01"
+    assert qname(query) == "api.openai.com"
+    answer = refusal(query)
+    assert answer[:2] == b"\x12\x34" and answer[3] & 0x0F == REFUSED and answer[2] & 0x80
+    assert answer[12:] == query[12:]
+    assert qname(b"\x00" * 5) is None and refusal(b"short") == b""
+    assert qname(b"\x00" * 12 + b"\xc0\x0c") is None

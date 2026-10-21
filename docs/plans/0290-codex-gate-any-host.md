@@ -3,17 +3,17 @@
 ## Links and status
 
 - Issue: #290 (M6), a follow-up to #284 (#289) and #220
-- Status: plan, for the reviewer's look before the second test is built. The first test and the trace parser are written and pass locally against the pinned Codex 0.163.0
+- Status: built. Both tests, the control and the parser pass locally against the pinned Codex 0.163.0 and strace 6.8
 - Last verified: 2026-10-21, against main
 
 ## Objective and done-when
 
 #289 showed that Codex fetched OpenAI's model catalog on every run, and that the catalog sets each model's tools. Its test proves that one fetch is gone. #290 asks for a gate that fails on any other remote source too, such as feature flags or a provider list, not only the one we know about.
 
-- [ ] Every contact Codex's whole process tree attempts is checked, refused or not, so a fetch that fails and falls back quietly still fails the gate
-- [ ] It covers Codex as a deployment runs it: OpenAI's own provider at its default address
-- [ ] It fails, never skips, when `JOTFLOW_REQUIRE_CODEX=1`, as in CI's gate job
-- [ ] presets.md and the threat model's Codex row say the gate checks for any outbound host
+- [x] Every contact Codex's whole process tree attempts is checked, refused or not, so a fetch that fails and falls back quietly still fails the gate
+- [x] It covers Codex as a deployment runs it: OpenAI's own provider at its default address
+- [x] It fails, never skips, when `JOTFLOW_REQUIRE_CODEX=1`, as in CI's gate job
+- [x] presets.md and the threat model's Codex row say the gate checks for any outbound host
 
 ## Why strace, and why two tests
 
@@ -27,6 +27,7 @@
 2. **Start-up, exactly as deployed** (to build). The preset's config with no override at all, in `unshare -rnm`, offline:
    - `/etc/nsswitch.conf` and `/etc/resolv.conf` are bind-mounted to `hosts: files dns` and `nameserver 127.0.0.1`, so every lookup is plain DNS, whatever the runner's own resolver setup
    - a small DNS listener on 127.0.0.1:53 inside the namespace records each name asked for and answers REFUSED
+   - JotFlow's MCP server is turned off for this run. It's required, and unreachable offline it would stop Codex before the model is asked for, so nothing would be seen
    - the gate requires that the only name asked for is `api.openai.com`, the model, and that no contact goes anywhere but that listener
    - this sees everything before the first model answer, which can't arrive offline. Test 1 covers the run after it
 
@@ -47,5 +48,5 @@ The gate job installs `strace` from Ubuntu's archive with `apt-get install --no-
 - [x] The trace parser, with unit tests on real strace lines
 - [x] Test 1, behaviour with the fake model, for drafting and question
 - [ ] The reviewer's look at this plan
-- [ ] Test 2, start-up exactly as deployed, with its control
-- [ ] CI installs strace; docs; `make check`
+- [x] Test 2, start-up exactly as deployed, with its control
+- [x] CI installs strace; docs; `make check`

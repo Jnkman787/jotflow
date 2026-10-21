@@ -144,6 +144,12 @@ Codex keeps its state, logs, and memory databases in `CODEX_HOME`, so the runner
 
 A further test runs Codex with this config and OpenAI's own provider, as a deployment does, but in a network namespace with no network. It shows Codex never tries to fetch the remote model catalog, and that it would with `api_key_model_discovery` on. The CI job allows unprivileged namespaces for it.
 
+**No host but the model (#290).** The gate also runs Codex under `strace` and checks every contact its whole process tree attempts, refused or not, so a fetch that fails and quietly falls back still fails the gate. It does this twice:
+- **Against the fake model,** with OpenAI's own provider pointed at it, for drafting and question, every contact must be the fake model or JotFlow's MCP server on loopback, and the fake model must be asked for `/v1/responses` only.
+- **Exactly as deployed,** with no override, offline, with every lookup made plain DNS to a recording listener. The only host Codex may ask for is `api.openai.com`. A custom base address makes Codex skip fetches it makes only for OpenAI's default address, so this run is needed too. It sees everything before the first model answer, which can't arrive offline.
+
+A control run with the model catalog forced on must ask for another host, so the gate is shown to catch the fetch #284 removed. A new host in a later Codex release fails the gate until it's deliberately allowed. The CI job installs `strace` from Ubuntu's archive.
+
 Codex talks only to `jotflow.testing.fake_responses_api` on 127.0.0.1, so it costs nothing. Further tests show a code-mode model would get `exec` and `spawn_agent`, that the startup probe passes `gpt-5.5` and refuses `gpt-6.1-sol`, and that the pinned GitHub server, fetched by the same checksum as the image, serves no repository content.
 
 **What was checked, on 2026-10-19,** without a model call. Codex 0.163.0 ran this preset's own config against a local fake model API that records the request, with JotFlow's real MCP server and github-mcp-server 2.0.2:

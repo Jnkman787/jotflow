@@ -410,6 +410,79 @@ async def test_the_trace_sees_a_contact_codex_would_make(tmp_path: Path) -> None
     assert found != []
 
 
+# Start-up exactly as deployed (#290): no override, so OpenAI's default address. A
+# custom base address makes Codex skip fetches it makes only for the default one.
+MODEL_HOST = "api.openai.com"
+
+
+def _startup_names(tmp_path: Path, overrides: Sequence[str] = ()) -> dict[str, list[str]]:
+    """Run tests/codex_startup_trace.py offline, with every lookup made plain DNS to
+    a recording listener on 127.0.0.1, and return what Codex asked for."""
+    assert STRACE is not None
+    nsswitch = tmp_path / "nsswitch.conf"
+    nsswitch.write_text("hosts: files dns\n")
+    resolv = tmp_path / "resolv.conf"
+    resolv.write_text("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    script = (
+        'mount --bind "$1" /etc/nsswitch.conf && mount --bind "$2" /etc/resolv.conf'
+        ' && ip link set lo up && shift 2 && exec "$@"'
+    )
+    argv = [
+        "unshare",
+        "-rnm",
+        "sh",
+        "-c",
+        script,
+        "sh",
+        str(nsswitch),
+        str(resolv),
+        sys.executable,
+        "-m",
+        "tests.codex_startup_trace",
+        STRACE,
+        str(work),
+        *overrides,
+    ]
+    done = subprocess.run(
+        argv,
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    result: dict[str, list[str]] = json.loads(done.stdout.strip().splitlines()[-1])
+    return result
+
+
+@pytest.mark.skipif(
+    not REQUIRED and (STRACE is None or not _no_network_available()),
+    reason="needs strace and unshare -rn",
+)
+async def test_codex_as_deployed_asks_for_no_host_but_the_model(tmp_path: Path) -> None:
+    """With the preset's exact config, Codex looks up only OpenAI's API host, and
+    contacts nothing but the DNS listener. Offline, no model answer arrives, so this
+    covers everything Codex does before one; the fake-model test covers the rest."""
+    assert STRACE is not None and _no_network_available(), "needs strace and unshare -rn"
+    found = _startup_names(tmp_path)
+    assert found["names"] == [MODEL_HOST], found
+    assert found["refused"] == [], found["refused"]
+
+
+@pytest.mark.skipif(
+    not REQUIRED and (STRACE is None or not _no_network_available()),
+    reason="needs strace and unshare -rn",
+)
+async def test_the_start_up_trace_sees_the_model_catalog(tmp_path: Path) -> None:
+    """The control: with the model catalog forced back on (#284), the same run asks
+    for another host, so the test above would fail on it."""
+    found = _startup_names(tmp_path, ["-c", "features.api_key_model_discovery=true"])
+    assert set(found["names"]) - {MODEL_HOST}, found
+
+
 # The startup probe (#220, #274), with the real Codex
 
 
