@@ -88,6 +88,8 @@ class FakeMessagesApi:
 
     def __init__(self, first: Mapping[str, Any] | None = None) -> None:
         self.requests: list[dict[str, Any]] = []
+        # Each request's headers, lowercased, in the same order: anthropic-beta among them.
+        self.headers: list[dict[str, str]] = []
         self._first = dict(first) if first is not None else text()
         api = self
 
@@ -98,6 +100,7 @@ class FakeMessagesApi:
                 size = int(self.headers.get("content-length") or 0)
                 body = json.loads(self.rfile.read(size) or b"{}")
                 api.requests.append(body)
+                api.headers.append({k.lower(): v for k, v in self.headers.items()})
                 block = text() if _answered(body) or not body.get("tools") else api._first
                 if body.get("stream"):
                     payload, kind = _stream(body.get("model"), block), "text/event-stream"
@@ -133,6 +136,15 @@ class FakeMessagesApi:
     @property
     def port(self) -> int:
         return int(self._server.server_address[1])
+
+    def betas(self) -> set[str]:
+        """Every ``anthropic-beta`` value any request asked for."""
+        return {
+            beta.strip()
+            for headers in self.headers
+            for beta in headers.get("anthropic-beta", "").split(",")
+            if beta.strip()
+        }
 
     def offered_tools(self) -> list[str]:
         """The tools offered in the first request that offered any, by name."""

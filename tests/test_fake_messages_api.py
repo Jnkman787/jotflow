@@ -65,3 +65,15 @@ def test_a_list_of_text_parts_is_read_as_one_result() -> None:
         post(api, {"model": "m", "messages": [result]})
     assert api.tool_outputs() == ["a b"]
     assert api.port == int(api.base_url.rsplit(":", 1)[1])
+
+
+def test_betas_are_read_from_every_request() -> None:
+    with FakeMessagesApi() as api:
+        httpx2.post(
+            f"{api.base_url}/v1/messages",
+            json={"model": "m", "messages": []},
+            headers={"anthropic-beta": "one-2026-01-01, two-2026-02-02"},
+            timeout=10,
+        )
+        post(api, {"model": "m", "messages": []})
+    assert api.betas() == {"one-2026-01-01", "two-2026-02-02"}

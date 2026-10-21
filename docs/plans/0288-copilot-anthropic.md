@@ -68,16 +68,17 @@ Security approved on 2026-10-21.
 - [x] The lead and security approve this plan
 - [x] Commit this plan and open the draft PR
 - [x] `FakeMessagesApi`, with its own unit tests
-- [ ] The provider-side checks: plain client tools only, no `mcp_servers` or `container`, pinned `anthropic-beta` values, and no hosted tool types on the Responses wire
-- [ ] The gate parametrized over both wires
-- [ ] `check_env()` and its tests
-- [ ] presets.md, the threat-model row, the CHANGELOG
+- [x] The provider-side checks: plain client tools only, no `mcp_servers` or `container`, pinned `anthropic-beta` values, and no hosted tool types on the Responses wire
+- [x] The gate parametrized over both wires
+- [x] `check_env()` and its tests
+- [x] presets.md, the threat-model row, the CHANGELOG
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
 
 - The lab run above.
-- Once built: the gate in CI, and `make check`.
+- The gate passed all 21 cases, both wires, in a container like CI's, with `JOTFLOW_REQUIRE_COPILOT=1` and strace.
+- Unit tests show the provider-side checks fire on a hosted tool, a code-execution tool, `mcp_servers`, `container`, a tool with no schema, and an unreviewed beta.
 
 ## Handoff notes
 
