@@ -34,6 +34,7 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 | `list_topics` | Active topics for a channel with ids, titles, linked issues |
 | `get_topic` | A topic's linked Slack messages and issue state |
 | `get_work` | The run's packet: thread text, the active topic index, and related-thread excerpts for a drafting or question run; only the approved structured proposal for an execution run |
+| `get_issue` | Question runs only: one issue in one of the run's channel repos, by number. State, close reason, title and labels marked untrusted, comment count and last update; never the body or comments. Read through the drafting runner, at most 5 a run (#273) |
 | `propose_issue` | Structured draft: repo, title, body, labels, assignees, size |
 | `propose_update` | Structured change to an existing issue: body edit, comment, label or assignee change |
 | `link_message` | Associate a Slack message with a topic, or mark it as chatter |
@@ -49,7 +50,7 @@ Every call carries a token, and what a token may do depends on who holds it:
 |---|---|---|
 | Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel`, and `list_repo_docs` and `read_repo_doc` when a repo sets `read_paths` |
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
-| Question run (D12, #57) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `answer` (once, in the source thread only) |
+| Question run (D12, #57) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `get_issue` (this channel's repos only, #273), `answer` (once, in the source thread only) |
 | Operator token (M5, D12, #58) | One person, named channels, admin-issued and revocable | `list_topics`, `get_topic` only: no `get_work`, no write, approval or result tool |
 
 Tokens are short-lived for runs and revocable for operators. The server validates `Host` and `Origin` headers so a web page cannot reach it from a browser.
@@ -224,7 +225,7 @@ People never need syntax: a plain message is classified by the agent. Keywords l
 | `idea:`, `bug:` | Agent, as a hint | Suggests the kind of issue. The agent may overrule it; the card says when it does. |
 | `re:` | JotFlow | Attaches the message to an existing topic or issue in this channel's repos. `re: 42` when unambiguous, `re: web#42` otherwise. |
 | `skip:` | JotFlow | Marks the message as not an idea. Its text is kept out of agent packets. On a top-level message it covers the whole thread. |
-| `ask:`, or an @-mention of the bot | Question run | A question answered once in the thread from this channel's topics and from `/jotflow help` (D12, #57). A question run has no GitHub access: its answer posts without approval, and the shared read token reaches repos that feed other channels. Only this workspace's own members can ask. The answer is plain text, labelled as the agent's, with no links, pings, or other repos' references. The asking message is marked as the agent's chatter, so it is never drafted. |
+| `ask:`, or an @-mention of the bot | Question run | A question answered once in the thread from this channel's topics and from `/jotflow help` (D12, #57). A question run has no GitHub access of its own: its answer posts without approval, and the shared read token reaches repos that feed other channels. Its one GitHub read is `get_issue`, which JotFlow serves through the drafting runner for one issue in the asking channel's repos (#273). Only this workspace's own members can ask. The answer is plain text, labelled as the agent's, with no links, pings, or other repos' references. The asking message is marked as the agent's chatter, so it is never drafted. |
 
 Post-v1: `hold:` and `go:` to lengthen or shorten the wait before drafting, and `new:` to split a reply off into its own topic.
 

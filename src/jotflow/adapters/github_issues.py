@@ -27,11 +27,13 @@ from jotflow.adapters.github_repos import API, GithubError, _page
 from jotflow.models import (
     MAX_ISSUE_SOURCES,
     MAX_MARKED_ISSUES,
+    IssueDetails,
     IssueSource,
     MarkedIssue,
     MarkedIssues,
     is_bare_repo_name,
     is_owner_name,
+    is_plain_label,
 )
 from jotflow.store.titles import clean_title
 
@@ -150,3 +152,72 @@ async def token_login(token: str, *, http: httpx2.AsyncClient, api: str = API) -
     ):
         raise GithubError("GitHub's answer had no login")
     return login
+
+
+# --- one issue's details, for a question run (#273) -------------------------------------------
+
+ISSUE_TITLE_LENGTH = 120
+MAX_ISSUE_BYTES = 256 * 1024
+MAX_LABELS = 20
+
+
+def issue_details_from(item: object) -> IssueDetails | None:
+    """The fields a question may see, or None for a pull request or something unexpected."""
+    if not isinstance(item, dict) or "pull_request" in item:
+        return None
+    raw_title = item.get("title")
+    try:
+        title = clean_title(raw_title if isinstance(raw_title, str) else "", ISSUE_TITLE_LENGTH)
+    except ValueError:
+        title = f"#{item.get('number')}"
+    labels: list[str] = []
+    for label in item.get("labels") or []:
+        name = label.get("name") if isinstance(label, dict) else None
+        if isinstance(name, str) and is_plain_label(name) and name not in labels:
+            labels.append(name)
+        if len(labels) >= MAX_LABELS:
+            break
+    try:
+        # Through JSON, so the strict model reads the timestamp as GitHub sends it.
+        return IssueDetails.model_validate_json(
+            json.dumps(
+                {
+                    "number": item.get("number"),
+                    "state": item.get("state"),
+                    "state_reason": item.get("state_reason"),
+                    "title": title,
+                    "labels": labels,
+                    "comments": item.get("comments"),
+                    "updated_at": item.get("updated_at"),
+                }
+            )
+        )
+    except (ValidationError, TypeError, ValueError):
+        raise GithubError("GitHub's issue had an unexpected shape") from None
+
+
+async def issue_details(
+    owner: str, name: str, number: int, token: str, *, http: httpx2.AsyncClient, api: str = API
+) -> IssueDetails | None:
+    """One issue's details, or None when there is no such issue (or it is a pull request).
+
+    A rate limit raises :class:`RateLimited`, never None: it says nothing about
+    whether the issue exists. A transferred issue's 301 isn't followed, so it
+    raises :class:`GithubError`.
+    """
+    if not is_owner_name(owner) or not is_bare_repo_name(name) or not 1 <= number <= 10**9:
+        raise GithubError("not a GitHub issue")
+    url = f"{api}/repos/{owner}/{name}/issues/{number}"
+    status, body = await _page(http, url, token, MAX_ISSUE_BYTES)
+    if status in (404, 410):
+        return None
+    if status != 200 or len(body) > MAX_ISSUE_BYTES:
+        raise GithubError(f"GitHub answered {status}")
+    try:
+        item = json.loads(body)
+    except ValueError:
+        raise GithubError("GitHub's answer was not JSON") from None
+    details = issue_details_from(item)
+    if details is not None and details.number != number:
+        raise GithubError("GitHub's answer was for another issue")
+    return details

@@ -772,6 +772,34 @@ def build_runner_app(
         )
         return JSONResponse(found.model_dump(mode="json"))
 
+    async def one_issue(request: Request) -> Response:
+        # A question run's one issue (#273): the read token, path parameters only.
+        if config.read_token is None:
+            return JSONResponse({"error": "issue details are the drafting runner's"}, 404)
+        owner, name = request.path_params["owner"], request.path_params["name"]
+        raw = request.path_params["number"]
+        if (
+            not is_owner_name(owner)
+            or not is_bare_repo_name(name)
+            or not re.fullmatch(r"[1-9][0-9]{0,9}", raw)
+            or int(raw) > 10**9
+        ):
+            return JSONResponse({"error": "not a GitHub issue"}, status_code=400)
+        try:
+            found = await github_issues.issue_details(
+                owner, name, int(raw), config.read_token, http=http, api=config.github_api
+            )
+        except github_repos.RateLimited:
+            # Never "not found": a rate limit says nothing about the issue.
+            log.warning("issue %s/%s#%s: GitHub's rate limit", owner, name, raw)
+            return JSONResponse({"error": "GitHub is rate limiting the read token"}, 503)
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("issue %s/%s#%s failed: %s", owner, name, raw, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        if found is None:
+            return JSONResponse({"error": "no such issue"}, status_code=404)
+        return JSONResponse(found.model_dump(mode="json"))
+
     async def identity(_: Request) -> Response:
         # The write token's own login, so JotFlow trusts only issues it wrote (#256).
         if config.write_token is None:
@@ -926,6 +954,7 @@ def build_runner_app(
             Route("/identity", identity, methods=["GET"]),
             Route("/repos/{owner}", repos, methods=["GET"]),
             Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
+            Route("/repos/{owner}/{name}/issues/{number}", one_issue, methods=["GET"]),
         ]
     )
     return RunnerGate(app, secret=config.secret, allowed_hosts=config.allowed_hosts)

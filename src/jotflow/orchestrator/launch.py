@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 from collections.abc import Collection
@@ -44,6 +45,7 @@ from jotflow.config import Settings
 from jotflow.doc_paths import MAX_FILE_BYTES
 from jotflow.models import (
     DiscoveredRepo,
+    IssueDetails,
     MarkedIssues,
     Run,
     RunKind,
@@ -108,6 +110,13 @@ class RunnerError(Exception):
     def __init__(self, reason: str, *, retry: str | None = None) -> None:
         super().__init__(reason)
         self.retry = retry
+
+
+class GithubBusy(RunnerError):
+    """GitHub couldn't be asked right now: rate limited or failing (#273).
+
+    Never a "not found": it says nothing about whether the issue exists.
+    """
 
 
 def _refused(status: int) -> RunnerError:
@@ -222,6 +231,19 @@ class AccessWire(BaseModel):
 
 # The largest marked-issue list JotFlow reads from a runner (#256).
 MAX_MARKED_BYTES = 8_000_000
+# The largest single issue's details (#273).
+MAX_ISSUE_BYTES = 64 * 1024
+# The drafting runner's reply when GitHub has no such issue (#273).
+NO_SUCH_ISSUE_REPLY = {"error": "no such issue"}
+
+
+def _json_or_none(content: bytes) -> object:
+    if len(content) > 1024:
+        return None
+    try:
+        return json.loads(content)
+    except ValueError:
+        return None
 
 
 class IdentityWire(BaseModel):
@@ -376,6 +398,41 @@ class RunnerClient:
             except ValueError:
                 cleaned.append(issue.model_copy(update={"title": f"#{issue.number}"}))
         return found.model_copy(update={"issues": tuple(cleaned)})
+
+    async def issue(self, owner: str, name: str, number: int) -> IssueDetails | None:
+        """One issue's details from the drafting runner, or None if there's no such issue.
+
+        Raises :class:`GithubBusy` for a rate limit or GitHub failing, never None.
+        The reply is checked strictly, and the title cleaned again.
+        """
+        if not is_owner_name(owner) or not is_bare_repo_name(name) or not 1 <= number <= 10**9:
+            raise RunnerError("not a GitHub issue")
+        response = await self._call(
+            "GET", RunKind.DRAFTING, f"/repos/{owner}/{name}/issues/{number}"
+        )
+        if response.status_code == 404:
+            # Only the runner's own answer is a miss: a 404 for a missing route or
+            # a runner without the read token says nothing about the issue.
+            if _json_or_none(response.content) == NO_SUCH_ISSUE_REPLY:
+                return None
+            raise RunnerError("the runner can't look up issues")
+        if response.status_code in (502, 503):
+            raise GithubBusy("GitHub couldn't be asked right now")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_ISSUE_BYTES:
+            raise RunnerError("the runner's issue was too large")
+        try:
+            details = IssueDetails.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not an issue") from None
+        if details.number != number:
+            raise RunnerError("the runner's reply was for another issue")
+        try:
+            title = clean_title(details.title, 120)
+        except ValueError:
+            title = f"#{number}"
+        return details.model_copy(update={"title": title})
 
     async def write_login(self) -> str:
         """The execution runner's write token's own login (#256)."""

@@ -147,6 +147,45 @@ class MarkedIssue(BaseModel):
         return value
 
 
+class IssueDetails(BaseModel):
+    """One issue, as a question run may see it (#273): no body, no comments, no people.
+
+    The title and labels are GitHub's text: the title is cleaned like a topic
+    title, and each label name passes the label rule. Both are untrusted.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    number: int = Field(ge=1, le=10**9)
+    state: Literal["open", "closed"]
+    state_reason: Literal["completed", "not_planned", "reopened", "duplicate"] | None = None
+    title: str = Field(min_length=1, max_length=120)
+    labels: tuple[str, ...] = Field(default=(), max_length=20)
+    comments: int = Field(ge=0, le=10**7)
+    updated_at: AwareDatetime
+
+    @field_validator("labels")
+    @classmethod
+    def _label_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not all(is_plain_label(label) for label in value):
+            raise ValueError("a label name is not one JotFlow accepts")
+        return value
+
+
+def is_plain_label(name: str) -> bool:
+    """A GitHub label a question may see (#273): a valid label name that cleaning leaves
+    as it is, so no Slack markup, mention or link."""
+    from jotflow.policy import label_problem
+    from jotflow.store.titles import clean_title
+
+    if label_problem(name) is not None:
+        return False
+    try:
+        return clean_title(name, 50) == name
+    except ValueError:
+        return False
+
+
 class MarkedIssues(BaseModel):
     """The drafting runner's answer for one repo's marked issues (#256)."""
 

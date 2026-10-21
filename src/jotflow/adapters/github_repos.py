@@ -38,6 +38,10 @@ class GithubError(Exception):
     """GitHub answered with something other than what was asked for."""
 
 
+class RateLimited(GithubError):
+    """GitHub's rate limit: it says nothing about the thing asked for (#236, #273)."""
+
+
 @dataclass
 class Listing:
     """An owner's repos, and what was left out on the way."""
@@ -91,7 +95,7 @@ async def _page(http: httpx2.AsyncClient, url: str, token: str, budget: int) -> 
     """
     async with http.stream("GET", url, headers=_headers(token)) as response:
         if _rate_limited(response):
-            raise GithubError("GitHub's rate limit")
+            raise RateLimited("GitHub's rate limit")
         body = b""
         async for chunk in response.aiter_bytes():
             body += chunk

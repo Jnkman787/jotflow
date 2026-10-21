@@ -47,6 +47,7 @@ from jotflow.config import Settings
 from jotflow.models import (
     ChannelMode,
     DiscoveredRepo,
+    IssueDetails,
     ProposalRecord,
     RunKind,
     expected_runner_preset,
@@ -66,7 +67,7 @@ from jotflow.orchestrator.help import BoltHelpSlack, HelpHandler, HelpSlack
 from jotflow.orchestrator.identity import LinkCommand, Notifier, PeopleLookup, SlackNote
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, Decision
 from jotflow.orchestrator.keyword_handler import BoltKeywordSlack, KeywordHandler, KeywordSlack
-from jotflow.orchestrator.launch import RunnerClient, RunnerError, RunSupervisor
+from jotflow.orchestrator.launch import GithubBusy, RunnerClient, RunnerError, RunSupervisor
 from jotflow.orchestrator.modes import AutoApprover, BoltModeSlack, ModeCommand, ModeSlack
 from jotflow.orchestrator.notices import GiveUpNotice
 from jotflow.orchestrator.packet import BoltSlackReader, SlackWorkSource
@@ -92,7 +93,7 @@ from jotflow.whiteboard.doc_tools import (
     probe_docs,
 )
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
-from jotflow.whiteboard.read_tools import read_tools
+from jotflow.whiteboard.read_tools import IssueReader, IssueUnavailable, read_tools
 from jotflow.whiteboard.tokens import TokenCheck, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
 from jotflow.whiteboard.write_tools import write_tools
@@ -100,6 +101,26 @@ from jotflow.whiteboard.write_tools import write_tools
 log = logging.getLogger("jotflow.orchestrator")
 
 FLUSH_SECONDS = 1.0
+
+
+class RunnerIssues:
+    """get_issue's reader: the drafting runner, with every failure as "unavailable" (#273).
+
+    A rate limit or a runner fault never reads as "no such issue".
+    """
+
+    def __init__(self, runner: RunnerClient) -> None:
+        self._runner = runner
+
+    async def issue(self, owner: str, name: str, number: int) -> IssueDetails | None:
+        try:
+            return await self._runner.issue(owner, name, number)
+        except GithubBusy:
+            log.info("get_issue: GitHub couldn't be asked right now")
+            raise IssueUnavailable from None
+        except RunnerError as failed:
+            log.warning("get_issue: the runner failed: %s", failed)
+            raise IssueUnavailable from None
 
 
 class Server(Protocol):
@@ -346,6 +367,12 @@ class Orchestrator:
             return None
         return self._runner
 
+    def _issue_reader(self) -> IssueReader | None:
+        """The drafting runner, when question runs are on, for get_issue (#273)."""
+        if self._runner is None or RunKind.QUESTION not in self.kinds.on:
+            return None
+        return RunnerIssues(self._runner)
+
     def _doc_source(self) -> DocSource | None:
         """The drafting runner, when it's on, for reading repo docs (#209)."""
         if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
@@ -463,6 +490,7 @@ class Orchestrator:
                 source,
                 attribution=SlackAttribution(slack_people, people.name),
                 repos=self.repos,
+                issues=self._issue_reader,
             ),
             *write_tools(self._store, self._policy, poster, repos=self.repos, docs=doc_reads),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
