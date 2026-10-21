@@ -550,7 +550,7 @@ def codex_config(kind: RunKind, tmp_path: Path, model: str | None = None) -> dic
 def test_codex_is_a_preset_on_equal_terms() -> None:
     assert parse_preset("codex") is presets.CODEX
     # The maintainer dropped codex's experimental label on 2026-10-19 (#41).
-    assert frozenset() == presets.EXPERIMENTAL
+    assert "codex" not in presets.EXPERIMENTAL
     assert "claude-code" not in presets.EXPERIMENTAL
 
 

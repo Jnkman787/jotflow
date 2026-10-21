@@ -2,7 +2,7 @@
 
 To add a preset of your own, or check one, see [agent-adapters.md](agent-adapters.md).
 
-A preset is how the agent container's runner starts an agent CLI for one run. JotFlow ships two, `claude-code` and `codex`, and the team picks one; `jotflow init` offers both. Setup names the preset in `agent.env` and `agent-exec.env`, or by hand:
+A preset is how the agent container's runner starts an agent CLI for one run. JotFlow ships `claude-code` and `codex`, which `jotflow init` offers, and the experimental `copilot`, set by hand. The team picks one. Setup names the preset in `agent.env` and `agent-exec.env`, or by hand:
 
 ```
 JOTFLOW_AGENT_PRESET=claude-code
@@ -14,6 +14,7 @@ The preset sets the CLI's flags, the MCP config, which tools each run kind may u
 |---|---|---|---|
 | `claude-code` | Claude Code, `@anthropic-ai/claude-code` | 2.1.303, 2026-10-18 | github-mcp-server 2.0.2 |
 | `codex` | Codex CLI, `@openai/codex` | 0.163.0, 2026-10-19, by the CI tool-set gate; no real-model pass recorded yet | github-mcp-server 2.0.2 |
+| `copilot` (experimental) | GitHub Copilot CLI, `@github/copilot` | 1.0.101, 2026-10-21, by the CI tool-set gate; no real-model pass recorded yet | github-mcp-server 2.0.2 |
 
 ## claude-code
 
@@ -166,3 +167,63 @@ The `apply_patch` refusal is already shown, by the gate. Whether Codex fetches m
 
 **Codex's MCP resource tools** would let a drafting run read repository files if a server served them, and with `read_paths` (#209) the read token can read any file in any repo it reaches, not only the allowed paths. A question run has no GitHub server (#57). Codex can't turn those tools off. But nothing behind them serves a repository file: JotFlow's own server declares no resources, and the GitHub server, started with this preset's `--read-only --tools` flags, registers no `repo://` templates and refuses a repository read without making a network call. The runner checks that at every start, starting the server with its own read token as a run would, since the server can register more for a token that allows more. It refuses to start if either list offers anything but the server's own `ui://` pages, if a list runs past one page, or if an answer can't be read. CI runs the same check against the pinned binary with a token that has Contents: Read. So `read_paths` works with `codex` too (#274). A later GitHub server release that served repository content would stop the runner, failing closed. Execution never runs on Codex, so the write token never meets them. Files the drafting run does read, through JotFlow's own doc tools within `read_paths`, are untrusted text, like Slack messages. The drafting instructions treat every field and tool result outside JotFlow's own instructions as data, and drafts still need approval.
 
+## copilot
+
+**Experimental.** The runner's startup line says `(experimental)`. The security gate below runs Copilot CLI 1.0.101 on every pull request, for every run kind. A real-model pass, `jotflow replay --agent copilot`, hasn't been recorded yet.
+
+**Every run kind.** Copilot offers the model only the tools the preset lists, with no MCP resource-read tools, so unlike codex it can serve execution as well as drafting and question runs.
+
+**The model login is your own provider's API key, never a GitHub login.** Copilot runs in its offline mode, which turns off its GitHub sign-in, telemetry, web tools, its own GitHub MCP server and updates, and talks to the model provider you name. A Copilot subscription login would mean a third GitHub token in the agent container, which the runner refuses; #287 discusses it. Set all four of these in the agent env file, and list them in `JOTFLOW_AGENT_ENV_ALLOW`:
+
+```
+COPILOT_PROVIDER_BASE_URL=https://api.openai.com/v1
+COPILOT_PROVIDER_TYPE=openai
+COPILOT_PROVIDER_WIRE_API=responses
+COPILOT_PROVIDER_API_KEY=<your key>
+JOTFLOW_AGENT_ENV_ALLOW=COPILOT_PROVIDER_BASE_URL,COPILOT_PROVIDER_TYPE,COPILOT_PROVIDER_WIRE_API,COPILOT_PROVIDER_API_KEY
+JOTFLOW_AGENT_PRESET=copilot
+JOTFLOW_AGENT_MODEL=<a model your provider serves>
+```
+
+**The runner fails closed.** It refuses to start unless all of these hold:
+- `copilot --version` prints exactly 1.0.101.
+- A model is named for every kind the runner serves. With your own provider, there's no default.
+- The provider type is `openai` or `azure`, the wire API is `responses`, and the base URL is `https://`. The gate fakes only that wire. #288 adds Anthropic's.
+- No other `COPILOT_*`, `XDG_*` or `OTEL_*` name is in `JOTFLOW_AGENT_ENV_ALLOW`. Only the four provider names may pass. So `COPILOT_ALLOW_ALL`, which would trust the working directory and its hooks, and `COPILOT_PROVIDER_API_KEY_COMMAND`, which runs a shell command, are refused, and so is any name a later release adds.
+
+**Install it.** The published agent image doesn't include Copilot. Build your own, with Copilot next to any CLI your other runner needs, such as `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @github/copilot@1.0.101"`. The image keeps only Copilot's glibc binary, about 190 MB.
+
+**The command,** for a run of each kind:
+
+```
+copilot -p <the kind's fixed prompt>
+  --additional-mcp-config @<run dir>/mcp.json
+  --disable-builtin-mcps --no-custom-instructions --no-ask-user
+  --no-auto-update --disable-client-telemetry --log-level none
+  --model <model>
+  --allow-tool jotflow(<tool>) ... --allow-tool github(<tool>) ...
+  --available-tools jotflow-<tool> ... github-<tool> ...
+```
+
+The command carries no run data. `mcp.json` (0600) holds the JotFlow server, with the run's token as an `Authorization` header, and the pinned GitHub server, with the GitHub token in its own environment. Each server is limited to the kind's tools, and a question run gets no GitHub server.
+
+**How tools are limited, and why `--available-tools` is the boundary.**
+- `--available-tools` is the exact set the model is offered. Without it, Copilot 1.0.101 offers 18 built-ins, including `bash`, `apply_patch`, `view`, `web_fetch`, `sql` and its agent tools.
+- `--allow-tool` lets each listed tool run without a prompt. An offered tool that isn't allowed is denied with "no one to approve", and the run goes on.
+- Copilot runs an offered tool marked read-only even when it isn't in `--allow-tool`. So the boundary is `--available-tools`, and the gate pins that a read-only tool outside the kind is never offered.
+- A tool JotFlow doesn't serve, such as the doc tools without `read_paths`, only prints a notice.
+
+**State and transcripts.** Copilot always writes a session. The preset points `COPILOT_HOME` and the `XDG_*` directories into the run directory, so its session, logs and caches are removed with the run, and nothing is written to `HOME`. Memory is off, since prompt mode needs `--enable-memory` for it.
+
+**The security gate.** `tests/test_copilot_gate.py` runs in CI's "Copilot preset gate" job, with Copilot 1.0.101 from `.github/ci/copilot`'s lockfile, and fails rather than skips there. Copilot runs this preset's own command and config against `jotflow.testing.fake_responses_api` on 127.0.0.1, with JotFlow's real MCP server. For drafting, question and execution runs it checks:
+- the model is offered exactly the kind's tools
+- scripted `bash` and `read_mcp_resource` calls are refused as "does not exist", and no file is written
+- Copilot ends by itself, and JotFlow's audit shows it listed the tools
+- neither token reaches the model
+- under `strace`, with the network reachable, Copilot contacts nothing but the fake model and JotFlow: no DNS lookup, feature flags, model list or experiments. It uses the codex gate's shared rules in `tests/outbound_trace.py`, and the job turns io_uring off, as Docker's default seccomp does in the agent containers, since strace can't see a connect sent through it. An `io_uring_setup` that succeeds fails the gate
+
+It also checks that an allowed tool runs without a prompt, an offered tool outside `--allow-tool` is denied without one, and a read-only tool outside the kind is never offered.
+
+**Not yet confirmed.** These need a real model run: how a real model uses the tools, and whether an Azure endpoint behaves like OpenAI's. Any Copilot upgrade reruns the gate, as for every pinned CLI.
+
+**Gemini CLI** isn't a preset yet. It can be locked down the same way, but every release so far speaks MCP 2025-11-25 at most, and JotFlow serves only 2026-07-28. #286 has the details.

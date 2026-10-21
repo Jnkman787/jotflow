@@ -201,7 +201,10 @@ async def _one_with_agent(
         thread_ref=ref,
         time_limit=getattr(args, "time_limit", DEFAULT_TIME_LIMIT),
         models=(
-            {RunKind.EXECUTION if getattr(args, "execute", False) else RunKind.DRAFTING: model}
+            {RunKind.EXECUTION: model}
+            if model and getattr(args, "execute", False)
+            # Both conversation kinds, since a fixture's question runs need one too (#59).
+            else dict.fromkeys((RunKind.DRAFTING, RunKind.QUESTION), model)
             if model
             else {}
         ),

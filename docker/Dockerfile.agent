@@ -67,6 +67,14 @@ RUN apt-get update \
          npm install --global --no-fund --no-audit ${AGENT_NPM_PACKAGES} \
          && npm cache clean --force; \
        fi \
+    # Copilot's npm package brings a native binary for both glibc and musl; this
+    # image is glibc, so the musl one (about 190 MB) goes.
+    && rm -rf /usr/local/lib/node_modules/@github/copilot/node_modules/@github/copilot-linuxmusl-* \
+    && if [ -e /usr/local/bin/copilot ]; then \
+         HOME=/tmp/copilot-check XDG_CACHE_HOME=/tmp/copilot-check \
+         COPILOT_HOME=/tmp/copilot-check COPILOT_OFFLINE=true copilot --version \
+         && rm -rf /tmp/copilot-check; \
+       fi \
     && apt-get purge --yes --auto-remove \
          -o APT::AutoRemove::RecommendsImportant=false \
          -o APT::AutoRemove::SuggestsImportant=false npm \

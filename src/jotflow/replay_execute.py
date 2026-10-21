@@ -54,6 +54,7 @@ from jotflow.replay_agent import (
     _fake_github,
     _usage_wrapper,
     _wait,
+    check_env,
 )
 from jotflow.store.hashing import content_hash
 from jotflow.testing.threads import GithubRepo, SavedThread
@@ -130,6 +131,7 @@ class _Launch:
             models={k: v for k, v in self.options.models.items() if k is RunKind.EXECUTION},
             github_mcp=str(self.github),
         )
+        check_env(preset, config, self.environ)
         runner = Runner(config, environ=self.environ, limit=lambda _k: self.options.time_limit)
         await runner.launch(
             LaunchRequest(run_id=started.run.id, kind=RunKind.EXECUTION, token=started.token)

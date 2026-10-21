@@ -112,6 +112,47 @@ jobs:
           JOTFLOW_PROBE_GITHUB_TOKEN: ${{ github.token }}
         run: uv run pytest -q -p no:cacheprovider tests/test_codex_gate.py
 
+  copilot-gate:
+    # The copilot preset's security gate (#59): with the pinned Copilot and this
+    # preset's own command and config, every run kind is offered exactly its tools,
+    # a shell and a resource read are refused, nothing prompts, and Copilot connects
+    # to nothing but the fake model and JotFlow, under strace. Nothing is spent.
+    name: Copilot preset gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      - name: Install
+        run: uv sync --locked --all-groups
+
+      # The gate traces every contact Copilot attempts (#290), from Ubuntu's own archive.
+      # io_uring goes off, as Docker's default seccomp profile has it in the agent
+      # containers: a connect sent through io_uring never shows up as a system call.
+      - name: Install strace, and turn io_uring off
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends strace
+          sudo sysctl -w kernel.io_uring_disabled=2
+
+      # From .github/ci/copilot's lockfile, so every package is pinned by integrity hash.
+      - name: Install the pinned Copilot
+        working-directory: .github/ci/copilot
+        run: |
+          npm ci --no-fund --no-audit
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Gate
+        env:
+          JOTFLOW_REQUIRE_COPILOT: "1"
+        run: uv run pytest -q -p no:cacheprovider tests/test_copilot_gate.py
+
   workflows:
     name: Workflow lint
     runs-on: ubuntu-latest

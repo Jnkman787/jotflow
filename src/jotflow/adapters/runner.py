@@ -220,6 +220,13 @@ class RunnerConfig:
                 )
             if not MODEL_NAME.fullmatch(model):
                 raise ConfigError(f"{model!r} is not a model name")
+        if getattr(self.preset, "needs_model", False):
+            missing = sorted(k.value for k in self.kinds if not self.model(k))
+            if missing:
+                raise ConfigError(
+                    f"the {self.agent.name} preset needs a model; set JOTFLOW_AGENT_MODEL "
+                    f"(no model for {' and '.join(missing)} runs)"
+                )
         if self.preset is not None and self.preset.github_token_in_config:
             for token in (self.read_token, self.write_token):
                 if token is not None and not GITHUB_TOKEN_CHARS.fullmatch(token):
