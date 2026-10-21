@@ -522,9 +522,13 @@ COPILOT_PROVIDER_ENV = (
     "COPILOT_PROVIDER_WIRE_API",
     "COPILOT_PROVIDER_API_KEY",
 )
-# Provider types whose wire the gate fakes: the OpenAI Responses API (#288 adds Anthropic's).
-COPILOT_PROVIDER_TYPES = ("openai", "azure")
+# Provider types whose wire the gate fakes: the OpenAI Responses API for openai and
+# azure, and Anthropic's Messages API (#288). The wire setting is for the first two
+# only: anthropic must leave it unset, as the gate runs it.
+COPILOT_RESPONSES_TYPES = ("openai", "azure")
+COPILOT_PROVIDER_TYPES = (*COPILOT_RESPONSES_TYPES, "anthropic")
 COPILOT_WIRE_API = "responses"
+COPILOT_WIRE_ENV = "COPILOT_PROVIDER_WIRE_API"
 # Names the preset sets itself, and OpenTelemetry's, which could export a run's content.
 COPILOT_OWN_ENV = re.compile(r"^(COPILOT_|XDG_|OTEL_|GH_)")
 COPILOT_VERSION_LINE = re.compile(r"GitHub Copilot CLI (\S+?)\.?$")
@@ -600,26 +604,36 @@ class CopilotPreset:
                     + ", ".join(COPILOT_PROVIDER_ENV)
                     + " may"
                 )
+        # The raw values, as Copilot gets them: "anthropic " must not pass as anthropic.
+        kind = environ.get("COPILOT_PROVIDER_TYPE", "")
+        responses = kind in COPILOT_RESPONSES_TYPES
         for name in COPILOT_PROVIDER_ENV:
+            if name == COPILOT_WIRE_ENV and not responses:
+                continue  # checked below, once the type is known
             if name not in names or not environ.get(name):
                 return f"the copilot preset needs {name}, set and listed in JOTFLOW_AGENT_ENV_ALLOW"
-        kind = environ["COPILOT_PROVIDER_TYPE"].strip()
         if kind not in COPILOT_PROVIDER_TYPES:
             return (
                 "COPILOT_PROVIDER_TYPE must be "
-                + " or ".join(COPILOT_PROVIDER_TYPES)
-                + f", not {kind!r}"
+                + ", ".join(COPILOT_PROVIDER_TYPES[:-1])
+                + f" or {COPILOT_PROVIDER_TYPES[-1]}, not {kind!r}"
             )
-        if environ["COPILOT_PROVIDER_WIRE_API"].strip() != COPILOT_WIRE_API:
-            return f"COPILOT_PROVIDER_WIRE_API must be {COPILOT_WIRE_API}"
+        if responses and environ[COPILOT_WIRE_ENV] != COPILOT_WIRE_API:
+            return f"{COPILOT_WIRE_ENV} must be {COPILOT_WIRE_API}"
+        if not responses and COPILOT_WIRE_ENV in names:
+            return f"{COPILOT_WIRE_ENV} must not be set with COPILOT_PROVIDER_TYPE={kind}"
         raw = environ["COPILOT_PROVIDER_BASE_URL"]
         # Checked before parsing: urlsplit drops tabs and newlines without a word.
         if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
             return "COPILOT_PROVIDER_BASE_URL must have no spaces or control characters"
-        base = urlsplit(raw)
+        try:
+            base = urlsplit(raw)
+            host = base.hostname
+        except ValueError:  # such as a malformed IPv6 address, "https://[::1"
+            host = None
         if (
-            base.scheme != "https"
-            or not base.hostname
+            host is None
+            or base.scheme != "https"
             or base.username is not None
             or base.password is not None
         ):

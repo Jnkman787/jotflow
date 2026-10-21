@@ -173,7 +173,7 @@ The `apply_patch` refusal is already shown, by the gate. Whether Codex fetches m
 
 **Every run kind.** Copilot offers the model only the tools the preset lists, with no MCP resource-read tools, so unlike codex it can serve execution as well as drafting and question runs.
 
-**The model login is your own provider's API key, never a GitHub login.** Copilot runs in its offline mode, which turns off its GitHub sign-in, telemetry, web tools, its own GitHub MCP server and updates, and talks to the model provider you name. A Copilot subscription login would mean a third GitHub token in the agent container, which the runner refuses; #287 discusses it. Set all four of these in the agent env file, and list them in `JOTFLOW_AGENT_ENV_ALLOW`:
+**The model login is your own provider's API key, never a GitHub login.** Copilot runs in its offline mode, which turns off its GitHub sign-in, telemetry, web tools, its own GitHub MCP server and updates, and talks to the model provider you name: OpenAI, Azure OpenAI, or Anthropic. A Copilot subscription login would mean a third GitHub token in the agent container, which the runner refuses; #287 discusses it. For OpenAI or Azure, set all four of these in the agent env file, and list them in `JOTFLOW_AGENT_ENV_ALLOW`:
 
 ```
 COPILOT_PROVIDER_BASE_URL=https://api.openai.com/v1
@@ -185,10 +185,21 @@ JOTFLOW_AGENT_PRESET=copilot
 JOTFLOW_AGENT_MODEL=<a model your provider serves>
 ```
 
+For Anthropic, leave `COPILOT_PROVIDER_WIRE_API` out, of the file and of the list. The runner refuses it with `anthropic`, since the gate runs that wire without it:
+
+```
+COPILOT_PROVIDER_BASE_URL=https://api.anthropic.com
+COPILOT_PROVIDER_TYPE=anthropic
+COPILOT_PROVIDER_API_KEY=<your key>
+JOTFLOW_AGENT_ENV_ALLOW=COPILOT_PROVIDER_BASE_URL,COPILOT_PROVIDER_TYPE,COPILOT_PROVIDER_API_KEY
+JOTFLOW_AGENT_PRESET=copilot
+JOTFLOW_AGENT_MODEL=claude-sonnet-5-5
+```
+
 **The runner fails closed.** It refuses to start unless all of these hold:
 - `copilot --version` prints exactly 1.0.101.
 - A model is named for every kind the runner serves. With your own provider, there's no default.
-- The provider type is `openai` or `azure`, the wire API is `responses`, and the base URL is `https://`. The gate fakes only that wire. #288 adds Anthropic's.
+- The provider type is `openai`, `azure` or `anthropic`, and the base URL is `https://`. The first two need the wire API `responses`, and `anthropic` must not set one. Those are the two wires the gate fakes (#288).
 - No other `COPILOT_*`, `XDG_*` or `OTEL_*` name is in `JOTFLOW_AGENT_ENV_ALLOW`. Only the four provider names may pass. So `COPILOT_ALLOW_ALL`, which would trust the working directory and its hooks, and `COPILOT_PROVIDER_API_KEY_COMMAND`, which runs a shell command, are refused, and so is any name a later release adds.
 
 **Install it.** The published agent image doesn't include Copilot. Build your own, with Copilot next to any CLI your other runner needs, such as `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @github/copilot@1.0.101"`. The image keeps only Copilot's glibc binary, about 190 MB.
@@ -215,15 +226,16 @@ The command carries no run data. `mcp.json` (0600) holds the JotFlow server, wit
 
 **State and transcripts.** Copilot always writes a session. The preset points `COPILOT_HOME` and the `XDG_*` directories into the run directory, so its session, logs and caches are removed with the run, and nothing is written to `HOME`. Memory is off, since prompt mode needs `--enable-memory` for it.
 
-**The security gate.** `tests/test_copilot_gate.py` runs in CI's "Copilot preset gate" job, with Copilot 1.0.101 from `.github/ci/copilot`'s lockfile, and fails rather than skips there. Copilot runs this preset's own command and config against `jotflow.testing.fake_responses_api` on 127.0.0.1, with JotFlow's real MCP server. For drafting, question and execution runs it checks:
+**The security gate.** `tests/test_copilot_gate.py` runs in CI's "Copilot preset gate" job, with Copilot 1.0.101 from `.github/ci/copilot`'s lockfile, and fails rather than skips there. Copilot runs this preset's own command and config against a fake model on 127.0.0.1, with JotFlow's real MCP server. Every case runs twice, once on each wire the preset accepts: `jotflow.testing.fake_responses_api` for OpenAI's Responses API, and `jotflow.testing.fake_messages_api` for Anthropic's Messages API. The hidden built-ins differ between them, `apply_patch` and `rg` on one and `create`, `edit` and `grep` on the other, so each wire needs its own pass. For drafting, question and execution runs it checks:
 - the model is offered exactly the kind's tools
 - scripted `bash` and `read_mcp_resource` calls are refused as "does not exist", and no file is written
 - Copilot ends by itself, and JotFlow's audit shows it listed the tools
 - neither token reaches the model
 - under `strace`, with the network reachable, Copilot contacts nothing but the fake model and JotFlow: no DNS lookup, feature flags, model list or experiments. It uses the codex gate's shared rules in `tests/outbound_trace.py`, and the job turns io_uring off, as Docker's default seccomp does in the agent containers, since strace can't see a connect sent through it. An `io_uring_setup` that succeeds fails the gate
+- no tool the provider would run itself, which strace can't see either. On the Responses wire every tool is a `function`, never `web_search`, `file_search`, `code_interpreter` or `mcp`. On the Messages wire every tool is a plain client tool, with a name and a schema and no server `type`, and no request has `mcp_servers` or `container`. Every `anthropic-beta` value must be on a list reviewed in the test, so a new beta in a later Copilot release fails the gate until someone checks what it turns on
 
 It also checks that an allowed tool runs without a prompt, an offered tool outside `--allow-tool` is denied without one, and a read-only tool outside the kind is never offered.
 
-**Not yet confirmed.** These need a real model run: how a real model uses the tools, and whether an Azure endpoint behaves like OpenAI's. Any Copilot upgrade reruns the gate, as for every pinned CLI.
+**Not yet confirmed.** These need a real model run: how a real model uses the tools, and whether an Azure endpoint behaves like OpenAI's, and Anthropic's like the fake. Any Copilot upgrade reruns the gate, as for every pinned CLI.
 
 **Gemini CLI** isn't a preset yet. It can be locked down the same way, but every release so far speaks MCP 2025-11-25 at most, and JotFlow serves only 2026-07-28. #286 has the details.

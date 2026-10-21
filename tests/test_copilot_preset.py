@@ -201,7 +201,7 @@ def test_any_other_copilot_name_is_refused(name: str) -> None:
 @pytest.mark.parametrize(
     ("change", "problem"),
     [
-        ({"COPILOT_PROVIDER_TYPE": "anthropic"}, "must be openai or azure"),
+        ({"COPILOT_PROVIDER_TYPE": "ollama"}, "must be openai, azure or anthropic"),
         ({"COPILOT_PROVIDER_TYPE": ""}, "needs COPILOT_PROVIDER_TYPE"),
         ({"COPILOT_PROVIDER_WIRE_API": "completions"}, "must be responses"),
         ({"COPILOT_PROVIDER_BASE_URL": "http://api.example.com/v1"}, "https://"),
@@ -223,6 +223,55 @@ def test_any_other_copilot_name_is_refused(name: str) -> None:
 def test_the_provider_must_be_one_the_gate_checks(change: dict[str, str], problem: str) -> None:
     found = COPILOT.check_env(ALLOW, {**PROVIDER, **change})
     assert found is not None and problem in found
+
+
+ANTHROPIC = {
+    "COPILOT_PROVIDER_BASE_URL": "https://api.anthropic.com",
+    "COPILOT_PROVIDER_TYPE": "anthropic",
+    "COPILOT_PROVIDER_API_KEY": "sk-ant-test",
+}
+ANTHROPIC_ALLOW = tuple(n for n in ALLOW if n != "COPILOT_PROVIDER_WIRE_API")
+
+
+def test_anthropic_passes_with_no_wire_setting() -> None:
+    assert COPILOT.check_env(ANTHROPIC_ALLOW, ANTHROPIC) is None
+    # Set but not passed on, it changes nothing: only listed names reach the run.
+    unlisted = {**ANTHROPIC, "COPILOT_PROVIDER_WIRE_API": "x"}
+    assert COPILOT.check_env(ANTHROPIC_ALLOW, unlisted) is None
+
+
+@pytest.mark.parametrize("value", ["responses", "completions", ""])
+def test_anthropic_refuses_a_listed_wire_setting(value: str) -> None:
+    found = COPILOT.check_env(ALLOW, {**ANTHROPIC, "COPILOT_PROVIDER_WIRE_API": value})
+    assert found == (
+        "COPILOT_PROVIDER_WIRE_API must not be set with COPILOT_PROVIDER_TYPE=anthropic"
+    )
+
+
+def test_anthropic_still_needs_its_other_three_names_and_https() -> None:
+    for name in ANTHROPIC_ALLOW:
+        listed = tuple(n for n in ANTHROPIC_ALLOW if n != name)
+        found = COPILOT.check_env(listed, ANTHROPIC)
+        assert found is not None and name in found
+    plain = {**ANTHROPIC, "COPILOT_PROVIDER_BASE_URL": "http://api.anthropic.com"}
+    assert "https://" in str(COPILOT.check_env(ANTHROPIC_ALLOW, plain))
+
+
+@pytest.mark.parametrize("stray", [" ", "\n", "\t"])
+def test_the_type_and_wire_are_compared_exactly_as_copilot_gets_them(stray: str) -> None:
+    for kind in ("anthropic", "openai"):
+        found = COPILOT.check_env(ALLOW, {**PROVIDER, "COPILOT_PROVIDER_TYPE": kind + stray})
+        assert found is not None and "must be openai, azure or anthropic" in found
+    wire = {**PROVIDER, "COPILOT_PROVIDER_WIRE_API": "responses" + stray}
+    assert COPILOT.check_env(ALLOW, wire) == "COPILOT_PROVIDER_WIRE_API must be responses"
+    leading = {**PROVIDER, "COPILOT_PROVIDER_TYPE": stray + "openai"}
+    assert COPILOT.check_env(ALLOW, leading) is not None
+
+
+@pytest.mark.parametrize("url", ["https://[::1", "https://[zz]/v1"])
+def test_a_malformed_address_is_refused_not_a_crash(url: str) -> None:
+    found = COPILOT.check_env(ALLOW, {**PROVIDER, "COPILOT_PROVIDER_BASE_URL": url})
+    assert found == "COPILOT_PROVIDER_BASE_URL must be an https:// address with a host, no login"
 
 
 def test_every_provider_name_must_be_listed() -> None:
@@ -265,9 +314,9 @@ def test_the_runner_refuses_to_start_on_a_refused_name(
 def test_the_runner_refuses_to_start_on_an_unchecked_provider(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    runner_env(monkeypatch, COPILOT_PROVIDER_TYPE="anthropic")
+    runner_env(monkeypatch, COPILOT_PROVIDER_TYPE="ollama")
     assert runner_command.run(runner_command.argparse.Namespace()) == runner_command.EXIT_CONFIG
-    assert "must be openai or azure" in capsys.readouterr().err
+    assert "must be openai, azure or anthropic" in capsys.readouterr().err
 
 
 def test_a_good_copilot_runner_config_builds(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,8 +334,8 @@ def test_replay_makes_the_same_env_check() -> None:
         env_allow=ALLOW,
     )
     replay_check_env(COPILOT, config, PROVIDER)
-    with pytest.raises(ReplayError, match="must be openai or azure"):
-        replay_check_env(COPILOT, config, {**PROVIDER, "COPILOT_PROVIDER_TYPE": "anthropic"})
+    with pytest.raises(ReplayError, match="must be openai, azure or anthropic"):
+        replay_check_env(COPILOT, config, {**PROVIDER, "COPILOT_PROVIDER_TYPE": "ollama"})
 
 
 # The installed CLI
@@ -399,3 +448,69 @@ async def test_a_copilot_run_end_to_end(kind: RunKind, tmp_path: Path) -> None:
         assert secret not in json.dumps(env) and secret not in " ".join(record["argv"])
     assert not run_dir.exists()  # the session, logs and caches go with the run
     assert stat.S_ISDIR(work.stat().st_mode)
+
+
+# The gate's provider-side checks, which must fire on what strace can't see (#288)
+
+CLIENT_TOOL = {"name": "jotflow-get_work", "description": "d", "input_schema": {"type": "object"}}
+
+
+@pytest.mark.parametrize(
+    "request_body",
+    [
+        {"tools": [CLIENT_TOOL, {"type": "web_search_20250305", "name": "web_search"}]},
+        {"tools": [{"type": "code_execution_20250522", "name": "code_execution"}]},
+        {"tools": [CLIENT_TOOL], "mcp_servers": [{"type": "url", "url": "https://x"}]},
+        {"tools": [CLIENT_TOOL], "container": "container_1"},
+        {"tools": [{"name": "no-schema"}]},
+    ],
+)
+def test_the_gate_refuses_a_tool_anthropic_would_run_itself(request_body: dict[str, Any]) -> None:
+    from jotflow.testing.fake_messages_api import FakeMessagesApi
+    from tests.test_copilot_gate import assert_no_provider_side_tool
+
+    api = FakeMessagesApi()
+    api.requests.append(request_body)
+    api.headers.append({})
+    with pytest.raises(AssertionError):
+        assert_no_provider_side_tool(api)
+    api._server.server_close()
+
+
+def test_the_gate_refuses_a_beta_nobody_reviewed() -> None:
+    from jotflow.testing.fake_messages_api import FakeMessagesApi
+    from tests.test_copilot_gate import REVIEWED_BETAS, assert_no_provider_side_tool
+
+    api = FakeMessagesApi()
+    api.requests.append({"tools": [CLIENT_TOOL]})
+    api.headers.append({"anthropic-beta": ",".join(REVIEWED_BETAS)})
+    assert_no_provider_side_tool(api)  # the reviewed ones pass
+    api.headers.append({"anthropic-beta": "mcp-client-2025-04-04"})
+    with pytest.raises(AssertionError, match="mcp-client"):
+        assert_no_provider_side_tool(api)
+    api._server.server_close()
+
+
+@pytest.mark.parametrize("hosted", ["web_search", "file_search", "code_interpreter", "mcp"])
+def test_the_gate_refuses_a_hosted_tool_on_the_responses_wire(hosted: str) -> None:
+    from jotflow.testing.fake_responses_api import FakeResponsesApi
+    from tests.test_copilot_gate import assert_no_provider_side_tool
+
+    api = FakeResponsesApi()
+    api.requests.append({"tools": [{"type": "function", "name": "t"}, {"type": hosted}]})
+    with pytest.raises(AssertionError, match=hosted):
+        assert_no_provider_side_tool(api)
+    api._server.server_close()
+
+
+def test_the_gate_checks_the_tool_set_on_every_request_not_only_the_first() -> None:
+    from jotflow.testing.fake_messages_api import FakeMessagesApi
+    from tests.test_copilot_gate import assert_every_request_offers
+
+    api = FakeMessagesApi()
+    api.requests.append({"tools": [CLIENT_TOOL]})
+    assert_every_request_offers(api, ["jotflow-get_work"])
+    api.requests.append({"tools": [CLIENT_TOOL, {**CLIENT_TOOL, "name": "jotflow-answer"}]})
+    with pytest.raises(AssertionError, match="request 1 offered"):
+        assert_every_request_offers(api, ["jotflow-get_work"])
+    api._server.server_close()

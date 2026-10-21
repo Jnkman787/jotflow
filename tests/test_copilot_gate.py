@@ -1,9 +1,11 @@
 """The copilot preset's security gate (#59), against the real Copilot CLI, at no cost.
 
 Copilot runs with this preset's own command and MCP config, pointed at a scripted
-fake Responses API on 127.0.0.1 instead of a real provider, with JotFlow's real MCP
-server and the fake GitHub server attached. For every run kind, execution included,
-it shows:
+fake model API on 127.0.0.1 instead of a real provider, with JotFlow's real MCP
+server and the fake GitHub server attached. Every case runs on both provider wires
+the preset accepts: OpenAI's Responses API and Anthropic's Messages API (#288),
+since Copilot's hidden built-ins differ between them. For every run kind,
+execution included, it shows:
 
 - the model is offered exactly the kind's JotFlow and GitHub tools, nothing else
 - a scripted ``bash`` or ``read_mcp_resource`` call is refused and writes no file
@@ -12,6 +14,9 @@ it shows:
 - under strace, Copilot contacts nothing but the fake model and JotFlow (no DNS,
   flags, model list or experiments), with the network reachable, and io_uring,
   which strace can't see into, never starts
+- no provider-side tool, which strace can't see either: every tool offered is a plain
+  client tool, with no hosted type (web search, code execution, an MCP connector), no
+  ``mcp_servers`` or ``container`` field, and only the reviewed ``anthropic-beta`` values
 
 It also pins two behaviours: an offered tool outside ``--allow-tool`` is denied
 without a prompt, and a read-only-hinted tool outside the kind's list is never
@@ -34,6 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 
@@ -47,6 +53,7 @@ from jotflow.adapters.presets import (
 from jotflow.models import RUN_KINDS, RunKind
 from jotflow.policy import parse_policy
 from jotflow.store import MemoryStore
+from jotflow.testing.fake_messages_api import FakeMessagesApi, tool_use
 from jotflow.testing.fake_responses_api import FakeResponsesApi, function_call
 from jotflow.testing.threads import builtin_thread
 from jotflow.whiteboard.doc_tools import DOC_TOOLS
@@ -62,7 +69,15 @@ POLICY = parse_policy(
     'description = "Web"\n'
 )
 GITHUB_TOKEN = "github_pat_gate"
-MODEL = "gpt-5.5"
+# The provider wires the preset accepts, each with a model it would name.
+WIRES = ("responses", "messages")
+MODELS = {"responses": "gpt-5.5", "messages": "claude-sonnet-5-5"}
+# The anthropic-beta values Copilot 1.0.101 sends, reviewed on 2026-10-21 (#288): this
+# one shapes extended thinking and adds no tool. A new value fails the gate until
+# someone checks what it turns on, since a beta can enable a tool Anthropic runs.
+REVIEWED_BETAS = frozenset({"thinking-binding-controls-2026-08-01"})
+# Request fields that make the provider run something itself, out of strace's sight.
+SERVER_SIDE_FIELDS = ("mcp_servers", "container", "tool_resources")
 PROBE_FILE = "jotflow-copilot-probe"
 REFUSED = "does not exist"
 REQUIRED = os.environ.get("JOTFLOW_REQUIRE_COPILOT") == "1"
@@ -108,10 +123,32 @@ def offered_for(kind: RunKind) -> list[str]:
     return sorted([f"jotflow-{t}" for t in served] + [f"github-{t}" for t in GITHUB_TOOLS[kind]])
 
 
+Probe = tuple[str, dict[str, Any]]
+Api = FakeResponsesApi | FakeMessagesApi
+
+
+def _scripted(wire: str, probe: Probe) -> Api:
+    name, arguments = probe
+    if wire == "messages":
+        return FakeMessagesApi(first=tool_use(name, arguments))
+    return FakeResponsesApi(first=function_call(name, arguments), full_stream=True)
+
+
+def _provider_env(wire: str, url: str) -> dict[str, str]:
+    """The gate's own provider settings, as a team would set them, pointed at the fake."""
+    if wire == "messages":  # no wire setting: the preset refuses one for anthropic
+        return {"COPILOT_PROVIDER_TYPE": "anthropic", "COPILOT_PROVIDER_BASE_URL": url}
+    return {
+        "COPILOT_PROVIDER_TYPE": "openai",
+        "COPILOT_PROVIDER_WIRE_API": "responses",
+        "COPILOT_PROVIDER_BASE_URL": url,
+    }
+
+
 @dataclass
 class GateRun:
     done: subprocess.CompletedProcess[str]
-    api: FakeResponsesApi
+    api: Api
     audit: str
     token: str
     trace: list[str] | None
@@ -139,7 +176,8 @@ async def gate_run(
     kind: RunKind,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
-    first: dict[str, Any],
+    wire: str,
+    call: Probe,
     mutate: Mutate | None = None,
     provider_url: str | None = None,
 ) -> GateRun:
@@ -173,7 +211,7 @@ async def gate_run(
             mcp_token=token,
             github_token=GITHUB_TOKEN,
             github_mcp=str(_fake_github(tmp_path)),
-            model=MODEL,
+            model=MODELS[wire],
         )
         plan = COPILOT.plan(context)
         argv = list(plan.argv)
@@ -182,17 +220,15 @@ async def gate_run(
             mutate(argv, config)
         context.config_path.write_text(json.dumps(config))
         context.config_path.chmod(0o600)
-        with FakeResponsesApi(first=first, full_stream=True) as api:
-            model_port = int(api.base_url.rsplit(":", 1)[1].split("/")[0])
+        with _scripted(wire, call) as api:
+            model_port = int(urlparse(api.base_url).port or 0)
             # Only the model provider is the gate's own: the rest is the preset's.
             env = {
                 "PATH": os.environ["PATH"],
                 "HOME": str(tmp_path / "home"),
                 "TMPDIR": str(run_dir),
                 **plan.env,
-                "COPILOT_PROVIDER_BASE_URL": provider_url or api.base_url,
-                "COPILOT_PROVIDER_TYPE": "openai",
-                "COPILOT_PROVIDER_WIRE_API": "responses",
+                **_provider_env(wire, provider_url or api.base_url),
                 "COPILOT_PROVIDER_API_KEY": "gate",
             }
             if STRACE is not None:
@@ -224,40 +260,72 @@ def assert_clean(run: GateRun, kind: RunKind) -> None:
     if STRACE is not None:
         assert any("connect(" in line for line in run.trace or []), "strace saw no connection"
         assert run.strangers() == [], run.strangers()
+    assert_every_request_offers(run.api, offered_for(kind))
+    assert_no_provider_side_tool(run.api)
 
 
+def assert_every_request_offers(api: Api, expected: list[str]) -> None:
+    """The exact set on every request, not only the first: a tool added later fails too."""
+    for index, request in enumerate(api.requests):
+        if request.get("tools"):
+            names = sorted(str(t.get("name")) for t in request["tools"])
+            assert names == expected, f"request {index} offered {names}"
+
+
+def assert_no_provider_side_tool(api: Api) -> None:
+    """Nothing the provider would run itself, which strace can't see (#288)."""
+    for request in api.requests:
+        for field in SERVER_SIDE_FIELDS:
+            assert field not in request, field
+        for tool in request.get("tools") or []:
+            if isinstance(api, FakeMessagesApi):
+                # A client tool: a name and a schema. A server tool has a "type", such
+                # as web_search_20250305, code_execution_20250522 or an MCP connector.
+                assert "type" not in tool, tool.get("type")
+                assert tool.get("name") and "input_schema" in tool, tool
+            else:
+                # Never a hosted tool: web_search, file_search, code_interpreter, mcp.
+                assert tool.get("type") == "function", tool.get("type")
+    if isinstance(api, FakeMessagesApi):
+        assert api.betas() <= REVIEWED_BETAS, sorted(api.betas() - REVIEWED_BETAS)
+
+
+@pytest.mark.parametrize("wire", WIRES)
 @pytest.mark.parametrize("kind", sorted(RUN_KINDS))
 async def test_copilot_offers_exactly_the_kinds_tools_and_refuses_a_shell(
-    kind: RunKind, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    kind: RunKind, wire: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     probe = {"command": f"touch {tmp_path / PROBE_FILE}", "description": "probe"}
-    run = await gate_run(kind, tmp_path, caplog, function_call("bash", probe))
+    run = await gate_run(kind, tmp_path, caplog, wire, ("bash", probe))
     assert_clean(run, kind)
     assert REFUSED in run.output() and "'bash'" in run.output()
 
 
+@pytest.mark.parametrize("wire", WIRES)
 @pytest.mark.parametrize("kind", sorted(RUN_KINDS))
 async def test_copilot_has_no_resource_read_tool(
-    kind: RunKind, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    kind: RunKind, wire: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     probe = {"server": "github", "uri": "repo://acme-co/web/contents/README.md"}
-    run = await gate_run(kind, tmp_path, caplog, function_call("read_mcp_resource", probe))
+    run = await gate_run(kind, tmp_path, caplog, wire, ("read_mcp_resource", probe))
     assert_clean(run, kind)
     assert REFUSED in run.output()
 
 
+@pytest.mark.parametrize("wire", WIRES)
 async def test_an_allowed_tool_runs_without_a_prompt(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    wire: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    run = await gate_run(RunKind.DRAFTING, tmp_path, caplog, function_call("jotflow-get_work"))
+    run = await gate_run(RunKind.DRAFTING, tmp_path, caplog, wire, ("jotflow-get_work", {}))
     assert_clean(run, RunKind.DRAFTING)
     # JotFlow ran it and answered: the gate's run isn't in the store, so get_work says so.
     assert "method=tools/call tool=get_work run=run-gate status=200 outcome=served" in run.audit
     assert "run run-gate is unknown" in run.output() and "Permission denied" not in run.output()
 
 
+@pytest.mark.parametrize("wire", WIRES)
 async def test_an_offered_tool_outside_allow_tool_is_denied_without_a_prompt(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    wire: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     def narrow(argv: list[str], config: dict[str, Any]) -> None:
         at = argv.index("jotflow(ask_channel)")
@@ -267,7 +335,8 @@ async def test_an_offered_tool_outside_allow_tool_is_denied_without_a_prompt(
         RunKind.DRAFTING,
         tmp_path,
         caplog,
-        function_call("jotflow-ask_channel", {"question": "Which repo?"}),
+        wire,
+        ("jotflow-ask_channel", {"question": "Which repo?"}),
         narrow,
     )
     assert_clean(run, RunKind.DRAFTING)
@@ -275,8 +344,9 @@ async def test_an_offered_tool_outside_allow_tool_is_denied_without_a_prompt(
     assert "tool=ask_channel" not in run.audit
 
 
+@pytest.mark.parametrize("wire", WIRES)
 async def test_a_read_only_tool_outside_the_kind_is_never_offered(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    wire: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """``--available-tools`` is the boundary, not ``--allow-tool``: Copilot would run an
     offered read-only-hinted tool unasked, so one outside the kind must never be offered.
@@ -291,7 +361,8 @@ async def test_a_read_only_tool_outside_the_kind_is_never_offered(
         RunKind.EXECUTION,
         tmp_path,
         caplog,
-        function_call("github-search_issues", {"query": "repo:acme-co/web bar"}),
+        wire,
+        ("github-search_issues", {"query": "repo:acme-co/web bar"}),
         widen,
     )
     assert "search_issues" not in GITHUB_TOOLS[RunKind.EXECUTION]
@@ -299,8 +370,9 @@ async def test_a_read_only_tool_outside_the_kind_is_never_offered(
     assert REFUSED in run.output()
 
 
+@pytest.mark.parametrize("wire", WIRES)
 async def test_the_trace_sees_a_contact_copilot_would_make(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    wire: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The control: with a remote model address, the trace shows the lookup and the gate's
     rules refuse it, so the network check can't pass because it sees nothing."""
@@ -311,9 +383,10 @@ async def test_the_trace_sees_a_contact_copilot_would_make(
         RunKind.QUESTION,
         tmp_path,
         caplog,
-        function_call("bash", {"command": "true"}),
+        wire,
+        ("bash", {"command": "true"}),
         # A reserved name (RFC 2606): the lookup still shows, and the key reaches nobody.
-        provider_url="https://api.jotflow-gate.invalid/v1",
+        provider_url="https://api.jotflow-gate.invalid" + ("/v1" if wire == "responses" else ""),
     )
     assert run.api.requests == []  # the fake model was never asked
     assert run.strangers(), "the trace saw no lookup of api.jotflow-gate.invalid"
