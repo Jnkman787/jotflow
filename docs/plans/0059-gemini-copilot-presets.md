@@ -4,7 +4,7 @@
 
 - Issue: #59 (M6)
 - Draft PR: #285
-- Status: planning. The lead and security review this plan before any code
+- Status: planning. The lead approved the plan on 2026-10-21 with the decisions below. Code waits for security
 - Last verified: 2026-10-21, both CLIs in a throwaway build of `docker/Dockerfile.agent` from main, run with `--network none` against JotFlow's real MCP server and scripted fake model APIs
 - Next safe action: review
 
@@ -24,7 +24,7 @@ Done when, from #59's boxes, for the `copilot` preset:
 - [ ] **A real pass** with `jotflow replay --agent copilot` is recorded, or presets.md says none is, and the preset stays experimental. A real pass costs model tokens and needs the maintainer's approval
 - [ ] `make check` passes
 
-**Out of scope:** a Gemini preset (deferred, see below), Copilot's own GitHub-account login (see open question 1), setup offering either CLI (a follow-up once the preset leaves experimental), and changes to JotFlow's MCP server.
+**Out of scope:** a Gemini preset (#286), Copilot's own GitHub-account login (#287), Anthropic's API for copilot (#288), setup offering either CLI (a follow-up once the preset leaves experimental), and changes to JotFlow's MCP server.
 
 ## What was checked, and how
 
@@ -107,6 +107,7 @@ This needs a small runner change: a preset's optional `refused_env` set, checked
 ## Design, for the copilot preset
 
 - **`CopilotPreset`** in `adapters/presets.py`, next to `CodexPreset`. `plan()` writes `mcp.json` in Copilot's shape: `type: "http"` with `headers` for JotFlow, and `type: "local"` with `command`, `args`, `env` and `tools` for GitHub. It returns the argv above, the env above, and `github_token_env=False`. `check_install()` checks the exact version. `default_models` is empty, and the runner refuses a copilot runner with no model. `run_kinds` is all three.
+- **Provider types.** The runner refuses a copilot runner whose `COPILOT_PROVIDER_TYPE` isn't `openai` or `azure`, and one with none set, since Copilot then falls back to its GitHub login.
 - **`refused_env`,** an optional preset member. The runner reads it at startup and refuses to start if `JOTFLOW_AGENT_ENV_ALLOW` names any of those names. Codex and claude-code don't set it.
 - **`PRESETS` and `EXPERIMENTAL`** gain `copilot`. `PARTIAL_PRESET_KINDS` is unchanged, because copilot serves every kind.
 - **The gate.** `tests/test_copilot_gate.py`, in a new "Copilot preset gate" CI job with the CLI from a lockfile in `.github/ci/copilot`. It reuses `FakeResponsesApi`, extended so its stream carries the full event sequence and the output in `response.completed`, which Copilot needs. For each of the three kinds it checks:
@@ -119,19 +120,29 @@ This needs a small runner change: a preset's optional `refused_env` set, checked
 - **Docs:** a copilot section in presets.md, agent-adapters.md's list of presets and `refused_env`, the threat model's preset row, and the CHANGELOG.
 - **`docker-compose.yml`** keeps its default `AGENT_NPM_PACKAGES`. A team adds `@github/copilot@1.0.101` to try the preset, as with codex before it was published.
 
+## Decisions
+
+The lead decided on 2026-10-21, following this plan's recommendations:
+1. **Gemini is deferred** to #286, which records the recipe and the MCP-version blocker. There's no bridge.
+2. **Copilot uses bring-your-own-key only.** The runner keeps refusing a third GitHub token. #287 is a discussion of the subscription login.
+3. **OpenAI-compatible providers only.** The preset fails closed unless `COPILOT_PROVIDER_TYPE` is `openai` or `azure`, until #288 gates Anthropic's API.
+
+So #59 is scoped to the copilot preset, and the implementation PR says Fixes #59.
+
 ## Risks and open questions
 
-1. **For security and the lead: Copilot's own login.** Most teams would use Copilot with their Copilot subscription, which is a GitHub token (`COPILOT_GITHUB_TOKEN`) for a licensed account. The runner refuses `*_TOKEN` and `GITHUB_*` names, rightly, so this plan supports only bring-your-own-key. Allowing a third GitHub token into the agent container would need its own review: what it can reach, and that `--disable-builtin-mcps` keeps it away from the model's tools. Proposed: BYOK only now, and a separate issue for the subscription login if teams ask.
-2. **The Anthropic wire isn't gated.** The fake model speaks only the OpenAI Responses API, so the gate covers `COPILOT_PROVIDER_TYPE=openai` with `WIRE_API=responses`, plus Azure, which uses the same wire. The tool set is filtered by the CLI, not the provider, but that's unproven for the Anthropic wire. Proposed: the preset accepts `openai` and `azure` only, until the gate gains a fake Anthropic Messages API, in a follow-up.
+1. **Decided: Copilot's own login is out for now (#287).** Most teams would use Copilot with their Copilot subscription, which is a GitHub token (`COPILOT_GITHUB_TOKEN`) for a licensed account. The runner refuses `*_TOKEN` and `GITHUB_*` names, rightly, so this plan supports only bring-your-own-key. Allowing a third GitHub token into the agent container would need its own review: what it can reach, and that `--disable-builtin-mcps` keeps it away from the model's tools. Proposed: BYOK only now, and a separate issue for the subscription login if teams ask.
+2. **Decided: the Anthropic wire waits for #288.** The fake model speaks only the OpenAI Responses API, so the gate covers `COPILOT_PROVIDER_TYPE=openai` with `WIRE_API=responses`, plus Azure, which uses the same wire. The tool set is filtered by the CLI, not the provider, but that's unproven for the Anthropic wire. Proposed: the preset accepts `openai` and `azure` only, until the gate gains a fake Anthropic Messages API, in a follow-up.
 3. **Copilot runs read-only-marked tools unasked** when they're offered but not in `--allow-tool`. It's bounded by `--available-tools`, and the gate tests that boundary. A later Copilot release could change either behaviour, so the pin and the gate must move together.
 4. **Release cadence.** Copilot ships almost daily. The pin is exact, so nothing moves without a PR that reruns the gate.
-5. **Gemini:** the lead decides between deferring (recommended) and a bridge.
+5. **Decided: Gemini is deferred to #286.**
 
 ## Progress checklist
 
-- [ ] The lead and security approve this plan, and decide open questions 1, 2 and 5
-- [ ] Commit this plan and open the draft PR
-- [ ] Open the Gemini follow-up issue, blocked on its MCP client, with the recipe above
+- [x] The lead approves this plan and decides open questions 1, 2 and 5
+- [ ] Security approves it
+- [x] Commit this plan and open the draft PR
+- [x] Open the follow-ups: #286 (Gemini), #287 (subscription login), #288 (Anthropic's API)
 - [ ] `CopilotPreset`, `refused_env` in the runner, and `PRESETS` and `EXPERIMENTAL`
 - [ ] Unit tests: argv and `mcp.json` pinned per kind, no run data in the prompt or argv, no token in argv or env, `check_install()`, a model required, `refused_env` refusals, and an end-to-end run with a fake CLI
 - [ ] The gate, its lockfile, and the CI job
