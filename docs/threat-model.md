@@ -112,6 +112,7 @@ Issue bodies, comments, and public repo files, through Codex's resource tools, a
 | A moved Action tag | Every Action is pinned to a commit SHA, Dependabot proposes updates, and zizmor checks each SHA against its repo | [ci.yml](../.github/workflows/ci.yml) "Workflow lint", `.github/dependabot.yml` |
 | A tampered release | Release images carry signed build provenance. `gh attestation verify` checks it | [release.yml](../.github/workflows/release.yml), [install.md](install.md) |
 | Fork code with secrets | CI runs fork PRs with a read-only token and never uses `pull_request_target` | [ci.yml](../.github/workflows/ci.yml) |
+| A Node option in the agent container's environment that loads code into every run, or writes secrets to disk, such as `--require`, `--import`, `--inspect`, `--openssl-config` or `--tls-keylog` | `NODE_OPTIONS` reaches every run, so the runner allows only a short list of harmless options, such as `--max-old-space-size=N`, and refuses to start on anything else, naming it (#294). It's an allowlist, so an option a later Node adds is refused too | [runner.py](../src/jotflow/adapters/runner.py) `node_options_problem`, [commands/runner.py](../src/jotflow/commands/runner.py) |
 
 ### A person with an operator token, or their terminal agent
 

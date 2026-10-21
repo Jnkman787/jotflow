@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import signal
 import tempfile
@@ -84,6 +85,48 @@ DIR_PREFIX = "jotflow-run-"
 RUNNER_SET_ENV = frozenset({"HOME", "TMPDIR"})
 # Always passed through, when set; nothing else from the runner's own environment.
 BASE_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "TERM", "NODE_OPTIONS", "SSL_CERT_FILE")
+
+# NODE_OPTIONS reaches every run, and Node has many options that load code or write
+# secrets to disk: --require, --import, --loader and --inspect, but also
+# --openssl-config, --env-file, --tls-keylog and --report-on-signal. So only these
+# are allowed, each written as one word, and anything else refuses the start (#294).
+NODE_OPTIONS_ALLOWED = (
+    re.compile(r"--max-old-space-size=\d{1,7}"),
+    re.compile(r"--max-semi-space-size=\d{1,5}"),
+    re.compile(r"--dns-result-order=(ipv4first|ipv6first|verbatim)"),
+    re.compile(r"--unhandled-rejections=(strict|warn|none|throw|warn-with-error-code)"),
+    re.compile(r"--no-warnings"),
+    re.compile(r"--no-deprecation"),
+    re.compile(r"--enable-source-maps"),
+    re.compile(r"--use-openssl-ca"),
+    re.compile(r"--use-bundled-ca"),
+)
+
+
+def node_options_problem(value: str | None) -> str | None:
+    """Why ``NODE_OPTIONS`` can't be passed to agent runs, or None (#294)."""
+    if value is None or not value.strip():
+        return None
+    try:
+        words = shlex.split(value)
+    except ValueError:
+        return "NODE_OPTIONS could not be read; remove it, or quote it plainly"
+    for word in words:
+        # Node reads _ and - alike in an option's name, as in --max_old_space_size.
+        name, eq, rest = word.partition("=")
+        canonical = name.replace("_", "-") + eq + rest
+        if not any(pattern.fullmatch(canonical) for pattern in NODE_OPTIONS_ALLOWED):
+            shown = name if name.startswith("-") else "a bare value"
+            return (
+                f"NODE_OPTIONS has {shown}, which agent runs don't allow: Node options can "
+                "load code or write secrets. Allowed: --max-old-space-size=N, "
+                "--max-semi-space-size=N, --dns-result-order, --unhandled-rejections, "
+                "--no-warnings, --no-deprecation, --enable-source-maps, --use-openssl-ca "
+                "and --use-bundled-ca"
+            )
+    return None
+
+
 _ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 # Never handed to an agent, even if a team lists them.
 _FORBIDDEN_ENV = re.compile(r"^JOTFLOW_|^SLACK_|_TOKEN$|^GH_|^GITHUB_")
