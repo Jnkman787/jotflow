@@ -604,7 +604,8 @@ class CopilotPreset:
                     + ", ".join(COPILOT_PROVIDER_ENV)
                     + " may"
                 )
-        kind = environ.get("COPILOT_PROVIDER_TYPE", "").strip()
+        # The raw values, as Copilot gets them: "anthropic " must not pass as anthropic.
+        kind = environ.get("COPILOT_PROVIDER_TYPE", "")
         responses = kind in COPILOT_RESPONSES_TYPES
         for name in COPILOT_PROVIDER_ENV:
             if name == COPILOT_WIRE_ENV and not responses:

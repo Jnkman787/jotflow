@@ -257,6 +257,17 @@ def test_anthropic_still_needs_its_other_three_names_and_https() -> None:
     assert "https://" in str(COPILOT.check_env(ANTHROPIC_ALLOW, plain))
 
 
+@pytest.mark.parametrize("stray", [" ", "\n", "\t"])
+def test_the_type_and_wire_are_compared_exactly_as_copilot_gets_them(stray: str) -> None:
+    for kind in ("anthropic", "openai"):
+        found = COPILOT.check_env(ALLOW, {**PROVIDER, "COPILOT_PROVIDER_TYPE": kind + stray})
+        assert found is not None and "must be openai, azure or anthropic" in found
+    wire = {**PROVIDER, "COPILOT_PROVIDER_WIRE_API": "responses" + stray}
+    assert COPILOT.check_env(ALLOW, wire) == "COPILOT_PROVIDER_WIRE_API must be responses"
+    leading = {**PROVIDER, "COPILOT_PROVIDER_TYPE": stray + "openai"}
+    assert COPILOT.check_env(ALLOW, leading) is not None
+
+
 def test_every_provider_name_must_be_listed() -> None:
     for name in ALLOW:
         listed = tuple(n for n in ALLOW if n != name)
