@@ -416,7 +416,8 @@ class CodexPreset:
 
         Fails closed: only the pinned release, with the MCP 2026-07-28 flag
         this preset turns on, is accepted, since JotFlow speaks only that
-        version and the flag is still marked "under development".
+        version and the flag is still marked "under development". It must also
+        know ``api_key_model_discovery``, which the preset turns off (#284).
         """
         codex = which("codex")
         if codex is None:
@@ -437,6 +438,10 @@ class CodexPreset:
         flags = {line.split()[0] for line in str(features.stdout).splitlines() if line.split()}
         if features.returncode != 0 or "mcp_2026_07_28" not in flags:
             return "this Codex has no mcp_2026_07_28 feature, which JotFlow's MCP version needs"
+        # A Codex that doesn't know a flag the preset turns off would ignore it, and
+        # api_key_model_discovery is what keeps the model catalog local (#284).
+        if "api_key_model_discovery" not in flags:
+            return "this Codex has no api_key_model_discovery feature to turn off"
         return None
 
     def plan(self, run: RunContext) -> RunPlan:

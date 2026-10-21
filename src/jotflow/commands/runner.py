@@ -143,6 +143,7 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
             probe_runner(
                 {kind: config.model(kind) for kind in kinds},
                 github_mcp=settings.github_mcp_command,
+                read_token=config.read_token,
                 preset=preset,
             )
         except ProbeError as refused:

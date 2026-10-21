@@ -30,6 +30,7 @@ from jotflow.adapters.codex_probe import (
 from jotflow.models import RunKind
 
 SAFE = [{"type": "function", "name": name} for name in sorted(SAFE_BUILTINS)]
+TOKEN = "github_pat_reader"
 
 
 def _script(path: Path, body: str) -> Path:
@@ -139,12 +140,52 @@ def test_a_server_with_no_repository_resources_passes() -> None:
     [
         (
             {"result": {"resourceTemplates": [{"uriTemplate": "repo://{owner}/{repo}/contents"}]}},
-            {},
+            {"result": {}},
             {"error": {}},
             "serves repository resources: repo://",
         ),
-        ({}, {"result": {"resources": [{"uri": "repo://a/b/x"}]}}, {"error": {}}, "repo://a/b/x"),
-        ({}, {}, {"result": {"contents": []}}, "answered a repository read"),
+        (
+            {"result": {}},
+            {"result": {"resources": [{"uri": "repo://a/b/x"}]}},
+            {"error": {}},
+            "repo://a/b/x",
+        ),
+        (
+            {"result": {}},
+            {"result": {}},
+            {"result": {"contents": []}},
+            "answered a repository read",
+        ),
+        (
+            {"result": {"resourceTemplates": [], "nextCursor": "2"}},
+            {"result": {}},
+            {"error": {}},
+            "more than one page",
+        ),
+        (
+            {"result": {}},
+            {"result": {"resources": [], "nextCursor": "x"}},
+            {"error": {}},
+            "more than one page",
+        ),
+        (
+            {"result": []},
+            {"result": {}},
+            {"error": {}},
+            "resourceTemplates answer could not be read",
+        ),
+        (
+            {"result": {}},
+            {"result": {"resources": "all"}},
+            {"error": {}},
+            "resources answer could not be read",
+        ),
+        (
+            {"result": {}},
+            {"result": {"resources": ["repo://x"]}},
+            {"error": {}},
+            "could not be read",
+        ),
     ],
 )
 def test_a_server_serving_repository_content_is_refused(
@@ -188,7 +229,10 @@ def test_the_github_server_is_asked_as_the_preset_starts_it(tmp_path: Path) -> N
         tmp_path / "github",
         f"""
 import json, sys
-open({str(calls)!r}, "w").write(json.dumps(sys.argv[1:]))
+import os
+token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+seen = [sys.argv[1:], {{"GITHUB_PERSONAL_ACCESS_TOKEN": token}}]
+open({str(calls)!r}, "w").write(json.dumps(seen))
 for line in sys.stdin:
     message = json.loads(line)
     if "id" in message:
@@ -198,10 +242,14 @@ for line in sys.stdin:
         sys.stdout.flush()
 """,
     )
-    probe_github_server(RunKind.DRAFTING, github_mcp=str(server))
-    argv = json.loads(calls.read_text())
+    probe_github_server(RunKind.DRAFTING, github_mcp=str(server), token=TOKEN)
+    argv, env = json.loads(calls.read_text())
     assert argv[:2] == ["stdio", "--read-only"] and argv[2] == "--tools"
-    probe_github_server(RunKind.QUESTION, github_mcp="/nowhere")  # no server for questions
+    # The runner's own read token, as the run's config gives it: not a placeholder.
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == TOKEN
+    probe_github_server(RunKind.QUESTION, github_mcp="/nowhere", token=None)  # no server
+    with pytest.raises(ProbeError, match="without the read token"):
+        probe_github_server(RunKind.DRAFTING, github_mcp=str(server), token=None)
 
 
 def test_a_server_that_serves_repos_or_stays_silent_refuses_the_start(
@@ -216,13 +264,13 @@ def test_a_server_that_serves_repos_or_stays_silent_refuses_the_start(
         },
     )
     with pytest.raises(ProbeError, match="serves repository resources"):
-        probe_github_server(RunKind.DRAFTING, github_mcp=str(serving))
+        probe_github_server(RunKind.DRAFTING, github_mcp=str(serving), token=TOKEN)
     monkeypatch.setattr(codex_probe, "SERVER_SECONDS", 1)
     silent = fake_server(tmp_path / "silent", None)
     with pytest.raises(ProbeError, match="did not answer in time"):
-        probe_github_server(RunKind.DRAFTING, github_mcp=str(silent))
+        probe_github_server(RunKind.DRAFTING, github_mcp=str(silent), token=TOKEN)
     with pytest.raises(ProbeError, match="could not be started"):
-        probe_github_server(RunKind.DRAFTING, github_mcp=str(tmp_path / "missing"))
+        probe_github_server(RunKind.DRAFTING, github_mcp=str(tmp_path / "missing"), token=TOKEN)
 
 
 def test_the_runner_probes_each_kinds_model_and_server(
@@ -235,7 +283,7 @@ def test_the_runner_probes_each_kinds_model_and_server(
     monkeypatch.setattr(
         codex_probe, "probe_github_server", lambda kind, **_: seen.append((kind.value, "server"))
     )
-    probe_runner({RunKind.QUESTION: "b", RunKind.DRAFTING: "a"}, github_mcp="/x")
+    probe_runner({RunKind.QUESTION: "b", RunKind.DRAFTING: "a"}, github_mcp="/x", read_token=TOKEN)
     assert seen == [
         ("drafting", "a"),
         ("drafting", "server"),
@@ -265,3 +313,34 @@ def test_a_codex_runner_will_not_start_when_the_probe_refuses(
     )
     with pytest.raises(ConfigError, match="forbids: exec"):
         command.build_config(settings)
+
+
+def test_the_config_must_keep_the_model_catalog_off() -> None:
+    from jotflow.adapters.codex_probe import check_config
+
+    check_config("[features]\napi_key_model_discovery = false\n")
+    for config in ("[features]\napi_key_model_discovery = true\n", "model = 'x'\n"):
+        with pytest.raises(ProbeError, match="api_key_model_discovery"):
+            check_config(config)
+
+
+@pytest.mark.parametrize(
+    ("flags", "problem"),
+    [
+        ("mcp_2026_07_28 under development false\napi_key_model_discovery stable true\n", None),
+        ("mcp_2026_07_28 under development false\n", "no api_key_model_discovery feature"),
+    ],
+)
+def test_a_codex_that_does_not_know_the_discovery_flag_is_refused(
+    flags: str, problem: str | None
+) -> None:
+    from types import SimpleNamespace
+
+    from jotflow.adapters.presets import CODEX, CODEX_VERSION
+
+    def run(argv: list[str], **_: Any) -> Any:
+        out = f"codex-cli {CODEX_VERSION}\n" if argv[1] == "--version" else flags
+        return SimpleNamespace(returncode=0, stdout=out)
+
+    found = CODEX.check_install(which=lambda _: "/usr/bin/codex", run=run)
+    assert found == problem or (problem is not None and found is not None and problem in found)

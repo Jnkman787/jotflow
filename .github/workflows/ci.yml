@@ -99,6 +99,8 @@ jobs:
       - name: Gate
         env:
           JOTFLOW_REQUIRE_CODEX: "1"
+          # The workflow's token, contents: read, for the GitHub server probe (#274).
+          JOTFLOW_PROBE_GITHUB_TOKEN: ${{ github.token }}
         run: uv run pytest -q -p no:cacheprovider tests/test_codex_gate.py
 
   workflows:

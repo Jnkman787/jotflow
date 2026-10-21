@@ -11,8 +11,10 @@ configured model, at startup:
   namespace, where code mode puts ``exec`` and ``spawn_agent``, may appear.
 - **The GitHub server's side (#274).** Codex's MCP resource tools can't be turned
   off, so the GitHub server must serve nothing behind them. Started exactly as the
-  preset starts it, with a dummy token, it must list no resource templates, no
-  resource but its own ``ui://`` pages, and refuse a ``repo://`` read at once.
+  preset starts it, with the runner's own read token, since the server may register
+  more for a token that allows more, it must list no resource templates, no
+  resource but its own ``ui://`` pages, on one page, and refuse a ``repo://`` read
+  of a repo that doesn't exist.
 
 Anything else, including a probe that can't run or can't be read, refuses the
 runner's start: fail closed. Only the model provider differs from a real run, a
@@ -54,7 +56,7 @@ SAFE_BUILTINS = frozenset(
 )
 PROBE_SECONDS = 60
 SERVER_SECONDS = 10
-# Placeholders only: the probe calls no tool, and the GitHub server makes no request.
+# For the model probe only, where Codex lists the GitHub server's tools and calls none.
 DUMMY_TOKEN = "github_pat_probe"
 _PROBE_REPO = "repo://jotflow-probe/probe/contents/README.md"
 
@@ -113,6 +115,7 @@ def probe_model(
             github_mcp=github_mcp,
         )
         plan = preset.plan(context)
+        check_config(plan.files["codex/config.toml"])
         for relative, text in plan.files.items():
             write_private(run_dir, relative, text)
         with FakeResponsesApi() as api:
@@ -146,10 +149,25 @@ def probe_model(
         check_request(api.requests[0], model)
 
 
-def probe_github_server(kind: RunKind, *, github_mcp: str, preset: CodexPreset = CODEX) -> None:
-    """The GitHub server, started as ``kind``'s runs start it, must serve no repo content."""
+def check_config(config_toml: str) -> None:
+    """The run's config must keep the remote model catalog off (#284): the probe's
+    answer holds only while every run reads the release's bundled catalog."""
+    import tomllib
+
+    features = tomllib.loads(config_toml).get("features", {})
+    if features.get("api_key_model_discovery") is not False:
+        raise ProbeError("the codex config doesn't turn off api_key_model_discovery")
+
+
+def probe_github_server(
+    kind: RunKind, *, github_mcp: str, token: str | None, preset: CodexPreset = CODEX
+) -> None:
+    """The GitHub server, started as ``kind``'s runs start it, with the runner's own
+    read token, must serve no repo content."""
     if not GITHUB_TOOLS[kind]:
         return  # this kind's runs have no GitHub server
+    if not token:
+        raise ProbeError("the GitHub MCP server can't be checked without the read token")
     with tempfile.TemporaryDirectory(prefix="jotflow-probe-") as tmp:
         run_dir = Path(tmp)
         context = RunContext(
@@ -159,14 +177,14 @@ def probe_github_server(kind: RunKind, *, github_mcp: str, preset: CodexPreset =
             config_path=run_dir / "mcp.json",
             mcp_url="http://127.0.0.1:9/mcp",
             mcp_token="jfr_probe",
-            github_token=DUMMY_TOKEN,
+            github_token=token,
             github_mcp=github_mcp,
         )
         server = preset.plan(context).files["codex/config.toml"]
-    args = _github_args(server)
+    args, env = _github_server(server)
     answers = _ask_server(
         [github_mcp, *args],
-        {"GITHUB_PERSONAL_ACCESS_TOKEN": DUMMY_TOKEN, "PATH": "/usr/bin:/bin"},
+        {"PATH": "/usr/bin:/bin", **env},
         [
             ("resources/templates/list", {}),
             ("resources/list", {}),
@@ -179,12 +197,16 @@ def probe_github_server(kind: RunKind, *, github_mcp: str, preset: CodexPreset =
 def check_server(
     templates: Mapping[str, Any], listed: Mapping[str, Any], read: Mapping[str, Any]
 ) -> None:
-    """Raise :class:`ProbeError` unless the server serves no repository resources."""
-    found = templates.get("result", {}).get("resourceTemplates", [])
+    """Raise :class:`ProbeError` unless the server serves no repository resources.
+
+    An error answer to a list means the server serves none of that kind. A result
+    must be one complete page, of the shape MCP gives it: anything else is refused.
+    """
+    found = _listed(templates, "resourceTemplates")
     if found:
         uris = ", ".join(str(t.get("uriTemplate")) for t in found)
         raise ProbeError(f"the GitHub MCP server serves repository resources: {uris}")
-    for resource in listed.get("result", {}).get("resources", []):
+    for resource in _listed(listed, "resources"):
         uri = str(resource.get("uri"))
         if not uri.startswith("ui://"):
             raise ProbeError(f"the GitHub MCP server serves a resource it mustn't: {uri}")
@@ -192,11 +214,27 @@ def check_server(
         raise ProbeError("the GitHub MCP server answered a repository read")
 
 
-def _github_args(config_toml: str) -> list[str]:
+def _listed(answer: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
+    if "error" in answer and "result" not in answer:
+        return []
+    result = answer.get("result")
+    if not isinstance(result, dict):
+        raise ProbeError(f"the GitHub MCP server's {key} answer could not be read")
+    if result.get("nextCursor"):
+        raise ProbeError(f"the GitHub MCP server's {key} list has more than one page")
+    items = result.get(key, [])
+    if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+        raise ProbeError(f"the GitHub MCP server's {key} answer could not be read")
+    return items
+
+
+def _github_server(config_toml: str) -> tuple[list[str], dict[str, str]]:
+    """The GitHub server's args and environment, exactly as a run's config gives them."""
     import tomllib
 
     server = tomllib.loads(config_toml)["mcp_servers"]["github"]
-    return [str(a) for a in server["args"]]
+    env = {str(k): str(v) for k, v in server.get("env", {}).items()}
+    return [str(a) for a in server["args"]], env
 
 
 def _ask_server(
@@ -264,9 +302,13 @@ def _receive(proc: subprocess.Popen[bytes], wanted: int, deadline: float) -> dic
 
 
 def probe_runner(
-    kinds_models: Mapping[RunKind, str | None], *, github_mcp: str, preset: CodexPreset = CODEX
+    kinds_models: Mapping[RunKind, str | None],
+    *,
+    github_mcp: str,
+    read_token: str | None,
+    preset: CodexPreset = CODEX,
 ) -> None:
     """Probe every model the runner will use, and each kind's GitHub server. Fails closed."""
     for kind, model in sorted(kinds_models.items(), key=lambda pair: pair[0].value):
         probe_model(kind, model, github_mcp=github_mcp, preset=preset)
-        probe_github_server(kind, github_mcp=github_mcp, preset=preset)
+        probe_github_server(kind, github_mcp=github_mcp, token=read_token, preset=preset)

@@ -324,5 +324,10 @@ def test_the_pinned_github_server_serves_no_repository_content() -> None:
     from jotflow.adapters.codex_probe import probe_github_server
 
     assert GITHUB_MCP, "JOTFLOW_GITHUB_MCP_BINARY is not set"
+    # CI passes its own token, which has Contents: Read, so an empty answer can't be
+    # a missing permission (security's condition for #274). Elsewhere, a placeholder.
+    token = os.environ.get("JOTFLOW_PROBE_GITHUB_TOKEN") or "github_pat_gate"
+    if REQUIRED:
+        assert os.environ.get("JOTFLOW_PROBE_GITHUB_TOKEN"), "CI must pass a real token"
     for kind in sorted(CODEX_RUN_KINDS):
-        probe_github_server(kind, github_mcp=GITHUB_MCP)
+        probe_github_server(kind, github_mcp=GITHUB_MCP, token=token)
