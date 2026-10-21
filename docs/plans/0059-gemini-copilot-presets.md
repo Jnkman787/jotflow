@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #59 (M6)
-- Draft PR: to be opened
+- Draft PR: #285
 - Status: planning. The lead and security review this plan before any code
 - Last verified: 2026-10-21, both CLIs in a throwaway build of `docker/Dockerfile.agent` from main, run with `--network none` against JotFlow's real MCP server and scripted fake model APIs
 - Next safe action: review
