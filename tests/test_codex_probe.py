@@ -136,6 +136,20 @@ def test_a_server_with_no_repository_resources_passes() -> None:
 
 
 @pytest.mark.parametrize(
+    "read",
+    [
+        {"error": {"code": 0, "message": "failed to get raw content: dial tcp: lookup"}},
+        {"error": {"code": -32602, "message": "invalid params"}},
+        {"error": "Resource not found"},
+        {"result": {"contents": []}},
+    ],
+)
+def test_only_a_not_found_refusal_of_the_repo_read_passes(read: dict[str, Any]) -> None:
+    with pytest.raises(ProbeError, match="didn't refuse a repository read as not found"):
+        check_server({"result": {}}, {"result": {}}, read)
+
+
+@pytest.mark.parametrize(
     ("templates", "listed", "read", "problem"),
     [
         (
@@ -154,7 +168,7 @@ def test_a_server_with_no_repository_resources_passes() -> None:
             {"result": {}},
             {"result": {}},
             {"result": {"contents": []}},
-            "answered a repository read",
+            "as not found",
         ),
         (
             {"result": {"resourceTemplates": [], "nextCursor": "2"}},
@@ -237,7 +251,8 @@ for line in sys.stdin:
     message = json.loads(line)
     if "id" in message:
         read = message["method"] == "resources/read"
-        answer = {{"error": {{"code": -32602}}}} if read else {{"result": {{}}}}
+        refused = {{"code": -32602, "message": "Resource not found"}}
+        answer = {{"error": refused}} if read else {{"result": {{}}}}
         sys.stdout.write(json.dumps({{"jsonrpc": "2.0", "id": message["id"], **answer}}) + "\\n")
         sys.stdout.flush()
 """,

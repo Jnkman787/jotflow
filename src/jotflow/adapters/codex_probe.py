@@ -210,8 +210,18 @@ def check_server(
         uri = str(resource.get("uri"))
         if not uri.startswith("ui://"):
             raise ProbeError(f"the GitHub MCP server serves a resource it mustn't: {uri}")
-    if "error" not in read:
-        raise ProbeError("the GitHub MCP server answered a repository read")
+    if not _not_found(read):
+        # Any other error, such as a failed fetch, means the server tried the read.
+        raise ProbeError("the GitHub MCP server didn't refuse a repository read as not found")
+
+
+def _not_found(answer: Mapping[str, Any]) -> bool:
+    """MCP's own refusal of an unknown resource: -32602, or -32002, "not found"."""
+    error = answer.get("error")
+    if not isinstance(error, dict) or "result" in answer:
+        return False
+    message = str(error.get("message", "")).casefold()
+    return error.get("code") in (-32602, -32002) and "not found" in message
 
 
 def _listed(answer: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
