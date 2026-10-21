@@ -27,14 +27,17 @@ from collections.abc import Iterable
 from pathlib import Path
 
 # The system calls strace must trace for :func:`contacts` to see everything.
-TRACED = "trace=connect,sendto,sendmsg,sendmmsg,io_uring_setup"
+TRACED = "trace=connect,sendto,sendmsg,sendmmsg,io_uring_setup,execve"
 
 _FAMILY = re.compile(r"sa_family=(AF_[A-Z0-9]+)")
 _PORT = re.compile(r"sin6?_port=htons\((\d+)\)")
 _V4 = re.compile(r'sin_addr=inet_addr\("([0-9.]+)"\)')
 _V6 = re.compile(r'inet_pton\(AF_INET6, "([0-9a-fA-F:.]+)"')
 _RESULT = re.compile(r"\)\s*=\s*(-?\d+)")
+# Exactly these, so a wildcard such as 0.0.0.0 or ::, which reaches the host's own
+# loopback on Linux, is refused too.
 LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+_CALL = re.compile(r"^\[\d+ [^\]]*\] ")
 
 
 def strace_argv(strace: str, prefix: Path) -> list[str]:
@@ -43,11 +46,28 @@ def strace_argv(strace: str, prefix: Path) -> list[str]:
 
 
 def trace_lines(prefix: Path) -> list[str]:
-    """Every line strace wrote for the process tree, one file per process."""
+    """Every line strace wrote for the process tree, one file per process.
+
+    Each line is prefixed with the process's id and program, as in
+    ``[4242 codex] connect(...)``, so a failure says which process made the contact.
+    """
     lines: list[str] = []
     for path in sorted(prefix.parent.glob(prefix.name + ".*")):
-        lines += path.read_text(errors="replace").splitlines()
+        pid = path.name.rsplit(".", 1)[1]
+        program = _program(path)
+        lines += [
+            f"[{pid} {program}] {line}" for line in path.read_text(errors="replace").splitlines()
+        ]
     return lines
+
+
+def _program(trace: Path) -> str:
+    """The program a trace file's process ran, from its execve. A thread has none: "?"."""
+    for line in trace.read_text(errors="replace").splitlines():
+        if line.startswith("execve("):
+            name = line.split('"', 2)[1] if '"' in line else "?"
+            return Path(name).name
+    return "?"
 
 
 def refused_contacts(lines: Iterable[str], allowed_ports: Iterable[int]) -> list[str]:
@@ -55,7 +75,8 @@ def refused_contacts(lines: Iterable[str], allowed_ports: Iterable[int]) -> list
     ports = set(allowed_ports)
     refused: list[str] = []
     for line in lines:
-        if line.startswith("io_uring_setup("):
+        call = _CALL.sub("", line, count=1)
+        if call.startswith("io_uring_setup("):
             refused.append(line)
             continue
         family = _FAMILY.search(line)

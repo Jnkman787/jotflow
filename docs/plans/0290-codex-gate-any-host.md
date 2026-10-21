@@ -47,6 +47,6 @@ The gate job installs `strace` from Ubuntu's archive with `apt-get install --no-
 
 - [x] The trace parser, with unit tests on real strace lines
 - [x] Test 1, behaviour with the fake model, for drafting and question
-- [ ] The reviewer's look at this plan
+- [x] The reviewer's look at this plan: process names in failures, exact loopback only, and the GitHub-server limit stated
 - [x] Test 2, start-up exactly as deployed, with its control
 - [x] CI installs strace; docs; `make check`

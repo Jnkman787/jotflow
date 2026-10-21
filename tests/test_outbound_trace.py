@@ -34,7 +34,14 @@ def test_every_other_contact_is_refused() -> None:
         # Loopback, but not one of the allowed ports.
         'connect(8, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr("127.0.0.1")}, 16) = 0',
         'connect(8, {sa_family=AF_INET6, sin6_port=htons(38999), sin6_flowinfo=htonl(0), inet_pton(AF_INET6, "fe80::1", &sin6_addr), sin6_scope_id=0}, 28) = 0',
-        # A lookup service that answered, which would hide the host asked for.
+        # A wildcard, which reaches the host's own loopback on Linux.
+        'connect(8, {sa_family=AF_INET, sin_port=htons(38999), sin_addr=inet_addr("0.0.0.0")}, 16) = 0',
+        'connect(8, {sa_family=AF_INET6, sin6_port=htons(38999), sin6_flowinfo=htonl(0), inet_pton(AF_INET6, "::", &sin6_addr), sin6_scope_id=0}, 28) = 0',
+        # Loopback by another 127/8 address.
+        'connect(8, {sa_family=AF_INET, sin_port=htons(38999), sin_addr=inet_addr("127.0.0.2")}, 16) = 0',
+        # A lookup service that answered, which would hide the host asked for, and an
+        # abstract socket that answered.
+        'connect(3, {sa_family=AF_UNIX, sun_path=@"/tmp/dbus-AbC"}, 20) = 0',
         'connect(3, {sa_family=AF_UNIX, sun_path="/run/systemd/resolve/io.systemd.Resolve"}, 110) = 0',
         # A family nobody expects, and io_uring, which hides its connects.
         "connect(9, {sa_family=AF_PACKET, sll_protocol=htons(ETH_P_ALL)}, 20) = 0",
@@ -50,10 +57,16 @@ def test_a_line_with_no_parsable_address_is_refused() -> None:
 
 def test_trace_files_are_read_per_process(tmp_path: Path) -> None:
     prefix = tmp_path / "trace"
-    (tmp_path / "trace.101").write_text(MODEL + "\n")
+    (tmp_path / "trace.101").write_text(
+        'execve("/usr/local/bin/codex", ["codex"], 0x7ffd /* 9 vars */) = 0\n' + MODEL + "\n"
+    )
     (tmp_path / "trace.202").write_text(NSCD_MISSING + "\n")
     (tmp_path / "unrelated").write_text("connect(...)\n")
-    assert trace_lines(prefix) == [MODEL, NSCD_MISSING]
+    lines = trace_lines(prefix)
+    assert lines[1:] == [f"[101 codex] {MODEL}", f"[202 ?] {NSCD_MISSING}"]
+    # Labelled lines read the same, and a refusal names the process that made it.
+    leak = 'connect(7, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr("1.1.1.1")}, 16) = 0'
+    assert refused_contacts([*lines, f"[303 node] {leak}"], {API}) == [f"[303 node] {leak}"]
     argv = strace_argv("/usr/bin/strace", prefix)
     assert argv[:3] == ["/usr/bin/strace", "-f", "-ff"] and argv[-2:] == ["-o", str(prefix)]
 
