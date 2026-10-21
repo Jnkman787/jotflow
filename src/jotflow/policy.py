@@ -28,6 +28,7 @@ from pydantic import (
     model_validator,
 )
 
+from jotflow.doc_paths import PathRefused, check_patterns
 from jotflow.models import RepoName, RepoVisibility, shown, under_owner
 from jotflow.reactions import DEFAULT_APPROVAL, DEFAULT_ISSUE_REACTION, KEYWORD_REACTIONS, reserved
 from jotflow.text import unsafe_text_problem
@@ -180,6 +181,25 @@ class RepoPolicy(_Strict):
             "quickly are allowed (#216)"
         ),
     )
+
+    read_paths: tuple[str, ...] | None = Field(
+        default=None,
+        description=(
+            "Optional. The repo's text files a drafting run may read, as patterns such as "
+            "docs/plans/**/*.md. Needs Contents: Read on the read token, which then covers "
+            "every repo that token reaches (#209)"
+        ),
+    )
+
+    @field_validator("read_paths")
+    @classmethod
+    def _checked_read_paths(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        try:
+            return check_patterns(value)
+        except PathRefused as refused:
+            raise ValueError(str(refused)) from None
 
     @field_validator("conventions")
     @classmethod
@@ -556,6 +576,15 @@ class Policy(_Strict):
     def repo(self, channel_id: str, ref: str) -> RepoPolicy:
         """The repo ``ref`` names in ``channel_id``, by ``owner/name`` or nickname."""
         return self.channel(channel_id).repo(ref, channel_id=channel_id)
+
+    @property
+    def reads_docs(self) -> bool:
+        """Whether any repo sets ``read_paths``, so drafting gets the doc tools (#209)."""
+        return any(
+            repo.read_paths is not None
+            for channel in self.channels.values()
+            for repo in channel.repos
+        )
 
     @model_validator(mode="after")
     def _reactions_never_collide(self) -> Policy:

@@ -7,9 +7,28 @@ What changed in each JotFlow release, for the people who run it. The format foll
 ### Added
 
 - **`jotflow replay` plays question runs (#270).** Fixtures can script a question run's answer and expect what JotFlow posts after its no-links rewrite. Four new fixtures cover a question about an existing topic, a how-to question, an injected link-and-ping request, and a guest who is refused privately.
+- **A question can check an issue's status (#273).** The agent can look up an issue in the asking channel's repos, so an answer can say whether `owner/name#42` is open or closed, why it was closed, how it's labelled, and when it last changed. It reads through the drafting runner with the read token, at most 5 issues a question, and never sees an issue's body or comments. Another channel's repos are refused. A rate limit makes the answer say GitHub couldn't be checked, never that the issue doesn't exist. The question run itself still has no GitHub access. Update both images: the drafting runner gains one fixed GitHub call.
+- **`jotflow rebuild --from-github` (#256).** It's optional. It reads JotFlow's own issues through the agent runners, so JotFlow still holds no GitHub token. It restores real topic titles, and threads whose Slack reply was lost. Only issues the write token's own account wrote count, and only messages the Slack walk saw are linked, at the agent's level.
+
+### Changed
+
+- **`jotflow rebuild` restores a thread's links as the agent's decision, not a person's (#279).** The original links were mostly the agent's, so a later drafting run can still move a rebuilt one, and a person's later choice wins. A `skip:` stays a person's. A message a person attached before the loss, for example with `re:`, comes back as the agent's too, so attach it again with `re:` to keep it fixed.
+
+## [0.4.0] - 2026-10-20
+
+A minor release with new features, all off by default except the readable help, related issues on the card, and the @-mention check. Upgrade both images: the agent image changed too. The default Compose files are unchanged, so an image bump is enough, and `docker-compose.isolation.yml` is new and only for teams turning on per-run uids. It adds store migrations 14 and 15, so rolling back means restoring the backup from before the upgrade, then removing any new keys from `jotflow.toml` (`scopes`, `read_paths`, `conventions`, `title_pattern`, `[questions]` and any `[channels.<id>.questions]`), which older versions refuse. No Slack app change is needed.
+
+### Added
+
+- **Drafting can read a repo's design docs, opt-in (#209).**
+  - A repo in `jotflow.toml` can set `read_paths`, such as `["README.md", "docs/plans/**/*.md"]`. Drafting runs then get `list_repo_docs` and `read_repo_doc`, which read only the text files those patterns allow, through the drafting agent container.
+  - Reads are capped at 64 KiB a file, and 20 files and 256 KiB a run. The text is marked untrusted, and the card lists every doc the draft read and flags a long passage copied word for word.
+  - The read token then needs **Contents: Read-only**, which GitHub grants for every file in every repo the token reaches, not only these paths. `jotflow check` says so.
+  - The `codex` preset can't be used with `read_paths`, because its MCP resource tools would read past it. `jotflow check` fails, and JotFlow turns drafting runs off with a reason naming the conflict; question runs, which have no GitHub access, stay on (#274).
+  - With no `read_paths`, nothing changes. Before rolling back, remove `read_paths`, because older versions refuse keys they don't know.
 - **Prove a GitHub link is yours (#195).** `/jotflow verify` gives you a one-time code to put in your GitHub profile bio or a public gist's description, and `/jotflow verify check` checks it. A verified login loses "(unverified)" on cards. If someone else linked your login first, `/jotflow verify your-github-login` lets you prove it and moves the link to you; they're told privately. The check runs in the drafting agent container, anonymously, so JotFlow itself still never talks to GitHub, and it needs the agent containers on. GitHub limits anonymous reads, so a busy host may be asked to try again later. This adds migration 15.
 - **Per-run uids in the agent containers, opt-in (#181).** With `JOTFLOW_RUNNER_ISOLATION=uid` in an agent env file and `docker-compose.isolation.yml` in `COMPOSE_FILE`, each run's agent runs as its own Linux uid with no capabilities. So runs of one kind can't read each other's environment, run directory or MCP config, or the runner's, which holds the GitHub token and runner secret. The runner starts as root with only SETUID and SETGID, and refuses to start without them. This mode needs an API key, not a CLI login. The default, `none`, is unchanged. Making `uid` the default is planned for a later minor release.
-- **Questions with `ask:` or an @-mention of the bot (#57).** The agent answers once, in the thread, from the channel's topics and from `/jotflow help`. A question run has no GitHub access. The answer is plain text labelled "Answer from the agent:", with no links, no pings, and no other repos' references. Only this workspace's own members can ask. A new `[questions]` table sets a per-channel hourly limit (10) and a per-person wait (60 seconds), or turns questions off. No new Slack scope is needed.
+- **Questions with `ask:` or an @-mention of the bot (#57).** The agent answers once, in the thread, from the channel's topics and from `/jotflow help`. A question run has no GitHub access. The answer is plain text labelled "Answer from the agent:", with no links, no pings, and no other repos' references. Only this workspace's own members can ask. A new `[questions]` table sets a per-channel hourly limit (10) and a per-person wait (60 seconds), or turns questions off. No new Slack scope is needed. Plain file names like `Node.js` and `config.yaml` stay readable, while anything Slack could link, such as `README.md`, is removed (#275).
 - **Per-repo house rules for issues (#216).**
   - A repo in `jotflow.toml` can have `conventions`, the team's own rules for its issues, which the drafting agent follows over the style of recent issues.
   - A repo can also have a `title_pattern` that every proposed title must fully match. JotFlow refuses a title that doesn't, and the agent tries again, up to three times per run.
@@ -131,7 +150,8 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
-[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Jnkman787/jotflow/releases/tag/v0.1.1

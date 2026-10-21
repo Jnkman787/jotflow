@@ -169,8 +169,42 @@ class AnswerCall(_Strict):
     arguments: Answer
 
 
+class RepoDocArguments(_Strict):
+    repo: str = Field(min_length=1, max_length=140)
+    path: str | None = Field(default=None, min_length=1, max_length=400)
+
+
+class ListRepoDocsCall(_Strict):
+    """A ``list_repo_docs`` call (#209). ``expect_paths`` is what it must return."""
+
+    tool: Literal["list_repo_docs"]
+    arguments: RepoDocArguments
+    expect_paths: tuple[str, ...] | None = None
+    expect_error: str | None = Field(default=None, min_length=1)
+
+
+class ReadRepoDocCall(_Strict):
+    """A ``read_repo_doc`` call (#209), which may expect a refusal."""
+
+    tool: Literal["read_repo_doc"]
+    arguments: RepoDocArguments
+    expect_error: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _names_a_path(self) -> ReadRepoDocCall:
+        if self.arguments.path is None:
+            raise ValueError("a read_repo_doc call needs a path")
+        return self
+
+
 ToolCall = Annotated[
-    LinkMessageCall | ProposeIssueCall | ProposeUpdateCall | AskChannelCall | AnswerCall,
+    LinkMessageCall
+    | ProposeIssueCall
+    | ProposeUpdateCall
+    | AskChannelCall
+    | AnswerCall
+    | ListRepoDocsCall
+    | ReadRepoDocCall,
     Field(discriminator="tool"),
 ]
 # What a question run may call, as #57 gives the question kind its tools.
@@ -383,6 +417,9 @@ class Expected(_Strict):
     whispers: tuple[ExpectedWhisper, ...] = Field(
         default=(), description="JotFlow's fixed private replies about questions, in order"
     )
+    docs_read: tuple[str, ...] = Field(
+        default=(), description="Each repo doc a run read, as owner/name:path, in order (#209)"
+    )
 
 
 class GithubIssue(_Strict):
@@ -453,6 +490,13 @@ class SavedThread(_Strict):
         default_factory=dict,
         description="What a real agent's GitHub read tools see, by owner/name; replay --agent",
     )
+    docs: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description=(
+            "Text files in each repo's default branch, by owner/name then path, for the "
+            "doc tools (#209). Only those read_paths allows are ever readable"
+        ),
+    )
     expected: Expected
 
     @property
@@ -515,6 +559,9 @@ def _github_problems(thread: SavedThread) -> list[str]:
     repos = {r.repo.casefold() for c in thread.policy.channels.values() for r in c.repos}
     # Under a scope's owner, any repo may be there, an excluded one too (#236).
     owners = {s.owner.casefold() for c in thread.policy.channels.values() for s in c.scopes}
+    for name in thread.docs:
+        if name.casefold() not in repos:
+            problems.append(f"docs.{name}: not a repo in policy")
     for name, repo in thread.github.items():
         where = f"github.{name}"
         if name.casefold() not in repos and name.partition("/")[0].casefold() not in owners:

@@ -108,7 +108,7 @@ docker compose start jotflow
 
 It restores:
 - **a topic per issue**, titled by its nickname and number, such as `web#42`
-- **the people's messages** in each such thread, linked to their topic, or marked as not an idea when they start with `skip:`
+- **the people's messages** in each such thread, linked to their topic as the agent's decision, so a person's later choice still wins, or marked as not an idea when they start with `skip:`, which stays a person's decision
 - **each channel's mode,** from JotFlow's latest mode announcement
 - **whether the channel's guide was already posted,** so it isn't posted and pinned twice
 
@@ -118,6 +118,15 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 - `--dry-run` reads Slack and prints what it would restore, writing nothing.
 - `--since 90d` reads only the last 90 days. The default is all history. A mode set before that window isn't seen, so the channel falls back to `propose`, and rebuild says to check it with `/jotflow mode`.
 - `--channel C0IDEAS01` rebuilds one channel, and can be repeated.
+- `--from-github` also reads JotFlow's own issues on GitHub, through the agent runners, so JotFlow still holds no GitHub token. It needs both agent containers running, and it's optional. It does two things:
+  - It replaces each `nick#N` title with the issue's real title. A title someone gave is never changed.
+  - For an issue whose Slack reply was lost, it restores the topic and links its source messages from the issue's footer, as the agent's decision, so a person's later one still wins.
+
+  Only issues the write token's own account wrote count, since anyone can write a JotFlow marker into an issue. Only messages the Slack walk saw in that channel are linked. With `issue_links = "none"`, issues carry no permalinks, so only titles come back. An update's marker lives in a comment, which isn't read.
+
+  ```
+  docker compose run --rm --no-deps jotflow jotflow rebuild --from-github
+  ```
 - `--no-lock` lets rebuild run without the check that JotFlow isn't running, but only on a filesystem that can't lock. Stop JotFlow yourself first. Where locking works, a running JotFlow is still refused.
 - `--merge` adds to a store that already has topics, never overwriting what's there. Without it, rebuild refuses a store with topics in a configured channel.
 
@@ -126,8 +135,9 @@ It prints progress per channel, then counts. A big channel takes minutes, becaus
 - applied proposals' history: who approved, and the run records
 - identity links, operator tokens and identity unlinks, which Slack only showed privately. People run `/jotflow link` again, and admins reissue tokens.
 - old reaction marks
+- whether a link was a person's choice. A message a person attached before the loss, for example with `re: web#42`, comes back linked as the agent's decision, so a later drafting run could move it. Attach it again with `re:` to make it a person's choice again. A `skip:` stays a person's, since it's in the message itself.
 - the agent's own "not an idea" marks. Only `skip:` is visible in Slack, so a message the agent had marked as chatter comes back linked to the thread's issue.
-- real topic titles
+- real topic titles, unless `--from-github` is given
 - messages deleted in Slack, threads older than the workspace's history retention or `--since`, and threads JotFlow never wrote an issue for
 
 **One writer at a time.** `jotflow run` holds a lock on the database, a `jotflow.db.lock` file next to it, for as long as it runs. Rebuild takes the same lock, so it refuses with "another JotFlow process is using the database" while JotFlow is running, and a second JotFlow refuses to start during a rebuild. Both containers share the data volume, so each sees the other's lock. The lock goes away when the process exits, even after a crash.

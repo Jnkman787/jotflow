@@ -425,3 +425,29 @@ async def test_a_different_refusal_than_expected_fails_the_replay() -> None:
     report = await replay(parse_thread(_broken("title-pattern", other), source="test"))
     script = {c.name: c for c in report.checks}["script"]
     assert script.ok is False and "must match title_pattern" in script.detail
+
+
+# Repo docs (#209)
+
+
+async def test_a_doc_outside_read_paths_stays_unreadable_in_replay() -> None:
+    def widened(data: dict[str, Any]) -> None:
+        # Drop the listing check, so only the refused read can catch it.
+        data["agent"][0]["calls"][3].pop("expect_paths")
+        web = data["policy"]["channels"]["C0EXAMPLE1"]["repos"][0]
+        web["read_paths"] = ["docs/**/*.md"]
+
+    report = await replay(parse_thread(_broken("repo-docs", widened), source="test"))
+    script = {c.name: c for c in report.checks}["script"]
+    assert (
+        script.ok is False and "was accepted, but the script expected it refused" in script.detail
+    )
+
+
+async def test_a_fixture_without_read_paths_has_no_doc_tools() -> None:
+    def off(data: dict[str, Any]) -> None:
+        data["policy"]["channels"]["C0EXAMPLE1"]["repos"][0].pop("read_paths")
+
+    report = await replay(parse_thread(_broken("repo-docs", off), source="test"))
+    script = {c.name: c for c in report.checks}["script"]
+    assert script.ok is False and "list_repo_docs" in script.detail

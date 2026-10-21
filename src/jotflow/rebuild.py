@@ -30,7 +30,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from jotflow.models import ChannelMode, MessageRef
+from jotflow.models import ChannelMode, MarkedIssue, MessageRef
 from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.packet import Budget, Sleep, with_backoff
@@ -87,6 +87,9 @@ class ChannelPlan:
     guide_posted: bool = False
     messages_read: int = 0
     unknown_repos: int = 0
+    # Every person's message the walk saw: ts -> its thread, or None at top level.
+    # --from-github links only these (#256), so an issue can't name others.
+    seen: dict[str, str | None] = field(default_factory=dict)
 
     @property
     def issue_count(self) -> int:
@@ -218,6 +221,11 @@ async def collect(
 
     top = await _pages(paced(history, f"{channel_id}'s history"))
     plan.messages_read = len(top)
+    for message in top:
+        if _is_person(message, bot):
+            parent = message.get("thread_ts")
+            ts = str(message["ts"])
+            plan.seen[ts] = parent if isinstance(parent, str) and parent != ts else None
     mode_ts = -1.0
     threads = [m for m in top if isinstance(m.get("reply_count"), int) and m["reply_count"] > 0]
     for message in top:
@@ -234,6 +242,9 @@ async def collect(
         ts = str(parent.get("ts") or "")
         replies = await _pages(paced(_replies(slack, channel_id, ts), f"a thread in {channel_id}"))
         plan.messages_read += max(len(replies) - 1, 0)
+        for reply in replies:
+            if _is_person(reply, bot) and str(reply["ts"]) != ts:
+                plan.seen[str(reply["ts"])] = ts
         thread = plan_thread(ts, replies, bot, repos)
         plan.unknown_repos += thread.unknown_repos
         if thread.issues:
@@ -302,7 +313,10 @@ async def apply(store: Store, policy: Policy, plan: ChannelPlan, bot: BotIdentit
                 await store.mark_chatter(ref, by="person")
                 done.chatter += 1
             else:
-                await store.link_message(ref, topic_ids[index], by="person")
+                # The agent's, as the original link mostly was: a person's later choice,
+                # or the agent's own later judgment, can still move it. A skip: above stays
+                # a person's, since a person typed it.
+                await store.link_message(ref, topic_ids[index], by="agent")
                 done.linked += 1
     if plan.mode is not None and await store.get_channel_mode(plan.channel_id) is None:
         await store.set_channel_mode(plan.channel_id, plan.mode, changed_by=bot.user_id)
@@ -317,5 +331,81 @@ async def apply(store: Store, policy: Policy, plan: ChannelPlan, bot: BotIdentit
         done.linked,
         done.chatter,
         done.kept,
+    )
+    return done
+
+
+# --- --from-github (#256) --------------------------------------------------------------------
+
+
+@dataclass
+class FromGithub:
+    """Counts only, for the summary."""
+
+    titles: int = 0
+    topics: int = 0
+    linked: int = 0
+    not_ours: int = 0  # authored by anyone but JotFlow's write token: never trusted
+    no_source: int = 0  # no source message the Slack walk saw in this channel
+
+
+async def apply_github(
+    store: Store,
+    policy: Policy,
+    plan: ChannelPlan,
+    issues: Mapping[str, Sequence[MarkedIssue]],
+    write_login: str,
+) -> FromGithub:
+    """Real titles, and threads whose Slack reply was lost, from JotFlow's own issues.
+
+    ``issues`` maps each of the channel's repos to its marked issues. Only an
+    issue authored by ``write_login`` counts, since anyone can write a marker
+    line. A restored link is the agent's, so a person's later decision still
+    wins, and only a message the Slack walk saw in this channel is linked.
+    """
+    done = FromGithub()
+    bound = {
+        (t.topic.repo.casefold(), t.topic.issue_number): t.topic
+        for t in await store.channel_topics(plan.channel_id)
+        if t.topic.repo is not None and t.topic.issue_number is not None
+    }
+    for repo, found in issues.items():
+        for issue in found:
+            if issue.author.casefold() != write_login.casefold():
+                done.not_ours += 1
+                continue
+            topic = bound.get((repo.casefold(), issue.number))
+            if topic is not None:
+                # Only rebuild's own placeholder is replaced, never a title someone gave.
+                if topic.title == _title(policy, plan.channel_id, repo, issue.number):
+                    await store.rename_topic(topic.id, issue.title)
+                    done.titles += 1
+                continue
+            sources = [
+                s for s in issue.sources if s.channel_id == plan.channel_id and s.ts in plan.seen
+            ]
+            if not sources:
+                done.no_source += 1
+                continue
+            created = await store.create_topic(plan.channel_id, issue.title)
+            await store.set_topic_issue(created.topic.id, repo, issue.number)
+            bound[(repo.casefold(), issue.number)] = created.topic
+            done.topics += 1
+            for source in sources:
+                if await store.get_message(plan.channel_id, source.ts) is not None:
+                    continue
+                ref = MessageRef(
+                    channel_id=plan.channel_id, ts=source.ts, thread_ts=plan.seen[source.ts]
+                )
+                await store.link_message(ref, created.topic.id, by="agent")
+                done.linked += 1
+    log.info(
+        "from GitHub in %s: %d titles, %d topics, %d linked, %d not ours, %d without a source",
+        plan.channel_id,
+        done.titles,
+        done.topics,
+        done.linked,
+        done.not_ours,
+        done.no_source,
     )
     return done

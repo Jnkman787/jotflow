@@ -97,6 +97,109 @@ class DiscoveredRepo(BaseModel):
     private: bool = False
 
 
+# Pointers JotFlow parses out of its own issues for `jotflow rebuild --from-github`
+# (#256). The runner reads GitHub and sends only these. JotFlow checks them again.
+MAX_MARKED_ISSUES = 5000
+MAX_ISSUE_SOURCES = 50
+_SLACK_CHANNEL = r"[CG][A-Z0-9]{2,20}"
+_SLACK_TS = r"[0-9]{9,10}\.[0-9]{6}"
+_MARKER_ID = r"[A-Za-z0-9_-]{1,64}"
+_LOGIN = r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?"
+
+
+class IssueSource(BaseModel):
+    """A Slack message an issue's footer links to: a pointer, never the link itself."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    channel_id: str = Field(pattern=f"^{_SLACK_CHANNEL}$")
+    ts: str = Field(pattern=f"^{_SLACK_TS}$")
+    thread_ts: str | None = Field(default=None, pattern=f"^{_SLACK_TS}$")
+
+
+class MarkedIssue(BaseModel):
+    """One issue carrying a JotFlow marker, as the drafting runner reports it (#256).
+
+    The title is GitHub's text, cleaned; nothing else from the issue's text comes.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    number: int = Field(gt=0, le=10**9)
+    state: Literal["open", "closed"]
+    title: str = Field(min_length=1, max_length=80)
+    author: str = Field(max_length=45, description="The issue's author's login")
+    markers: tuple[str, ...] = Field(min_length=1, max_length=20)
+    sources: tuple[IssueSource, ...] = Field(default=(), max_length=MAX_ISSUE_SOURCES)
+
+    @field_validator("author")
+    @classmethod
+    def _login(cls, value: str) -> str:
+        if not is_github_login(value):
+            raise ValueError("not a GitHub login")
+        return value
+
+    @field_validator("markers")
+    @classmethod
+    def _marker_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not all(re.fullmatch(_MARKER_ID, m) for m in value):
+            raise ValueError("a marker id is not a JotFlow proposal id")
+        return value
+
+
+class IssueDetails(BaseModel):
+    """One issue, as a question run may see it (#273): no body, no comments, no people.
+
+    The title and labels are GitHub's text: the title is cleaned like a topic
+    title, and each label name passes the label rule. Both are untrusted.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    number: int = Field(ge=1, le=10**9)
+    state: Literal["open", "closed"]
+    state_reason: Literal["completed", "not_planned", "reopened", "duplicate"] | None = None
+    title: str = Field(min_length=1, max_length=120)
+    labels: tuple[str, ...] = Field(default=(), max_length=20)
+    comments: int = Field(ge=0, le=10**7)
+    updated_at: AwareDatetime
+
+    @field_validator("labels")
+    @classmethod
+    def _label_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not all(is_plain_label(label) for label in value):
+            raise ValueError("a label name is not one JotFlow accepts")
+        return value
+
+
+def is_plain_label(name: str) -> bool:
+    """A GitHub label a question may see (#273): a valid label name that cleaning leaves
+    as it is, so no Slack markup, mention or link."""
+    from jotflow.policy import label_problem
+    from jotflow.store.titles import clean_title
+
+    if label_problem(name) is not None:
+        return False
+    try:
+        return clean_title(name, 50) == name
+    except ValueError:
+        return False
+
+
+class MarkedIssues(BaseModel):
+    """The drafting runner's answer for one repo's marked issues (#256)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    issues: tuple[MarkedIssue, ...] = Field(default=(), max_length=MAX_MARKED_ISSUES)
+    truncated: bool = False
+
+
+def is_github_login(value: str) -> bool:
+    """A GitHub login, or an app's ``name[bot]``. Python's re: pydantic's has no lookahead."""
+    return re.fullmatch(_LOGIN, value) is not None
+
+
 def is_repo_name(value: str) -> bool:
     """Whether ``value`` is a valid ``owner/name`` GitHub repo."""
     match = _REPO_RE.fullmatch(value)

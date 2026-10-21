@@ -648,3 +648,171 @@ def test_a_lock_held_by_a_killed_process_is_free_again(tmp_path: Path) -> None:
     finally:
         if child.poll() is None:
             child.kill()
+
+
+# --- --from-github (#256) --------------------------------------------------------------------
+
+LOGIN = "jotflow-bot"
+
+
+def marked(
+    number: int, title: str, *sources: tuple[str, str, str | None], author: str = LOGIN
+) -> Any:
+    from jotflow.models import IssueSource, MarkedIssue
+
+    return MarkedIssue(
+        number=number,
+        state="open",
+        title=title,
+        author=author,
+        markers=(f"m{number}",),
+        # The workspace's short fake ts: validated shapes are the runner tests' job.
+        sources=tuple(
+            IssueSource.model_construct(channel_id=c, ts=t, thread_ts=p) for c, t, p in sources
+        ),
+    )
+
+
+class FakeGithubSource:
+    def __init__(self, issues: dict[str, list[Any]]) -> None:
+        self.issues = issues
+        self.asked: list[str] = []
+
+    async def repos(self, owner: str) -> list[Any]:
+        return []
+
+    async def marked_issues(self, owner: str, name: str, *, since: Any = None) -> Any:
+        from jotflow.models import MarkedIssues
+
+        self.asked.append(f"{owner}/{name}")
+        return MarkedIssues(issues=tuple(self.issues.get(f"{owner}/{name}", [])))
+
+    async def write_login(self) -> str:
+        return LOGIN
+
+
+LOST = ("C0IDEAS01", "1300.000100", None)
+LOST_REPLY = ("C0IDEAS01", "1300.000200", "1300.000100")
+
+
+def github() -> FakeGithubSource:
+    return FakeGithubSource(
+        {
+            "acme-co/web": [
+                marked(42, "Progress bar on onboarding"),
+                marked(55, "Export the table as CSV", LOST, LOST_REPLY),
+                marked(66, "Forged by someone else", LOST, author="mallory"),
+                marked(77, "Names a message nobody saw", ("C0IDEAS01", "9999.000100", None)),
+            ],
+            "acme-co/api": [marked(7, "Rate limit headers")],
+        }
+    )
+
+
+async def test_from_github_restores_titles_and_a_thread_whose_reply_was_lost(
+    tmp_path: Path,
+) -> None:
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    source = github()
+    try:
+        lines: list[str] = []
+        await rebuild(
+            store,
+            POLICY,
+            workspace(),
+            BOT,
+            [CH, OTHER],
+            oldest=None,
+            merge=False,
+            dry_run=False,
+            github=source,
+            say=lines.append,
+        )
+        topics = {
+            (r.topic.repo, r.topic.issue_number): r.topic for r in await store.channel_topics(CH)
+        }
+        # Real titles replace rebuild's nick#N placeholders.
+        assert topics[("acme-co/web", 42)].title == "Progress bar on onboarding"
+        assert topics[("acme-co/api", 7)].title == "Rate limit headers"
+        # The lost thread is back, linked as the agent's decision, so a person's still wins.
+        lost = topics[("acme-co/web", 55)]
+        assert lost.title == "Export the table as CSV"
+        for ts, thread in (("1300.000100", None), ("1300.000200", "1300.000100")):
+            link = await store.get_message(CH, ts)
+            assert link is not None and link.topic_id == lost.id and link.linked_by == "agent"
+            assert link.ref.thread_ts == thread
+        # A forged issue and one naming an unseen message restore nothing.
+        assert ("acme-co/web", 66) not in topics and ("acme-co/web", 77) not in topics
+        assert await store.get_message(CH, "9999.000100") is None
+        # The other channel feeds only web, and none of these sources are there.
+        other = {(r.topic.repo, r.topic.issue_number) for r in await store.channel_topics(OTHER)}
+        assert other == {("acme-co/web", 42)}
+        # Each repo is read once, however many channels feed it.
+        assert sorted(source.asked) == ["acme-co/api", "acme-co/web"]
+        summary = next(line for line in lines if "from GitHub" in line and line.startswith(CH))
+        assert "1 issues by others skipped" in summary and "1 without a message here" in summary
+    finally:
+        await store.close()
+
+
+async def test_from_github_never_renames_a_title_someone_gave(tmp_path: Path) -> None:
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    try:
+        own = await store.create_topic(CH, "Our own words")
+        await store.set_topic_issue(own.topic.id, "acme-co/web", 42)
+        await rebuild(
+            store,
+            POLICY,
+            workspace(),
+            BOT,
+            [CH],
+            oldest=None,
+            merge=True,
+            dry_run=False,
+            github=github(),
+            say=lambda _: None,
+        )
+        topic = await store.get_topic(own.topic.id)
+        assert topic is not None and topic.topic.title == "Our own words"
+    finally:
+        await store.close()
+
+
+async def test_a_from_github_dry_run_writes_nothing(tmp_path: Path) -> None:
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    lines: list[str] = []
+    try:
+        await rebuild(
+            store,
+            POLICY,
+            workspace(),
+            BOT,
+            [CH],
+            oldest=None,
+            merge=False,
+            dry_run=True,
+            github=github(),
+            say=lines.append,
+        )
+        assert await store.channel_topics(CH) == []
+        assert any("4 of JotFlow's issues on GitHub (dry run" in line for line in lines)
+    finally:
+        await store.close()
+
+
+async def test_a_rebuilt_link_is_the_agents_so_a_persons_later_choice_wins(tmp_path: Path) -> None:
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    try:
+        await run_rebuild(store, workspace())
+        rebuilt = await store.get_message(CH, "1100.000200")
+        assert rebuilt is not None and rebuilt.linked_by == "agent"
+        # A skip: is a person's own decision, and stays one.
+        skipped = await store.get_message(CH, "1100.000600")
+        assert skipped is not None and skipped.chatter and skipped.linked_by == "person"
+        # A person moves the message to another topic: their choice wins.
+        other = await store.create_topic(CH, "Someone's own topic")
+        ref = MessageRef(channel_id=CH, ts="1100.000200", thread_ts="1100.000100")
+        moved = await store.link_message(ref, other.topic.id, by="person")
+        assert moved.topic_id == other.topic.id and moved.linked_by == "person"
+    finally:
+        await store.close()

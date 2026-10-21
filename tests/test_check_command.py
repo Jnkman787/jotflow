@@ -596,3 +596,26 @@ def test_check_names_a_title_pattern_that_runs_out_of_time() -> None:
     policy = Policy.model_validate({"channels": {"C0TEST1": {"repos": repos}}})
     [warning] = check_command.pattern_warnings(policy)
     assert warning.startswith("acme-co/web's title_pattern ran out of time on a test title")
+
+
+def test_check_names_what_read_paths_needs_from_the_read_token() -> None:
+    from tests.test_doc_tools import with_read_paths
+    from tests.test_write_tools import POLICY
+
+    assert check_command.doc_notes(POLICY) == []
+    [note] = check_command.doc_notes(with_read_paths(POLICY))
+    assert note.startswith("acme-co/web set read_paths, so the read token needs Contents: Read")
+    assert "covers every repo the token reaches" in note
+
+
+def test_codex_with_read_paths_fails_check(
+    workspace: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Codex's resource tools would read past read_paths, so it's refused, not warned (#209).
+    _with_preset(workspace, "codex")
+    toml = workspace / "jotflow.toml"
+    toml.write_text(toml.read_text() + 'read_paths = ["docs/*.md"]\n')
+    assert main(["check"]) == check_command.EXIT_FAILED
+    out = capsys.readouterr().out
+    assert "fail  policy: drafting runs are off" in out
+    assert "codex, whose MCP resource tools would read any file" in out

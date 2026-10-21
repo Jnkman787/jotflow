@@ -1494,6 +1494,19 @@ class SqliteStore:
             )
         return int(row["n"]) if row is not None else 0
 
+    async def tool_call_results(self, run_id: str, tools: Collection[str]) -> list[str]:
+        names = list(tools)
+        if not names:
+            return []
+        marks = ", ".join("?" for _ in names)
+        async with self._lock:
+            rows = await self._all(
+                f"SELECT result_json FROM tool_calls WHERE run_id = ? AND tool IN ({marks}) "
+                "ORDER BY seq",
+                (run_id, *names),
+            )
+        return [str(row["result_json"]) for row in rows]
+
     async def count_thread_calls(
         self, channel_id: str, thread_ts: str | None, tool: str, *, since: datetime
     ) -> int:

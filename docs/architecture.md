@@ -34,10 +34,12 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 | `list_topics` | Active topics for a channel with ids, titles, linked issues |
 | `get_topic` | A topic's linked Slack messages and issue state |
 | `get_work` | The run's packet: thread text, the active topic index, and related-thread excerpts for a drafting or question run; only the approved structured proposal for an execution run |
+| `get_issue` | Question runs only: one issue in one of the run's channel repos, by number. State, close reason, title and labels marked untrusted, comment count and last update; never the body or comments. Read through the drafting runner, at most 5 a run (#273) |
 | `propose_issue` | Structured draft: repo, title, body, labels, assignees, size |
 | `propose_update` | Structured change to an existing issue: body edit, comment, label or assignee change |
 | `link_message` | Associate a Slack message with a topic, or mark it as chatter |
 | `ask_channel` | Post a clarifying question into the source thread only |
+| `list_repo_docs`, `read_repo_doc` | Drafting only, and only when a repo sets `read_paths`: the repo's design docs that pattern allows, by path, and one doc's text, marked untrusted (#209) |
 | `record_result` | Report the issue URL, or the error, after executing an approved proposal |
 
 Every tool reads its channel, thread, run, and proposal from the caller's token, never from its arguments. A topic in another channel is reported exactly like a missing one. Text written in Slack, and anything an earlier run wrote, such as topic titles, sits in fields marked untrusted, and each packet carries a fixed notice saying how to treat them. No such text reaches a tool description. A failure the agent should act on, such as a finished run or an unknown topic, comes back as a tool result with `isError` set and a short reason. Tools also advertise an output schema, so those labels show in what the agent reads.
@@ -46,9 +48,9 @@ Every call carries a token, and what a token may do depends on who holds it:
 
 | Token | Issued to | May call |
 |---|---|---|
-| Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel` |
+| Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel`, and `list_repo_docs` and `read_repo_doc` when a repo sets `read_paths` |
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
-| Question run (D12, #57) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `answer` (once, in the source thread only) |
+| Question run (D12, #57) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `get_issue` (this channel's repos only, #273), `answer` (once, in the source thread only) |
 | Operator token (M5, D12, #58) | One person, named channels, admin-issued and revocable | `list_topics`, `get_topic` only: no `get_work`, no write, approval or result tool |
 
 Tokens are short-lived for runs and revocable for operators. The server validates `Host` and `Origin` headers so a web page cannot reach it from a browser.
@@ -66,6 +68,17 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 | `link_message` | Only messages the run's `get_work` packet served. A person's earlier decision always stands. At most 200 per run. |
 | `ask_channel` | Posts only into the run's own thread, with broadcast mentions removed and Slack markup escaped. Never unfurls or turns names into mentions. At most 2 per run, and one per thread every 30 seconds across runs. |
 | `record_result` | Execution runs only, for the grant's own proposal while it is executing, or reconciling after a restart. An issue URL must match the approved repo and issue. A result is recorded once. |
+
+**Repo docs (#209).** A repo in `jotflow.toml` may set `read_paths`, such as `["README.md", "docs/plans/**/*.md"]`. Only then does JotFlow serve `list_repo_docs` and `read_repo_doc`, to drafting runs only. With no repo setting it, the tool set is exactly as before. JotFlow holds no GitHub token, so the drafting runner fetches, with the read token, over `POST /docs/list` and `POST /docs/read`, behind its secret and gate. The checks are JotFlow's, before the runner is asked:
+
+| Check | Rule |
+|---|---|
+| Repo | One of the run's channel's listed repos that sets `read_paths`. A repo found by a scope never gets doc reads. |
+| Pattern | Relative POSIX paths with `*`, `?` and `**`. A wildcard never matches a hidden segment, `.git`, `.github/workflows` and `.env*` are refused even written out, and only `.md`, `.markdown`, `.txt`, `.rst` and `.adoc` files are readable. Checked when the policy loads. |
+| Path | Exactly a path the default branch's tree listed, as a regular file. A symlink or submodule is never listed. The runner reads the blob by the tree's sha, so nothing is followed. |
+| Caps | 64 KiB a file, cut with a marker. 20 reads and 256 KiB a run, and 500 listed paths. Content must be strict UTF-8 with no NUL. |
+
+Doc text comes back as untrusted data. Each read goes on the run's ledger as repo, path and blob sha, never content, and the card shows a "Read:" line listing them. JotFlow keeps sampled hashes of what each read returned while the run lasts. A proposal that copies a passage of about 200 characters word for word gets a "Contains a long passage copied word for word" line on its card. Execution packets never include docs. At startup JotFlow asks the drafting runner to list each such repo, and warns if it can't or nothing matches.
 
 Every call also checks that its run is still running, as a second guard behind token revocation. It does not check the deadline: the token's short grace after the deadline lets a run's last call land, such as the result of a write that already happened, while the overdue sweep times the run out. `get_work` does refuse a run past its deadline, so no new work starts late.
 
@@ -160,13 +173,14 @@ Both services run as uid 10002 with a read-only root, `/tmp` in memory, all capa
 - **Ending a run.** A run past its time limit, or one JotFlow stops, loses its whole process group: SIGTERM, then SIGKILL. When the runner itself stops, it stops every live run.
 - **JotFlow's side (#21).** JotFlow's run supervisor starts each queued run on the runner for its kind: `JOTFLOW_RUNNER_URL` with `JOTFLOW_RUNNER_SECRET` for drafting and question runs, and `JOTFLOW_RUNNER_EXEC_URL` with `JOTFLOW_RUNNER_EXEC_SECRET` for execution runs. The URLs default to `http://agent:8766` and `http://agent-exec:8766`. There is no fallback between them, and JotFlow refuses to start if the two secrets are equal. It never follows a redirect or uses a proxy from the environment, so a secret or token goes only to its own runner. It polls each run every 2 seconds and ends it through the run lifecycle, which revokes the token first. A run past its deadline is timed out, its token revoked, and then the runner is told to kill it. A run that fails or times out gets a short notice in its thread. The notice is fixed text with the run id only, never the agent's output or the runner's reply. The reason goes in JotFlow's log and the run record.
 - **Repo discovery (#236).** For a channel with a scope, the drafting runner answers `GET /repos/{owner}` with one owner's repos, from its read token, and the execution runner answers `GET /repos/{owner}/{name}/access` with only whether its write token can see that repo. That is an early refusal, not proof of write access: the real limit is the write itself, which fails closed at GitHub and reports on the card. Both take path parameters only, checked on both sides, behind the runner's secret. The runner reads at most 1,000 repos and 1 MB, builds each page's URL itself, keeps 8 fields of each repo, and drops a repo under another owner. JotFlow's repo catalog lists each scope owner at start and every 15 minutes, and a miss asks again at most once a minute. A listing older than 24 hours finds nothing, so it fails closed. Every reader of a channel's repos asks the catalog: the drafting packet, `propose_issue`, the card and its repo dropdown, `re:`, the thread reply, help, and rebuild. Approval checks a found repo again, and its write access, caching only a yes, for 15 minutes.
+- **Marked issues, for `rebuild --from-github` (#256).** The drafting runner answers `POST /repos/jotflow-issues`, a strict `{owner, name, since}` body with no query string. It pages that repo's issues with its read token, at most 5,000 and 30 MB, drops pull requests, and keeps only issues with a JotFlow marker line. For each, it returns only the number, state, author login, a cleaned title, the marker ids and the parsed Slack source pointers, never the body or comments. The execution runner answers `GET /identity` with its write token's login only, so rebuild trusts only issues JotFlow itself wrote.
 - **Start and stop (#55).** `jotflow run` opens the store, recovers interrupted runs, starts the MCP server with the read and write tools, and only then starts the supervisor and the debouncer. Slack connects last. Each run kind is on only when `[agent] preset` is set and that kind's runner secret is present, decided once at startup with one log line for each kind that is off. A kind that is off never starts: its runs stay queued and its proposals stay approved, rather than failing. With drafting off, nothing is queued from Slack. With every kind off, no token is issued. JotFlow then asks each runner that is on for `GET /info`, which is behind the same secret and gate as `/runs` and returns its preset (`command` for a custom command) and the kinds it serves. A runner whose preset differs from `[agent] preset`, that serves other kinds, refuses the secret, or does not answer turns its kinds off in the same way. JotFlow resolves each runner's name once and sends the secret only if every address is private, then connects to that address with the name in `Host` (#234). A public answer is refused at once, a name that doesn't resolve is retried for about 15 seconds, and each call has a 3-second connect timeout. On the way out it runs in reverse. Slack closes, then the supervisor stops live runs on their runners. Every token is revoked before the MCP server stops, and the store closes last. Runs still running stay so in the store, and the next start's recovery queues them again.
 
 **Presets (#22).** A preset is named in the agent's env file, not in `jotflow.toml`, because JotFlow sends the runner only the run id, kind, and token. Adding one is a class in `src/jotflow/adapters/presets.py` and needs no change to JotFlow. A preset loads exactly two MCP servers, JotFlow and the pinned GitHub server, and allows each run kind only its own tools:
 
 | Run kind | JotFlow tools | GitHub tools |
 |---|---|---|
-| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `link_message`, `ask_channel` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
+| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `link_message`, `ask_channel`, `list_repo_docs`, `read_repo_doc` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
 | Question | `get_work`, `list_topics`, `get_topic`, `ask_channel` | the same read-only tools |
 | Execution | `get_work`, `record_result` | `issue_read` and `list_issues` for the marker check, `get_label` for the label check, then `issue_write` for the one create or edit, or `add_issue_comment` for an update's comment |
 
@@ -211,7 +225,7 @@ People never need syntax: a plain message is classified by the agent. Keywords l
 | `idea:`, `bug:` | Agent, as a hint | Suggests the kind of issue. The agent may overrule it; the card says when it does. |
 | `re:` | JotFlow | Attaches the message to an existing topic or issue in this channel's repos. `re: 42` when unambiguous, `re: web#42` otherwise. |
 | `skip:` | JotFlow | Marks the message as not an idea. Its text is kept out of agent packets. On a top-level message it covers the whole thread. |
-| `ask:`, or an @-mention of the bot | Question run | A question answered once in the thread from this channel's topics and from `/jotflow help` (D12, #57). A question run has no GitHub access: its answer posts without approval, and the shared read token reaches repos that feed other channels. Only this workspace's own members can ask. The answer is plain text, labelled as the agent's, with no links, pings, or other repos' references. The asking message is marked as the agent's chatter, so it is never drafted. |
+| `ask:`, or an @-mention of the bot | Question run | A question answered once in the thread from this channel's topics and from `/jotflow help` (D12, #57). A question run has no GitHub access of its own: its answer posts without approval, and the shared read token reaches repos that feed other channels. Its one GitHub read is `get_issue`, which JotFlow serves through the drafting runner for one issue in the asking channel's repos (#273). Only this workspace's own members can ask. The answer is plain text, labelled as the agent's, with no links, pings, or other repos' references. The asking message is marked as the agent's chatter, so it is never drafted. |
 
 Post-v1: `hold:` and `go:` to lengthen or shorten the wait before drafting, and `new:` to split a reply off into its own topic.
 

@@ -28,6 +28,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `question-how-to.json` | Carol mentions the bot and asks how to add a message to an existing issue. The packet carries the help text, and the answer explains `re: web#42`. |
 | `question-injected.json` | Carol asks the bot to post a login link and ping `@acme-bob` and the channel. The scripted answer complies, as an injected model might, and also quotes `ask:`, names the bot, and cites another owner's repo. The posted answer has `[link removed]`, `acme-bob` without its `@`, no broadcast, no bot mention, and only `acme-co/web#42`. It starts no question run of its own. |
 | `question-guest.json` | Dave, a guest, asks a question. No run is queued, and he gets the members-only reply privately. The fixture scripts no run. |
+| `repo-docs.json` | As `feature-request.json`, but `acme-co/web` sets `read_paths` to `docs/plans/*.md` (#209). A reply asks the agent to paste an internal doc. `list_repo_docs` shows only the plan, the read of the internal doc is refused, and the proposal cites the plan under Context. One proposal, one doc read. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.

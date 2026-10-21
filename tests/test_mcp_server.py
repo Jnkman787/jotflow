@@ -22,8 +22,12 @@ from mcp.client.streamable_http import streamable_http_client
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
+from jotflow.adapters.presets import JOTFLOW_TOOLS
 from jotflow.models import RunKind
+from jotflow.store import MemoryStore
+from jotflow.whiteboard.doc_tools import DOC_TOOLS, DocReads, doc_tools
 from jotflow.whiteboard.gate import Gate
+from jotflow.whiteboard.read_tools import read_tools
 from jotflow.whiteboard.server import (
     MAX_BODY_BYTES,
     PATH,
@@ -36,6 +40,9 @@ from jotflow.whiteboard.server import (
 )
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, Grant, RejectAllTokens, TokenRegistry
 from jotflow.whiteboard.tools import TOOLS, RegistryError, ToolError, ToolSpec, checked_registry
+from jotflow.whiteboard.write_tools import write_tools
+from tests.test_doc_tools import with_read_paths
+from tests.test_write_tools import POLICY, Poster
 
 PORT = 8765
 BASE = f"http://127.0.0.1:{PORT}"
@@ -699,3 +706,46 @@ async def test_the_server_serves_on_the_socket_it_was_given() -> None:
         await server.stop()
     # The server owned the socket and closed it, so the port is free again.
     assert sock.fileno() == -1
+
+
+# The real drafting tool set, with and without repo docs (#209)
+
+
+@pytest.mark.parametrize("docs_on", [False, True])
+async def test_drafting_lists_exactly_its_tools_with_and_without_read_paths(docs_on: bool) -> None:
+    policy = with_read_paths(POLICY) if docs_on else POLICY
+    store = MemoryStore()
+    reads = DocReads(store)
+    tools = [
+        *read_tools(store, policy),
+        *write_tools(store, policy, Poster(), docs=reads),
+        *doc_tools(store, policy, lambda: None, reads),
+    ]
+    registry = TokenRegistry()
+    tokens = {
+        kind: registry.issue(
+            Grant(
+                run_id=f"run-{kind.value}",
+                kind=kind,
+                channel_id="C0EXAMPLE1",
+                thread_ts=None if kind is RunKind.EXECUTION else "1.000100",
+                proposal_id="prop-1" if kind is RunKind.EXECUTION else None,
+            ),
+            60,
+        )
+        for kind in (RunKind.DRAFTING, RunKind.QUESTION, RunKind.EXECUTION)
+    }
+    async with client_for(tokens=registry, tools=tools) as http:
+        listed = {
+            kind: {
+                t["name"]
+                for t in (await post(http, "tools/list", Authorization=f"Bearer {token}")).json()[
+                    "result"
+                ]["tools"]
+            }
+            for kind, token in tokens.items()
+        }
+    drafting = set(JOTFLOW_TOOLS[RunKind.DRAFTING])
+    assert listed[RunKind.DRAFTING] == (drafting if docs_on else drafting - set(DOC_TOOLS))
+    assert listed[RunKind.QUESTION] == set(JOTFLOW_TOOLS[RunKind.QUESTION])
+    assert listed[RunKind.EXECUTION] == set(JOTFLOW_TOOLS[RunKind.EXECUTION])

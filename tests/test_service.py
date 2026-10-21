@@ -1377,3 +1377,44 @@ async def test_a_question_queues_a_question_run_and_never_a_draft() -> None:
     assert asked is not None and asked.chatter and asked.linked_by == "agent"
     # Neither the keyword handler nor the help offered anything for a question.
     assert rig.slack.reactions == [] and rig.help.whispers == []
+
+
+def test_codex_with_read_paths_turns_only_drafting_off() -> None:
+    # Fail closed (#209): a drafting run's read token would reach past read_paths.
+    # A question run has no GitHub server or token (#57), so it stays on.
+    from jotflow.whiteboard.doc_tools import CODEX_CONFLICT
+    from tests.test_doc_tools import with_read_paths
+
+    kinds = decide_run_kinds(settings(), with_read_paths(policy(preset="codex")))
+    assert kinds.on == {RunKind.QUESTION, RunKind.EXECUTION}
+    assert kinds.off == (CODEX_CONFLICT,)
+    assert CODEX_CONFLICT.startswith("drafting runs are off:")
+    assert decide_run_kinds(settings(), policy(preset="codex")).on == RUN_KINDS
+    assert decide_run_kinds(settings(), with_read_paths(policy())).on == RUN_KINDS
+    # Without its runner's secret the shared runner stays off, whatever the policy.
+    none = decide_run_kinds(settings(runner_secret=None), with_read_paths(policy(preset="codex")))
+    assert none.on == {RunKind.EXECUTION}
+
+
+async def test_a_runner_group_is_checked_when_only_one_of_its_kinds_is_on() -> None:
+    # With drafting off for codex (#209), questions alone must still be checked:
+    # skipping the check would fail open.
+    from jotflow.orchestrator.launch import RunnerInfo
+    from jotflow.orchestrator.service import RunKinds, check_runners
+
+    asked: list[RunKind] = []
+
+    class Client:
+        def endpoint_for(self, kind: RunKind) -> RunnerEndpoint:
+            return RunnerEndpoint("http://agent:8766", SECRET)
+
+        async def info(self, kind: RunKind) -> RunnerInfo:
+            asked.append(kind)
+            return RunnerInfo(preset="claude-code", kinds=(RunKind.DRAFTING, RunKind.QUESTION))
+
+    only_questions = RunKinds(frozenset({RunKind.QUESTION}), ("drafting runs are off: x",))
+    wrong = await check_runners(Client(), only_questions, "codex", attempts=1)  # type: ignore[arg-type]
+    assert asked and wrong.on == frozenset()
+    assert "starts preset claude-code" in wrong.off[-1]
+    right = await check_runners(Client(), only_questions, "claude-code", attempts=1)  # type: ignore[arg-type]
+    assert right.on == {RunKind.QUESTION}

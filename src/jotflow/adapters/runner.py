@@ -38,6 +38,7 @@ import signal
 import tempfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -51,7 +52,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from jotflow.adapters import github_proof, github_repos
+from jotflow.adapters import github_docs, github_issues, github_proof, github_repos
 from jotflow.adapters import isolation as isolation_mod
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
@@ -644,6 +645,16 @@ def runner_info(config: RunnerConfig) -> dict[str, Any]:
     }
 
 
+class MarkedIssuesRequest(BaseModel):
+    """What JotFlow sends to read one repo's marked issues (#256): a body, no query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: str = Field(min_length=1, max_length=39)
+    name: str = Field(min_length=1, max_length=100)
+    since: date | None = None
+
+
 class VerifyRequest(BaseModel):
     """What JotFlow sends to check a GitHub link's one-time code (#195)."""
 
@@ -653,12 +664,40 @@ class VerifyRequest(BaseModel):
     code_digest: str = Field(min_length=64, max_length=64)
 
 
+class DocsListRequest(BaseModel):
+    """What JotFlow sends to list a repo's text files (#209)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    repo: str = Field(min_length=3, max_length=140)
+
+
+class DocsReadRequest(BaseModel):
+    """What JotFlow sends to read one of them: the exact path from the listing (#209)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    repo: str = Field(min_length=3, max_length=140)
+    path: str = Field(min_length=1, max_length=400)
+
+
+async def _capped_body(request: Request) -> bytes | None:
+    """The request body, or None when it's over MAX_BODY_BYTES."""
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_BODY_BYTES:
+            return None
+    return body
+
+
 def build_runner_app(
     runner: Runner,
     config: RunnerConfig,
     *,
     github: Any = None,
     github_transport: Any = None,
+    docs: github_docs.DocReader | None = None,
 ) -> ASGIApp:
     """The runner's HTTP app: GET /info, POST /runs, GET /runs/{id}, DELETE /runs/{id},
     and, on the drafting runner, POST /verify (#195).
@@ -667,6 +706,9 @@ def build_runner_app(
     /repos/{owner}/{name}/access on the execution runner: the runner's own fixed
     GitHub calls for pattern scopes (#236). ``github`` is the HTTP client for
     them, for tests.
+
+    And POST /docs/list and /docs/read on the drafting runner, for repo docs
+    (#209). ``docs`` is the doc reader, for tests.
     """
     http = github if github is not None else github_repos.client()
 
@@ -692,6 +734,85 @@ def build_runner_app(
         )
         return JSONResponse(listing.as_json())
 
+    async def marked(request: Request) -> Response:
+        # The drafting runner's read token only: the execution runner reads nothing here.
+        if config.read_token is None:
+            return JSONResponse({"error": "marked issues are the drafting runner's"}, 404)
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = MarkedIssuesRequest.model_validate_json(body)
+        except ValidationError:
+            return JSONResponse({"error": "expected exactly owner, name and since"}, 400)
+        if not is_owner_name(asked.owner) or not is_bare_repo_name(asked.name):
+            return JSONResponse({"error": "not a GitHub repo"}, status_code=400)
+        try:
+            found = await github_issues.marked_issues(
+                asked.owner,
+                asked.name,
+                config.read_token,
+                since=asked.since,
+                http=http,
+                api=config.github_api,
+            )
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning(
+                "marked issues for %s/%s failed: %s", asked.owner, asked.name, type(exc).__name__
+            )
+            return JSONResponse({"error": "GitHub could not list the issues"}, status_code=502)
+        log.info(
+            "found %d marked issues in %s/%s%s",
+            len(found.issues),
+            asked.owner,
+            asked.name,
+            ", truncated" if found.truncated else "",
+        )
+        return JSONResponse(found.model_dump(mode="json"))
+
+    async def one_issue(request: Request) -> Response:
+        # A question run's one issue (#273): the read token, path parameters only.
+        if config.read_token is None:
+            return JSONResponse({"error": "issue details are the drafting runner's"}, 404)
+        owner, name = request.path_params["owner"], request.path_params["name"]
+        raw = request.path_params["number"]
+        if (
+            not is_owner_name(owner)
+            or not is_bare_repo_name(name)
+            or not re.fullmatch(r"[1-9][0-9]{0,9}", raw)
+            or int(raw) > 10**9
+        ):
+            return JSONResponse({"error": "not a GitHub issue"}, status_code=400)
+        try:
+            found = await github_issues.issue_details(
+                owner, name, int(raw), config.read_token, http=http, api=config.github_api
+            )
+        except github_repos.RateLimited:
+            # Never "not found": a rate limit says nothing about the issue.
+            log.warning("issue %s/%s#%s: GitHub's rate limit", owner, name, raw)
+            return JSONResponse({"error": "GitHub is rate limiting the read token"}, 503)
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("issue %s/%s#%s failed: %s", owner, name, raw, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        if found is None:
+            return JSONResponse({"error": "no such issue"}, status_code=404)
+        return JSONResponse(found.model_dump(mode="json"))
+
+    async def identity(_: Request) -> Response:
+        # The write token's own login, so JotFlow trusts only issues it wrote (#256).
+        if config.write_token is None:
+            return JSONResponse({"error": "the write token is the execution runner's"}, 404)
+        try:
+            login = await github_issues.token_login(
+                config.write_token, http=http, api=config.github_api
+            )
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("the write token's login could not be read: %s", type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        return JSONResponse({"login": login})
+
     async def access(request: Request) -> Response:
         if config.write_token is None:
             return JSONResponse({"error": "write access is the execution runner's"}, 404)
@@ -706,6 +827,57 @@ def build_runner_app(
             log.warning("write access check for %s/%s failed: %s", owner, name, type(exc).__name__)
             return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
         return JSONResponse({"reachable": ok})
+
+    # POST /docs/list and /docs/read, on the drafting runner (#209).
+    reader = docs
+    if reader is None and config.read_token is not None and not config.serves_execution:
+        docs_http = github_docs.client(transport=github_transport) if github_transport else None
+        reader = github_docs.DocReader(config.read_token, http=docs_http)
+
+    async def docs_list(request: Request) -> Response:
+        # Only the drafting runner reads docs, with the read token. JotFlow has
+        # already matched the repo against the admin's read_paths.
+        if reader is None:
+            return JSONResponse({"error": "this runner doesn't read docs"}, status_code=403)
+        body = await _capped_body(request)
+        if body is None:
+            return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = DocsListRequest.model_validate_json(body)
+            tree = await reader.tree(asked.repo)
+        except ValidationError:
+            return JSONResponse({"error": "expected exactly a repo"}, status_code=400)
+        except github_docs.DocsError as failed:
+            log.warning("listing a repo's docs failed: %s", failed)
+            return JSONResponse({"error": str(failed)}, status_code=502)
+        return JSONResponse(
+            {
+                "paths": [entry.path for entry in tree.entries],
+                "truncated": tree.truncated,
+            }
+        )
+
+    async def docs_read(request: Request) -> Response:
+        if reader is None:
+            return JSONResponse({"error": "this runner doesn't read docs"}, status_code=403)
+        body = await _capped_body(request)
+        if body is None:
+            return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = DocsReadRequest.model_validate_json(body)
+            doc = await reader.read(asked.repo, asked.path)
+        except ValidationError:
+            return JSONResponse({"error": "expected exactly a repo and a path"}, status_code=400)
+        except github_docs.DocNotFound as missing:
+            return JSONResponse({"error": str(missing)}, status_code=404)
+        except github_docs.DocsError as failed:
+            log.warning("reading a repo doc failed: %s", failed)
+            return JSONResponse({"error": str(failed)}, status_code=502)
+        # The path and content are never logged; only that a read happened.
+        log.info("read one repo doc (%d characters)", len(doc.text))
+        return JSONResponse(
+            {"path": doc.path, "sha": doc.sha, "text": doc.text, "truncated": doc.truncated}
+        )
 
     async def launch(request: Request) -> Response:
         # Read with a cap, so a chunked body without a length cannot grow unbounded.
@@ -772,11 +944,17 @@ def build_runner_app(
         routes=[
             Route("/info", info, methods=["GET"]),
             Route("/verify", verify, methods=["POST"]),
+            Route("/docs/list", docs_list, methods=["POST"]),
+            Route("/docs/read", docs_read, methods=["POST"]),
             Route("/runs", launch, methods=["POST"]),
             Route("/runs/{run_id}", status, methods=["GET"]),
             Route("/runs/{run_id}", stop, methods=["DELETE"]),
+            # Before /repos/{owner}, which would otherwise take "jotflow-issues" as an owner.
+            Route("/repos/jotflow-issues", marked, methods=["POST"]),
+            Route("/identity", identity, methods=["GET"]),
             Route("/repos/{owner}", repos, methods=["GET"]),
             Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
+            Route("/repos/{owner}/{name}/issues/{number}", one_issue, methods=["GET"]),
         ]
     )
     return RunnerGate(app, secret=config.secret, allowed_hosts=config.allowed_hosts)

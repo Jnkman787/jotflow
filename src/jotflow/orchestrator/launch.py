@@ -29,28 +29,36 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 from collections.abc import Collection
 from dataclasses import dataclass, field
+from datetime import date
 from enum import StrEnum
+from typing import Any
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 from jotflow.config import Settings
+from jotflow.doc_paths import MAX_FILE_BYTES
 from jotflow.models import (
     DiscoveredRepo,
+    IssueDetails,
+    MarkedIssues,
     Run,
     RunKind,
     RunStatus,
     is_bare_repo_name,
+    is_github_login,
     is_owner_name,
     under_owner,
 )
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.store.base import Store
+from jotflow.store.titles import clean_title
 from jotflow.whiteboard.write_tools import PostError, ThreadPoster
 
 log = logging.getLogger("jotflow.launch")
@@ -104,6 +112,13 @@ class RunnerError(Exception):
         self.retry = retry
 
 
+class GithubBusy(RunnerError):
+    """GitHub couldn't be asked right now: rate limited or failing (#273).
+
+    Never a "not found": it says nothing about whether the issue exists.
+    """
+
+
 def _refused(status: int) -> RunnerError:
     return RunnerError(_REFUSALS.get(status, f"the runner answered {status}"))
 
@@ -150,6 +165,36 @@ class VerifyAnswer(BaseModel):
     login: str | None = Field(default=None, max_length=39)
 
 
+# What the drafting runner may send back for repo docs (#209).
+MAX_DOC_PATHS = 10_000
+# 10,000 paths of up to 400 characters, as JSON.
+MAX_DOCS_REPLY_BYTES = 5 * 1024 * 1024
+
+
+class DocsListAnswer(BaseModel):
+    """The drafting runner's answer to ``POST /docs/list`` (#209), validated strictly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    paths: list[str] = Field(max_length=MAX_DOC_PATHS)
+    truncated: bool
+
+
+class DocsReadAnswer(BaseModel):
+    """The drafting runner's answer to ``POST /docs/read`` (#209), validated strictly."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    path: str = Field(min_length=1, max_length=400)
+    sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    text: str = Field(max_length=MAX_FILE_BYTES)
+    truncated: bool
+
+
+class DocMissing(RunnerError):
+    """The path isn't a readable text file in the repo's default branch."""
+
+
 class RunnerInfoWire(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -182,6 +227,38 @@ class AccessWire(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     reachable: bool
+
+
+# The largest marked-issue list JotFlow reads from a runner (#256).
+MAX_MARKED_BYTES = 8_000_000
+# The largest single issue's details (#273).
+MAX_ISSUE_BYTES = 64 * 1024
+# The drafting runner's reply when GitHub has no such issue (#273).
+NO_SUCH_ISSUE_REPLY = {"error": "no such issue"}
+
+
+def _json_or_none(content: bytes) -> object:
+    if len(content) > 1024:
+        return None
+    try:
+        return json.loads(content)
+    except ValueError:
+        return None
+
+
+class IdentityWire(BaseModel):
+    """The execution runner's answer to GET /identity (#256)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    login: str = Field(max_length=45)
+
+    @field_validator("login")
+    @classmethod
+    def _login(cls, value: str) -> str:
+        if not is_github_login(value):
+            raise ValueError("not a GitHub login")
+        return value
 
 
 class RunnerClient:
@@ -289,6 +366,84 @@ class RunnerClient:
             raise RunnerError("the runner's reply was not a repo list") from None
         return [r for r in raw.repos[:MAX_DISCOVERED] if under_owner(r.full_name, owner)]
 
+    async def marked_issues(
+        self, owner: str, name: str, *, since: date | None = None
+    ) -> MarkedIssues:
+        """``owner/name``'s issues carrying a JotFlow marker, from the drafting runner (#256).
+
+        Pointers and a cleaned title only. Checked again here, strictly, and the
+        title cleaned again: the runner is trusted with the read token, not with
+        what GitHub said.
+        """
+        if not is_owner_name(owner) or not is_bare_repo_name(name):
+            raise RunnerError("not a GitHub repo")
+        body: dict[str, Any] = {"owner": owner, "name": name, "since": None}
+        if since is not None:
+            body["since"] = since.isoformat()
+        response = await self._call("POST", RunKind.DRAFTING, "/repos/jotflow-issues", json=body)
+        if response.status_code == 502:
+            raise RunnerError("GitHub didn't answer the drafting runner")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_MARKED_BYTES:
+            raise RunnerError("the runner's issue list was too large")
+        try:
+            found = MarkedIssues.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a list of marked issues") from None
+        cleaned = []
+        for issue in found.issues:
+            try:
+                cleaned.append(issue.model_copy(update={"title": clean_title(issue.title)}))
+            except ValueError:
+                cleaned.append(issue.model_copy(update={"title": f"#{issue.number}"}))
+        return found.model_copy(update={"issues": tuple(cleaned)})
+
+    async def issue(self, owner: str, name: str, number: int) -> IssueDetails | None:
+        """One issue's details from the drafting runner, or None if there's no such issue.
+
+        Raises :class:`GithubBusy` for a rate limit or GitHub failing, never None.
+        The reply is checked strictly, and the title cleaned again.
+        """
+        if not is_owner_name(owner) or not is_bare_repo_name(name) or not 1 <= number <= 10**9:
+            raise RunnerError("not a GitHub issue")
+        response = await self._call(
+            "GET", RunKind.DRAFTING, f"/repos/{owner}/{name}/issues/{number}"
+        )
+        if response.status_code == 404:
+            # Only the runner's own answer is a miss: a 404 for a missing route or
+            # a runner without the read token says nothing about the issue.
+            if _json_or_none(response.content) == NO_SUCH_ISSUE_REPLY:
+                return None
+            raise RunnerError("the runner can't look up issues")
+        if response.status_code in (502, 503):
+            raise GithubBusy("GitHub couldn't be asked right now")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_ISSUE_BYTES:
+            raise RunnerError("the runner's issue was too large")
+        try:
+            details = IssueDetails.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not an issue") from None
+        if details.number != number:
+            raise RunnerError("the runner's reply was for another issue")
+        try:
+            title = clean_title(details.title, 120)
+        except ValueError:
+            title = f"#{number}"
+        return details.model_copy(update={"title": title})
+
+    async def write_login(self) -> str:
+        """The execution runner's write token's own login (#256)."""
+        response = await self._call("GET", RunKind.EXECUTION, "/identity")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        try:
+            return IdentityWire.model_validate_json(response.content).login
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a login") from None
+
     async def write_reachable(self, owner: str, name: str) -> bool:
         """Whether the execution runner's write token can see ``owner/name`` (#236)."""
         if not is_owner_name(owner) or not is_bare_repo_name(name):
@@ -321,6 +476,46 @@ class RunnerClient:
             raise RunnerError("the runner's reply was not a verification answer") from None
         if answer.verified and (answer.github_id is None or answer.login is None):
             raise RunnerError("the runner's reply was not a verification answer")
+        return answer
+
+    async def docs_list(self, repo: str) -> DocsListAnswer:
+        """The text files in ``repo``'s default branch, from the drafting runner (#209).
+
+        JotFlow matches these against the repo's ``read_paths``; the runner doesn't.
+        """
+        response = await self._call("POST", RunKind.DRAFTING, "/docs/list", json={"repo": repo})
+        if response.status_code == 502:
+            raise RunnerError(
+                "GitHub didn't list the repo's files: check the read token has Contents: Read"
+            )
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_DOCS_REPLY_BYTES:
+            raise RunnerError("the runner's file list was too large")
+        try:
+            return DocsListAnswer.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a file list") from None
+
+    async def docs_read(self, repo: str, path: str) -> DocsReadAnswer:
+        """One text file's content, from the drafting runner (#209). Untrusted."""
+        response = await self._call(
+            "POST", RunKind.DRAFTING, "/docs/read", json={"repo": repo, "path": path}
+        )
+        if response.status_code == 404:
+            raise DocMissing("no such text file in the repo's default branch")
+        if response.status_code == 502:
+            raise RunnerError("GitHub didn't return the file")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_DOCS_REPLY_BYTES:
+            raise RunnerError("the runner's reply was too large")
+        try:
+            answer = DocsReadAnswer.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a file") from None
+        if answer.path != path:
+            raise RunnerError("the runner returned a different file")
         return answer
 
     async def stop(self, run_id: str, kind: RunKind) -> None:

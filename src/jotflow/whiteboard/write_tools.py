@@ -52,6 +52,7 @@ from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
 from jotflow.store.base import check_github_login, utc_now
 from jotflow.title_pattern import Match, match_title_async
+from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
 
@@ -303,9 +304,21 @@ _URLISH = re.compile(
     r"|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
     # Labels and the top-level domain in any script, so an IDN such as
     # \u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444 counts.
-    r"|\b(?:[^\W_](?:[\w-]{0,61}[^\W_])?\.)+[^\W\d_]{2,63}\b(?:/[^\s<>|]*)?"
+    r"|(?P<domain>\b(?:[^\W_](?:[\w-]{0,61}[^\W_])?\.)+(?P<last>[^\W\d_]{2,63})\b)"
+    r"(?P<path>/[^\s<>|]*)?"
     r")"
 )
+# File extensions an answer may keep, as in "Node.js" or "config.yaml" (#57): none
+# is a top-level domain, so Slack can't make a link of them. An allowlist, so a
+# newly delegated TLD fails closed: md, py, sh, rs, io and ai are real ccTLDs, so
+# "README.md" is still removed. A test checks this list against a pinned copy of
+# IANA's. Only a bare name: anything with a path, a scheme, www. or an @ is removed.
+FILE_EXTENSIONS = frozenset(
+    {
+        "js", "ts", "tsx", "jsx", "mjs", "cjs", "json", "yaml", "yml", "toml",
+        "lock", "cfg", "ini", "txt", "csv", "log", "html", "css", "scss", "env",
+    }
+)  # fmt: skip
 # An issue reference, owner/name#42.
 _REPO_REF = re.compile(r"(?<![\w/.-])([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#([0-9]+)\b")
 _HELD = re.compile("\x00([0-9]+)\x00")
@@ -344,6 +357,15 @@ def safe_text(text: str, repos: Collection[str]) -> tuple[str, int]:
 
     def link(match: re.Match[str]) -> str:
         nonlocal removed
+        last = match.group("last")
+        name = match.group(0)
+        if (
+            last is not None
+            and match.group("path") is None
+            and name.count(".") == 1  # "evil.com.js" could still hide "evil.com"
+            and last.lower() in FILE_EXTENSIONS
+        ):
+            return name  # a file name, which Slack can't make a link of
         removed += 1
         return LINK_REMOVED
 
@@ -420,9 +442,12 @@ class WriteTools:
         clock: Callable[[], datetime] = utc_now,
         new_id: Callable[[], str] = lambda: secrets.token_hex(8),
         repos: RepoCatalog | None = None,
+        docs: DocReads | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
+        # The run's doc reads, for the card's long-passage flag (#209).
+        self._docs = docs
         self._poster = poster
         self._clock = clock
         self._new_id = new_id
@@ -633,7 +658,33 @@ class WriteTools:
         superseded = await self._store.supersede_pending(
             grant.channel_id, thread, keep_id=stored.id
         )
+        await self._flag_passages(grant, stored.id, proposal)
         return ProposeResult(proposal_id=stored.id, state=stored.state, superseded=superseded)
+
+    async def _flag_passages(
+        self, grant: Grant, proposal_id: str, proposal: IssueProposal | UpdateProposal
+    ) -> None:
+        """Note on the ledger which docs the proposal copies at length, for its card (#209)."""
+        if self._docs is None:
+            return
+        if isinstance(proposal, IssueProposal):
+            texts: list[str | None] = [proposal.title, proposal.body]
+        else:
+            texts = [proposal.changes.body, proposal.changes.comment]
+        copied = self._docs.copied_from(grant.run_id, texts)
+        if not copied:
+            return
+        await self._store.record_tool_call(
+            ToolCallRecord(
+                run_id=grant.run_id,
+                tool=PASSAGES,
+                args_hash=f"proposal:{proposal_id}",
+                channel_id=grant.channel_id,
+                thread_ts=grant.thread_ts,
+                result_json=passages_row(proposal_id, copied),
+                called_at=self._clock(),
+            )
+        )
 
     # The tools.
 
@@ -870,9 +921,10 @@ def write_tools(
     clock: Callable[[], datetime] = utc_now,
     new_id: Callable[[], str] = lambda: secrets.token_hex(8),
     repos: RepoCatalog | None = None,
+    docs: DocReads | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
-    tools = WriteTools(store, policy, poster, clock=clock, new_id=new_id, repos=repos)
+    tools = WriteTools(store, policy, poster, clock=clock, new_id=new_id, repos=repos, docs=docs)
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
         ("propose_issue", ProposeIssueArgs, DRAFTING),
         ("propose_update", ProposeUpdateArgs, DRAFTING),

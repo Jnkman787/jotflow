@@ -143,9 +143,11 @@ async def call(spec: ToolSpec, grant: Grant, arguments: Any = None) -> Any:
 # The registry
 
 
-def test_three_tools_with_the_token_tables_kinds(store: MemoryStore, clock: Clock) -> None:
+def test_the_tools_with_the_token_tables_kinds(store: MemoryStore, clock: Clock) -> None:
     by_name = tools(store, clock)
-    assert set(by_name) == {"list_topics", "get_topic", "get_work"}
+    assert set(by_name) == {"list_topics", "get_topic", "get_work", "get_issue"}
+    # Only a question run looks up issues (#273).
+    assert by_name["get_issue"].kinds == {RunKind.QUESTION}
     readers = {RunKind.DRAFTING, RunKind.QUESTION, RunKind.OPERATOR}
     assert by_name["list_topics"].kinds == readers
     assert by_name["get_topic"].kinds == readers

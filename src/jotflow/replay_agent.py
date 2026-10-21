@@ -196,6 +196,7 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
     for index, run in play_order(state.thread):
         started = await start_scripted(state, prepared.lifecycle, run)
         kind = started.run.kind
+        state.run_ids.append(started.run.id)
         preset = _preset(options, index)
         config = RunnerConfig(
             secret="replay-" + "x" * 32,

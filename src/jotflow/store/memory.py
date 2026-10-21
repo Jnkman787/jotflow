@@ -901,6 +901,9 @@ class MemoryStore:
     async def count_tool_calls(self, run_id: str, tools: Collection[str]) -> int:
         return sum(1 for c in self._calls if c.run_id == run_id and c.tool in tools)
 
+    async def tool_call_results(self, run_id: str, tools: Collection[str]) -> list[str]:
+        return [c.result_json for c in self._calls if c.run_id == run_id and c.tool in tools]
+
     async def count_thread_calls(
         self, channel_id: str, thread_ts: str | None, tool: str, *, since: datetime
     ) -> int:
