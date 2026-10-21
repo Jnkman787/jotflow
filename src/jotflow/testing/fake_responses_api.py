@@ -54,17 +54,34 @@ def _event(name: str, data: Mapping[str, Any]) -> bytes:
 
 
 class FakeResponsesApi:
-    """Serves ``POST /v1/responses`` on 127.0.0.1 in a background thread."""
+    """Serves ``POST /v1/responses`` on 127.0.0.1 in a background thread.
+
+    Every request's method and path is kept in :attr:`calls`, so a test can show
+    Codex asked for nothing else, such as a model list (#290). Anything else gets 404.
+    """
 
     def __init__(self, first: Mapping[str, Any] | None = None) -> None:
         self.requests: list[dict[str, Any]] = []
+        self.calls: list[str] = []
         self._first = dict(first) if first is not None else final_message()
         api = self
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
+            def _elsewhere(self) -> None:
+                api.calls.append(f"{self.command} {self.path}")
+                self.send_response(404)
+                self.send_header("content-length", "0")
+                self.end_headers()
+
+            do_GET = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _elsewhere
+
             def do_POST(self) -> None:
+                api.calls.append(f"POST {self.path}")
+                if self.path != "/v1/responses":
+                    self._elsewhere_after_post()
+                    return
                 size = int(self.headers.get("content-length") or 0)
                 body = json.loads(self.rfile.read(size) or b"{}")
                 api.requests.append(body)
@@ -94,6 +111,13 @@ class FakeResponsesApi:
                 self.end_headers()
                 self.wfile.write(payload)
 
+            def _elsewhere_after_post(self) -> None:
+                size = int(self.headers.get("content-length") or 0)
+                self.rfile.read(size)
+                self.send_response(404)
+                self.send_header("content-length", "0")
+                self.end_headers()
+
             def log_message(self, format: str, *args: Any) -> None:
                 pass
 
@@ -103,6 +127,11 @@ class FakeResponsesApi:
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self._server.server_address[1]}/v1"
+
+    def builtin_overrides(self) -> list[str]:
+        """``codex exec -c`` arguments that point OpenAI's own built-in provider here,
+        as a deployment uses it, with the key in ``CODEX_API_KEY``. For tests only."""
+        return ["-c", f'openai_base_url="{self.base_url}"']
 
     def provider_overrides(self, env_key: str = "FAKE_MODEL_KEY") -> list[str]:
         """``codex exec -c`` arguments that route Codex's model calls here, for tests only."""

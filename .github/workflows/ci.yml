@@ -86,6 +86,15 @@ jobs:
       - name: Allow a network namespace for the offline test
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The gate traces every contact Codex attempts (#290), from Ubuntu's own archive.
+      # io_uring goes off, as Docker's default seccomp profile has it in the agent
+      # containers: a connect sent through io_uring never shows up as a system call.
+      - name: Install strace, and turn io_uring off
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends strace
+          sudo sysctl -w kernel.io_uring_disabled=2
+
       # The same release and checksum as docker/Dockerfile.agent, for the probe's
       # check that the server serves no repository content (#274).
       - name: Fetch the pinned GitHub MCP server
@@ -400,6 +409,20 @@ jobs:
           import socket
           socket.create_connection(("agent-exec", 8766), 3).close()
           print("agents-exec reaches agent-exec ok")'
+          # Docker's default seccomp profile refuses io_uring in both agent containers.
+          # The codex gate's outbound trace relies on that: a connect sent through
+          # io_uring never shows up as a system call (#290). 425 is io_uring_setup on x86-64.
+          for service in agent agent-exec; do
+            docker compose --project-directory . -f docker/docker-compose.yml exec -T "$service" python -c '
+          import ctypes, errno
+          libc = ctypes.CDLL(None, use_errno=True)
+          params = ctypes.create_string_buffer(120)
+          if libc.syscall(425, 8, params) != -1:
+              raise SystemExit("io_uring_setup succeeded in the agent container")
+          if ctypes.get_errno() not in (errno.EPERM, errno.ENOSYS):
+              raise SystemExit(f"io_uring_setup failed oddly: {errno.errorcode[ctypes.get_errno()]}")
+          print("io_uring refused ok")'
+          done
           docker compose --project-directory . -f docker/docker-compose.yml --profile agent down
           rm -f .env agent.env agent-exec.env
 
