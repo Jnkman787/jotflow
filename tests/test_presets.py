@@ -626,12 +626,13 @@ def test_codex_config_is_pinned(kind: RunKind, tmp_path: Path) -> None:
     assert github["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": READ}
 
 
-def test_codex_defaults_to_its_verified_model_and_refuses_others() -> None:
+def test_codex_defaults_to_gpt_5_5_and_leaves_other_models_to_the_probe() -> None:
     config = preset_config(preset=presets.CODEX)
-    assert {config.model(k) for k in presets.CODEX_RUN_KINDS} == {"gpt-5.5"}
-    assert preset_config(preset=presets.CODEX, models={RunKind.DRAFTING: "gpt-5.5"})
-    with pytest.raises(ConfigError, match="accepts only these models"):
-        preset_config(preset=presets.CODEX, models={RunKind.DRAFTING: "gpt-6.1-sol"})
+    assert {config.model(k) for k in presets.CODEX_RUN_KINDS} == {presets.CODEX_DEFAULT_MODEL}
+    # No list of models any more: the runner's startup probe decides (#220).
+    other = preset_config(preset=presets.CODEX, models={RunKind.DRAFTING: "gpt-6.1-sol"})
+    assert other.model(RunKind.DRAFTING) == "gpt-6.1-sol"
+    assert not hasattr(presets.CODEX, "verified_models")
 
 
 def test_codex_without_a_model_leaves_it_out(tmp_path: Path) -> None:

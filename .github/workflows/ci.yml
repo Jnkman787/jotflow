@@ -86,9 +86,21 @@ jobs:
       - name: Allow a network namespace for the offline test
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The same release and checksum as docker/Dockerfile.agent, for the probe's
+      # check that the server serves no repository content (#274).
+      - name: Fetch the pinned GitHub MCP server
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/github-mcp-server.tar.gz" \
+            https://github.com/github/github-mcp-server/releases/download/v2.0.2/github-mcp-server_Linux_x86_64.tar.gz
+          echo "815e27d931c796af0c97f24fd211e14f8a4607d4528377719a5ad2352086b0b0  $RUNNER_TEMP/github-mcp-server.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/github-mcp-server.tar.gz" -C "$RUNNER_TEMP" github-mcp-server
+          echo "JOTFLOW_GITHUB_MCP_BINARY=$RUNNER_TEMP/github-mcp-server" >> "$GITHUB_ENV"
+
       - name: Gate
         env:
           JOTFLOW_REQUIRE_CODEX: "1"
+          # The workflow's token, contents: read, for the GitHub server probe (#274).
+          JOTFLOW_PROBE_GITHUB_TOKEN: ${{ github.token }}
         run: uv run pytest -q -p no:cacheprovider tests/test_codex_gate.py
 
   copilot-gate:

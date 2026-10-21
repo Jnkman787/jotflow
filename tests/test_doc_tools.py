@@ -583,17 +583,6 @@ async def test_the_client_reports_a_missing_doc_and_a_strict_listing() -> None:
     assert (await runner.docs_list("acme-co/web")).paths == ["a.md"]
 
 
-def test_codex_with_read_paths_is_a_conflict_and_others_are_not() -> None:
-    from jotflow.whiteboard.doc_tools import CODEX_CONFLICT, docs_conflict
-
-    def preset(policy: Policy, name: str) -> Policy:
-        return policy.model_copy(update={"agent": policy.agent.model_copy(update={"preset": name})})
-
-    assert docs_conflict(preset(with_read_paths(POLICY), "codex")) == CODEX_CONFLICT
-    assert docs_conflict(preset(with_read_paths(POLICY), "claude-code")) is None
-    assert docs_conflict(preset(POLICY, "codex")) is None
-
-
 async def test_a_read_failure_after_the_listing_is_a_fixed_refusal(h: Harness) -> None:
     await h.list()
 

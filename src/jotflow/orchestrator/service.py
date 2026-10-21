@@ -89,7 +89,6 @@ from jotflow.whiteboard.doc_tools import (
     DocReads,
     DocSource,
     doc_tools,
-    docs_conflict,
     probe_docs,
 )
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
@@ -163,11 +162,6 @@ def decide_run_kinds(settings: Settings, policy: Policy) -> RunKinds:
     off: list[str] = []
     if settings.runner_secret is None:
         off.append("drafting and question runs are off: JOTFLOW_RUNNER_SECRET is not set")
-    elif (conflict := docs_conflict(policy)) is not None:
-        # Fail closed (#209): a drafting run's read token would reach past
-        # read_paths. A question run has no GitHub server or token (#57), so it stays.
-        on.add(RunKind.QUESTION)
-        off.append(conflict)
     else:
         on |= CONVERSATION_KINDS
     if settings.runner_exec_secret is None:
