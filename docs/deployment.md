@@ -108,7 +108,7 @@ docker compose start jotflow
 
 It restores:
 - **a topic per issue**, titled by its nickname and number, such as `web#42`
-- **the people's messages** in each such thread, linked to their topic, or marked as not an idea when they start with `skip:`
+- **the people's messages** in each such thread, linked to their topic as the agent's decision, so a person's later choice still wins, or marked as not an idea when they start with `skip:`, which stays a person's decision
 - **each channel's mode,** from JotFlow's latest mode announcement
 - **whether the channel's guide was already posted,** so it isn't posted and pinned twice
 

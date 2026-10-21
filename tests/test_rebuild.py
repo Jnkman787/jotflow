@@ -798,3 +798,21 @@ async def test_a_from_github_dry_run_writes_nothing(tmp_path: Path) -> None:
         assert any("4 of JotFlow's issues on GitHub (dry run" in line for line in lines)
     finally:
         await store.close()
+
+
+async def test_a_rebuilt_link_is_the_agents_so_a_persons_later_choice_wins(tmp_path: Path) -> None:
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    try:
+        await run_rebuild(store, workspace())
+        rebuilt = await store.get_message(CH, "1100.000200")
+        assert rebuilt is not None and rebuilt.linked_by == "agent"
+        # A skip: is a person's own decision, and stays one.
+        skipped = await store.get_message(CH, "1100.000600")
+        assert skipped is not None and skipped.chatter and skipped.linked_by == "person"
+        # A person moves the message to another topic: their choice wins.
+        other = await store.create_topic(CH, "Someone's own topic")
+        ref = MessageRef(channel_id=CH, ts="1100.000200", thread_ts="1100.000100")
+        moved = await store.link_message(ref, other.topic.id, by="person")
+        assert moved.topic_id == other.topic.id and moved.linked_by == "person"
+    finally:
+        await store.close()

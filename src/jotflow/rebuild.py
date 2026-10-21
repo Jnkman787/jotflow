@@ -313,7 +313,10 @@ async def apply(store: Store, policy: Policy, plan: ChannelPlan, bot: BotIdentit
                 await store.mark_chatter(ref, by="person")
                 done.chatter += 1
             else:
-                await store.link_message(ref, topic_ids[index], by="person")
+                # The agent's, as the original link mostly was: a person's later choice,
+                # or the agent's own later judgment, can still move it. A skip: above stays
+                # a person's, since a person typed it.
+                await store.link_message(ref, topic_ids[index], by="agent")
                 done.linked += 1
     if plan.mode is not None and await store.get_channel_mode(plan.channel_id) is None:
         await store.set_channel_mode(plan.channel_id, plan.mode, changed_by=bot.user_id)
