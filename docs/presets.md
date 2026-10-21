@@ -213,7 +213,7 @@ The command carries no run data. `mcp.json` (0600) holds the JotFlow server, wit
 - scripted `bash` and `read_mcp_resource` calls are refused as "does not exist", and no file is written
 - Copilot ends by itself, and JotFlow's audit shows it listed the tools
 - neither token reaches the model
-- under `strace`, with the network reachable, Copilot connects to nothing but the fake model and JotFlow: no DNS lookup, feature flags, model list or experiments
+- under `strace`, with the network reachable, Copilot connects or sends to nothing but the fake model and JotFlow: no DNS lookup, feature flags, model list or experiments
 
 It also checks that an allowed tool runs without a prompt, an offered tool outside `--allow-tool` is denied without one, and a read-only tool outside the kind is never offered.
 

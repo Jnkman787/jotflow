@@ -390,7 +390,7 @@ async def test_a_copilot_run_end_to_end(kind: RunKind, tmp_path: Path) -> None:
 
 
 def test_the_gates_network_check_flags_anything_but_its_own_ports() -> None:
-    from tests.test_copilot_gate import _CONNECT, _ours
+    from tests.test_copilot_gate import _ours, destinations
 
     lines = [
         '12 connect(42, {sa_family=AF_INET, sin_port=htons(4000), sin_addr=inet_addr("127.0.0.1")}'
@@ -400,7 +400,12 @@ def test_the_gates_network_check_flags_anything_but_its_own_ports() -> None:
         '12 connect(44, {sa_family=AF_UNIX, sun_path="/var/run/nscd/socket"}, 110) = -1 ENOENT',
         '12 connect(45, {sa_family=AF_INET, sin_port=htons(9999), sin_addr=inet_addr("127.0.0.1")}'
         ", 16) = 0",
+        # A DNS query sent without connecting first.
+        '13 sendto(46, "\\x12\\x34", 30, MSG_NOSIGNAL, {sa_family=AF_INET, sin_port=htons(53), '
+        'sin_addr=inet_addr("8.8.8.8")}, 16) = 30',
+        "13 sendmsg(47, {msg_name={sa_family=AF_INET6, sin6_port=htons(53)}, msg_iov=[]}, 0) = 1",
+        '13 sendto(48, "x", 1, 0, NULL, 0) = 1',  # a connected socket: no destination
     ]
-    addresses = [m.group("addr") for line in lines if (m := _CONNECT.search(line))]
-    assert len(addresses) == 4
-    assert [_ours(a, {4000}) for a in addresses] == [True, False, False, False]
+    addresses = destinations(lines)
+    assert len(addresses) == 6
+    assert [_ours(a, {4000}) for a in addresses] == [True] + [False] * 5

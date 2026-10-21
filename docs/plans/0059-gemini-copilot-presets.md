@@ -4,7 +4,7 @@
 
 - Issue: #59 (M6)
 - Draft PR: #285
-- Status: implementing. The lead approved the plan on 2026-10-21 with the decisions below, and security approved it the same day with four conditions
+- Status: ready for review. The lead approved the plan on 2026-10-21 with the decisions below, and security approved it the same day with four conditions
 - Last verified: 2026-10-21, both CLIs in a throwaway build of `docker/Dockerfile.agent` from main, run with `--network none` against JotFlow's real MCP server and scripted fake model APIs
 - Next safe action: review
 
@@ -134,7 +134,7 @@ So #59 is scoped to the copilot preset, and the implementation PR says Fixes #59
 Security approved on 2026-10-21, agreeing with all three decisions, on four conditions:
 
 1. **An allowlist of Copilot's names, not a denylist.** For the copilot preset, the runner refuses to start if `JOTFLOW_AGENT_ENV_ALLOW` names any `COPILOT_*` or `GH_*` name other than `COPILOT_PROVIDER_BASE_URL`, `COPILOT_PROVIDER_TYPE`, `COPILOT_PROVIDER_WIRE_API` and `COPILOT_PROVIDER_API_KEY`. That refuses `COPILOT_ALLOW_ALL`, `COPILOT_PROVIDER_API_KEY_COMMAND`, and whatever a later release adds, by construction. The provider type must be `openai` or `azure` and the wire API `responses`, checked at startup, failing closed.
-2. **No remote tool or config source.** One gate pass runs Copilot under `strace -f -e trace=connect`, with the network reachable, and fails on any connection except the gate's own loopback ports: no DNS, feature flags, model list or experiments. Tried in the lab on 2026-10-21: with `COPILOT_OFFLINE=true`, Copilot connected only to the MCP server and the fake model on 127.0.0.1. A positive control with a remote model URL showed the DNS lookups on port 53, so the trace sees them.
+2. **No remote tool or config source.** Every gate pass runs Copilot under `strace -f -e trace=connect,sendto,sendmsg,sendmmsg`, so a datagram sent without connecting, such as a DNS query, counts too, with the network reachable, and fails on any connection except the gate's own loopback ports: no DNS, feature flags, model list or experiments. Tried in the lab on 2026-10-21: with `COPILOT_OFFLINE=true`, Copilot connected only to the MCP server and the fake model on 127.0.0.1. A positive control with a remote model URL showed the DNS lookups on port 53, so the trace sees them.
 3. **Execution is gated in CI, and never skipped there.** For execution, the gate shows the exact offered set, refused `bash` and `read_mcp_resource` calls, and no file written. Like codex's gate, a missing or wrong binary fails when `JOTFLOW_REQUIRE_COPILOT=1`, which the CI job sets.
 4. **The read-only-hint behaviour is pinned.** A gate case uses a server that lists an extra tool marked read-only, outside the kind's tools, and checks it's never offered under `--available-tools` and is refused if called. The threat model gains a row: the boundary is `--available-tools`, and any CLI upgrade reruns the gate.
 
@@ -158,7 +158,7 @@ Security approved on 2026-10-21, agreeing with all three decisions, on four cond
 - [x] The Dockerfile drops the musl binary when Copilot is installed
 - [x] presets.md, agent-adapters.md, the threat model, the CHANGELOG
 - [x] `jotflow replay --all --agent scripted` and `--execute` pass
-- [ ] CodeRabbit once, `make check`, mark ready
+- [x] CodeRabbit, `make check`, mark ready
 
 ## Validation
 
@@ -167,6 +167,8 @@ Security approved on 2026-10-21, agreeing with all three decisions, on four cond
 - An agent image built with `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @github/copilot@1.0.101"` kept only the glibc binary, 188 MB. Its runner started with `preset copilot (experimental)` and refused `COPILOT_ALLOW_ALL` in the allowlist.
 
 ## Handoff notes
+
+- CodeRabbit ran on the implementation, and was run a second time only to read its two findings in full, both fixed: the trace now covers `sendto`, `sendmsg` and `sendmmsg`, and the allowed-tool case checks JotFlow's own reply.
 
 - Copilot's tool names are `<server>-<tool>`, such as `jotflow-get_work`. Gemini's are `mcp_<server>_<tool>`.
 - Copilot needs the fuller Responses stream. With only `response.output_item.done` and a bare `response.completed`, it reports "No response was returned".

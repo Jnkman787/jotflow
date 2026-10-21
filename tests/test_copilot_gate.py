@@ -64,7 +64,18 @@ GITHUB_TOKEN = "github_pat_gate"
 MODEL = "gpt-5.5"
 PROBE_FILE = "jotflow-copilot-probe"
 REFUSED = "does not exist"
-_CONNECT = re.compile(r"connect\(\d+, \{(?P<addr>[^}]*)\}")
+# Every call that names a destination: connect, and a datagram sent without one,
+# such as a DNS query, through sendto, sendmsg or sendmmsg.
+TRACED = "trace=connect,sendto,sendmsg,sendmmsg"
+_CALL = re.compile(r"^\d+\s+(connect|sendto|sendmsg|sendmmsg)\(")
+_ADDRESS = re.compile(r"\{(?P<addr>sa_family=[^}]*)\}")
+
+
+def destinations(lines: list[str]) -> list[str]:
+    """The socket addresses each traced call names, in order."""
+    return [m.group("addr") for line in lines if _CALL.match(line) for m in _ADDRESS.finditer(line)]
+
+
 _INET = re.compile(r'sa_family=AF_INET, sin_port=htons\((\d+)\), sin_addr=inet_addr\("([^"]+)"\)')
 
 REQUIRED = os.environ.get("JOTFLOW_REQUIRE_COPILOT") == "1"
@@ -200,7 +211,7 @@ async def gate_run(
                 "COPILOT_PROVIDER_API_KEY": "gate",
             }
             if STRACE is not None:
-                argv = [STRACE, "-f", "-qq", "-e", "trace=connect", "-o", str(trace), *argv]
+                argv = [STRACE, "-f", "-qq", "-e", TRACED, "-o", str(trace), *argv]
             done = await asyncio.to_thread(
                 subprocess.run,
                 argv,
@@ -216,7 +227,7 @@ async def gate_run(
     connects = None
     if STRACE is not None:
         lines = trace.read_text().splitlines() if trace.exists() else []
-        connects = [m.group("addr") for line in lines if (m := _CONNECT.search(line))]
+        connects = destinations(lines)
     return GateRun(done, api, caplog.text, token, connects, {port, model_port}, probe)
 
 
@@ -258,7 +269,9 @@ async def test_an_allowed_tool_runs_without_a_prompt(
 ) -> None:
     run = await gate_run(RunKind.DRAFTING, tmp_path, caplog, function_call("jotflow-get_work"))
     assert_clean(run, RunKind.DRAFTING)
-    assert "method=tools/call tool=get_work" in run.audit
+    # JotFlow ran it and answered: the gate's run isn't in the store, so get_work says so.
+    assert "method=tools/call tool=get_work run=run-gate status=200 outcome=served" in run.audit
+    assert "run run-gate is unknown" in run.output() and "Permission denied" not in run.output()
 
 
 async def test_an_offered_tool_outside_allow_tool_is_denied_without_a_prompt(
