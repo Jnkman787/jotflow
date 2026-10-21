@@ -86,6 +86,12 @@ jobs:
       - name: Allow a network namespace for the offline test
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The gate traces every contact Codex attempts (#290), from Ubuntu's own archive.
+      - name: Install strace
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends strace
+
       # The same release and checksum as docker/Dockerfile.agent, for the probe's
       # check that the server serves no repository content (#274).
       - name: Fetch the pinned GitHub MCP server
