@@ -30,6 +30,7 @@ from jotflow.adapters.runner import (
     Runner,
     RunnerConfig,
     build_runner_app,
+    node_options_problem,
     parse_command,
     parse_preset,
     remove_stale,
@@ -108,6 +109,10 @@ def build_config(
 ) -> RunnerConfig:
     if (settings.agent_preset is None) == (settings.agent_command is None):
         raise ConfigError("set exactly one of JOTFLOW_AGENT_PRESET and JOTFLOW_AGENT_COMMAND")
+    # Every run gets NODE_OPTIONS, so a code-loading flag would reach them all (#294).
+    env_in = os.environ if environ is None else environ
+    if (problem := node_options_problem(env_in.get("NODE_OPTIONS"))) is not None:
+        raise ConfigError(problem)
     preset = None if settings.agent_preset is None else parse_preset(settings.agent_preset)
     check_install = getattr(preset, "check_install", None)
     if check_install is not None and (problem := check_install()) is not None:

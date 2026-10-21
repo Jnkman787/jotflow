@@ -726,3 +726,73 @@ async def test_github_failing_is_a_502_not_a_verdict(tmp_path: Path) -> None:
         reply = await http.post("/verify", json={"login": "octo", "code_digest": VERIFY_DIGEST})
     assert reply.status_code == 502
     assert reply.json() == {"error": "GitHub answered 500"}
+
+
+# NODE_OPTIONS reaches every run, so only harmless options are allowed (#294)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        "  ",
+        "--max-old-space-size=4096",
+        "--max_old_space_size=4096 --no-warnings",
+        '--dns-result-order=ipv4first "--unhandled-rejections=strict"',
+        "--enable-source-maps --use-openssl-ca --no-deprecation --max-semi-space-size=64",
+    ],
+)
+def test_harmless_node_options_are_allowed(value: str | None) -> None:
+    from jotflow.adapters.runner import node_options_problem
+
+    assert node_options_problem(value) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "named"),
+    [
+        ("--require /tmp/x.js", "--require"),
+        ("-r /tmp/x.js", "-r"),
+        ("--import=data:text/javascript,1", "--import"),
+        ("--loader ./l.mjs", "--loader"),
+        ("--experimental-loader=./l.mjs", "--experimental-loader"),
+        ("--inspect", "--inspect"),
+        ("--inspect-brk=0.0.0.0:9229", "--inspect-brk"),
+        ("--openssl-config=/tmp/o.cnf", "--openssl-config"),
+        ("--env-file=/run/secrets", "--env-file"),
+        ("--tls-keylog=/tmp/keys", "--tls-keylog"),
+        ("--report-on-signal", "--report-on-signal"),
+        ("--max-old-space-size=4096 --require=x", "--require"),
+        ("--max-old-space-size 4096", "--max-old-space-size"),
+        ("4096", "a bare value"),
+        ("--dns-result-order=evil", "--dns-result-order"),
+    ],
+)
+def test_node_options_that_load_code_refuse_the_start(value: str, named: str) -> None:
+    from jotflow.adapters.runner import node_options_problem
+
+    problem = node_options_problem(value)
+    assert problem is not None and named in problem
+
+
+def test_unreadable_node_options_refuse_the_start() -> None:
+    from jotflow.adapters.runner import node_options_problem
+
+    assert "could not be read" in (node_options_problem('--no-warnings "unclosed') or "")
+
+
+def test_the_runner_refuses_to_start_with_a_code_loading_node_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name, value in {
+        "JOTFLOW_RUNNER_SECRET": SECRET,
+        "JOTFLOW_AGENT_COMMAND": '["claude", "-p", "--mcp-config", "{mcp_config}"]',
+        "JOTFLOW_GITHUB_READ_TOKEN": READ,
+        "NODE_OPTIONS": "--require /tmp/hook.js",
+    }.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ConfigError, match="--require"):
+        runner_command.build_config(runner_command.RunnerSettings())  # type: ignore[call-arg]
+    monkeypatch.setenv("NODE_OPTIONS", "--max-old-space-size=2048")
+    runner_command.build_config(runner_command.RunnerSettings())  # type: ignore[call-arg]

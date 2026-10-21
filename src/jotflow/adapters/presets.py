@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from jotflow.models import PARTIAL_PRESET_KINDS, RunKind
 
@@ -611,8 +612,15 @@ class CopilotPreset:
             )
         if environ["COPILOT_PROVIDER_WIRE_API"].strip() != COPILOT_WIRE_API:
             return f"COPILOT_PROVIDER_WIRE_API must be {COPILOT_WIRE_API}"
-        if not environ["COPILOT_PROVIDER_BASE_URL"].strip().startswith("https://"):
-            return "COPILOT_PROVIDER_BASE_URL must be an https:// address"
+        base = urlsplit(environ["COPILOT_PROVIDER_BASE_URL"].strip())
+        if (
+            base.scheme != "https"
+            or not base.hostname
+            or base.username is not None
+            or base.password is not None
+            or any(ch.isspace() or ord(ch) < 0x20 for ch in base.geturl())
+        ):
+            return "COPILOT_PROVIDER_BASE_URL must be an https:// address with a host, no login"
         return None
 
     def plan(self, run: RunContext) -> RunPlan:
