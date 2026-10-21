@@ -212,3 +212,85 @@ async def test_a_code_mode_model_would_offer_an_exec_tool(tmp_path: Path) -> Non
     extra = next(i for i in api.requests[0]["input"] if i.get("type") == "additional_tools")
     nested = {t["name"] for ns in extra["tools"] for t in ns.get("tools", [])}
     assert "exec" in nested and "spawn_agent" in nested
+
+
+def _no_network_available() -> bool:
+    """Whether this machine can run a command with no network: unshare -rn, unprivileged."""
+    unshare = shutil.which("unshare")
+    if unshare is None:
+        return False
+    done = subprocess.run([unshare, "-rn", "true"], capture_output=True, timeout=10)
+    return done.returncode == 0
+
+
+# CI's gate job allows unprivileged namespaces, so there a missing one fails, not skips.
+@pytest.mark.skipif(
+    not REQUIRED and not _no_network_available(),
+    reason="needs unshare -rn to run Codex with no network",
+)
+async def test_the_preset_never_fetches_the_remote_model_catalog(tmp_path: Path) -> None:
+    """Codex with an API key would fetch OpenAI's model catalog on every run, and that
+    metadata sets each model's tools, so a remote change could add an exec tool (#284).
+
+    Codex runs with the preset's own config and the built-in OpenAI provider, as a
+    deployment does, but in a network namespace, so nothing leaves the machine. A
+    control run with discovery forced back on shows the catalog fetch would be seen.
+    """
+    assert _no_network_available(), "unshare -rn is not available here"
+    logs: dict[bool, str] = {}
+    for discovery in (True, False):
+        run_dir = tmp_path / f"run-{discovery}"
+        run_dir.mkdir(mode=0o700)
+        context = RunContext(
+            kind=RunKind.DRAFTING,
+            run_id="run-gate",
+            run_dir=run_dir,
+            config_path=run_dir / "mcp.json",
+            mcp_url="http://127.0.0.1:9/mcp",
+            mcp_token="jfr_gate",
+            github_token="github_pat_gate",
+            github_mcp=str(_fake_github(tmp_path)),
+            model="gpt-5.5",
+        )
+        plan = CODEX.plan(context)
+        for relative, text in plan.files.items():
+            write_private(run_dir, relative, text)
+        # No JotFlow server: only Codex's own start-up is under test.
+        overrides = ["-c", "mcp_servers.jotflow.enabled=false"]
+        if discovery:
+            overrides += ["-c", "features.api_key_model_discovery=true"]
+        argv = ["unshare", "-rn", *plan.argv[:2], *overrides, *plan.argv[2:]]
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": str(tmp_path / "home"),
+            "TMPDIR": str(run_dir),
+            "CODEX_API_KEY": "sk-gate-not-a-key",
+            "RUST_LOG": "codex_models_manager=info",
+            **plan.env,
+        }
+        logs[discovery] = await _offline(argv, env, run_dir)
+    assert "list_models" in logs[True], "the control run should try to fetch the catalog"
+    assert "list_models" not in logs[False], logs[False][-2000:]
+
+
+async def _offline(argv: list[str], env: dict[str, str], cwd: Path) -> str:
+    """Run until Codex gives up or 15 seconds pass, and return what it logged."""
+    import asyncio
+
+    def blocking() -> str:
+        try:
+            done = subprocess.run(
+                argv,
+                env=env,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired as stopped:
+            out = stopped.stderr or b""
+            return out.decode(errors="replace") if isinstance(out, bytes) else out
+        return done.stderr
+
+    return await asyncio.to_thread(blocking)

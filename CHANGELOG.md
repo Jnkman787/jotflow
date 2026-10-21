@@ -14,6 +14,10 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 - **`jotflow rebuild` restores a thread's links as the agent's decision, not a person's (#279).** The original links were mostly the agent's, so a later drafting run can still move a rebuilt one, and a person's later choice wins. A `skip:` stays a person's. A message a person attached before the loss, for example with `re:`, comes back as the agent's too, so attach it again with `re:` to keep it fixed.
 
+### Security
+
+- **The codex preset no longer fetches OpenAI's model catalog (#284).** With an API key, Codex fetched it on every run, and that catalog sets each model's tools. A change on OpenAI's side could have switched `gpt-5.5` into Codex's code mode, which adds a JavaScript `exec` tool, and JotFlow's model check wouldn't have caught it. Codex now uses the catalog bundled with the pinned release. Only teams on the `codex` preset are affected. Upgrade the agent image, which builds the config.
+
 ## [0.4.0] - 2026-10-20
 
 A minor release with new features, all off by default except the readable help, related issues on the card, and the @-mention check. Upgrade both images: the agent image changed too. The default Compose files are unchanged, so an image bump is enough, and `docker-compose.isolation.yml` is new and only for teams turning on per-run uids. It adds store migrations 14 and 15, so rolling back means restoring the backup from before the upgrade, then removing any new keys from `jotflow.toml` (`scopes`, `read_paths`, `conventions`, `title_pattern`, `[questions]` and any `[channels.<id>.questions]`), which older versions refuse. No Slack app change is needed.
