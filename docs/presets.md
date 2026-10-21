@@ -169,7 +169,7 @@ The `apply_patch` refusal is already shown, by the gate. Whether Codex fetches m
 
 ## copilot
 
-**Experimental.** The runner's startup line says `(experimental)`. The security gate below runs Copilot CLI 1.0.101 on every pull request, for every run kind. A real-model pass, `jotflow replay --agent copilot`, hasn't been recorded yet.
+**Experimental, until a real-agent replay is recorded (#293).** The runner's startup line says `(experimental)`. The security gate below runs Copilot CLI 1.0.101 offline on every pull request, for every run kind, but no real-model pass, `jotflow replay --agent copilot`, has been recorded yet. So it's checked that Copilot can only reach the right tools, not yet how well a real model drafts with them.
 
 **Every run kind.** Copilot offers the model only the tools the preset lists, with no MCP resource-read tools, so unlike codex it can serve execution as well as drafting and question runs.
 
