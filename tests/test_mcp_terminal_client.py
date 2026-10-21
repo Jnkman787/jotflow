@@ -56,7 +56,7 @@ TOKEN_TABLE: dict[RunKind, set[str]] = {
         "ask_channel",
     },
     RunKind.EXECUTION: {"get_work", "record_result"},
-    RunKind.QUESTION: {"get_work", "list_topics", "get_topic", "answer"},
+    RunKind.QUESTION: {"get_work", "list_topics", "get_topic", "get_issue", "answer"},
     RunKind.OPERATOR: {"list_topics", "get_topic"},
 }
 
