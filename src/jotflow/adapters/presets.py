@@ -311,7 +311,12 @@ CODEX_RUN_KINDS = PARTIAL_PRESET_KINDS["codex"]
 # Every built-in Codex feature that adds a tool or acts outside the run, off. The
 # shell goes with shell_tool and unified_exec. mcp_2026_07_28 is on: JotFlow serves
 # only that MCP version, and this release marks the flag "under development".
+# api_key_model_discovery would fetch OpenAI's model catalog on every run, and that
+# metadata sets each model's tools: a remote change could switch gpt-5.5 into code
+# mode, with an exec tool. Off, Codex uses the catalog bundled with the pinned release
+# (#284).
 CODEX_FEATURES_OFF = (
+    "api_key_model_discovery",
     "apps",
     "browser_use",
     "browser_use_external",

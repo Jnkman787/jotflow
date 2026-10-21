@@ -81,6 +81,11 @@ jobs:
           npm ci --no-fund --no-audit
           echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
+      # The model-catalog test runs Codex in a network namespace, so nothing leaves
+      # the runner (#284). Ubuntu's AppArmor blocks unprivileged ones by default.
+      - name: Allow a network namespace for the offline test
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Gate
         env:
           JOTFLOW_REQUIRE_CODEX: "1"
