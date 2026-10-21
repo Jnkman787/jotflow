@@ -16,9 +16,11 @@ See docs/presets.md for what each preset was verified against.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -498,7 +500,175 @@ class CodexPreset:
 
 CODEX = CodexPreset()
 
-PRESETS: Mapping[str, Preset] = {CLAUDE_CODE.name: CLAUDE_CODE, CODEX.name: CODEX}
+
+# GitHub Copilot CLI (#59). Verified, without a model call, against this release.
+COPILOT_VERSION = "1.0.101"
+# The only Copilot names a team may pass on, all for its own model provider: Copilot
+# runs offline with the team's key, never with a GitHub login (#59, #287). Any other
+# COPILOT_* name is refused, so whatever a later release adds is refused too.
+COPILOT_PROVIDER_ENV = (
+    "COPILOT_PROVIDER_BASE_URL",
+    "COPILOT_PROVIDER_TYPE",
+    "COPILOT_PROVIDER_WIRE_API",
+    "COPILOT_PROVIDER_API_KEY",
+)
+# Provider types whose wire the gate fakes: the OpenAI Responses API (#288 adds Anthropic's).
+COPILOT_PROVIDER_TYPES = ("openai", "azure")
+COPILOT_WIRE_API = "responses"
+# Names the preset sets itself, and OpenTelemetry's, which could export a run's content.
+COPILOT_OWN_ENV = re.compile(r"^(COPILOT_|XDG_|OTEL_|GH_)")
+COPILOT_VERSION_LINE = re.compile(r"GitHub Copilot CLI (\S+?)\.?$")
+COPILOT_PROMPTS = CLAUDE_PROMPTS
+
+
+@dataclass(frozen=True)
+class CopilotPreset:
+    """GitHub Copilot CLI in prompt mode, offline, with the team's own model key (#59).
+
+    ``--available-tools`` offers the model exactly the run kind's JotFlow and GitHub
+    tools, so no shell, file, web, or agent tool, and ``--allow-tool`` lets each one
+    run without a prompt; anything else is denied, never asked about. Copilot's own
+    GitHub server is off, and ``COPILOT_OFFLINE`` turns off its GitHub login,
+    telemetry, web tools, and updates. Its session, logs, and caches go to the run
+    directory, which the runner removes. See docs/presets.md.
+    """
+
+    name: str = "copilot"
+    # With the team's own provider there's no default model: the runner needs one named.
+    default_models: Mapping[RunKind, str] = field(default_factory=dict)
+    needs_model: bool = True
+    needs_github_mcp: bool = True
+    github_token_in_config: bool = True
+
+    def check_install(
+        self,
+        *,
+        which: Callable[[str], str | None] = shutil.which,
+        run: Callable[..., Any] = subprocess.run,
+    ) -> str | None:
+        """Why the installed Copilot can't run this preset, or None. Fails closed on any
+        version but the pinned one, since a new release can change its tools."""
+        copilot = which("copilot")
+        if copilot is None:
+            return (
+                "the copilot CLI is not installed; add @github/copilot@"
+                + COPILOT_VERSION
+                + " to AGENT_NPM_PACKAGES"
+            )
+        try:
+            # Its own scratch home, so the check unpacks nothing into the service's.
+            with tempfile.TemporaryDirectory() as scratch:
+                env = {
+                    "PATH": os.environ.get("PATH", ""),
+                    "HOME": scratch,
+                    "XDG_CACHE_HOME": scratch,
+                    "COPILOT_HOME": scratch,
+                    "COPILOT_OFFLINE": "true",
+                }
+                done = run(
+                    [copilot, "--version"], capture_output=True, text=True, timeout=60, env=env
+                )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"the copilot CLI could not be run ({type(exc).__name__})"
+        lines = str(done.stdout).strip().splitlines() if done.returncode == 0 else []
+        match = COPILOT_VERSION_LINE.fullmatch(lines[0].strip()) if lines else None
+        found = match.group(1) if match else "unknown"
+        if found != COPILOT_VERSION:
+            return f"the copilot preset needs Copilot CLI {COPILOT_VERSION}; this image has {found}"
+        return None
+
+    def check_env(self, names: Sequence[str], environ: Mapping[str, str]) -> str | None:
+        """Why the team's env allowlist can't run this preset, or None.
+
+        Only the four provider names may pass, and the provider must be one whose
+        wire the gate checks, reached over https. Failing closed.
+        """
+        for name in names:
+            if COPILOT_OWN_ENV.match(name) and name not in COPILOT_PROVIDER_ENV:
+                return (
+                    f"{name} may not be passed to the copilot preset; only "
+                    + ", ".join(COPILOT_PROVIDER_ENV)
+                    + " may"
+                )
+        for name in COPILOT_PROVIDER_ENV:
+            if name not in names or not environ.get(name):
+                return f"the copilot preset needs {name}, set and listed in JOTFLOW_AGENT_ENV_ALLOW"
+        kind = environ["COPILOT_PROVIDER_TYPE"].strip()
+        if kind not in COPILOT_PROVIDER_TYPES:
+            return (
+                "COPILOT_PROVIDER_TYPE must be "
+                + " or ".join(COPILOT_PROVIDER_TYPES)
+                + f", not {kind!r}"
+            )
+        if environ["COPILOT_PROVIDER_WIRE_API"].strip() != COPILOT_WIRE_API:
+            return f"COPILOT_PROVIDER_WIRE_API must be {COPILOT_WIRE_API}"
+        if not environ["COPILOT_PROVIDER_BASE_URL"].strip().startswith("https://"):
+            return "COPILOT_PROVIDER_BASE_URL must be an https:// address"
+        return None
+
+    def plan(self, run: RunContext) -> RunPlan:
+        if run.model is None:  # the runner refuses this at startup too
+            raise ValueError("the copilot preset needs a model")
+        servers: dict[str, Any] = {
+            "jotflow": {
+                **jotflow_server(run.mcp_url, run.mcp_token),
+                "tools": list(JOTFLOW_TOOLS[run.kind]),
+            }
+        }
+        if GITHUB_TOOLS[run.kind]:
+            github = github_server(run)
+            servers["github"] = {
+                "type": "local",
+                "command": github["command"],
+                "args": github["args"],
+                "env": github["env"],
+                "tools": list(GITHUB_TOOLS[run.kind]),
+            }
+        offered = [f"jotflow-{t}" for t in JOTFLOW_TOOLS[run.kind]]
+        offered += [f"github-{t}" for t in GITHUB_TOOLS[run.kind]]
+        allowed: list[str] = []
+        for tool in JOTFLOW_TOOLS[run.kind]:
+            allowed += ["--allow-tool", f"jotflow({tool})"]
+        for tool in GITHUB_TOOLS[run.kind]:
+            allowed += ["--allow-tool", f"github({tool})"]
+        argv = (
+            "copilot",
+            "-p",
+            COPILOT_PROMPTS[run.kind],
+            "--additional-mcp-config",
+            f"@{run.config_path}",
+            "--disable-builtin-mcps",
+            "--no-custom-instructions",
+            "--no-ask-user",
+            "--no-auto-update",
+            "--disable-client-telemetry",
+            "--log-level",
+            "none",
+            "--model",
+            run.model,
+            *allowed,
+            # Last, since it takes every name up to the next option: the hard allowlist.
+            "--available-tools",
+            *offered,
+        )
+        env = {
+            "COPILOT_OFFLINE": "true",
+            "COPILOT_HOME": str(run.run_dir / "copilot"),
+            "XDG_CACHE_HOME": str(run.run_dir / "cache"),
+            "XDG_CONFIG_HOME": str(run.run_dir / "config"),
+            "XDG_STATE_HOME": str(run.run_dir / "state"),
+            "XDG_DATA_HOME": str(run.run_dir / "data"),
+        }
+        return RunPlan(argv=argv, config={"mcpServers": servers}, env=env, github_token_env=False)
+
+
+COPILOT = CopilotPreset()
+
+PRESETS: Mapping[str, Preset] = {
+    CLAUDE_CODE.name: CLAUDE_CODE,
+    CODEX.name: CODEX,
+    COPILOT.name: COPILOT,
+}
 # Presets the maintainer has marked experimental; the runner's startup line says
-# so. None today: codex left it on 2026-10-19 (docs/agent-adapters.md, step 5).
-EXPERIMENTAL: frozenset[str] = frozenset()
+# so. Codex left it on 2026-10-19 (docs/agent-adapters.md, step 5).
+EXPERIMENTAL: frozenset[str] = frozenset({COPILOT.name})

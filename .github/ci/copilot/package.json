@@ -1,0 +1,8 @@
+{
+  "name": "jotflow-copilot-gate",
+  "private": true,
+  "description": "The Copilot CLI release the copilot preset is pinned to, for CI's copilot preset gate.",
+  "dependencies": {
+    "@github/copilot": "1.0.101"
+  }
+}

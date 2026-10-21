@@ -76,10 +76,12 @@ Then add it to `PRESETS`, and to `EXPERIMENTAL` until the maintainer drops the l
 - **`github_token_env`**, which says whether `GITHUB_TOKEN` and `GH_TOKEN` are set. Keep it false when the token is in the config.
 - **`files`**, more private files by path inside the run directory, such as a CLI's own config file. See the Codex preset's `codex/config.toml`. Codex is a drafting and question preset only, and it's refused for execution.
 
-Three optional members, which the runner looks for:
+Five optional members, which the runner looks for:
 - **`check_install()`** returns why the installed CLI can't honour the preset, or None. The runner calls it at startup and refuses to start on a problem: a different version, a missing feature flag, or a missing binary.
 - **`verified_models`** is the models whose tool set was checked. The runner refuses any other model. Use it when a CLI's tool set depends on the model, as Codex's does.
 - **`run_kinds`** is the run kinds the preset may serve. A runner serving any other kind refuses to start. The codex preset serves drafting and question only, because Codex can't drop its MCP resource-read tools, and an execution run must never have them.
+- **`check_env(names, environ)`** returns why the team's `JOTFLOW_AGENT_ENV_ALLOW` can't run the preset, or None. The runner calls it at startup, and so does replay. Make it an allowlist of the CLI's own names, so a name a later release adds is refused by construction. The copilot preset passes only its four model-provider names, and checks the provider is one the gate fakes.
+- **`needs_model`**, when true, makes the runner refuse to start without a model for every kind it serves. Use it when the CLI has no default model, as with copilot's own provider.
 
 Rules for the code:
 - **The prompt** is a fixed string per run kind. It tells the agent to call `get_work` first and follow its guidance. JotFlow's instructions arrive in the work packet, the same for every CLI. Never put run data in the prompt or anywhere in `argv`: no token, run id, URL, path, or model, nor anything from Slack.

@@ -40,7 +40,7 @@ async def test_the_scripted_agent_matches_every_fixture_over_real_mcp(name: str)
 
 
 def test_presets_and_the_stand_in_are_the_agents() -> None:
-    assert AGENTS == ("scripted", "claude-code", "codex")
+    assert AGENTS == ("scripted", "claude-code", "codex", "copilot")
     stand_in = _preset(AgentOptions("scripted", "chatter"), 1)
     assert isinstance(stand_in, CommandPreset)
     assert stand_in.command[-4:] == ("chatter", "--run", "1", "{mcp_config}")

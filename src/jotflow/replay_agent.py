@@ -31,8 +31,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jotflow.adapters.presets import PRESETS, CommandPreset, Preset
-from jotflow.adapters.runner import LIVE, LaunchRequest, Runner, RunnerConfig, RunState
+from jotflow.adapters.presets import COPILOT_PROVIDER_ENV, PRESETS, CommandPreset, Preset
+from jotflow.adapters.runner import (
+    CONVERSATION_KINDS,
+    LIVE,
+    LaunchRequest,
+    Runner,
+    RunnerConfig,
+    RunState,
+)
 from jotflow.models import RunKind, RunStatus
 from jotflow.replay import (
     Check,
@@ -54,7 +61,13 @@ DEFAULT_TIME_LIMIT = 600.0
 # The fake GitHub server takes no real token; the runner still requires one.
 FIXTURE_GITHUB_TOKEN = "github_pat_fixture"
 # What a model login usually needs; pass more with env_allow.
-DEFAULT_ENV_ALLOW = ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "HTTPS_PROXY", "NO_PROXY")
+DEFAULT_ENV_ALLOW = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    *COPILOT_PROVIDER_ENV,
+)
 
 
 # Wraps the claude CLI during replay to keep its result's numbers, nothing else:
@@ -121,6 +134,13 @@ def _preset(options: AgentOptions, index: int) -> Preset:
         return PRESETS[options.agent]
     except KeyError:
         raise ReplayError(f"no agent {options.agent}; choose one of {', '.join(AGENTS)}") from None
+
+
+def check_env(preset: Preset, config: RunnerConfig, environ: Mapping[str, str]) -> None:
+    """The preset's own env check, as the runner makes at startup (#59)."""
+    check = getattr(preset, "check_env", None)
+    if check is not None and (problem := check(config.env_allow, environ)) is not None:
+        raise ReplayError(problem)
 
 
 def _fake_github(thread: SavedThread, root: Path, *, log: Path | None = None) -> Path:
@@ -206,9 +226,10 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
             env_allow=tuple(n for n in options.env_allow if n in environ),
             allowed_hosts=frozenset(),
             workdir=root,
-            models={k: v for k, v in options.models.items() if k is kind},
+            models={k: v for k, v in options.models.items() if k in CONVERSATION_KINDS},
             github_mcp=str(github),
         )
+        check_env(preset, config, environ)
         runner = Runner(config, environ=environ, limit=lambda _kind: options.time_limit)
         await runner.launch(LaunchRequest(run_id=started.run.id, kind=kind, token=started.token))
         view = await _wait(runner, started.run.id)

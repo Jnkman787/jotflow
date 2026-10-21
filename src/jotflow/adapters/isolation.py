@@ -55,6 +55,7 @@ HELPER_TIMEOUT_SECONDS = 10.0
 API_KEYS: Mapping[str, tuple[str, ...]] = {
     "claude-code": ("ANTHROPIC_API_KEY",),
     "codex": ("CODEX_API_KEY", "OPENAI_API_KEY"),
+    "copilot": ("COPILOT_PROVIDER_API_KEY",),
 }
 
 

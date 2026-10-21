@@ -102,7 +102,9 @@ def _models(settings: RunnerSettings, kinds: frozenset[RunKind]) -> dict[RunKind
     return models
 
 
-def build_config(settings: RunnerSettings) -> RunnerConfig:
+def build_config(
+    settings: RunnerSettings, environ: Mapping[str, str] | None = None
+) -> RunnerConfig:
     if (settings.agent_preset is None) == (settings.agent_command is None):
         raise ConfigError("set exactly one of JOTFLOW_AGENT_PRESET and JOTFLOW_AGENT_COMMAND")
     preset = None if settings.agent_preset is None else parse_preset(settings.agent_preset)
@@ -114,6 +116,12 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
         if not (os.path.isfile(path) and os.access(path, os.X_OK)):
             raise ConfigError(f"the GitHub MCP server is not installed at {path}")
     kinds = _kinds(settings.runner_kinds)
+    env_allow = tuple(n.strip() for n in settings.agent_env_allow.split(",") if n.strip())
+    check_env = getattr(preset, "check_env", None)
+    if check_env is not None and (
+        problem := check_env(env_allow, os.environ if environ is None else environ)
+    ):
+        raise ConfigError(problem)  # fail closed: names or a provider the preset can't vouch for
     port = settings.runner_port
     names = [h.strip() for h in settings.runner_allowed_hosts.split(",") if h.strip()]
     hosts = {f"{name}:{port}" for name in [*names, "127.0.0.1", "localhost"]}
@@ -132,7 +140,7 @@ def build_config(settings: RunnerSettings) -> RunnerConfig:
         write_token=(
             settings.github_write_token.get_secret_value() if settings.github_write_token else None
         ),
-        env_allow=tuple(n.strip() for n in settings.agent_env_allow.split(",") if n.strip()),
+        env_allow=env_allow,
         kinds=kinds,
         allowed_hosts=frozenset(hosts),
     )

@@ -117,7 +117,7 @@ Security's condition 1 below makes this an allowlist instead, through a small ru
   - JotFlow's audit log showing `tools/list` served
   - neither token in any model request
   - the CLI exiting by itself
-- **Docs:** a copilot section in presets.md, agent-adapters.md's list of presets and `refused_env`, the threat model's preset row, and the CHANGELOG.
+- **Docs:** a copilot section in presets.md, agent-adapters.md's list of presets and `check_env()`, the threat model's preset row, and the CHANGELOG.
 - **`docker-compose.yml`** keeps its default `AGENT_NPM_PACKAGES`. A team adds `@github/copilot@1.0.101` to try the preset, as with codex before it was published.
 
 ## Decisions
@@ -152,18 +152,19 @@ Security approved on 2026-10-21, agreeing with all three decisions, on four cond
 - [x] Security approves it, with the four conditions above
 - [x] Commit this plan and open the draft PR
 - [x] Open the follow-ups: #286 (Gemini), #287 (subscription login), #288 (Anthropic's API)
-- [ ] `CopilotPreset`, `check_env()` in the runner, and `PRESETS` and `EXPERIMENTAL`
-- [ ] Unit tests: argv and `mcp.json` pinned per kind, no run data in the prompt or argv, no token in argv or env, `check_install()`, a model required, `check_env()` refusals, and an end-to-end run with a fake CLI
-- [ ] The gate, its lockfile, and the CI job, with all three kinds, the connect trace, and the read-only-hint case
-- [ ] The Dockerfile drops the musl binary when Copilot is installed
-- [ ] presets.md, agent-adapters.md, the threat model, the CHANGELOG
-- [ ] `jotflow replay --all --agent scripted` and `--execute` pass
+- [x] `CopilotPreset`, `check_env()` and `needs_model` in the runner and in replay, and `PRESETS` and `EXPERIMENTAL`
+- [x] Unit tests, in `tests/test_copilot_preset.py`: argv and `mcp.json` pinned per kind, no run data in the prompt or argv, no token in argv or env, `check_install()`, a model required, `check_env()` refusals, and an end-to-end run with a fake CLI
+- [x] The gate, its lockfile, and the CI job, with all three kinds, the connect trace, and the read-only-hint case
+- [x] The Dockerfile drops the musl binary when Copilot is installed
+- [x] presets.md, agent-adapters.md, the threat model, the CHANGELOG
+- [x] `jotflow replay --all --agent scripted` and `--execute` pass
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
 
 - The lab runs above, on 2026-10-21, with Gemini CLI 0.65.0 and Copilot CLI 1.0.101.
-- Once built: the gate in CI, and `make check`.
+- The gate, `tests/test_copilot_gate.py`, passed all 10 cases on 2026-10-21 in a container like CI's: Python 3.14, Debian's Node 20, strace, and Copilot 1.0.101 from `.github/ci/copilot`'s lockfile, with `JOTFLOW_REQUIRE_COPILOT=1`.
+- An agent image built with `AGENT_NPM_PACKAGES="@anthropic-ai/claude-code@2.1.303 @github/copilot@1.0.101"` kept only the glibc binary, 188 MB. Its runner started with `preset copilot (experimental)` and refused `COPILOT_ALLOW_ALL` in the allowlist.
 
 ## Handoff notes
 

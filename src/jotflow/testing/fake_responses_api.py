@@ -39,6 +39,18 @@ def apply_patch_call(patch: str = PROBE_PATCH) -> dict[str, Any]:
     }
 
 
+def function_call(name: str, arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """An output item calling the tool ``name``, as Copilot's tools are called (#59)."""
+    return {
+        "type": "function_call",
+        "id": "fc_probe",
+        "call_id": "call_probe",
+        "name": name,
+        "arguments": json.dumps(dict(arguments or {})),
+        "status": "completed",
+    }
+
+
 def final_message(text: str = "done") -> dict[str, Any]:
     return {
         "type": "message",
@@ -53,10 +65,52 @@ def _event(name: str, data: Mapping[str, Any]) -> bytes:
     return f"event: {name}\ndata: {json.dumps(dict(data))}\n\n".encode()
 
 
+def _full_stream(model: object, item: Mapping[str, Any]) -> bytes:
+    """The whole event sequence the real API sends, which Copilot needs (#59): the item
+    added, its text or arguments, the item done, and the output again in completed."""
+    usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+    response = {"id": "resp_fake", "object": "response", "status": "in_progress", "model": model}
+
+    def event(name: str, **data: Any) -> bytes:
+        return _event(name, {"type": name, **data})
+
+    parts = [
+        event("response.created", response={**response, "output": []}),
+        event("response.in_progress", response={**response, "output": []}),
+        event("response.output_item.added", output_index=0, item={**item, "status": "in_progress"}),
+    ]
+    where = {"item_id": item.get("id"), "output_index": 0}
+    if item.get("type") == "message":
+        part = item["content"][0]
+        empty = {**part, "text": ""}
+        parts += [
+            event("response.content_part.added", **where, content_index=0, part=empty),
+            event("response.output_text.delta", **where, content_index=0, delta=part["text"]),
+            event("response.output_text.done", **where, content_index=0, text=part["text"]),
+            event("response.content_part.done", **where, content_index=0, part=part),
+        ]
+    elif item.get("type") == "function_call":
+        arguments = item["arguments"]
+        parts += [
+            event("response.function_call_arguments.delta", **where, delta=arguments),
+            event("response.function_call_arguments.done", **where, arguments=arguments),
+        ]
+    parts += [
+        event("response.output_item.done", output_index=0, item=dict(item)),
+        event(
+            "response.completed",
+            response={**response, "status": "completed", "output": [dict(item)], "usage": usage},
+        ),
+    ]
+    return b"".join(parts)
+
+
 class FakeResponsesApi:
     """Serves ``POST /v1/responses`` on 127.0.0.1 in a background thread."""
 
-    def __init__(self, first: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self, first: Mapping[str, Any] | None = None, *, full_stream: bool = False
+    ) -> None:
         self.requests: list[dict[str, Any]] = []
         self._first = dict(first) if first is not None else final_message()
         api = self
@@ -68,8 +122,19 @@ class FakeResponsesApi:
                 size = int(self.headers.get("content-length") or 0)
                 body = json.loads(self.rfile.read(size) or b"{}")
                 api.requests.append(body)
-                answered = any(i.get("type") in TOOL_OUTPUTS for i in body.get("input", []))
+                answered = any(
+                    isinstance(i, dict) and i.get("type") in TOOL_OUTPUTS
+                    for i in body.get("input", [])
+                )
                 item = final_message() if answered else api._first
+                if full_stream:
+                    payload = _full_stream(body.get("model"), item)
+                    self.send_response(200)
+                    self.send_header("content-type", "text/event-stream")
+                    self.send_header("content-length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
                 rid = "resp_" + uuid.uuid4().hex[:8]
                 usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
                 payload = b"".join(

@@ -220,6 +220,13 @@ class RunnerConfig:
                 )
             if not MODEL_NAME.fullmatch(model):
                 raise ConfigError(f"{model!r} is not a model name")
+        if getattr(self.preset, "needs_model", False):
+            missing = sorted(k.value for k in self.kinds if not self.model(k))
+            if missing:
+                raise ConfigError(
+                    f"the {self.agent.name} preset needs a model; set JOTFLOW_AGENT_MODEL "
+                    f"(no model for {' and '.join(missing)} runs)"
+                )
         verified = getattr(self.preset, "verified_models", None)
         if verified is not None:
             for kind, model in self.models.items():
