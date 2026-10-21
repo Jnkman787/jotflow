@@ -260,7 +260,16 @@ def assert_clean(run: GateRun, kind: RunKind) -> None:
     if STRACE is not None:
         assert any("connect(" in line for line in run.trace or []), "strace saw no connection"
         assert run.strangers() == [], run.strangers()
+    assert_every_request_offers(run.api, offered_for(kind))
     assert_no_provider_side_tool(run.api)
+
+
+def assert_every_request_offers(api: Api, expected: list[str]) -> None:
+    """The exact set on every request, not only the first: a tool added later fails too."""
+    for index, request in enumerate(api.requests):
+        if request.get("tools"):
+            names = sorted(str(t.get("name")) for t in request["tools"])
+            assert names == expected, f"request {index} offered {names}"
 
 
 def assert_no_provider_side_tool(api: Api) -> None:

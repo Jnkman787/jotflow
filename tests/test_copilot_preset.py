@@ -484,3 +484,16 @@ def test_the_gate_refuses_a_hosted_tool_on_the_responses_wire(hosted: str) -> No
     with pytest.raises(AssertionError, match=hosted):
         assert_no_provider_side_tool(api)
     api._server.server_close()
+
+
+def test_the_gate_checks_the_tool_set_on_every_request_not_only_the_first() -> None:
+    from jotflow.testing.fake_messages_api import FakeMessagesApi
+    from tests.test_copilot_gate import assert_every_request_offers
+
+    api = FakeMessagesApi()
+    api.requests.append({"tools": [CLIENT_TOOL]})
+    assert_every_request_offers(api, ["jotflow-get_work"])
+    api.requests.append({"tools": [CLIENT_TOOL, {**CLIENT_TOOL, "name": "jotflow-answer"}]})
+    with pytest.raises(AssertionError, match="request 1 offered"):
+        assert_every_request_offers(api, ["jotflow-get_work"])
+    api._server.server_close()

@@ -4,7 +4,7 @@
 
 - Issue: #288 (M6), a follow-up to #59 and #285
 - Draft PR: #297
-- Status: implementing. The lead approved the plan on 2026-10-21, and security approved it the same day with the condition below
+- Status: ready for review. The lead approved the plan on 2026-10-21, and security approved it the same day with the condition below
 - Last verified: 2026-10-21, Copilot CLI 1.0.101 in a throwaway agent image, with `--network none`, against JotFlow's real MCP server and a scripted fake of Anthropic's Messages API
 - Next safe action: review
 
@@ -72,7 +72,7 @@ Security approved on 2026-10-21.
 - [x] The gate parametrized over both wires
 - [x] `check_env()` and its tests
 - [x] presets.md, the threat-model row, the CHANGELOG
-- [ ] CodeRabbit once, `make check`, mark ready
+- [x] CodeRabbit once (one finding, fixed: the exact tool set is now checked on every request), `make check`, mark ready
 
 ## Validation
 
