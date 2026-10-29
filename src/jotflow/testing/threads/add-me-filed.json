@@ -1,0 +1,236 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "add-me-filed",
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        },
+        {
+          "number": 42,
+          "title": "Export the dashboard table as CSV",
+          "state": "open",
+          "body": "Finance needs a monthly CSV of the dashboard table.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "description": "The thread's idea was filed as acme-co/web#42. Alice, whose GitHub login is linked, later replies \"I'll help with this one, add me.\" The run links her reply to the topic and proposes an update that assigns her, with the reason volunteered and her reply as its source, and nothing else (#305).",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [
+    {
+      "id": "topic-csv-export",
+      "channel_id": "C0EXAMPLE1",
+      "title": "Export the dashboard table as CSV",
+      "repo": "acme-co/web",
+      "issue_number": 42,
+      "messages": [
+        {
+          "channel_id": "C0EXAMPLE1",
+          "ts": "1792331000.000100"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792331000.000100",
+      "user": "U0CAROL",
+      "text": "Could the dashboard table be exported as a CSV file?"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792331300.000100",
+      "user": "U0ALICE",
+      "text": "I'll help with this one, add me.",
+      "thread_ts": "1792331000.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792331000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792331300.000100",
+              "thread_ts": "1792331000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "topic-csv-export"
+          }
+        },
+        {
+          "tool": "propose_update",
+          "arguments": {
+            "topic_id": "topic-csv-export",
+            "repo": "acme-co/web",
+            "issue_number": 42,
+            "changes": {
+              "add_assignees": [
+                "acme-alice"
+              ],
+              "assignee_reasons": [
+                {
+                  "login": "acme-alice",
+                  "why": "volunteered",
+                  "source_ts": "1792331300.000100"
+                }
+              ]
+            },
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792331300.000100",
+                "thread_ts": "1792331000.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "The reply joins the filed topic, and one update proposal assigns Alice to acme-co/web#42 as a volunteer.",
+    "accepted": [
+      "1792331000.000100",
+      "1792331300.000100"
+    ],
+    "topics": [
+      {
+        "topic": "topic-csv-export",
+        "messages": [
+          "1792331000.000100",
+          "1792331300.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "update_issue",
+        "repo": "acme-co/web",
+        "topic": "topic-csv-export",
+        "issue_number": 42
+      }
+    ]
+  }
+}

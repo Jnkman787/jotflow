@@ -205,6 +205,15 @@ class RepoPolicy(_Strict):
             "every repo that token reaches (#209)"
         ),
     )
+    owner_hints: tuple[UserId, ...] | None = Field(
+        default=None,
+        max_length=20,
+        description=(
+            "Optional. Slack member IDs of people who own this repo's area. The agent may "
+            "propose one as an assignee, saying so on the card, when an idea plainly falls "
+            "to this repo (#305). Only someone with a linked GitHub login is ever assigned"
+        ),
+    )
 
     @field_validator("read_paths")
     @classmethod

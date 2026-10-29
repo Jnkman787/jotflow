@@ -290,7 +290,10 @@ async def _execute_one(
         if done is None or done.state is ProposalState.APPLIED or "labels missing" not in error:
             problems.append(f"{record.id}: did not report the missing labels {missing}")
         return problems
-    if interrupted:
+    # With no marker to find, as for a labels- or assignees-only update, the retry
+    # writes the same set change again; it must be exactly the planned one (#305).
+    rewrite = interrupted and checks.marker_in == "nowhere"
+    if interrupted and not rewrite:
         if len(written) != before:
             problems.append(f"{record.id}: wrote again after an interrupted attempt")
     elif len(written) - before != len(expected) or not all(

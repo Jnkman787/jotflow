@@ -124,6 +124,8 @@ def render_policy(policy: Policy) -> str:
             # Docs a drafting run may read (#209).
             if repo.read_paths is not None:
                 lines.append(f"read_paths = {_array(repo.read_paths)}")
+            if repo.owner_hints is not None:
+                lines.append(f"owner_hints = {_array(repo.owner_hints)}")
         for scope in channel.scopes:
             # Pattern scopes (#236): every field, so a rewrite keeps what was written.
             lines += [

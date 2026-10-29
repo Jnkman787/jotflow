@@ -512,6 +512,7 @@ class Orchestrator:
                 boards_off=self.boards_off,
                 # Who wrote a revision's new messages, as approval reads them (#304).
                 authors=attribution.authors,
+                mentions=attribution.mentions,
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )

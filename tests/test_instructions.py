@@ -123,6 +123,11 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "likely_duplicate",  # a related issue's (#337)
         "scope_total",
         "has_docs",
+        "owner_hints",  # assignment's fields and reasons (#305)
+        "assignee_reasons",
+        "source_ts",
+        "named_owner",
+        "owner_hint",
     }
     named = set(re.findall(r"`([a-z]+(?:_[a-z]+)+)`", DRAFTING_INSTRUCTIONS)) - fields
     assert named <= jotflow | github, named - jotflow - github
@@ -242,8 +247,14 @@ DRAFTING_RULES = {
     "one proposal per topic per run": "One proposal per topic per run",
     # 7. People
     "broadcasts are not people": "`@here` and `@channel` are not people",
-    "a mention never assigns": "A mention or a reply never makes someone an assignee",
-    "assign only with a linked login": "only with that person's `github_login`",
+    "a mention never assigns": "A mention alone never makes someone an assignee",
+    "assign only with a linked login": "Assign only a `github_login` in `people` or `owner_hints`",
+    "every assignee has a reason (#305)": "with one `assignee_reasons` entry each",
+    "a named owner is named as the owner (#305)": "a message @-mentions them as the owner",
+    "owner hints only for the repo's own work (#305)": (
+        "only when the idea plainly falls to that repo"
+    ),
+    "if unsure, assign nobody": "If unsure, assign nobody",
     # 8. Ask
     "ask below 0.6": "confidence below 0.6. Ask instead of proposing",
     "ask who owns mentioned work": "do ask who should own it",
