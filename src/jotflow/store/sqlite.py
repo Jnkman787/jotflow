@@ -45,8 +45,10 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    MAX_SUMMARY_ATTEMPTS,
     OPERATOR_REMOVER,
     REVISED_FIELDS,
+    SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
     Clock,
@@ -69,6 +71,9 @@ from jotflow.store.base import (
     Recovery,
     StaleRevisionError,
     StoreError,
+    SummaryDeferral,
+    SummaryPost,
+    SummaryStatus,
     ToolCallRecord,
     TopicRecord,
     Verified,
@@ -1306,6 +1311,106 @@ class SqliteStore:
         async with self._lock:
             row = await self._one("SELECT * FROM channel_modes WHERE channel_id = ?", (channel_id,))
         return None if row is None else self._mode(row)
+
+    # Weekly summaries (#308)
+
+    @staticmethod
+    def _summary(row: aiosqlite.Row) -> SummaryPost:
+        return SummaryPost(
+            channel_id=row["channel_id"],
+            slot=from_text(row["slot"]),
+            status=row["status"],
+            attempts=int(row["attempts"]),
+            updated_at=from_text(row["updated_at"]),
+            ts=row["ts"],
+        )
+
+    async def start_summary(self, channel_id: str, slot: datetime) -> bool:
+        check_id(channel_id, "channel id")
+        now = self._clock()
+        async with self._write():
+            row = await self._one(
+                "SELECT * FROM summaries WHERE channel_id = ? AND slot = ?",
+                (channel_id, to_text(slot)),
+            )
+            if row is None:
+                await self._db.execute(
+                    "INSERT INTO summaries (channel_id, slot, status, attempts, updated_at)"
+                    " VALUES (?, ?, 'posting', 1, ?)",
+                    (channel_id, to_text(slot), to_text(now)),
+                )
+                return True
+            found = self._summary(row)
+            stale = found.status == "posting" and now - found.updated_at > SUMMARY_POSTING_STALE
+            if (found.status == "failed" or stale) and found.attempts < MAX_SUMMARY_ATTEMPTS:
+                await self._db.execute(
+                    "UPDATE summaries SET status = 'posting', attempts = attempts + 1,"
+                    " updated_at = ? WHERE channel_id = ? AND slot = ?",
+                    (to_text(now), channel_id, to_text(slot)),
+                )
+                return True
+            return False
+
+    async def finish_summary(
+        self, channel_id: str, slot: datetime, status: SummaryStatus, ts: str | None = None
+    ) -> SummaryPost:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE summaries SET status = ?, ts = COALESCE(?, ts), updated_at = ?"
+                " WHERE channel_id = ? AND slot = ?",
+                (status, ts, to_text(self._clock()), channel_id, to_text(slot)),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(f"no summary for {channel_id} at {slot.isoformat()}")
+            row = await self._one(
+                "SELECT * FROM summaries WHERE channel_id = ? AND slot = ?",
+                (channel_id, to_text(slot)),
+            )
+        return self._summary(_found(row))
+
+    async def get_summary(self, channel_id: str, slot: datetime) -> SummaryPost | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT * FROM summaries WHERE channel_id = ? AND slot = ?",
+                (channel_id, to_text(slot)),
+            )
+        return None if row is None else self._summary(row)
+
+    @staticmethod
+    def _deferral(row: aiosqlite.Row) -> SummaryDeferral:
+        return SummaryDeferral(
+            topic_id=row["topic_id"],
+            channel_id=row["channel_id"],
+            until_slot=from_text(row["until_slot"]),
+            by=row["deferred_by"],
+            at=from_text(row["deferred_at"]),
+        )
+
+    async def defer_topic(
+        self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str
+    ) -> SummaryDeferral:
+        check_id(by, "Slack user id")
+        async with self._write():
+            await self._db.execute(
+                "INSERT INTO summary_deferrals"
+                " (topic_id, channel_id, until_slot, deferred_by, deferred_at)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT (topic_id, until_slot) DO NOTHING",
+                (topic_id, channel_id, to_text(until_slot), by, to_text(self._clock())),
+            )
+            row = await self._one(
+                "SELECT * FROM summary_deferrals WHERE topic_id = ? AND until_slot = ?",
+                (topic_id, to_text(until_slot)),
+            )
+        return self._deferral(_found(row))
+
+    async def deferred_topics(self, channel_id: str, slot: datetime) -> list[SummaryDeferral]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM summary_deferrals WHERE channel_id = ? AND until_slot = ?"
+                " ORDER BY deferred_at, topic_id",
+                (channel_id, to_text(slot)),
+            )
+        return [self._deferral(row) for row in rows]
 
     # Runs (D8, #53)
 

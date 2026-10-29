@@ -72,6 +72,7 @@ _TS = re.compile(r"[0-9]{1,12}\.[0-9]{1,8}")
 # What a person sees when JotFlow says no. Fixed text: never the draft, never theirs.
 NOT_ALLOWED = "Only people in this workspace who are not guests can do this."
 NOT_AN_APPROVER = "Only the channel's approvers can approve proposals here."
+APPROVERS_ONLY_HERE = "Only the channel's approvers can do this here."
 OWN_PROPOSAL = "This proposal was drawn from your messages, so someone else needs to approve it."
 AUTHORS_UNKNOWN = (
     "JotFlow could not confirm who wrote this proposal's messages, so it can't be approved "
@@ -357,6 +358,34 @@ class ApprovalHandler:
             return await action(click, record)
         except Refused as refused:
             log.info("card action refused for user %s", click.user_id)
+            await self._tell(click.user_id, str(refused), channel=click.channel_id)
+            return "refused"
+
+    async def checked_click(
+        self, body: Mapping[str, Any], action: Callable[[Click], Awaitable[str]]
+    ) -> str:
+        """Run ``action`` for a click on one of JotFlow's own messages that isn't a card,
+        such as the weekly summary (#308), under Approve's rules for who may click.
+
+        A member of this workspace, not a guest or external user, in a channel the
+        policy lists and that isn't paused, and an approver when approvers are on.
+        Returns the action's outcome, ``"refused"``, or ``"ignored"``.
+        """
+        click = _click(body)
+        if click is None or click.channel_id is None or click.message_ts is None:
+            log.warning("a click payload was malformed; ignored")
+            return "ignored"
+        try:
+            await self._check_person(body, click.user_id)
+            if click.channel_id not in self._policy.channels:
+                raise Refused(NOT_ALLOWED)
+            await self._check_not_paused(click.channel_id)
+            approval = self._policy.approval
+            if approval.approvers_enabled and click.user_id not in approval.approvers:
+                raise Refused(APPROVERS_ONLY_HERE)
+            return await action(click)
+        except Refused as refused:
+            log.info("click refused for user %s", click.user_id)
             await self._tell(click.user_id, str(refused), channel=click.channel_id)
             return "refused"
 
