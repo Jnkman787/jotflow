@@ -296,6 +296,39 @@ def doc_notes(policy: Policy) -> list[str]:
     return notes
 
 
+def issue_notes(policy: Policy) -> list[str]:
+    """What ``[issues]`` adds to every new issue, and what to make sure of (#306).
+
+    jotflow check can't reach GitHub, so it can't see the repos' labels. It says
+    what a missing label does instead: the write is refused, naming the label.
+    """
+    notes: list[str] = []
+    label, prefix = policy.issues.label, policy.issues.title_prefix
+    if label:
+        notes.append(
+            f"every new issue gets the label {label!r}. Make sure it exists in each repo the "
+            "channels feed: JotFlow never creates labels, so an approved issue in a repo "
+            "without it fails to file, saying the label is missing."
+        )
+    patterned = sorted(
+        {
+            repo.repo
+            for channel in policy.channels.values()
+            for repo in channel.repos
+            if repo.title_pattern
+        }
+    )
+    if prefix:
+        note = f"every new issue's title starts with {prefix + ' '!r}."
+        if patterned:
+            note += (
+                " It goes on after title_pattern checks the title, so filed titles in "
+                f"{', '.join(patterned)} won't match the pattern themselves."
+            )
+        notes.append(note)
+    return notes
+
+
 def _load() -> tuple[Settings, Policy]:
     settings = load_settings()
     return settings, load_policy(settings.config_path)
@@ -326,6 +359,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"warn  policy: {warning}")
     for note in doc_notes(policy):
         print(f"note  docs: {note}")
+    for note in issue_notes(policy):
+        print(f"note  issues: {note}")
     failures: list[str] = []
     if policy.agent.preset:
         agent = agent_failures(policy, Path("."))
