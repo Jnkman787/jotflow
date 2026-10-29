@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from jotflow.policy import Policy, QuestionsPolicy, parse_policy
+from jotflow.policy import IssuesPolicy, Policy, QuestionsPolicy, parse_policy
 
 HEADER = (
     "# jotflow.toml: admin policy for JotFlow, written by `jotflow init`.\n"
@@ -88,11 +88,21 @@ def render_policy(policy: Policy) -> str:
             f"per_hour = {policy.questions.per_hour}",
             f"per_person_seconds = {policy.questions.per_person_seconds}",
         ]
+    # What every new issue gets (#306): written only when set, like [questions].
+    if policy.issues != IssuesPolicy():
+        lines += ["", "[issues]"]
+        if policy.issues.label is not None:
+            lines.append(f"label = {toml_string(policy.issues.label)}")
+        if policy.issues.title_prefix is not None:
+            lines.append(f"title_prefix = {toml_string(policy.issues.title_prefix)}")
     for channel_id, channel in policy.channels.items():
         # Channel ids are validated to [CG][A-Z0-9]+, so they are bare keys.
         lines += ["", f"[channels.{channel_id}]"]
         if channel.debounce_seconds is not None:
             lines.append(f"debounce_seconds = {channel.debounce_seconds}")
+        if channel.triage_guide is not None:
+            # The team's guide to choosing a repo and boards (#317), as written.
+            lines.append(f"triage_guide = {toml_string(channel.triage_guide)}")
         for repo in channel.repos:
             lines += [
                 "",
@@ -133,6 +143,15 @@ def render_policy(policy: Policy) -> str:
                 # Nicknames are [a-z0-9_-], so they are bare keys.
                 pairs = ", ".join(f"{k} = {toml_string(v)}" for k, v in scope.aliases.items())
                 lines.append(f"aliases = {{ {pairs} }}")
+        for board in channel.boards:
+            # Projects boards (#309), as configured: the description is the team's.
+            lines += [
+                "",
+                f"[[channels.{channel_id}.boards]]",
+                f"board = {toml_string(board.board)}",
+                f"nickname = {toml_string(board.nickname)}",
+                f"description = {toml_string(board.description)}",
+            ]
         own_help = channel.help.model_dump(exclude_none=True)
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]

@@ -27,8 +27,8 @@ from jotflow.models import (
     ProposalState,
     UpdateProposal,
 )
-from jotflow.policy import ChannelPolicy, RepoPolicy
-from jotflow.store.base import AUTO_APPROVER, IdentityLink, Store
+from jotflow.policy import ChannelPolicy, IssuesPolicy, RepoPolicy
+from jotflow.store.base import AUTO_APPROVER, IdentityLink, ProposalRevision, Store
 from jotflow.store.hashing import content_hash
 
 Block = dict[str, Any]
@@ -73,8 +73,21 @@ class CardContext:
 
     channel: ChannelPolicy
     names: Mapping[str, str] = field(default_factory=dict)  # Slack user id -> display name
+    # Who the issue's footer will name, computed as the write computes it, so approval
+    # covers every name sent to GitHub (#307 review). None: names aren't sent.
+    credit_line: str | None = None
+    # What JotFlow adds to every new issue, shown so the card is what's filed (#306).
+    issues: IssuesPolicy = field(default_factory=IssuesPolicy)
     identities: Mapping[str, IdentityLink] = field(default_factory=dict)  # by Slack user id
     visibility: Mapping[str, Visibility] = field(default_factory=dict)  # by owner/name, any case
+    # The draft's revisions from new messages, oldest first (#304).
+    revisions: Sequence[ProposalRevision] = ()
+
+    @property
+    def changed(self) -> frozenset[str]:
+        """What the latest revision changed, for the card's marks."""
+        return frozenset(self.revisions[-1].changed) if self.revisions else frozenset()
+
     # Every repo the channel may feed now, listed and found by a scope (#236).
     # None means the channel's listed repos only.
     repos: tuple[RepoPolicy, ...] | None = None
@@ -216,16 +229,29 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
     return blocks
 
 
-def _labels_line(labels: Sequence[str], entry: RepoPolicy | None, prefix: str = "Labels") -> str:
-    shown = ", ".join(labels) if labels else "none"
+def _labels_line(
+    labels: Sequence[str],
+    entry: RepoPolicy | None,
+    prefix: str = "Labels",
+    added: str | None = None,
+) -> str:
+    """The labels line. ``added`` is the label JotFlow puts on every new issue (#306),
+    shown last and marked, since it isn't the draft's and can't be taken off here."""
+    own = [label for label in labels if not added or label.casefold() != added.casefold()]
+    shown = ", ".join(own) if own else ("" if added else "none")
     checked = entry is not None and entry.restricts_labels
-    return f"{prefix}: {shown}" + ("" if checked or not labels else " (not checked against a list)")
+    line = f"{prefix}: {shown}" + ("" if checked or not own else " (not checked against a list)")
+    if added:
+        line += (", " if own else "") + f"{added} (added to every issue)"
+    return line
 
 
 def _assignee_note(context: CardContext, login: str) -> str:
     link = context.login_link(login)
     if link is not None and link.verified:
         return ""
+    if link is not None and link.linked_by == "admin":
+        return " (linked by an admin)"  # #305
     return " (unverified)" if link is not None else " (not linked to anyone in Slack)"
 
 
@@ -273,6 +299,24 @@ def _body(text: str, show: bool) -> list[Block]:
     return [_section(chunk) for chunk in _chunks(text)] if show else [_context(TOO_LONG)]
 
 
+def _boards_blocks(draft: IssueProposal, context: CardContext) -> list[Block]:
+    """The Projects boards the issue will be added to after approval, and why (#309).
+
+    Boards are named by the channel's own nicknames; each reason is the agent's,
+    labelled as such and shown as plain text. Both are in the approved hash.
+    """
+    if not draft.boards:
+        return []
+    names = []
+    for proposed in draft.boards:
+        listed = context.channel.board(proposed.board)
+        names.append(f"{listed.nickname} ({listed.board})" if listed else proposed.board)
+    blocks = [_approved_context("Add to boards: " + ", ".join(names))]
+    for proposed, name in zip(draft.boards, names, strict=True):
+        blocks.append(_approved_context(f"The agent's reason for {name}: {proposed.reason}"))
+    return blocks
+
+
 def _hint_blocks(draft: IssueProposal | UpdateProposal) -> list[Block]:
     """Why the agent overruled the author's ``idea:`` or ``bug:`` hint, if it did (#147, D10).
 
@@ -296,19 +340,46 @@ def _draft_blocks(
     if isinstance(draft, IssueProposal):
         header = "Proposed issue"
         blocks: list[Block] = []
+        changed = context.changed
         if record.draft_cleared_at is None:
-            blocks.append(_section(draft.title))
+            if "title" in changed:
+                blocks.append(_context(CHANGED.format(what="Title")))
+            blocks.append(_section(context.issues.filed_title(draft.title)))
+            if "body" in changed:
+                blocks.append(_context(CHANGED.format(what="Description")))
             blocks += _body(draft.body, show_body)
-        blocks.append(_approved_context(_labels_line(draft.labels, entry)))
+        labels = _labels_line(draft.labels, entry, added=context.issues.label)
+        blocks.append(_approved_context(f"{labels} (changed)" if "labels" in changed else labels))
         details = [f"Confidence: {round(draft.confidence * 100)}%"]
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
         blocks.append(_approved_context("   ".join(details)))
+        blocks += _boards_blocks(draft, context)
         blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
+        if context.credit_line:
+            blocks.append(_approved_context(context.credit_line))
         return blocks, header
-    header = f"Proposed update to {_nickname(context, draft.repo)}#{draft.issue_number}"
-    return _update_blocks(record, draft, context, entry, pending, show_body, compact), header
+    return _update_blocks(
+        record, draft, context, entry, pending, show_body, compact
+    ), _update_header(draft, _nickname(context, draft.repo))
+
+
+def _update_header(draft: UpdateProposal, nickname: str) -> str:
+    """Says which kind of update it is (#304): the body is a bigger change than a comment."""
+    issue = f"{nickname}#{draft.issue_number}"
+    changes = draft.changes
+    if changes.body is not None:
+        return f"Proposed change to {issue}'s description"
+    others = (
+        changes.add_labels,
+        changes.remove_labels,
+        changes.add_assignees,
+        changes.remove_assignees,
+    )
+    if changes.comment is not None and not any(others):
+        return f"Proposed comment on {issue}"
+    return f"Proposed update to {issue}"
 
 
 def _update_blocks(
@@ -323,11 +394,14 @@ def _update_blocks(
     changes = draft.changes
     blocks: list[Block] = []
     if record.draft_cleared_at is None:
+        changed = context.changed
         if changes.body is not None:
-            blocks.append(_context("New description:"))
+            mark = " (changed in this revision)" if "body" in changed else ""
+            blocks.append(_context(f"New description{mark}:"))
             blocks += _body(changes.body, show_body)
         if changes.comment is not None:
-            blocks.append(_context("Comment:"))
+            mark = " (changed in this revision)" if "comment" in changed else ""
+            blocks.append(_context(f"Comment{mark}:"))
             blocks += _body(changes.comment, show_body)
     if changes.add_labels:
         blocks.append(_approved_context(_labels_line(changes.add_labels, entry, "Add labels")))
@@ -338,7 +412,42 @@ def _update_blocks(
     blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
     blocks += _hint_blocks(draft)
     blocks += _people_blocks(record, context, changes.add_assignees, pending, compact)
+    if context.credit_line:
+        blocks.append(_approved_context(context.credit_line))
     return blocks
+
+
+CHANGED = "{what} changed in this revision:"
+FIELD_NAMES = {
+    "title": "title",
+    "body": "description",
+    "comment": "comment",
+    "labels": "labels",
+    "assignees": "assignees",
+    "related": "related issues",
+}
+
+
+def _revision_block(context: CardContext) -> Block | None:
+    """Who revised the draft with new messages, and what changed (#304).
+
+    The names and fields are JotFlow's, from the store, never the agent's.
+    """
+    if not context.revisions:
+        return None
+    last = context.revisions[-1]
+    fields = ", ".join(FIELD_NAMES[f] for f in last.changed)
+    names = [context.names.get(user, user) for user in last.added_by]
+    who = f" with new messages from {_and(names)}" if names else " with new messages"
+    count = len(context.revisions)
+    which = "Revised" if count == 1 else f"Revised {count} times"
+    return _context(f"{which}{who}: {fields} changed. Reread before approving.")
+
+
+def _and(names: list[str]) -> str:
+    if len(names) <= 2:
+        return " and ".join(names)
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
 
 
 def _sources_block(record: ProposalRecord) -> Block | None:
@@ -581,6 +690,8 @@ def _assemble(
     finally:
         _SHORTENED.reset(token)
     blocks: list[Block] = [{"type": "header", "text": plain(header, MAX_HEADER_TEXT)}]
+    if (revised := _revision_block(context)) is not None:
+        blocks.append(revised)
     blocks += _repo_blocks(record, context, pending)
     blocks += content
     if (related := _related_block(record)) is not None:

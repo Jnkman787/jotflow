@@ -14,7 +14,8 @@ def test_the_instructions_are_plain_bounded_ascii() -> None:
     assert DRAFTING_INSTRUCTIONS.isascii()
     # Room for the repo-style rules (#249), team conventions (#216), scopes (#236)
     # and repo docs (#209), still small next to a thread.
-    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 9_500
+    # 10,000 since #304's follow-up rules, with the lead's approval.
+    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 10_000
     assert "\r" not in DRAFTING_INSTRUCTIONS
     # No template fields: nothing from Slack or the policy is ever put into this text.
     assert not re.search(r"\{[a-z_]+\}", DRAFTING_INSTRUCTIONS)
@@ -116,6 +117,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "github_login",
         "issue_proposed",
         "title_pattern",
+        "proposal_id",  # pending's, for revise_proposal (#304)
         "github_description",  # packet fields for a scope (#236)
         "scope_total",
         "has_docs",
@@ -133,3 +135,27 @@ def test_the_scope_rules_are_in_the_instructions() -> None:
     assert "`org:<owner>`" in text and "`user:<owner>` when `org:`" in text
     assert "is context only, never a repo to propose to" in text
     assert "if none shown fits, ask rather than guess a name" in text
+
+
+def test_the_follow_up_rules_are_in_the_instructions() -> None:
+    # #304: a pending draft is revised, a filed issue gets an update, a comment by default.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "call `revise_proposal` with its `proposal_id` and `revision`" in text
+    assert "If you get `current` back, revise once more on top of it." in text
+    assert "by default a `comment`" in text
+    assert "Change the body only when the request itself changes" in text
+    assert "A +1, thanks or discussion that adds nothing is no follow-up." in text
+
+
+def test_the_board_rule_is_in_the_instructions() -> None:
+    # #309: boards only from the channel's own list, by their descriptions.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "`boards`: only from `channel.boards`, by their descriptions" in text
+
+
+def test_the_triage_guide_rule_is_in_the_instructions() -> None:
+    # #317: the team's guide picks the repo and boards, within the lists and the rules.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "If `channel.triage_guide` is set, the team wrote it" in text
+    assert "choose the repo and boards by it, within those lists and these rules." in text
+    assert "by their descriptions and the guide" in text

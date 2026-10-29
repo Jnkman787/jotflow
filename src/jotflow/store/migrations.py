@@ -209,6 +209,26 @@ CREATE TABLE proposal_edits (
 )
 """
 
+# A drafting run's revision of a pending draft, from new messages (#304): which
+# fields, and whose messages, one row per person. Never a value.
+_PROPOSAL_REVISIONS = """
+CREATE TABLE proposal_revisions (
+    proposal_id TEXT NOT NULL REFERENCES proposals (id) ON DELETE CASCADE, -- the proposal
+    revision INTEGER NOT NULL, -- the proposal's revision after this one
+    run_id TEXT NOT NULL, -- the drafting run that revised it
+    changed TEXT NOT NULL, -- comma-separated fields: title, body, comment, labels, ...
+    revised_at TEXT NOT NULL -- UTC, ISO 8601
+)
+"""
+
+_PROPOSAL_REVISION_AUTHORS = """
+CREATE TABLE proposal_revision_authors (
+    proposal_id TEXT NOT NULL REFERENCES proposals (id) ON DELETE CASCADE, -- the proposal
+    revision INTEGER NOT NULL, -- which revision
+    user_id TEXT NOT NULL -- Slack user id whose message the revision added
+)
+"""
+
 _REACTION_MARKS = """
 CREATE TABLE reaction_marks (
     channel_id TEXT NOT NULL, -- Slack channel id
@@ -367,6 +387,29 @@ MIGRATIONS: tuple[Migration, ...] = (
             "ALTER TABLE identity_links ADD COLUMN github_id INTEGER"
             " /* GitHub's numeric user id, which survives a rename */",
             _IDENTITY_CODES,
+        ),
+    ),
+    # Follow-ups revise a pending draft (#304). Pointers and Slack ids only.
+    Migration(
+        16,
+        (
+            _PROPOSAL_REVISIONS,
+            "CREATE INDEX proposal_revisions_proposal ON proposal_revisions (proposal_id)",
+            _PROPOSAL_REVISION_AUTHORS,
+            "CREATE INDEX proposal_revision_authors_proposal"
+            " ON proposal_revision_authors (proposal_id)",
+            "ALTER TABLE proposals ADD COLUMN follow_up_due_at TEXT"
+            " /* UTC: a revision lost a race; draft the thread again once settled */",
+        ),
+    ),
+    # Admin-loaded links (#305): who made the link, so a card can say so, and a self-add
+    # can trust it like a verified one. Existing links were all made by the person.
+    Migration(
+        17,
+        (
+            "ALTER TABLE identity_links ADD COLUMN linked_by TEXT NOT NULL DEFAULT 'self'"
+            " CHECK (linked_by IN ('self', 'admin'))"
+            " /* self: /jotflow link or verify; admin: jotflow identity link */",
         ),
     ),
 )

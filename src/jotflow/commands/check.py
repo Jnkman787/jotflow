@@ -39,7 +39,7 @@ from jotflow.envfile import read_env
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
 from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
-from jotflow.policy import Policy, PolicyError, load_policy
+from jotflow.policy import MAX_TRIAGE_GUIDE, Policy, PolicyError, load_policy
 from jotflow.title_pattern import times_out
 
 EXIT_OK = 0
@@ -296,6 +296,65 @@ def doc_notes(policy: Policy) -> list[str]:
     return notes
 
 
+def board_notes(policy: Policy) -> list[str]:
+    """What listing Projects boards needs from the write token (#309), as one line.
+
+    `jotflow check` can't reach the agent runners, so JotFlow itself checks at
+    start that the write token may update each board, and turns off any it can't.
+    """
+    boards = sorted({b.board for c in policy.channels.values() for b in c.boards})
+    if not boards:
+        return []
+    return [
+        f"{', '.join(boards)}: the write token needs Projects: Read and write on the "
+        "organisation, which reaches every board it owns. Only organisation boards work. "
+        "JotFlow checks it can update each board when it starts, and turns off any it can't."
+    ]
+
+
+def triage_notes(policy: Policy) -> list[str]:
+    """Each channel's triage guide and its size against the cap (#317)."""
+    return [
+        f"{channel_id} has a {len(channel.triage_guide):,} of {MAX_TRIAGE_GUIDE:,} character "
+        "triage guide, which drafting uses to choose among its listed repos and boards"
+        for channel_id, channel in policy.channels.items()
+        if channel.triage_guide is not None
+    ]
+
+
+def issue_notes(policy: Policy) -> list[str]:
+    """What ``[issues]`` adds to every new issue, and what to make sure of (#306).
+
+    jotflow check can't reach GitHub, so it can't see the repos' labels. It says
+    what a missing label does instead: the write is refused, naming the label.
+    """
+    notes: list[str] = []
+    label, prefix = policy.issues.label, policy.issues.title_prefix
+    if label:
+        notes.append(
+            f"every new issue gets the label {label!r}. Make sure it exists in each repo the "
+            "channels feed: JotFlow never creates labels, so an approved issue in a repo "
+            "without it fails to file, saying the label is missing."
+        )
+    patterned = sorted(
+        {
+            repo.repo
+            for channel in policy.channels.values()
+            for repo in channel.repos
+            if repo.title_pattern
+        }
+    )
+    if prefix:
+        note = f"every new issue's title starts with {prefix + ' '!r}."
+        if patterned:
+            note += (
+                " It goes on after title_pattern checks the title, so filed titles in "
+                f"{', '.join(patterned)} won't match the pattern themselves."
+            )
+        notes.append(note)
+    return notes
+
+
 def _load() -> tuple[Settings, Policy]:
     settings = load_settings()
     return settings, load_policy(settings.config_path)
@@ -326,6 +385,12 @@ def run(args: argparse.Namespace) -> int:
         print(f"warn  policy: {warning}")
     for note in doc_notes(policy):
         print(f"note  docs: {note}")
+    for note in board_notes(policy):
+        print(f"note  boards: {note}")
+    for note in triage_notes(policy):
+        print(f"note  triage: {note}")
+    for note in issue_notes(policy):
+        print(f"note  issues: {note}")
     failures: list[str] = []
     if policy.agent.preset:
         agent = agent_failures(policy, Path("."))

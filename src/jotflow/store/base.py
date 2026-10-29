@@ -295,6 +295,14 @@ class IdentityLink:
     # numeric user id, which survives a rename.
     verified_at: datetime | None = None
     github_id: int | None = None
+    # "admin" for a link loaded by whoever runs JotFlow with `jotflow identity link`
+    # (#305), which stores the account's GitHub id. "self" for /jotflow link or verify.
+    linked_by: Literal["self", "admin"] = "self"
+
+    @property
+    def trusted(self) -> bool:
+        """Verified by the person, or loaded by an admin, with GitHub's account id kept."""
+        return (self.verified or self.linked_by == "admin") and self.github_id is not None
 
 
 # ``removed_by`` when a person proved control of a login someone else had linked (#195).
@@ -342,13 +350,18 @@ class ChannelModeSetting:
     changed_at: datetime
 
 
+CLEARED_REASON = "(cleared)"
+
+
 def cleared_draft(
     proposal: IssueProposal | UpdateProposal,
 ) -> IssueProposal | UpdateProposal:
     """The draft with its free text removed: title, body, comment, and the agent's reason
     for overruling a hint, which can quote people too (#147). All else stays."""
     if isinstance(proposal, IssueProposal):
-        update = {"title": CLEARED_TITLE, "body": "", "hint_overruled": None}
+        # Board reasons are the agent's words too; the boards themselves stay (#309).
+        boards = [b.model_copy(update={"reason": CLEARED_REASON}) for b in proposal.boards]
+        update = {"title": CLEARED_TITLE, "body": "", "hint_overruled": None, "boards": boards}
         return proposal.model_copy(update=update, deep=True)
     changes = proposal.changes.model_copy(update={"body": None, "comment": None})
     return proposal.model_copy(update={"changes": changes, "hint_overruled": None}, deep=True)
@@ -451,6 +464,140 @@ def edited_draft(
     if draft.repo.casefold() != record.proposal.repo.casefold() and draft.repo_visibility:
         return draft.model_copy(update={"repo_visibility": None})
     return draft
+
+
+# A drafting run's revision of a pending draft, from new messages (#304). The store
+# keeps which fields changed and whose messages, never the values.
+RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related"]
+REVISED_FIELDS: tuple[RevisedField, ...] = (
+    "title",
+    "body",
+    "comment",
+    "labels",
+    "assignees",
+    "related",
+)
+# At most this many revisions a proposal; past it, the agent asks instead.
+MAX_REVISIONS = 10
+# Approval looks up who wrote each of a proposal's messages, its thread's root and
+# its sources, and refuses past this many, so a revision must stay within it (#304).
+MAX_AUTHOR_LOOKUPS = 25
+TOO_MANY_SOURCES = (
+    f"the revised draft would draw on more than {MAX_AUTHOR_LOOKUPS} messages, which "
+    "approval can't check; ask in the thread instead, or propose the rest as its own issue"
+)
+
+
+@dataclass(frozen=True)
+class ProposalRevision:
+    """One revision of a pending draft: which run, which fields, whose messages."""
+
+    proposal_id: str
+    revision: int  # the proposal's revision after it
+    run_id: str
+    changed: tuple[RevisedField, ...]
+    added_by: tuple[str, ...]  # Slack user ids whose messages it added
+    revised_at: datetime
+
+
+class StaleRevisionError(TransitionError):
+    """The proposal moved on after the run read it. ``record`` is how it stands now."""
+
+    def __init__(self, record: ProposalRecord) -> None:
+        super().__init__(record.id, record.state, record.state)
+        self.record = record
+        self.args = (f"proposal {record.id} is at revision {record.revision}, not the one read",)
+
+
+def revision_changes(
+    old: IssueProposal | UpdateProposal, new: IssueProposal | UpdateProposal
+) -> tuple[RevisedField, ...]:
+    """The fields a revision changes, as the card shows them."""
+    if isinstance(old, IssueProposal) and isinstance(new, IssueProposal):
+        pairs: dict[RevisedField, tuple[object, object]] = {
+            "title": (old.title, new.title),
+            "body": (old.body, new.body),
+            "labels": (sorted(old.labels), sorted(new.labels)),
+            "assignees": (sorted(old.assignees), sorted(new.assignees)),
+            "related": (
+                [r.model_dump() for r in old.related],
+                [r.model_dump() for r in new.related],
+            ),
+        }
+    elif isinstance(old, UpdateProposal) and isinstance(new, UpdateProposal):
+        a, b = old.changes, new.changes
+        pairs = {
+            "body": (a.body, b.body),
+            "comment": (a.comment, b.comment),
+            "labels": (
+                (sorted(a.add_labels), sorted(a.remove_labels)),
+                (sorted(b.add_labels), sorted(b.remove_labels)),
+            ),
+            "assignees": (
+                (sorted(a.add_assignees), sorted(a.remove_assignees)),
+                (sorted(b.add_assignees), sorted(b.remove_assignees)),
+            ),
+        }
+    else:
+        raise ValueError("a revision keeps the proposal's kind")
+    return tuple(
+        field for field in REVISED_FIELDS if field in pairs and pairs[field][0] != pairs[field][1]
+    )
+
+
+def revised_draft(
+    record: ProposalRecord, draft: IssueProposal | UpdateProposal
+) -> IssueProposal | UpdateProposal:
+    """``draft`` as a revision stores it: the repo, topic, kind and issue stay the
+    proposal's own, and the sources build on the old ones."""
+    old = record.proposal
+    sources = list(old.sources)
+    for ref in draft.sources:
+        if ref not in sources:
+            sources.append(ref)
+    keep: dict[str, object] = {
+        "repo": old.repo,
+        "topic_id": old.topic_id,
+        "sources": sources,
+    }
+    if isinstance(old, IssueProposal):
+        keep["repo_visibility"] = old.repo_visibility
+    if isinstance(old, UpdateProposal):
+        keep["issue_number"] = old.issue_number
+    return draft.model_copy(update=keep)
+
+
+def check_revision(
+    record: ProposalRecord,
+    draft: IssueProposal | UpdateProposal,
+    *,
+    base_revision: int,
+    added_by: Collection[str],
+    revisions: int,
+) -> tuple[RevisedField, ...]:
+    """Raise unless ``draft`` may revise ``record``; return the fields it changes."""
+    for user in added_by:
+        check_id(user, "Slack user id")
+    if record.state is not ProposalState.PENDING or record.draft_cleared_at is not None:
+        error = TransitionError(record.id, record.state, record.state)
+        error.args = (f"proposal {record.id} is {record.state}, so it can't be revised",)
+        raise error
+    if record.revision != base_revision:
+        raise StaleRevisionError(record)
+    if draft.kind != record.proposal.kind:
+        raise ValueError("a revision keeps the proposal's kind")
+    if revisions >= MAX_REVISIONS:
+        raise ValueError(f"proposal {record.id} was revised {MAX_REVISIONS} times already")
+    merged = revised_draft(record, draft)
+    changed = revision_changes(record.proposal, merged)
+    if not changed:
+        raise ValueError("the revision changes nothing the card shows")
+    lookups = {record.thread_ts} | {
+        ref.ts for ref in merged.sources if ref.channel_id == record.channel_id
+    }
+    if len(lookups) > MAX_AUTHOR_LOOKUPS:
+        raise ValueError(TOO_MANY_SOURCES)
+    return changed
 
 
 def check_notice(channel_id: str, user_id: str, kind: str) -> None:
@@ -729,6 +876,39 @@ class Store(Protocol):
         """The edits made to a proposal from its card, oldest first."""
         ...
 
+    async def revise_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        run_id: str,
+        base_revision: int,
+        added_by: Collection[str],
+    ) -> ProposalRecord:
+        """Replace a pending draft with a drafting run's revision from new messages (#304).
+
+        Only while the proposal is pending and still at ``base_revision``, so a
+        person's card edit, an approval, or another run's revision that landed
+        after the run read it is never overwritten: :class:`StaleRevisionError`
+        carries the current record. Keeps the repo, topic and issue; merges the
+        sources and adds ``added_by`` to the participants. Raises the revision, so
+        the card is redrawn and an old card's hash no longer approves.
+        """
+        ...
+
+    async def proposal_revisions(self, proposal_id: str) -> list[ProposalRevision]:
+        """A proposal's revisions from new messages, oldest first."""
+        ...
+
+    async def mark_follow_up_due(self, proposal_id: str) -> None:
+        """A revision lost a race to an approval or a rejection: draft the thread
+        again once the proposal is applied or rejected (#304)."""
+        ...
+
+    async def take_follow_up_due(self, proposal_id: str) -> bool:
+        """Whether a follow-up was due, clearing it, so only one caller arms the thread."""
+        ...
+
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
         """Record the Slack ts of the proposal's card message, so later states edit it."""
         ...
@@ -810,6 +990,24 @@ class Store(Protocol):
 
     async def identity_unlinks(self) -> list[IdentityUnlink]:
         """Every removal by someone else, newest first."""
+        ...
+
+    async def admin_link(
+        self, slack_user_id: str, github_login: str, github_id: int, *, replace: bool = False
+    ) -> Verified:
+        """Link ``github_login`` to the person as an admin (#305), with GitHub's account id.
+
+        Raises :class:`ConflictError` if someone else has the login, unless ``replace``:
+        then their link is removed, recorded as by ``operator``, and named in the result.
+        """
+        ...
+
+    async def fill_github_id(self, slack_user_id: str, github_id: int) -> IdentityLink | None:
+        """Store GitHub's account id on the person's link if it has none (#305).
+
+        Nothing else changes: not the login, not who made it, not its verification.
+        Returns the link, or None if they have none.
+        """
         ...
 
     async def identity_for_login(self, github_login: str) -> IdentityLink | None:

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from jotflow.models import ProposalState, RunKind
+from jotflow.models import IssueProposal, ProposalState, RunKind
 from jotflow.orchestrator import approval as approval_module
 from jotflow.orchestrator.approval import (
     AUTHORS_UNKNOWN,
@@ -1197,3 +1197,104 @@ async def test_a_failed_access_check_or_a_repo_gone_from_scope_approves_nothing(
     assert await rig.handler.on_approve(click(good)) == "refused"
     assert "is archived" in rig.slack.ephemerals[-1][2]
     assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0
+
+
+# A draft revised from new messages (#304)
+
+
+async def _revise(rig: Rig, pid: str, *, by: str, ts: str) -> None:
+    from jotflow.models import MessageRef
+
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and isinstance(record.proposal, IssueProposal)
+    rig.slack.written_by[ts] = by
+    revised = record.proposal.model_copy(
+        update={
+            "body": record.proposal.body + " With totals.",
+            "sources": [MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD)],
+        }
+    )
+    await rig.store.revise_proposal(
+        pid, revised, run_id="run-2", base_revision=record.revision, added_by=[by]
+    )
+
+
+async def test_a_click_on_the_card_from_before_a_revision_approves_nothing() -> None:
+    rig = Rig()
+    pid = await rig.proposal()
+    before = f"{pid}:{await rig.hash(pid)}"
+    await _revise(rig, pid, by=CAROL, ts="1760781650.000100")
+    assert await rig.handler.on_approve(click(before)) == "refused"
+    assert rig.slack.ephemerals[-1][2] == STALE
+    assert await rig.state(pid) is ProposalState.PENDING
+    # The redrawn card's button locks the revised draft.
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "approved"
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and record.content_hash == content_hash(record.proposal)
+    assert record.proposal.body.endswith("With totals.")  # type: ignore[union-attr]
+
+
+async def test_someone_whose_message_a_revision_added_cannot_approve_it() -> None:
+    # require_second_approver bars every source author, re-read at approval, so a
+    # revision's author is barred with no stored state (security's condition 1).
+    rig = Rig(approvers=[ALICE, CAROL, DAVE], second=True)
+    pid = await rig.proposal(participants=[ALICE])
+    await _revise(rig, pid, by=CAROL, ts="1760781650.000100")
+    good = f"{pid}:{await rig.hash(pid)}"
+    assert await rig.handler.on_approve(click(good, user=CAROL)) == "refused"
+    assert rig.slack.ephemerals[-1][2] == OWN_PROPOSAL
+    assert await rig.handler.on_approve(click(good, user=DAVE)) == "approved"
+
+
+async def test_a_reaction_on_a_redrawn_card_is_refused_with_a_private_reply() -> None:
+    # #304, C: once the card changed in place, only its hash-carrying button approves.
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    app = _reacting_app(rig)
+    await _revise(rig, pid, by=BOB, ts="1760781650.000100")
+    await _shown(rig, pid)  # redrawn, so the card isn't behind: the refusal is C's own
+    await _react(app)
+    assert await rig.state(pid) is ProposalState.PENDING
+    assert rig.slack.ephemerals[-1][1:] == (CAROL, approval_module.REDRAWN_USE_BUTTON)
+    assert rig.slack.replies == []  # private to the reactor, never in the thread
+    # Slack's retry of a reaction made before the revision is refused the same way.
+    await _react(app, n=1)
+    assert await rig.state(pid) is ProposalState.PENDING
+    # The redrawn card's button still approves.
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "approved"
+
+
+async def test_a_person_s_card_edit_also_ends_reaction_approval() -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and isinstance(record.proposal, IssueProposal)
+    edited = record.proposal.model_copy(update={"assignees": ["acme-bob"]})
+    await rig.store.edit_proposal(pid, edited, by=BOB, field="assign")
+    await _shown(rig, pid)
+    await _react(_reacting_app(rig))
+    assert await rig.state(pid) is ProposalState.PENDING
+    assert rig.slack.ephemerals[-1][2] == approval_module.REDRAWN_USE_BUTTON
+
+
+async def test_a_card_revised_up_to_the_source_cap_still_approves() -> None:
+    # #304: revisions stop at approval's author-lookup cap, so the card never gets stuck.
+    from jotflow.models import MessageRef
+    from jotflow.store.base import MAX_AUTHOR_LOOKUPS
+
+    assert approval_module.MAX_AUTHOR_LOOKUPS == MAX_AUTHOR_LOOKUPS
+    rig = Rig()
+    pid = await rig.proposal()
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and isinstance(record.proposal, IssueProposal)
+    refs = []
+    for i in range(MAX_AUTHOR_LOOKUPS - 1):
+        ts = f"1760781{700 + i:03d}.000100"
+        rig.slack.written_by[ts] = DAVE
+        refs.append(MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD))
+    revised = record.proposal.model_copy(update={"body": "Folded in.", "sources": refs})
+    await rig.store.revise_proposal(
+        pid, revised, run_id="run-2", base_revision=record.revision, added_by=[DAVE]
+    )
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "approved"

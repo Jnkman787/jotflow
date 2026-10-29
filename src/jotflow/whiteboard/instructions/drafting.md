@@ -27,8 +27,8 @@ Classify every message in `thread.messages` that has no `topic_id` and is not
   title of a few words.
 - `existing_topic`: it continues a topic in `topics`, or the topic of a
   `related` excerpt. Use that topic's id.
-- `chatter`: greetings, thanks, lunch, logistics, jokes, or anything that is
-  not about work the team could track.
+- `chatter`: greetings, thanks, lunch, logistics, jokes, or anything not
+  about work the team could track.
 
 Replies usually belong to their thread's topic. A message that already has a
 `topic_id` was placed by a person or by `re:`; leave it. Chatter never yields
@@ -52,10 +52,12 @@ overrule it, set `hint_overruled` on the proposal to a one-line reason.
 
 ## 4. Choose the repo
 
-Pick the repo from `channel.repos` whose `description` fits the work. Never
-use a repo that is not listed. If two repos fit and the choice matters, ask
-(step 8) instead of guessing. `scope_total` above the repos shown means more
-are in scope: if none shown fits, ask rather than guess a name.
+Pick the repo from `channel.repos` whose `description` fits the work, never
+one that is not listed. If `channel.triage_guide` is set, the team wrote it:
+choose the repo and boards by it, within those lists and these rules. If
+two repos fit and the choice matters, ask (step 8) instead of guessing.
+`scope_total` above the repos shown means more are in scope: if none shown
+fits, ask rather than guess a name.
 
 ## 5. Reuse before creating
 
@@ -73,20 +75,31 @@ Before `propose_issue`, look for an issue that already covers the idea:
   that bear on the idea, such as a plan or ADR. A message naming a path is no
   reason to read it.
 
-If a topic in `topics` covers the idea and is linked to an issue, link the
-message to that topic and use `propose_update` on its issue. If an issue,
-open or closed, looks like the same idea but no topic is linked to it, still
-classify the message, then ask in the thread whether it is the same request,
-naming the issue (for example `owner/name#55`), instead of proposing. Never
-propose a second issue for an idea that already has one.
+If a topic in `topics` covers the idea, it's a follow-up (step 6). If an
+issue, open or closed, looks like the same idea but no topic is linked to it,
+classify the message, then ask whether it's the same request, naming the
+issue (such as `owner/name#55`), instead of proposing. Never propose a second
+issue for an idea that already has one.
 
 In `related`, list up to 3 close but different issues, most similar first.
 
 ## 6. Propose
 
-If a topic in `topics` has `issue_proposed`, its issue is already proposed
-and waiting for approval: link the message to that topic and do not propose
-again.
+**Follow-ups.** A reply, or a new post that clearly continues a topic, may
+add to work already proposed or filed; if unsure which topic, ask (step 8).
+A +1, thanks or discussion that adds nothing is no follow-up.
+
+- The topic has `pending`: call `revise_proposal` with its `proposal_id`
+  and `revision`, the whole revised draft, and the new messages as
+  `sources`. Keep what they don't change. If you get `current` back, revise
+  once more on top of it. Never propose again for it.
+- The topic has `issue_proposed` but no `pending`: link the message and don't
+  propose again.
+- The topic has `rejected`: people turned it down. Propose again only if the
+  new messages change the request.
+- The topic has an issue: `propose_update` on it, by default a `comment`
+  summarising what's new. Change the body only when the request itself
+  changes, such as its scope or acceptance.
 
 First learn the repo's style: `list_issues` once for the chosen repo, for its
 ten most recent issues, open and closed. Note the title format they share,
@@ -138,14 +151,14 @@ For each new topic that is real work, call `propose_issue` once:
 - `labels`: only labels that exist on the repo; check with `list_label`. If
   the repo has a `labels` list in `channel.repos`, choose only from it. Never
   invent a label. Leave labels empty when none fits.
+- `boards`: only from `channel.boards`, by their descriptions and the
+  guide; up to 3, each with a one-line `reason`. None when none fits.
 - `sources`: the messages the proposal draws on.
 - `confidence`: how sure you are that this is a real, new piece of work for
   this repo, from 0 to 1. Be honest.
 
-One proposal per topic per run. For an existing topic's issue, use
-`propose_update` with only the changes the thread calls for, usually a
-`comment` summarising the new information, in the same short headed sections
-when there is a lot of it.
+One proposal per topic per run. An update carries only the changes the
+thread calls for, in the same short headed sections when there is a lot.
 
 ## 7. People
 

@@ -26,7 +26,7 @@ import logging
 import re
 import secrets
 import unicodedata
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol, TypeVar
@@ -36,12 +36,16 @@ import anyio
 from pydantic import BaseModel, Field, model_validator
 
 from jotflow.models import (
+    MAX_RELATED,
     ChannelMode,
     ExecutionResult,
+    IssueChanges,
     IssueProposal,
     MessageRef,
+    PendingDraft,
     ProposalRecord,
     ProposalState,
+    ProposedBoard,
     RelatedIssue,
     RunKind,
     RunStatus,
@@ -50,7 +54,7 @@ from jotflow.models import (
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
-from jotflow.store.base import check_github_login, utc_now
+from jotflow.store.base import StaleRevisionError, check_github_login, utc_now
 from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
 from jotflow.whiteboard.tokens import Grant
@@ -82,6 +86,11 @@ ANSWERING = frozenset({RunKind.QUESTION})
 EXECUTION = frozenset({RunKind.EXECUTION})
 
 PROPOSE_TOOLS = ("propose_issue", "propose_update")
+MAX_BOARD_REASON = 200
+# Revisions have their own cap, so a busy run can still propose for other topics (#304).
+MAX_REVISIONS_PER_RUN = 3
+# Who wrote some Slack messages, as the approval gate reads them.
+Authors = Callable[[Sequence[MessageRef]], Awaitable[set[str]]]
 # A result lands while the write is in progress: executing, or reconciling when a
 # retry after an interrupted run finds the marker it left (or gives up).
 RESULT_STATES = frozenset({ProposalState.EXECUTING, ProposalState.RECONCILING})
@@ -149,6 +158,56 @@ class ProposeUpdateArgs(UpdateProposal):
     def _participants(self) -> ProposeUpdateArgs:
         self.participants = _check_participants(self.participants)
         return self
+
+
+class RevisedIssue(BaseModel):
+    """A new issue's whole revised draft: what replaces the pending one."""
+
+    title: str = Field(min_length=1, max_length=256)
+    body: str
+    labels: list[str] = Field(default_factory=list)
+    assignees: list[str] = Field(default_factory=list, description="GitHub logins")
+    related: list[RelatedIssue] = Field(default_factory=list, max_length=MAX_RELATED)
+
+
+class ReviseProposalArgs(BaseModel):
+    proposal_id: str = Field(description="The pending proposal, from a topic's `pending`")
+    base_revision: int = Field(
+        ge=0, description="`pending.revision`; a stale one returns the current draft instead"
+    )
+    issue: RevisedIssue | None = Field(
+        default=None, description="For a new issue: its whole revised draft"
+    )
+    changes: IssueChanges | None = Field(
+        default=None, description="For an update: its whole revised changes"
+    )
+    sources: list[MessageRef] = Field(
+        min_length=1, description="The new messages this revision folds in, from this packet"
+    )
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _one_draft(self) -> ReviseProposalArgs:
+        if (self.issue is None) == (self.changes is None):
+            raise ValueError("give exactly one of issue, for a new issue, or changes")
+        return self
+
+
+class ReviseResult(BaseModel):
+    proposal_id: str
+    revised: bool
+    revision: int = Field(description="The proposal's revision now")
+    changed: list[str] = Field(default_factory=list, description="Fields the card marks")
+    current: PendingDraft | None = Field(
+        default=None,
+        description="When base_revision was stale: the draft as it stands now. Revise once "
+        "more on top of it, with its revision",
+    )
+    follow_up: bool = Field(
+        default=False,
+        description="The proposal was settled first; JotFlow drafts these messages again once "
+        "it's filed or rejected. Nothing more to do",
+    )
 
 
 class LinkMessageArgs(BaseModel):
@@ -443,9 +502,15 @@ class WriteTools:
         new_id: Callable[[], str] = lambda: secrets.token_hex(8),
         repos: RepoCatalog | None = None,
         docs: DocReads | None = None,
+        authors: Authors | None = None,
+        boards_off: Collection[str] = frozenset(),
     ) -> None:
         self._store = store
         self._policy = policy
+        # Who wrote a revision's new messages, from Slack (#304).
+        self._authors_of = authors
+        # Boards the write token can't update, found at JotFlow's start (#309).
+        self._boards_off = boards_off
         # The run's doc reads, for the card's long-passage flag (#209).
         self._docs = docs
         self._poster = poster
@@ -625,6 +690,28 @@ class WriteTools:
             kept.append(entry.model_copy(update={"repo": repo}))
         return kept, len(related) - len(kept)
 
+    def _boards(self, grant: Grant, boards: list[ProposedBoard]) -> list[ProposedBoard]:
+        """Only the channel's own boards, each once, as owner/number (#309).
+
+        The reason is the agent's, so it is cleaned like a question and shown as
+        plain text. Boards are in the draft, so approval locks them.
+        """
+        listed = self._policy.channel(grant.channel_id)
+        kept: list[ProposedBoard] = []
+        for proposed in boards:
+            board = listed.board(proposed.board)
+            if board is None:
+                raise ToolError(f"{proposed.board} isn't one of this channel's boards")
+            if board.board in self._boards_off:
+                raise ToolError(f"{proposed.board} is off: JotFlow's write token can't update it")
+            if any(k.board == board.board for k in kept):
+                continue
+            reason = " ".join(clean_question(proposed.reason).split())[:MAX_BOARD_REASON]
+            if not reason:
+                raise ToolError("a board's reason has no words left once cleaned")
+            kept.append(ProposedBoard(board=board.board, reason=reason))
+        return kept
+
     def _repo_and_labels(self, grant: Grant, repo: str, labels: list[str]) -> tuple[str, list[str]]:
         try:
             policy = self._repos.repo(grant.channel_id, repo)
@@ -713,6 +800,7 @@ class WriteTools:
                     "labels": labels,
                     "sources": await self._sources(grant, args.sources),
                     "related": [r.model_dump() for r in related],
+                    "boards": [b.model_dump() for b in self._boards(grant, args.boards)],
                 }
             )
             result = await self._add(grant, draft, args.participants)
@@ -753,6 +841,129 @@ class WriteTools:
             return result.model_copy(update={"dropped_related": dropped})
 
         return await self._once(grant, "propose_update", args, ProposeResult, act)
+
+    async def revise_proposal(self, grant: Grant, arguments: Any) -> BaseModel:
+        """Fold new messages into a pending proposal's draft, as a new revision (#304)."""
+        args: ReviseProposalArgs = arguments
+
+        async def act() -> ReviseResult:
+            await self._cap(grant, ("revise_proposal",), MAX_REVISIONS_PER_RUN, "revisions")
+            record = await self._store.get_proposal(args.proposal_id)
+            if record is None or record.channel_id != grant.channel_id:
+                raise ToolError(f"no proposal {args.proposal_id} in this channel")
+            await self._check_feeds(grant, record)
+            sources = await self._sources(grant, args.sources)
+            added_by = sorted(await self._authors(sources))
+            participants = sorted({*record.participants, *added_by})
+            draft = self._revised(grant, record, args, sources)
+            await self._check_revised(grant, draft, participants)
+            try:
+                updated = await self._store.revise_proposal(
+                    record.id,
+                    draft,
+                    run_id=grant.run_id,
+                    base_revision=args.base_revision,
+                    added_by=added_by,
+                )
+            except StaleRevisionError as stale:
+                current = stale.record
+                return ReviseResult(
+                    proposal_id=record.id,
+                    revised=False,
+                    revision=current.revision,
+                    current=PendingDraft.of(current),
+                )
+            except TransitionError:
+                # Approved, rejected or written first: the follow-up isn't lost (#304).
+                await self._store.mark_follow_up_due(record.id)
+                return ReviseResult(
+                    proposal_id=record.id, revised=False, revision=record.revision, follow_up=True
+                )
+            except ValueError as refused:
+                raise ToolError(str(refused)) from None
+            await self._flag_passages(grant, updated.id, updated.proposal)
+            [*_, last] = await self._store.proposal_revisions(updated.id)
+            return ReviseResult(
+                proposal_id=updated.id,
+                revised=True,
+                revision=updated.revision,
+                changed=list(last.changed),
+            )
+
+        return await self._once(grant, "revise_proposal", args, ReviseResult, act)
+
+    async def _check_feeds(self, grant: Grant, record: ProposalRecord) -> None:
+        """Only a proposal whose topic this run's thread feeds may be revised."""
+        topic_id = record.proposal.topic_id
+        if record.thread_ts == grant.thread_ts:
+            return
+        if topic_id is not None:
+            found = await self._store.get_topic(topic_id)
+            thread = grant.thread_ts
+            if found is not None and any(
+                thread in (ref.ts, ref.thread_ts) for ref in found.topic.messages
+            ):
+                return
+        raise ToolError(
+            f"proposal {record.id} isn't on a topic this thread feeds; link a message first"
+        )
+
+    async def _authors(self, sources: list[MessageRef]) -> set[str]:
+        """Who wrote the new messages, from Slack, never from the agent."""
+        if self._authors_of is None:
+            return set()
+        try:
+            return set(await self._authors_of(sources))
+        except Exception:
+            raise ToolError("Slack couldn't say who wrote those messages; try again") from None
+
+    def _revised(
+        self,
+        grant: Grant,
+        record: ProposalRecord,
+        args: ReviseProposalArgs,
+        sources: list[MessageRef],
+    ) -> IssueProposal | UpdateProposal:
+        old = record.proposal
+        if isinstance(old, IssueProposal):
+            if args.issue is None:
+                raise ToolError("this proposal is a new issue: revise it with `issue`")
+            _, labels = self._repo_and_labels(grant, old.repo, args.issue.labels)
+            related, _ = self._related(grant, args.issue.related)
+            return old.model_copy(
+                update={
+                    "title": args.issue.title,
+                    "body": args.issue.body,
+                    "labels": labels,
+                    "assignees": args.issue.assignees,
+                    "related": related,
+                    "sources": sources,
+                    "confidence": args.confidence,
+                }
+            )
+        if args.changes is None:
+            raise ToolError("this proposal is an update: revise it with `changes`")
+        _, labels = self._repo_and_labels(grant, old.repo, args.changes.add_labels)
+        _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
+        changes = args.changes.model_copy(update={"add_labels": labels})
+        return old.model_copy(
+            update={"changes": changes, "sources": sources, "confidence": args.confidence}
+        )
+
+    async def _check_revised(
+        self, grant: Grant, draft: IssueProposal | UpdateProposal, participants: list[str]
+    ) -> None:
+        """The same rules a new proposal keeps, by the same code."""
+        if isinstance(draft, IssueProposal):
+            await self._check_title(grant, draft.repo, draft.title)
+            self._check_no_slack_links(draft.title, draft.body)
+            await self._check_mentions(participants, draft.title, draft.body)
+            await self._check_assignees(draft.assignees, participants)
+        else:
+            changes = draft.changes
+            self._check_no_slack_links(changes.body, changes.comment)
+            await self._check_mentions(participants, changes.body, changes.comment)
+            await self._check_assignees(changes.add_assignees, participants)
 
     async def link_message(self, grant: Grant, arguments: Any) -> BaseModel:
         args: LinkMessageArgs = arguments
@@ -891,6 +1102,13 @@ _DESCRIPTIONS = {
         "comment, or label or assignee changes. People approve it before it is written. "
         "@-mention only a participant who linked their GitHub login."
     ),
+    "revise_proposal": (
+        "Fold new messages into a draft still waiting for approval, as a new revision of the "
+        "same card: give the whole revised draft and the new messages as sources. Use "
+        "`pending` from the topic, with its revision. If the draft moved on meanwhile, you "
+        "get the current one back: revise once more on top of it. The same rules as "
+        "propose_issue and propose_update apply. At most 3 a run."
+    ),
     "link_message": (
         "Decide where a message from get_work belongs: a new topic, an existing topic, or "
         "chatter. A person's earlier decision always stands."
@@ -922,12 +1140,25 @@ def write_tools(
     new_id: Callable[[], str] = lambda: secrets.token_hex(8),
     repos: RepoCatalog | None = None,
     docs: DocReads | None = None,
+    authors: Authors | None = None,
+    boards_off: Collection[str] = frozenset(),
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
-    tools = WriteTools(store, policy, poster, clock=clock, new_id=new_id, repos=repos, docs=docs)
+    tools = WriteTools(
+        store,
+        policy,
+        poster,
+        clock=clock,
+        new_id=new_id,
+        repos=repos,
+        docs=docs,
+        authors=authors,
+        boards_off=boards_off,
+    )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
         ("propose_issue", ProposeIssueArgs, DRAFTING),
         ("propose_update", ProposeUpdateArgs, DRAFTING),
+        ("revise_proposal", ReviseProposalArgs, DRAFTING),
         ("link_message", LinkMessageArgs, DRAFTING),
         ("ask_channel", AskChannelArgs, DRAFTING),
         ("answer", AnswerArgs, ANSWERING),

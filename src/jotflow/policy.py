@@ -140,6 +140,21 @@ class InvalidLabelError(PolicyViolation):
 
 # A team's conventions text for one repo, in characters (#216).
 MAX_CONVENTIONS = 2000
+# A channel's triage guide, in characters (#317).
+MAX_TRIAGE_GUIDE = 8000
+
+
+def _plain_policy_text(name: str, value: str | None, empty: str) -> str | None:
+    """Admin-written text the agent follows: never empty, and every line free of
+    invisible or bidi characters, so a reviewer of jotflow.toml sees all of it."""
+    if value is None:
+        return None
+    if not value.strip():
+        raise ValueError(f"{name} is empty; remove the line, or {empty}")
+    for line in value.splitlines():
+        if line.strip() and (problem := unsafe_text_problem(line.strip())):
+            raise ValueError(f"{name} {problem}")
+    return value.strip()
 
 
 class RepoPolicy(_Strict):
@@ -204,14 +219,7 @@ class RepoPolicy(_Strict):
     @field_validator("conventions")
     @classmethod
     def _plain_conventions(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value.strip():
-            raise ValueError("conventions is empty; remove the line, or write the rules")
-        for line in value.splitlines():
-            if line.strip() and (problem := unsafe_text_problem(line.strip())):
-                raise ValueError(f"conventions {problem}")
-        return value.strip()
+        return _plain_policy_text("conventions", value, "write the rules")
 
     @field_validator("title_pattern")
     @classmethod
@@ -395,6 +403,52 @@ class ScopePolicy(_Strict):
         return " ".join(parts)
 
 
+MAX_BOARDS = 10
+MAX_BOARD_NUMBER = 10**9
+_BOARD = re.compile(r"(?P<owner>[^/]+)/(?P<number>[1-9][0-9]{0,9})")
+
+
+class BoardPolicy(_Strict):
+    """A GitHub Projects board a channel's issues may be added to (#309).
+
+    Organisation boards only. The description is the team's own, from a reviewed
+    jotflow.toml, and is what drafting chooses by: GitHub's goes stale.
+    """
+
+    board: str = Field(description="owner/number, as the board's URL shows it")
+    nickname: Nickname = Field(description="Short name for the card, such as roadmap")
+    description: str = Field(
+        min_length=1,
+        max_length=200,
+        description="What belongs on the board; the agent picks by this",
+    )
+
+    @field_validator("board")
+    @classmethod
+    def _board(cls, value: str) -> str:
+        match = _BOARD.fullmatch(value)
+        if match is None or _OWNER.fullmatch(match["owner"]) is None:
+            raise ValueError("a board is owner/number, such as example-org/3")
+        if not 1 <= int(match["number"]) <= MAX_BOARD_NUMBER:
+            raise ValueError("a board's number is from 1 to 1,000,000,000")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _plain_description(cls, value: str) -> str:
+        if problem := unsafe_text_problem(value):
+            raise ValueError(f"description {problem}")
+        return value
+
+    @property
+    def owner(self) -> str:
+        return self.board.partition("/")[0]
+
+    @property
+    def number(self) -> int:
+        return int(self.board.partition("/")[2])
+
+
 class ChannelPolicy(_Strict):
     """A Slack channel JotFlow watches and the repos it may feed."""
 
@@ -404,8 +458,22 @@ class ChannelPolicy(_Strict):
         max_length=MAX_SCOPES,
         description="Owners whose matching repos are found live, beside the listed repos (#236)",
     )
+    boards: tuple[BoardPolicy, ...] = Field(
+        default=(),
+        max_length=MAX_BOARDS,
+        description="GitHub Projects boards an issue may be added to, after approval (#309)",
+    )
     debounce_seconds: int | None = Field(
         default=None, ge=1, le=86_400, description="Overrides the top-level debounce window"
+    )
+    triage_guide: str | None = Field(
+        default=None,
+        max_length=MAX_TRIAGE_GUIDE,
+        description=(
+            "Optional. The team's guide to which repo, and which board, a request belongs on, "
+            "in plain text. The drafting agent chooses by it, within the listed repos and "
+            "boards (#317)"
+        ),
     )
     help: ChannelHelp = Field(
         default_factory=ChannelHelp, description="Overrides the top-level [help] settings"
@@ -413,6 +481,11 @@ class ChannelPolicy(_Strict):
     questions: ChannelQuestions = Field(
         default_factory=ChannelQuestions, description="Overrides the top-level [questions]"
     )
+
+    @field_validator("triage_guide")
+    @classmethod
+    def _plain_triage_guide(cls, value: str | None) -> str | None:
+        return _plain_policy_text("triage_guide", value, "write the guide")
 
     @model_validator(mode="after")
     def _unique_repos(self) -> ChannelPolicy:
@@ -423,9 +496,20 @@ class ChannelPolicy(_Strict):
         if dupes := _duplicates(s.owner for s in self.scopes):
             raise ValueError(f"scopes given more than once for: {', '.join(dupes)}")
         aliases = [alias for scope in self.scopes for alias in scope.aliases]
-        if dupes := _duplicates([*(r.nickname for r in self.repos), *aliases]):
+        boards = [b.nickname for b in self.boards]
+        if dupes := _duplicates([*(r.nickname for r in self.repos), *aliases, *boards]):
             raise ValueError(f"nicknames used more than once: {', '.join(dupes)}")
+        if dupes := _duplicates(b.board for b in self.boards):
+            raise ValueError(f"boards listed more than once: {', '.join(dupes)}")
         return self
+
+    def board(self, ref: str) -> BoardPolicy | None:
+        """A listed board by nickname or ``owner/number``, ignoring the owner's case."""
+        wanted = ref.casefold()
+        for board in self.boards:
+            if wanted in (board.board.casefold(), board.nickname):
+                return board
+        return None
 
     def repo(self, ref: str, *, channel_id: str = "") -> RepoPolicy:
         """Find a repo by ``owner/name`` or nickname, ignoring case.
@@ -532,6 +616,63 @@ class IdentityPolicy(_Strict):
         return self
 
 
+# GitHub's longest issue title.
+MAX_ISSUE_TITLE = 256
+MAX_TITLE_PREFIX = 32
+
+
+class IssuesPolicy(_Strict):
+    """What JotFlow adds to every new issue it files (#306). Both off by default.
+
+    They're added when the issue is written, after the draft's ``title_pattern``
+    check, so a person can't take them off on the card, and the card shows them.
+    """
+
+    label: Label | None = Field(
+        default=None,
+        description="A label added to every new issue; it must already exist in each repo",
+    )
+    title_prefix: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_TITLE_PREFIX,
+        description="Text put before every new issue's title, such as '[Slack]'",
+    )
+
+    @field_validator("title_prefix")
+    @classmethod
+    def _plain_prefix(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value != value.strip():
+            raise ValueError("title_prefix must not start or end with a space")
+        if problem := unsafe_text_problem(value):
+            raise ValueError(f"title_prefix {problem}")
+        if any(mark in value for mark in ("<", ">", "@", "`")):
+            raise ValueError("title_prefix must be plain text, with no markup or mentions")
+        return value
+
+    def filed_title(self, title: str) -> str:
+        """The title as filed: the prefix, a space, then the draft's title, within GitHub's
+        limit. A title that already starts with the prefix isn't given it twice."""
+        if not self.title_prefix or title.startswith(self.title_prefix + " "):
+            return title
+        return f"{self.title_prefix} {title}"[:MAX_ISSUE_TITLE].rstrip()
+
+    def filed_labels(self, labels: Iterable[str]) -> list[str]:
+        """The labels as filed: the draft's, then the JotFlow label if it isn't there."""
+        kept = list(labels)
+        if self.label and self.label.casefold() not in {label.casefold() for label in kept}:
+            kept.append(self.label)
+        return kept
+
+    def bare_title(self, title: str) -> str:
+        """A filed title without the prefix, as ``jotflow rebuild`` restores a topic's."""
+        if self.title_prefix and title.startswith(self.title_prefix + " "):
+            return title[len(self.title_prefix) + 1 :]
+        return title
+
+
 class Policy(_Strict):
     """The whole of ``jotflow.toml``."""
 
@@ -560,6 +701,7 @@ class Policy(_Strict):
     help: HelpPolicy = Field(default_factory=HelpPolicy)
     questions: QuestionsPolicy = Field(default_factory=QuestionsPolicy)
     identity: IdentityPolicy = Field(default_factory=IdentityPolicy)
+    issues: IssuesPolicy = Field(default_factory=IssuesPolicy)
     channels: dict[ChannelId, ChannelPolicy] = Field(min_length=1)
 
     def may_unlink_others(self, user_id: str) -> bool:

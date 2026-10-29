@@ -338,6 +338,16 @@ class RelatedIssue(BaseModel):
     )
 
 
+MAX_PROPOSED_BOARDS = 3
+
+
+class ProposedBoard(BaseModel):
+    """A Projects board the agent proposes the new issue for, and why (#309)."""
+
+    board: str = Field(description="A channel board's nickname or owner/number")
+    reason: str = Field(min_length=1, max_length=200, description="One line: why it belongs there")
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -372,6 +382,11 @@ class IssueProposal(BaseModel):
         default_factory=list,
         max_length=MAX_RELATED,
         description=RELATED_DESCRIPTION,
+    )
+    boards: list[ProposedBoard] = Field(
+        default_factory=list,
+        max_length=MAX_PROPOSED_BOARDS,
+        description="Optional. Up to 3 of channel.boards to add the issue to after approval",
     )
 
 
@@ -637,6 +652,59 @@ class UntrustedText(BaseModel):
     text: str = Field(description=UNTRUSTED)
 
 
+class PendingDraft(BaseModel):
+    """A proposal on this topic waiting for approval, for ``revise_proposal`` (#304).
+
+    The agent's own earlier draft, built from Slack text, so its text is untrusted.
+    """
+
+    proposal_id: str
+    revision: int = Field(description="Pass as base_revision; a stale one isn't applied")
+    state: ProposalState = Field(
+        default=ProposalState.PENDING,
+        description="pending is revised; approved or being written leaves it due for later",
+    )
+    kind: Literal["create_issue", "update_issue"]
+    title: UntrustedText | None = None
+    body: UntrustedText | None = None
+    comment: UntrustedText | None = None
+    labels: list[str] = Field(default_factory=list)
+    assignees: list[str] = Field(default_factory=list)
+    issue_number: int | None = None
+
+    @classmethod
+    def of(cls, record: ProposalRecord) -> PendingDraft:
+        """A pending proposal as the drafting packet gives it, its text marked untrusted."""
+        draft = record.proposal
+
+        def text(value: str | None) -> UntrustedText | None:
+            return None if value is None else UntrustedText(text=value)
+
+        if isinstance(draft, IssueProposal):
+            return cls(
+                proposal_id=record.id,
+                revision=record.revision,
+                state=record.state,
+                kind="create_issue",
+                title=text(draft.title),
+                body=text(draft.body),
+                labels=list(draft.labels),
+                assignees=list(draft.assignees),
+            )
+        changes = draft.changes
+        return cls(
+            proposal_id=record.id,
+            revision=record.revision,
+            state=record.state,
+            kind="update_issue",
+            body=text(changes.body),
+            comment=text(changes.comment),
+            labels=list(changes.add_labels),
+            assignees=list(changes.add_assignees),
+            issue_number=draft.issue_number,
+        )
+
+
 class TopicSummary(BaseModel):
     """One active topic, as the agent sees it in the index."""
 
@@ -655,6 +723,20 @@ class TopicSummary(BaseModel):
         description=(
             "True when a proposal for a new issue on this topic is waiting for approval or "
             "being written. Do not propose another; link messages to the topic instead"
+        ),
+    )
+    pending: PendingDraft | None = Field(
+        default=None,
+        description=(
+            "This topic's draft waiting for approval, when this thread feeds the topic: "
+            "revise it with revise_proposal to fold in new messages (#304)"
+        ),
+    )
+    rejected: Literal[True] | None = Field(
+        default=None,
+        description=(
+            "True when people turned down this topic's latest proposal. Don't propose it "
+            "again unless new messages change the request"
         ),
     )
 
@@ -678,3 +760,43 @@ class TopicIndex(BaseModel):
         if not data["more"]:
             del data["more"]
         return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+
+# What the drafting runner says about a person, for assigning by request (#305).
+
+
+class Account(BaseModel):
+    """What GitHub says about a login. ``missing`` has no id."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    account: Literal["user", "organization", "missing"]
+    id: int | None = Field(default=None, ge=1, le=2**53)
+    login: str | None = Field(default=None, max_length=39)
+
+    @model_validator(mode="after")
+    def _shape(self) -> Account:
+        found = self.id is not None and self.login is not None
+        if self.account == "missing" and (self.id is not None or self.login is not None):
+            raise ValueError("a missing account has no id or login")
+        if self.account != "missing" and not found:
+            raise ValueError("an account has both an id and a login")
+        return self
+
+
+class Assignable(Account):
+    """An account, and whether it can be assigned issues in one repo."""
+
+    assignable: bool = False
+
+    @model_validator(mode="after")
+    def _only_a_user(self) -> Assignable:
+        if self.assignable and self.account != "user":
+            raise ValueError("only a user can be assigned")
+        return self
+
+
+class Membership(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    member: Literal["yes", "no", "hidden"]

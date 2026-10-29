@@ -1275,3 +1275,69 @@ async def test_changing_or_removing_a_link_drops_verification(store: Store, how:
     else:
         assert await store.remove_identity("U0BOB", removed_by="U0APPROVE")
     assert await store.get_verification("U0BOB") is None
+
+
+# Admin links (#305)
+
+
+async def test_an_admin_link_keeps_the_account_id_and_says_who_made_it(store: Store) -> None:
+    done = await store.admin_link("U0BOB", "octo-example", 583231)
+    assert done.displaced is None
+    link = await store.get_identity("U0BOB")
+    assert link is not None
+    assert (link.github_login, link.github_id, link.linked_by, link.verified) == (
+        "octo-example",
+        583231,
+        "admin",
+        False,
+    )
+    assert link.trusted
+    # The person relinking themselves makes it theirs again, and untrusted.
+    await store.link_identity("U0BOB", "octo-example")
+    mine = await store.get_identity("U0BOB")
+    assert mine is not None
+    assert (mine.linked_by, mine.github_id, mine.trusted) == ("self", None, False)
+
+
+async def test_an_admin_link_takes_a_login_only_with_replace(store: Store) -> None:
+    from jotflow.store import ConflictError
+
+    await store.link_identity("U0SQUAT", "octo-example")
+    with pytest.raises(ConflictError):
+        await store.admin_link("U0REAL", "Octo-Example", 583231)
+    assert await store.get_identity("U0REAL") is None
+    done = await store.admin_link("U0REAL", "octo-example", 583231, replace=True)
+    assert done.displaced == "U0SQUAT"
+    assert await store.get_identity("U0SQUAT") is None
+    [record] = await store.identity_unlinks()
+    assert (record.slack_user_id, record.removed_by) == ("U0SQUAT", "operator")
+
+
+async def test_verifying_an_admin_link_makes_it_the_persons(store: Store) -> None:
+    await store.admin_link("U0BOB", "octo-example", 583231)
+    await store.start_verification(a_code())
+    await store.finish_verification("U0BOB", github_login="octo-example", github_id=583231)
+    link = await store.get_identity("U0BOB")
+    assert link is not None
+    assert (link.verified, link.linked_by, link.trusted) == (True, "self", True)
+
+
+@pytest.mark.parametrize("bad", [0, -1, True])
+async def test_an_admin_link_needs_a_real_account_id(store: Store, bad: Any) -> None:
+    with pytest.raises(ValueError):
+        await store.admin_link("U0BOB", "octo-example", bad)
+
+
+async def test_filling_an_account_id_changes_nothing_else(store: Store) -> None:
+    assert await store.fill_github_id("U0NOBODY", 5) is None
+    await store.link_identity("U0BOB", "octo-example")
+    before = await store.get_identity("U0BOB")
+    filled = await store.fill_github_id("U0BOB", 583231)
+    assert filled is not None and filled.github_id == 583231
+    assert before is not None and (filled.github_login, filled.verified, filled.linked_by) == (
+        before.github_login,
+        before.verified,
+        before.linked_by,
+    )
+    again = await store.fill_github_id("U0BOB", 7)  # never replaces an id it has
+    assert again is not None and again.github_id == 583231

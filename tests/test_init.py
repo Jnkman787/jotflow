@@ -1654,3 +1654,35 @@ def test_the_model_prompt_shows_what_enter_keeps(options: InitOptions) -> None:
     script = _kept_session(options)
     assert "Agent model [claude-opus-5-5]: " in script.prompts
     assert read_env(options.agent_file)["JOTFLOW_AGENT_MODEL"] == "claude-opus-5-5"
+
+
+def test_new_repos_for_a_kept_channel_keep_its_guide_boards_and_scopes() -> None:
+    # #317: re-picking a channel's repos used to drop its other settings.
+    from jotflow.commands.init import _with_new_repos
+    from jotflow.policy import ChannelPolicy, RepoPolicy
+
+    previous = ChannelPolicy.model_validate(
+        {
+            "repos": [{"repo": "acme/web", "nickname": "web", "description": "Web"}],
+            "boards": [{"board": "acme/3", "nickname": "roadmap", "description": "Planned"}],
+            "debounce_seconds": 30,
+            "triage_guide": "Billing goes to api.",
+            "help": {"guide": False},
+            "questions": {"enabled": False},
+        }
+    )
+    repos = (RepoPolicy(repo="acme/api", nickname="api", description="API"),)
+    script = Script(answers=[])
+    kept = _with_new_repos(script.console(), previous, repos)
+    assert kept.repos == repos
+    assert kept.boards == previous.boards and kept.debounce_seconds == 30
+    assert kept.triage_guide == "Billing goes to api."
+    assert "don't fit" not in script.text
+    clashing = (RepoPolicy(repo="acme/plan", nickname="roadmap", description="Plans"),)
+    fallback = _with_new_repos(script.console(), previous, clashing)
+    assert fallback.repos == clashing and fallback.boards == ()
+    assert fallback.debounce_seconds == 30 and fallback.triage_guide == "Billing goes to api."
+    # Only what can clash with repos is dropped (#322 review).
+    assert fallback.help == previous.help and fallback.questions == previous.questions
+    assert fallback.scopes == ()
+    assert "don't fit the new repos" in script.text

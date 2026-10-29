@@ -81,6 +81,18 @@ per_hour = 10
 # How long one person waits between questions, in seconds.
 per_person_seconds = 60
 
+[issues]
+# What JotFlow adds to every new issue it files (#306), so issues from Slack are
+# easy to filter. Both are off unless set. They're added when the issue is
+# written, the card shows them, and a person can't take them off there.
+# A label put on every new issue. It must already exist in each repo the
+# channels feed: JotFlow never creates labels, so a missing one stops the write.
+# label = "from-slack"
+# Text put before every new title, then a space, such as "[Slack] Export to CSV".
+# It's added after a repo's title_pattern checks the title, so a strict pattern
+# won't match the filed title.
+# title_prefix = "[Slack]"
+
 [identity]
 # Slack user ids that may remove someone else's GitHub link with
 # /jotflow unlink <member-id>, as approvers always may. For a login someone
@@ -138,6 +150,14 @@ description = "The public REST API and its background jobs"
 # No labels line: any label that exists on example-org/api.
 
 [channels.G0EXAMPLE2]
+# Optional: the team's own guide to which repo, and which board, a request belongs
+# on (#317). Plain text, up to 8,000 characters, for the whole channel. The
+# drafting agent chooses by it, but only among the repos and boards listed here,
+# and it never overrides JotFlow's own rules. Change it by a reviewed edit to this
+# file, as for any policy.
+triage_guide = """
+Process changes and onboarding go to handbook, even when they mention a service.
+A request for planned work goes on the roadmap board."""
 
 [[channels.G0EXAMPLE2.repos]]
 repo = "example-org/handbook"
@@ -163,6 +183,17 @@ include_forks = false
 include_archived = false
 description = "Backend services and shared libraries"
 aliases = { auth = "service-authentication" }
+
+# GitHub Projects boards an approved issue may be added to (#309). Organisation
+# boards only, as owner/number from the board's URL. The description is your own,
+# and it's what the drafting agent proposes boards by: GitHub's own goes stale.
+# The write token needs Projects: Read and write on the organisation. After
+# approval JotFlow adds the issue itself, through the exec runner; no agent gets
+# a projects tool.
+[[channels.G0EXAMPLE2.boards]]
+board = "example-org/4"
+nickname = "roadmap"
+description = "Planned work for the next two quarters"
 
 # This channel keeps its own help quieter: no pinned guide.
 [channels.G0EXAMPLE2.help]

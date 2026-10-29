@@ -45,6 +45,8 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    OPERATOR_REMOVER,
+    REVISED_FIELDS,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
     Clock,
@@ -61,9 +63,11 @@ from jotflow.store.base import (
     OperatorToken,
     PendingThread,
     ProposalEdit,
+    ProposalRevision,
     ReactionKeyword,
     ReactionMark,
     Recovery,
+    StaleRevisionError,
     StoreError,
     ToolCallRecord,
     TopicRecord,
@@ -76,6 +80,7 @@ from jotflow.store.base import (
     check_mark,
     check_new_proposal,
     check_notice,
+    check_revision,
     check_run_request,
     cleared_draft,
     edited_draft,
@@ -83,6 +88,7 @@ from jotflow.store.base import (
     plan_duplicate,
     plan_transition,
     plan_undo,
+    revised_draft,
     to_text,
     utc_now,
 )
@@ -631,6 +637,104 @@ class SqliteStore:
             for r in rows
         ]
 
+    async def revise_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        run_id: str,
+        base_revision: int,
+        added_by: Collection[str],
+    ) -> ProposalRecord:
+        async with self._write():
+            record = await self._get_proposal(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            counted = await self._one(
+                "SELECT COUNT(*) AS n FROM proposal_revisions WHERE proposal_id = ?",
+                (proposal_id,),
+            )
+            changed = check_revision(
+                record,
+                draft,
+                base_revision=base_revision,
+                added_by=added_by,
+                revisions=int(counted["n"]) if counted else 0,
+            )
+            draft = revised_draft(record, draft)
+            now = to_text(self._clock())
+            cursor = await self._db.execute(
+                "UPDATE proposals SET draft_json = ?, updated_at = ?, revision = revision + 1"
+                " WHERE id = ? AND state = 'pending' AND revision = ?",
+                (canonical_json(draft), now, proposal_id, base_revision),
+            )
+            if cursor.rowcount != 1:  # pragma: no cover - the write lock rules this out
+                raise StaleRevisionError(record)
+            revision = base_revision + 1
+            await self._db.execute(
+                "INSERT INTO proposal_revisions (proposal_id, revision, run_id, changed,"
+                " revised_at) VALUES (?, ?, ?, ?, ?)",
+                (proposal_id, revision, run_id, ",".join(changed), now),
+            )
+            for user in sorted(set(added_by)):
+                await self._db.execute(
+                    "INSERT INTO proposal_revision_authors (proposal_id, revision, user_id)"
+                    " VALUES (?, ?, ?)",
+                    (proposal_id, revision, user),
+                )
+                await self._db.execute(
+                    "INSERT OR IGNORE INTO proposal_participants (proposal_id, slack_user_id)"
+                    " VALUES (?, ?)",
+                    (proposal_id, user),
+                )
+            updated = await self._get_proposal(proposal_id)
+        return _found(updated)
+
+    async def proposal_revisions(self, proposal_id: str) -> list[ProposalRevision]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT * FROM proposal_revisions WHERE proposal_id = ? ORDER BY revision",
+                (proposal_id,),
+            )
+            authors = await self._all(
+                "SELECT revision, user_id FROM proposal_revision_authors"
+                " WHERE proposal_id = ? ORDER BY user_id",
+                (proposal_id,),
+            )
+        by_revision: dict[int, list[str]] = {}
+        for row in authors:
+            by_revision.setdefault(int(row["revision"]), []).append(row["user_id"])
+        return [
+            ProposalRevision(
+                r["proposal_id"],
+                int(r["revision"]),
+                r["run_id"],
+                tuple(f for f in r["changed"].split(",") if f in REVISED_FIELDS),
+                tuple(by_revision.get(int(r["revision"]), ())),
+                from_text(r["revised_at"]),
+            )
+            for r in rows
+        ]
+
+    async def mark_follow_up_due(self, proposal_id: str) -> None:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE proposals SET follow_up_due_at = COALESCE(follow_up_due_at, ?)"
+                " WHERE id = ?",
+                (to_text(self._clock()), proposal_id),
+            )
+            if cursor.rowcount != 1:
+                raise NotFoundError(f"no proposal {proposal_id}")
+
+    async def take_follow_up_due(self, proposal_id: str) -> bool:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE proposals SET follow_up_due_at = NULL"
+                " WHERE id = ? AND follow_up_due_at IS NOT NULL",
+                (proposal_id,),
+            )
+            return cursor.rowcount == 1
+
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
         check_id(ts, "card ts")
         async with self._write():
@@ -778,6 +882,7 @@ class SqliteStore:
             from_text(row["linked_at"]),
             from_text(row["verified_at"]) if row["verified_at"] else None,
             row["github_id"],
+            "admin" if row["linked_by"] == "admin" else "self",
         )
 
     async def link_identity(self, slack_user_id: str, github_login: str) -> IdentityLink:
@@ -800,7 +905,8 @@ class SqliteStore:
                     verified = 0,
                     verified_at = NULL,
                     github_id = NULL,
-                    linked_at = excluded.linked_at
+                    linked_at = excluded.linked_at,
+                    linked_by = 'self'
                 """,
                 (slack_user_id, github_login, to_text(self._clock())),
             )
@@ -947,9 +1053,76 @@ class SqliteStore:
                     verified = 1,
                     linked_at = excluded.linked_at,
                     verified_at = excluded.verified_at,
-                    github_id = excluded.github_id
+                    github_id = excluded.github_id,
+                    linked_by = 'self'
                 """,
                 (slack_user_id, github_login, now, now, github_id),
+            )
+            row = await self._one(
+                "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return Verified(self._identity(_found(row)), displaced)
+
+    async def fill_github_id(self, slack_user_id: str, github_id: int) -> IdentityLink | None:
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        async with self._write():
+            await self._db.execute(
+                "UPDATE identity_links SET github_id = ? WHERE slack_user_id = ?"
+                " AND github_id IS NULL",
+                (github_id, slack_user_id),
+            )
+            row = await self._one(
+                "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return None if row is None else self._identity(row)
+
+    async def admin_link(
+        self, slack_user_id: str, github_login: str, github_id: int, *, replace: bool = False
+    ) -> Verified:
+        check_id(slack_user_id, "Slack user id")
+        check_github_login(github_login)
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        now = to_text(self._clock())
+        async with self._write():
+            other = await self._one(
+                "SELECT slack_user_id FROM identity_links WHERE github_login = ?"
+                " AND slack_user_id != ?",
+                (github_login, slack_user_id),
+            )
+            displaced = None if other is None else str(other["slack_user_id"])
+            if displaced is not None:
+                if not replace:
+                    raise ConflictError(f"GitHub login {github_login} is already linked")
+                for table in ("identity_codes", "identity_links"):
+                    await self._db.execute(
+                        f"DELETE FROM {table} WHERE slack_user_id = ?",
+                        (displaced,),
+                    )
+                await self._db.execute(
+                    "INSERT INTO identity_unlinks (id, slack_user_id, removed_by, removed_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (secrets.token_hex(8), displaced, OPERATOR_REMOVER, now),
+                )
+            await self._db.execute(
+                "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
+            await self._db.execute(
+                """
+                INSERT INTO identity_links
+                    (slack_user_id, github_login, verified, linked_at, verified_at,
+                     github_id, linked_by)
+                VALUES (?, ?, 0, ?, NULL, ?, 'admin')
+                ON CONFLICT (slack_user_id) DO UPDATE SET
+                    github_login = excluded.github_login,
+                    verified = 0,
+                    linked_at = excluded.linked_at,
+                    verified_at = NULL,
+                    github_id = excluded.github_id,
+                    linked_by = 'admin'
+                """,
+                (slack_user_id, github_login, now, github_id),
             )
             row = await self._one(
                 "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)

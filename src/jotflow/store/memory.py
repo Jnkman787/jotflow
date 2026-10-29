@@ -34,6 +34,7 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    OPERATOR_REMOVER,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
     Clock,
@@ -50,6 +51,7 @@ from jotflow.store.base import (
     OperatorToken,
     PendingThread,
     ProposalEdit,
+    ProposalRevision,
     ReactionKeyword,
     ReactionMark,
     Recovery,
@@ -64,12 +66,14 @@ from jotflow.store.base import (
     check_mark,
     check_new_proposal,
     check_notice,
+    check_revision,
     check_run_request,
     cleared_draft,
     edited_draft,
     plan_duplicate,
     plan_transition,
     plan_undo,
+    revised_draft,
     to_text,
     utc_now,
 )
@@ -100,6 +104,8 @@ class MemoryStore:
         self._notices: set[tuple[str, str, str]] = set()
         self._marks: dict[tuple[str, str, str, str], ReactionMark] = {}
         self._edits: list[ProposalEdit] = []
+        self._revisions: list[ProposalRevision] = []
+        self._follow_ups: set[str] = set()
         self._runs: dict[str, Run] = {}
         self._pending: dict[tuple[str, str], datetime] = {}
         self._calls: list[ToolCallRecord] = []
@@ -305,6 +311,62 @@ class MemoryStore:
 
     async def proposal_edits(self, proposal_id: str) -> list[ProposalEdit]:
         return [e for e in self._edits if e.proposal_id == proposal_id]
+
+    async def revise_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        run_id: str,
+        base_revision: int,
+        added_by: Collection[str],
+    ) -> ProposalRecord:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            done = sum(1 for r in self._revisions if r.proposal_id == proposal_id)
+            changed = check_revision(
+                record, draft, base_revision=base_revision, added_by=added_by, revisions=done
+            )
+            people = list(record.participants)
+            people += [u for u in dict.fromkeys(added_by) if u not in people]
+            updated = record.model_copy(
+                update={
+                    "proposal": revised_draft(record, draft),
+                    "participants": sorted(people),
+                    "revision": record.revision + 1,
+                },
+                deep=True,
+            )
+            self._proposals[proposal_id] = updated
+            self._revisions.append(
+                ProposalRevision(
+                    proposal_id,
+                    updated.revision,
+                    run_id,
+                    changed,
+                    tuple(sorted(set(added_by))),
+                    self._clock(),
+                )
+            )
+            return updated.model_copy(deep=True)
+
+    async def proposal_revisions(self, proposal_id: str) -> list[ProposalRevision]:
+        return [r for r in self._revisions if r.proposal_id == proposal_id]
+
+    async def mark_follow_up_due(self, proposal_id: str) -> None:
+        async with self._lock:
+            if proposal_id not in self._proposals:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            self._follow_ups.add(proposal_id)
+
+    async def take_follow_up_due(self, proposal_id: str) -> bool:
+        async with self._lock:
+            if proposal_id in self._follow_ups:
+                self._follow_ups.discard(proposal_id)
+                return True
+            return False
 
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
         check_id(ts, "card ts")
@@ -550,6 +612,49 @@ class MemoryStore:
                     )
             now = self._clock()
             link = IdentityLink(slack_user_id, github_login, True, now, now, github_id)
+            self._identities[slack_user_id] = link
+            return Verified(link, displaced)
+
+    async def fill_github_id(self, slack_user_id: str, github_id: int) -> IdentityLink | None:
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        async with self._lock:
+            link = self._identities.get(slack_user_id)
+            if link is None:
+                return None
+            if link.github_id is None:
+                link = replace(link, github_id=github_id)
+                self._identities[slack_user_id] = link
+            return link
+
+    async def admin_link(
+        self, slack_user_id: str, github_login: str, github_id: int, *, replace: bool = False
+    ) -> Verified:
+        check_id(slack_user_id, "Slack user id")
+        check_github_login(github_login)
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        async with self._lock:
+            displaced: str | None = None
+            for other in list(self._identities.values()):
+                if (
+                    other.github_login.casefold() == github_login.casefold()
+                    and other.slack_user_id != slack_user_id
+                ):
+                    if not replace:
+                        raise ConflictError(f"GitHub login {github_login} is already linked")
+                    displaced = other.slack_user_id
+                    del self._identities[displaced]
+                    self._codes.pop(displaced, None)
+                    self._unlinks.append(
+                        IdentityUnlink(
+                            secrets.token_hex(8), displaced, OPERATOR_REMOVER, self._clock()
+                        )
+                    )
+            self._codes.pop(slack_user_id, None)
+            link = IdentityLink(
+                slack_user_id, github_login, False, self._clock(), None, github_id, "admin"
+            )
             self._identities[slack_user_id] = link
             return Verified(link, displaced)
 

@@ -37,7 +37,7 @@ import shlex
 import shutil
 import signal
 import tempfile
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
@@ -53,7 +53,14 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from jotflow.adapters import github_docs, github_issues, github_proof, github_repos
+from jotflow.adapters import (
+    github_docs,
+    github_issues,
+    github_people,
+    github_projects,
+    github_proof,
+    github_repos,
+)
 from jotflow.adapters import isolation as isolation_mod
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
@@ -145,6 +152,18 @@ class RunState(StrEnum):
     TIMED_OUT = "timed_out"
     KILLED = "killed"
     FAILED = "failed"
+
+
+class BoardAddRequest(BaseModel):
+    """JotFlow's request to add an issue it recorded to an approved board (#309)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    repo: str = Field(min_length=3, max_length=140)
+    issue_number: int = Field(ge=1, le=10**9)
+    board: str = Field(min_length=3, max_length=60)
+    # The issue's body must carry this proposal's marker line, or it isn't added.
+    proposal_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class LaunchRequest(BaseModel):
@@ -842,6 +861,54 @@ def build_runner_app(
             return JSONResponse({"error": "no such issue"}, status_code=404)
         return JSONResponse(found.model_dump(mode="json"))
 
+    async def _person(what: str, call: Callable[[str], Awaitable[BaseModel]]) -> Response:
+        """One of #305's person reads: the read token only, fixed replies on failure."""
+        if config.read_token is None:
+            return JSONResponse({"error": "person checks are the drafting runner's"}, 404)
+        try:
+            found = await call(config.read_token)
+        except github_repos.RateLimited:
+            # Never "no such account": a rate limit says nothing about the person.
+            log.warning("%s: GitHub's rate limit", what)
+            return JSONResponse({"error": "GitHub is rate limiting the read token"}, 503)
+        except github_repos.GithubError as exc:
+            if str(exc) in ("not a GitHub account", "not a GitHub repo"):
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            log.warning("%s failed: %s", what, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        except httpx2.HTTPError as exc:
+            log.warning("%s failed: %s", what, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        return JSONResponse(found.model_dump(mode="json"))
+
+    async def person_account(request: Request) -> Response:
+        login = request.path_params["login"]
+        return await _person(
+            "account check",
+            lambda token: github_people.account(login, token, http=http, api=config.github_api),
+        )
+
+    async def person_assignable(request: Request) -> Response:
+        owner, name = request.path_params["owner"], request.path_params["name"]
+        login = request.path_params["login"]
+        return await _person(
+            f"assignable check in {owner}/{name}"
+            if is_owner_name(owner) and is_bare_repo_name(name)
+            else "assignable check",
+            lambda token: github_people.assignable(
+                owner, name, login, token, http=http, api=config.github_api
+            ),
+        )
+
+    async def person_member(request: Request) -> Response:
+        org, login = request.path_params["org"], request.path_params["login"]
+        return await _person(
+            f"membership check in {org}" if is_owner_name(org) else "membership check",
+            lambda token: github_people.membership(
+                org, login, token, http=http, api=config.github_api
+            ),
+        )
+
     async def identity(_: Request) -> Response:
         # The write token's own login, so JotFlow trusts only issues it wrote (#256).
         if config.write_token is None:
@@ -869,6 +936,68 @@ def build_runner_app(
             log.warning("write access check for %s/%s failed: %s", owner, name, type(exc).__name__)
             return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
         return JSONResponse({"reachable": ok})
+
+    # GitHub Projects boards (#309), on the execution runner with the write token:
+    # fixed calls, never an agent tool.
+    graphql = config.github_api.rstrip("/") + "/graphql"
+
+    async def board_access(request: Request) -> Response:
+        if config.write_token is None:
+            return JSONResponse({"error": "boards are the execution runner's"}, 404)
+        owner, number = request.path_params["owner"], request.path_params["number"]
+        if not is_owner_name(owner) or not number.isdigit():
+            return JSONResponse({"error": "not a board"}, status_code=400)
+        try:
+            ok = await github_projects.board_access(
+                owner, int(number), config.write_token, http=http, url=graphql
+            )
+        except github_repos.RateLimited:
+            return JSONResponse({"error": "GitHub's rate limit"}, status_code=429)
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning(
+                "board access check for %s/%s failed: %s", owner, number, type(exc).__name__
+            )
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        return JSONResponse({"can_update": ok})
+
+    async def board_add(request: Request) -> Response:
+        if config.write_token is None:
+            return JSONResponse({"error": "boards are the execution runner's"}, 404)
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = BoardAddRequest.model_validate_json(body)
+        except ValidationError:
+            return JSONResponse(
+                {"error": "expected exactly repo, issue_number, board and proposal_id"},
+                status_code=400,
+            )
+        try:
+            item = await github_projects.add_issue(
+                asked.repo,
+                asked.issue_number,
+                asked.board,
+                asked.proposal_id,
+                config.write_token,
+                http=http,
+                url=graphql,
+            )
+        except github_repos.RateLimited:
+            return JSONResponse({"error": "GitHub's rate limit"}, status_code=429)
+        except github_projects.NotThisProposals:
+            log.warning(
+                "not adding an issue to board %s: it isn't one JotFlow filed for its proposal",
+                asked.board,
+            )
+            return JSONResponse({"error": "the issue isn't this proposal's"}, status_code=422)
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("adding an issue to board %s failed: %s", asked.board, type(exc).__name__)
+            return JSONResponse({"error": "GitHub did not add it"}, status_code=502)
+        log.info("issue added to board %s", asked.board)
+        return JSONResponse({"item_id": item})
 
     # POST /docs/list and /docs/read, on the drafting runner (#209).
     reader = docs
@@ -996,7 +1125,13 @@ def build_runner_app(
             Route("/identity", identity, methods=["GET"]),
             Route("/repos/{owner}", repos, methods=["GET"]),
             Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
+            Route("/boards/add", board_add, methods=["POST"]),
+            Route("/boards/{owner}/{number}/access", board_access, methods=["GET"]),
             Route("/repos/{owner}/{name}/issues/{number}", one_issue, methods=["GET"]),
+            # Assigning by request (#305): who an account is, and where it may be assigned.
+            Route("/accounts/{login}", person_account, methods=["GET"]),
+            Route("/repos/{owner}/{name}/assignable/{login}", person_assignable, methods=["GET"]),
+            Route("/orgs/{org}/members/{login}", person_member, methods=["GET"]),
         ]
     )
     return RunnerGate(app, secret=config.secret, allowed_hosts=config.allowed_hosts)

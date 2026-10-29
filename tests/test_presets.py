@@ -73,7 +73,7 @@ def test_claude_code_drafting_argv_is_locked_down(tmp_path: Path) -> None:
     plan = CLAUDE_CODE.plan(context(RunKind.DRAFTING, tmp_path))
     allowed = (
         "mcp__jotflow__get_work,mcp__jotflow__list_topics,mcp__jotflow__get_topic,"
-        "mcp__jotflow__propose_issue,mcp__jotflow__propose_update,"
+        "mcp__jotflow__propose_issue,mcp__jotflow__propose_update,mcp__jotflow__revise_proposal,"
         "mcp__jotflow__link_message,mcp__jotflow__ask_channel,"
         "mcp__jotflow__list_repo_docs,mcp__jotflow__read_repo_doc,"
         "mcp__github__issue_read,mcp__github__list_issues,mcp__github__search_issues,"
@@ -768,3 +768,32 @@ def test_private_files_never_follow_a_symlink(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         write_private(run_dir, "file.toml", "x")
     assert list(outside.iterdir()) == []
+
+
+# No run gets a GitHub Projects tool (#309, security's conditions 2 and 4). The write
+# token carries an organisation-wide Projects permission, and the read token may too;
+# boards are changed only by the execution runner's fixed add call.
+
+
+def test_no_kind_gets_a_github_projects_tool() -> None:
+    for kind, tools in GITHUB_TOOLS.items():
+        assert not [t for t in tools if "project" in t.lower()], kind
+
+
+@pytest.mark.parametrize("name", sorted(presets.PRESETS))
+def test_no_preset_starts_github_with_a_projects_tool(name: str, tmp_path: Path) -> None:
+    import json
+
+    preset = presets.PRESETS[name]
+    kinds = getattr(preset, "run_kinds", frozenset(RunKind) - {RunKind.OPERATOR})
+    for kind in sorted(kinds, key=lambda k: k.value):
+        if kind is RunKind.OPERATOR:
+            continue
+        run_dir = tmp_path / kind.value
+        run_dir.mkdir()
+        model = preset.default_models.get(kind) or "a-model"
+        plan = preset.plan(context(kind, run_dir, model=model))
+        everything = json.dumps(
+            {"argv": list(plan.argv), "config": plan.config, "files": dict(plan.files)}
+        ).lower()
+        assert "project" not in everything, (name, kind.value)

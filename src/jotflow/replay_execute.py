@@ -266,8 +266,8 @@ async def _execute_one(
     repo = record.proposal.repo
     if repo not in repos:
         return [f"{record.id}: the fixture has no github block for {repo}"]
-    tail = await execution_footer(record, state.thread.policy, state.attribution)
-    checks, writes = plan_writes(record, tail)
+    tail = await execution_footer(record, state.thread.policy, state.attribution, state.store)
+    checks, writes = plan_writes(record, tail, state.thread.policy.issues)
     missing = sorted(set(checks.labels) - set(repos[repo].labels))
     expected = [(w.tool, _expected(w, repos, repo)) for w in writes]
     number = getattr(record.proposal, "issue_number", None) or _new_number(repos, repo)

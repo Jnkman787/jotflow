@@ -53,6 +53,7 @@ from jotflow.models import (
     expected_runner_preset,
 )
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
+from jotflow.orchestrator.boards import BoardAdder
 from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
     SYNC_SECONDS,
@@ -334,6 +335,8 @@ class Orchestrator:
         self._tasks: list[asyncio.Task[None]] = []
         # Listed repos, and those a channel's scopes find through the runners (#236).
         self.repos = RepoCatalog(policy, lister=self._list_repos, access=self._write_reachable)
+        # Boards the exec runner's write token can't update, found at start (#309).
+        self.boards_off: set[str] = set()
 
     async def _list_repos(self, owner: str) -> list[DiscoveredRepo]:
         if self._runner is None:
@@ -402,6 +405,8 @@ class Orchestrator:
             CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
             people,
             repos=self.repos,
+            # A revision that lost a race drafts its thread again once settled (#304).
+            arm_thread=self._arm_thread,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode)
@@ -411,6 +416,8 @@ class Orchestrator:
             self._policy,
             self._thread_slack or BoltThreadSlack(self._client),
             repos=self.repos,
+            # Approved boards are added by the exec runner's fixed call (#309).
+            boards=BoardAdder(self._store, self._policy, _RunnerBoards(self)),
         )
         # Each person links only their own GitHub login (#35); approvers and
         # identity admins can remove someone else's (#173).
@@ -435,9 +442,12 @@ class Orchestrator:
         )
         store, policy, repos = self._store, self._policy, self.repos
 
+        # Who the issue will credit, looked up the way the footer does (#307 review).
+        credits = SlackAttribution(slack_people, people.name)
+
         async def drawn_with(record: ProposalRecord) -> CardContext:
             # The context the card loop draws with, so length rules agree (#34).
-            return await card_context(policy, store, people, record, repos)
+            return await card_context(policy, store, people, record, repos, credits)
 
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
@@ -477,16 +487,27 @@ class Orchestrator:
         # Repo docs for drafting (#209): no tools at all unless a repo sets read_paths.
         # The runner client is made below, so the tools look it up when called.
         doc_reads = DocReads(self._store)
+        attribution = SlackAttribution(slack_people, people.name)
         tools = (
             *read_tools(
                 self._store,
                 self._policy,
                 source,
-                attribution=SlackAttribution(slack_people, people.name),
+                attribution=attribution,
                 repos=self.repos,
                 issues=self._issue_reader,
+                boards_off=self.boards_off,
             ),
-            *write_tools(self._store, self._policy, poster, repos=self.repos, docs=doc_reads),
+            *write_tools(
+                self._store,
+                self._policy,
+                poster,
+                repos=self.repos,
+                docs=doc_reads,
+                boards_off=self.boards_off,
+                # Who wrote a revision's new messages, as approval reads them (#304).
+                authors=attribution.authors,
+            ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
@@ -516,6 +537,7 @@ class Orchestrator:
             )
         for reason in self.kinds.off:
             log.warning("%s", reason)
+        await self._check_boards()
         if self.repos.owners:
             if self._runner is None:
                 log.warning(
@@ -674,6 +696,40 @@ class Orchestrator:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=self._card_seconds)
 
+    async def _check_boards(self) -> None:
+        """Ask the exec runner whether its write token may update each configured
+        board (#309). One it can't is turned off: drafting doesn't see it, and
+        propose_issue refuses it. One that can't be checked, such as during a GitHub
+        outage or a rate limit, stays on (#311 review): this is a pre-check, and the
+        add's own failure, named in the thread, is the real one."""
+        boards = {b.board for c in self._policy.channels.values() for b in c.boards}
+        if not boards:
+            return
+        if self._runner is None or RunKind.EXECUTION not in self.kinds.on:
+            self.boards_off.update(boards)
+            log.warning("boards are off: execution runs are off, so nothing could add to them")
+            return
+        for board in sorted(boards):
+            owner, _, number = board.partition("/")
+            try:
+                ok = await self._runner.board_access(owner, int(number))
+            except RunnerError as exc:
+                log.warning(
+                    "board %s stays on: its access couldn't be checked at start (%s). If "
+                    "adding to it fails, the thread will say so",
+                    board,
+                    exc,
+                )
+                continue
+            if not ok:
+                self.boards_off.add(board)
+                log.warning(
+                    "board %s is off: the write token can't see or update it; give it "
+                    "Projects: Read and write on the organisation (a classic token needs the "
+                    "project scope), and check the board's owner and number",
+                    board,
+                )
+
     async def _arm_thread(self, channel_id: str, thread_ts: str) -> None:
         """Start a thread's quiet window for a message JotFlow posted for a person."""
         if self._debouncer is not None:
@@ -712,3 +768,18 @@ class Orchestrator:
         if self._store is not None:
             store, self._store = self._store, None
             await store.close()
+
+
+class _RunnerBoards:
+    """The board call, through whichever runner client the service has by then."""
+
+    def __init__(self, service: Orchestrator) -> None:
+        self._service = service
+
+    async def add_to_board(
+        self, repo: str, issue_number: int, board: str, proposal_id: str
+    ) -> None:
+        runner = self._service._runner
+        if runner is None:
+            raise RunnerError("no runner to ask")
+        await runner.add_to_board(repo, issue_number, board, proposal_id)

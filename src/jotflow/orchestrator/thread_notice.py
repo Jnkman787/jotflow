@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from jotflow.models import ProposalRecord
+from jotflow.orchestrator.boards import BoardAdder
 from jotflow.policy import Policy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import Store, utc_now
@@ -92,12 +93,14 @@ class ThreadNotice:
         *,
         clock: Callable[[], datetime] = utc_now,
         repos: RepoCatalog | None = None,
+        boards: BoardAdder | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
         self._slack = slack
         self._clock = clock
         self._repos = repos
+        self._boards = boards
         self._waiting: dict[str, tuple[datetime, timedelta]] = {}
 
     async def tell(self) -> int:
@@ -120,6 +123,14 @@ class ThreadNotice:
             )
             await self._store.mark_thread_told(record.id)
             return False
+        if self._boards is not None:
+            # Approved boards first, so the notice can say where it went (#309).
+            boards = await self._boards.add_all(record)
+            if boards.retry:
+                self._back_off(record.id)
+                return False
+            if line := boards.notice():
+                text = f"{text} {line}"
         try:
             await self._react_on_sources(record)
             await self._slack.reply(record.channel_id, record.thread_ts, text)

@@ -378,7 +378,7 @@ async def apply_github(
             if topic is not None:
                 # Only rebuild's own placeholder is replaced, never a title someone gave.
                 if topic.title == _title(policy, plan.channel_id, repo, issue.number):
-                    await store.rename_topic(topic.id, issue.title)
+                    await store.rename_topic(topic.id, policy.issues.bare_title(issue.title))
                     done.titles += 1
                 continue
             sources = [
@@ -387,7 +387,9 @@ async def apply_github(
             if not sources:
                 done.no_source += 1
                 continue
-            created = await store.create_topic(plan.channel_id, issue.title)
+            created = await store.create_topic(
+                plan.channel_id, policy.issues.bare_title(issue.title)
+            )
             await store.set_topic_issue(created.topic.id, repo, issue.number)
             bound[(repo.casefold(), issue.number)] = created.topic
             done.topics += 1
