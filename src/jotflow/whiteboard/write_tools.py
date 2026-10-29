@@ -45,6 +45,7 @@ from jotflow.models import (
     PendingDraft,
     ProposalRecord,
     ProposalState,
+    ProposedBoard,
     RelatedIssue,
     RunKind,
     RunStatus,
@@ -85,6 +86,7 @@ ANSWERING = frozenset({RunKind.QUESTION})
 EXECUTION = frozenset({RunKind.EXECUTION})
 
 PROPOSE_TOOLS = ("propose_issue", "propose_update")
+MAX_BOARD_REASON = 200
 # Revisions have their own cap, so a busy run can still propose for other topics (#304).
 MAX_REVISIONS_PER_RUN = 3
 # Who wrote some Slack messages, as the approval gate reads them.
@@ -501,11 +503,14 @@ class WriteTools:
         repos: RepoCatalog | None = None,
         docs: DocReads | None = None,
         authors: Authors | None = None,
+        boards_off: Collection[str] = frozenset(),
     ) -> None:
         self._store = store
         self._policy = policy
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
+        # Boards the write token can't update, found at JotFlow's start (#309).
+        self._boards_off = boards_off
         # The run's doc reads, for the card's long-passage flag (#209).
         self._docs = docs
         self._poster = poster
@@ -685,6 +690,28 @@ class WriteTools:
             kept.append(entry.model_copy(update={"repo": repo}))
         return kept, len(related) - len(kept)
 
+    def _boards(self, grant: Grant, boards: list[ProposedBoard]) -> list[ProposedBoard]:
+        """Only the channel's own boards, each once, as owner/number (#309).
+
+        The reason is the agent's, so it is cleaned like a question and shown as
+        plain text. Boards are in the draft, so approval locks them.
+        """
+        listed = self._policy.channel(grant.channel_id)
+        kept: list[ProposedBoard] = []
+        for proposed in boards:
+            board = listed.board(proposed.board)
+            if board is None:
+                raise ToolError(f"{proposed.board} isn't one of this channel's boards")
+            if board.board in self._boards_off:
+                raise ToolError(f"{proposed.board} is off: JotFlow's write token can't update it")
+            if any(k.board == board.board for k in kept):
+                continue
+            reason = " ".join(clean_question(proposed.reason).split())[:MAX_BOARD_REASON]
+            if not reason:
+                raise ToolError("a board's reason has no words left once cleaned")
+            kept.append(ProposedBoard(board=board.board, reason=reason))
+        return kept
+
     def _repo_and_labels(self, grant: Grant, repo: str, labels: list[str]) -> tuple[str, list[str]]:
         try:
             policy = self._repos.repo(grant.channel_id, repo)
@@ -773,6 +800,7 @@ class WriteTools:
                     "labels": labels,
                     "sources": await self._sources(grant, args.sources),
                     "related": [r.model_dump() for r in related],
+                    "boards": [b.model_dump() for b in self._boards(grant, args.boards)],
                 }
             )
             result = await self._add(grant, draft, args.participants)
@@ -1113,6 +1141,7 @@ def write_tools(
     repos: RepoCatalog | None = None,
     docs: DocReads | None = None,
     authors: Authors | None = None,
+    boards_off: Collection[str] = frozenset(),
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
     tools = WriteTools(
@@ -1124,6 +1153,7 @@ def write_tools(
         repos=repos,
         docs=docs,
         authors=authors,
+        boards_off=boards_off,
     )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
         ("propose_issue", ProposeIssueArgs, DRAFTING),

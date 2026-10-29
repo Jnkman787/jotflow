@@ -392,3 +392,24 @@ async def test_a_turned_down_topic_is_marked_for_the_re_draft(
     listed = await specs["list_topics"].handler(SECOND, NoArguments())
     [after] = [t for t in listed.topics if t.id == record.proposal.topic_id]
     assert after.rejected is True and after.issue_proposed is None
+
+
+async def test_a_revision_keeps_the_drafts_boards(tools: WriteTools, store: LiveStore) -> None:
+    # #309 with #304: a revision has no boards field, so the approved boards stay
+    # the ones the card showed, and the card's hash still covers them.
+    from jotflow.models import ProposedBoard
+
+    record = await pending(tools, store)
+    old = record.proposal
+    assert isinstance(old, IssueProposal)
+    boarded = old.model_copy(
+        update={"boards": [ProposedBoard(board="roadmap", reason="A planned feature")]}
+    )
+    record = record.model_copy(update={"proposal": boarded})
+    store._proposals[record.id] = record
+    result: Any = await tools.revise_proposal(SECOND, revise(record, body="With totals."))
+    assert result.revised
+    after = await store.get_proposal(record.id)
+    assert after is not None and isinstance(after.proposal, IssueProposal)
+    assert after.proposal.boards == boarded.boards
+    assert "boards" not in result.changed

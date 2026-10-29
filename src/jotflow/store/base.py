@@ -342,13 +342,18 @@ class ChannelModeSetting:
     changed_at: datetime
 
 
+CLEARED_REASON = "(cleared)"
+
+
 def cleared_draft(
     proposal: IssueProposal | UpdateProposal,
 ) -> IssueProposal | UpdateProposal:
     """The draft with its free text removed: title, body, comment, and the agent's reason
     for overruling a hint, which can quote people too (#147). All else stays."""
     if isinstance(proposal, IssueProposal):
-        update = {"title": CLEARED_TITLE, "body": "", "hint_overruled": None}
+        # Board reasons are the agent's words too; the boards themselves stay (#309).
+        boards = [b.model_copy(update={"reason": CLEARED_REASON}) for b in proposal.boards]
+        update = {"title": CLEARED_TITLE, "body": "", "hint_overruled": None, "boards": boards}
         return proposal.model_copy(update=update, deep=True)
     changes = proposal.changes.model_copy(update={"body": None, "comment": None})
     return proposal.model_copy(update={"changes": changes, "hint_overruled": None}, deep=True)

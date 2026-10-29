@@ -297,6 +297,24 @@ def _body(text: str, show: bool) -> list[Block]:
     return [_section(chunk) for chunk in _chunks(text)] if show else [_context(TOO_LONG)]
 
 
+def _boards_blocks(draft: IssueProposal, context: CardContext) -> list[Block]:
+    """The Projects boards the issue will be added to after approval, and why (#309).
+
+    Boards are named by the channel's own nicknames; each reason is the agent's,
+    labelled as such and shown as plain text. Both are in the approved hash.
+    """
+    if not draft.boards:
+        return []
+    names = []
+    for proposed in draft.boards:
+        listed = context.channel.board(proposed.board)
+        names.append(f"{listed.nickname} ({listed.board})" if listed else proposed.board)
+    blocks = [_approved_context("Add to boards: " + ", ".join(names))]
+    for proposed, name in zip(draft.boards, names, strict=True):
+        blocks.append(_approved_context(f"The agent's reason for {name}: {proposed.reason}"))
+    return blocks
+
+
 def _hint_blocks(draft: IssueProposal | UpdateProposal) -> list[Block]:
     """Why the agent overruled the author's ``idea:`` or ``bug:`` hint, if it did (#147, D10).
 
@@ -334,6 +352,7 @@ def _draft_blocks(
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
         blocks.append(_approved_context("   ".join(details)))
+        blocks += _boards_blocks(draft, context)
         blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
         if context.credit_line:

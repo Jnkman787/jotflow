@@ -145,3 +145,9 @@ def test_the_follow_up_rules_are_in_the_instructions() -> None:
     assert "by default a `comment`" in text
     assert "Change the body only when the request itself changes" in text
     assert "A +1, thanks or discussion that adds nothing is no follow-up." in text
+
+
+def test_the_board_rule_is_in_the_instructions() -> None:
+    # #309: boards only from the channel's own list, by their descriptions.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "`boards`: only from `channel.boards`, by their descriptions" in text

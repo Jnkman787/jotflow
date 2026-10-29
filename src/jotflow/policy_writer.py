@@ -140,6 +140,15 @@ def render_policy(policy: Policy) -> str:
                 # Nicknames are [a-z0-9_-], so they are bare keys.
                 pairs = ", ".join(f"{k} = {toml_string(v)}" for k, v in scope.aliases.items())
                 lines.append(f"aliases = {{ {pairs} }}")
+        for board in channel.boards:
+            # Projects boards (#309), as configured: the description is the team's.
+            lines += [
+                "",
+                f"[[channels.{channel_id}.boards]]",
+                f"board = {toml_string(board.board)}",
+                f"nickname = {toml_string(board.nickname)}",
+                f"description = {toml_string(board.description)}",
+            ]
         own_help = channel.help.model_dump(exclude_none=True)
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]
