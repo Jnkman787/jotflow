@@ -402,6 +402,16 @@ MIGRATIONS: tuple[Migration, ...] = (
             " /* UTC: a revision lost a race; draft the thread again once settled */",
         ),
     ),
+    # Admin-loaded links (#305): who made the link, so a card can say so, and a self-add
+    # can trust it like a verified one. Existing links were all made by the person.
+    Migration(
+        17,
+        (
+            "ALTER TABLE identity_links ADD COLUMN linked_by TEXT NOT NULL DEFAULT 'self'"
+            " CHECK (linked_by IN ('self', 'admin'))"
+            " /* self: /jotflow link or verify; admin: jotflow identity link */",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

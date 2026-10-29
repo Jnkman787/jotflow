@@ -295,6 +295,14 @@ class IdentityLink:
     # numeric user id, which survives a rename.
     verified_at: datetime | None = None
     github_id: int | None = None
+    # "admin" for a link loaded by whoever runs JotFlow with `jotflow identity link`
+    # (#305), which stores the account's GitHub id. "self" for /jotflow link or verify.
+    linked_by: Literal["self", "admin"] = "self"
+
+    @property
+    def trusted(self) -> bool:
+        """Verified by the person, or loaded by an admin, with GitHub's account id kept."""
+        return (self.verified or self.linked_by == "admin") and self.github_id is not None
 
 
 # ``removed_by`` when a person proved control of a login someone else had linked (#195).
@@ -982,6 +990,16 @@ class Store(Protocol):
 
     async def identity_unlinks(self) -> list[IdentityUnlink]:
         """Every removal by someone else, newest first."""
+        ...
+
+    async def admin_link(
+        self, slack_user_id: str, github_login: str, github_id: int, *, replace: bool = False
+    ) -> Verified:
+        """Link ``github_login`` to the person as an admin (#305), with GitHub's account id.
+
+        Raises :class:`ConflictError` if someone else has the login, unless ``replace``:
+        then their link is removed, recorded as by ``operator``, and named in the result.
+        """
         ...
 
     async def identity_for_login(self, github_login: str) -> IdentityLink | None:
