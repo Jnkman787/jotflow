@@ -326,6 +326,8 @@ class Verified:
 
     link: IdentityLink
     displaced: str | None = None
+    # An admin link that changed the person's own link to another login (#305): the old one.
+    replaced_own: str | None = None
 
 
 # ``removed_by`` for a removal made with the host CLI rather than in Slack (#173).
@@ -997,8 +999,10 @@ class Store(Protocol):
     ) -> Verified:
         """Link ``github_login`` to the person as an admin (#305), with GitHub's account id.
 
-        Raises :class:`ConflictError` if someone else has the login, unless ``replace``:
-        then their link is removed, recorded as by ``operator``, and named in the result.
+        Raises :class:`ConflictError` if someone else has the login, or the person has
+        another login linked, unless ``replace``. Then, in the same transaction, the other
+        holder's link is removed and the person's old link is replaced, each recorded as
+        by ``operator``, and the result names them (#305 review).
         """
         ...
 

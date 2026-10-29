@@ -1105,6 +1105,20 @@ class SqliteStore:
                     " VALUES (?, ?, ?, ?)",
                     (secrets.token_hex(8), displaced, OPERATOR_REMOVER, now),
                 )
+            own = await self._one(
+                "SELECT github_login FROM identity_links WHERE slack_user_id = ?",
+                (slack_user_id,),
+            )
+            replaced_own: str | None = None
+            if own is not None and str(own["github_login"]).casefold() != github_login.casefold():
+                if not replace:
+                    raise ConflictError(f"{slack_user_id} has another GitHub login linked")
+                replaced_own = str(own["github_login"])
+                await self._db.execute(
+                    "INSERT INTO identity_unlinks (id, slack_user_id, removed_by, removed_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (secrets.token_hex(8), slack_user_id, OPERATOR_REMOVER, now),
+                )
             await self._db.execute(
                 "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
             )
@@ -1127,7 +1141,7 @@ class SqliteStore:
             row = await self._one(
                 "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
             )
-        return Verified(self._identity(_found(row)), displaced)
+        return Verified(self._identity(_found(row)), displaced, replaced_own)
 
     async def identity_unlinks(self) -> list[IdentityUnlink]:
         async with self._lock:
