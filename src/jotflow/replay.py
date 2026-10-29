@@ -27,7 +27,7 @@ from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.packet import SlackWorkSource
-from jotflow.orchestrator.questions import QuestionHandler
+from jotflow.orchestrator.questions import QuestionHandler, is_ask
 from jotflow.orchestrator.runs import RunLifecycle, StartedRun
 from jotflow.orchestrator.slack_files import TooLarge
 from jotflow.store import MemoryStore, Store
@@ -428,8 +428,9 @@ def _questions(replay: _Replay) -> QuestionHandler:
 async def _apply_keywords(replay: _Replay, accepted: Sequence[str]) -> None:
     """Questions, then re: and skip:, with the live handlers, before any run (#56, #57).
 
-    As live, a message the question handler takes, queued or refused, gets no
-    keyword handling, and its question run is queued here, not by the script.
+    As live, an ``ask:`` the question handler takes, queued or refused, gets no
+    keyword handling, and its question run is queued here, not by the script. A
+    bot mention goes on to keywords and drafting too (#329).
     """
     slack = replay.slack or _FixtureSlack(replay.thread)
     handler = KeywordHandler(replay.store, replay.thread.policy, slack)
@@ -441,7 +442,8 @@ async def _apply_keywords(replay: _Replay, accepted: Sequence[str]) -> None:
                 await handler.on_reaction(event.model_dump(exclude_none=True))
         elif event.ts in wanted:
             data = event.model_dump(exclude_none=True)
-            if (await questions.on_message(data)).outcome != "not_a_question":
+            await questions.on_message(data)
+            if is_ask(event.text or ""):
                 continue
             await handler.on_message(data)
 
@@ -741,6 +743,8 @@ async def _question_checks(replay: _Replay) -> list[Check]:
     channel = _channel(replay.thread)
     drafted = []
     for ts in expected.questions:
+        if not is_ask(replay.thread.messages[ts].text or ""):
+            continue  # a mention is drafted too (#329): it may join a topic
         link = await replay.store.get_message(channel, ts)
         if link is not None and link.topic_id is not None:
             drafted.append(ts)

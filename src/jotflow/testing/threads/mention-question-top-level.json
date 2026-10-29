@@ -1,0 +1,198 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "mention-question-top-level",
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        },
+        {
+          "number": 42,
+          "title": "Export the dashboard table as CSV",
+          "state": "open",
+          "body": "Finance needs a monthly CSV of the dashboard table.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "description": "Alice posts a top-level message mentioning the bot: what's the status of the oven fix? (#329). It gets a question run, and drafting reads it too, but it only asks JotFlow something, so drafting marks it chatter: no topic and no card. The answer promises nothing.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792340000.000100",
+      "user": "U0ALICE",
+      "text": "<@U0JOTBOT> what's the status of the oven fix?"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792340000.000100",
+      "kind": "question",
+      "calls": [
+        {
+          "tool": "answer",
+          "arguments": {
+            "text": "No topic in this channel is about an oven fix, so I can't say its status."
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792340000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792340000.000100"
+            },
+            "decision": "chatter",
+            "confidence": 0.9
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One question answered once, marked chatter by drafting: no topic and no proposal.",
+    "accepted": [
+      "1792340000.000100"
+    ],
+    "chatter": [
+      "1792340000.000100"
+    ],
+    "questions": [
+      "1792340000.000100"
+    ],
+    "answers": [
+      {
+        "thread": "1792340000.000100",
+        "text": "Answer from the agent: No topic in this channel is about an oven fix, so I can't say its status.",
+        "removed": 0,
+        "excludes": [
+          "card",
+          "approve",
+          "filed",
+          "created"
+        ]
+      }
+    ]
+  }
+}
