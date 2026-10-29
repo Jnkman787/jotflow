@@ -135,6 +135,7 @@ class DuplicateRefusedError(ConflictError):
 DUPLICATE_NOT_PENDING = "This proposal is no longer waiting, so it can't be marked the same."
 DUPLICATE_NOT_NEW = "Only a proposed new issue can be marked the same as an existing one."
 DUPLICATE_NO_CANDIDATE = "That related issue isn't on this proposal any more."
+DUPLICATE_NOT_LIKELY = "The agent didn't mark that issue as a likely duplicate."
 DUPLICATE_TOPIC_LINKED = (
     "This conversation is already linked to an issue, so it can't be marked the same as another."
 )
@@ -175,6 +176,9 @@ def plan_duplicate(record: ProposalRecord, index: int, expected_hash: str) -> Re
         raise ContentChangedError(f"proposal {record.id} changed since the card was drawn")
     if not 0 <= index < len(draft.related):
         raise DuplicateRefusedError(DUPLICATE_NO_CANDIDATE)
+    # Only an issue the agent itself called a likely duplicate, as the card offers (#337).
+    if not draft.related[index].likely_duplicate:
+        raise DuplicateRefusedError(DUPLICATE_NOT_LIKELY)
     return draft.related[index]
 
 
@@ -344,6 +348,37 @@ class IdentityUnlink:
     removed_at: datetime
 
 
+# A weekly summary's post (#308): its slot is the UTC time it was due.
+SummaryStatus = Literal["posting", "posted", "failed", "skipped"]
+# Tries for one slot before it's given up, and how long a post may stay "posting"
+# before a restart treats it as failed.
+MAX_SUMMARY_ATTEMPTS = 5
+SUMMARY_POSTING_STALE = timedelta(minutes=10)
+
+
+@dataclass(frozen=True)
+class SummaryPost:
+    """One channel's summary for one week: pointers and times only."""
+
+    channel_id: str
+    slot: datetime
+    status: SummaryStatus
+    attempts: int
+    updated_at: datetime
+    ts: str | None = None
+
+
+@dataclass(frozen=True)
+class SummaryDeferral:
+    """A topic put off to a later summary with Not this week (#308)."""
+
+    topic_id: str
+    channel_id: str
+    until_slot: datetime
+    by: str
+    at: datetime
+
+
 @dataclass(frozen=True)
 class ChannelModeSetting:
     channel_id: str
@@ -353,6 +388,8 @@ class ChannelModeSetting:
 
 
 CLEARED_REASON = "(cleared)"
+# A board's reason when a person added it on the card, not the agent (#309).
+ADDED_ON_CARD = "(added on the card)"
 
 
 def cleared_draft(
@@ -427,8 +464,8 @@ def check_mark(channel_id: str, ts: str, user_id: str, keyword: str) -> None:
 
 
 # What a person changed from the card (#160). The value itself is never stored.
-EditField = Literal["repo", "assign", "unassign"]
-EDIT_FIELDS: tuple[EditField, ...] = ("repo", "assign", "unassign")
+EditField = Literal["repo", "assign", "unassign", "boards"]
+EDIT_FIELDS: tuple[EditField, ...] = ("repo", "assign", "unassign", "boards")
 # A person edits only what is still waiting for approval, or a failed write to retry.
 EDITABLE_STATES = frozenset({ProposalState.PENDING, ProposalState.FAILED})
 
@@ -1065,6 +1102,32 @@ class Store(Protocol):
     ) -> ChannelModeSetting: ...
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None: ...
+
+    # Weekly summaries (#308)
+
+    async def start_summary(self, channel_id: str, slot: datetime) -> bool:
+        """Claim the channel's summary for ``slot``, so it's posted once.
+
+        True for a new claim, or a failed one with tries left, or one left
+        "posting" longer than :data:`SUMMARY_POSTING_STALE`. False otherwise.
+        """
+        ...
+
+    async def finish_summary(
+        self, channel_id: str, slot: datetime, status: SummaryStatus, ts: str | None = None
+    ) -> SummaryPost: ...
+
+    async def get_summary(self, channel_id: str, slot: datetime) -> SummaryPost | None: ...
+
+    async def defer_topic(
+        self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str
+    ) -> SummaryDeferral:
+        """Put a topic off to the summary at ``until_slot``. Doing it twice keeps the first."""
+        ...
+
+    async def deferred_topics(self, channel_id: str, slot: datetime) -> list[SummaryDeferral]:
+        """The topics put off to the channel's summary at ``slot``."""
+        ...
 
     # Keyword reactions (#138, #139)
     async def add_reaction_mark(

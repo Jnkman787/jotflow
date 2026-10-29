@@ -81,6 +81,7 @@ from jotflow.orchestrator.questions import (
 )
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
+from jotflow.orchestrator.summary import BoltSummarySlack, WeeklySummaries
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
@@ -407,6 +408,7 @@ class Orchestrator:
             repos=self.repos,
             # A revision that lost a race drafts its thread again once settled (#304).
             arm_thread=self._arm_thread,
+            boards_off=self.boards_off,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode)
@@ -447,7 +449,9 @@ class Orchestrator:
 
         async def drawn_with(record: ProposalRecord) -> CardContext:
             # The context the card loop draws with, so length rules agree (#34).
-            return await card_context(policy, store, people, record, repos, credits)
+            return await card_context(
+                policy, store, people, record, repos, credits, boards_off=self.boards_off
+            )
 
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
@@ -472,6 +476,7 @@ class Orchestrator:
             approval_slack,
             refresh=self.cards.refresh,
             repos=self.repos,
+            boards_off=self.boards_off,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
@@ -511,6 +516,17 @@ class Orchestrator:
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
+        # The weekly summary (#308), for channels that set one, whether or not runs are on.
+        self.summaries: WeeklySummaries | None = None
+        self.summary_slack = BoltSummarySlack(self._client, self._identity.user_id)
+        self.summary_names = people
+        if any(c.summary is not None for c in self._policy.channels.values()):
+            self.summaries = WeeklySummaries(
+                self._store, self._policy, self.summary_slack, attribution
+            )
+            self._tasks.append(
+                asyncio.create_task(self.summaries.run(self._stop), name="jotflow-summaries")
+            )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
         self.operators = OperatorTokens(self._store)
         await self.operators.reload()

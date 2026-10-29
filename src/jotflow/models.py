@@ -336,6 +336,13 @@ class RelatedIssue(BaseModel):
     state: Literal["open", "closed"] = Field(
         description="As the agent's search reported it. JotFlow can't check it, and says so"
     )
+    likely_duplicate: bool = Field(
+        default=False,
+        description=(
+            "True only if it may be the same request, so the card offers Same as for it. "
+            "Close but different issues stay false (#337)"
+        ),
+    )
 
 
 MAX_PROPOSED_BOARDS = 3

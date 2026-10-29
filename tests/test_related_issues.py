@@ -41,7 +41,7 @@ from tests.test_approval import ALICE, BOB, CARD_TS, Rig, click
 from tests.test_runs import CH, START, THREAD
 
 PID = "0123456789abcdef"
-WEB42 = {"repo": "acme-co/web", "number": 42, "state": "closed"}
+WEB42 = {"repo": "acme-co/web", "number": 42, "state": "closed", "likely_duplicate": True}
 WEB57 = {"repo": "acme-co/web", "number": 57, "state": "open"}
 POLICY = Policy.model_validate(
     {"channels": {CH: {"repos": [{"repo": "acme-co/web", "nickname": "web", "description": "W"}]}}}
@@ -109,10 +109,15 @@ async def test_same_as_closes_the_proposal_binds_the_topic_and_clears_the_draft(
 
 async def test_the_issue_comes_from_the_stored_draft_by_index(store: Store) -> None:
     record = await pending(store)
+    # #337: only an issue the agent marked a likely duplicate; #57 is merely related.
+    with pytest.raises(DuplicateRefusedError, match="didn't mark that issue"):
+        await store.mark_duplicate(
+            PID, index=1, expected_hash=content_hash(record.proposal), by=BOB
+        )
     marked = await store.mark_duplicate(
-        PID, index=1, expected_hash=content_hash(record.proposal), by=BOB
+        PID, index=0, expected_hash=content_hash(record.proposal), by=BOB
     )
-    assert marked.duplicate is not None and marked.duplicate.number == 57
+    assert marked.duplicate is not None and marked.duplicate.number == 42
 
 
 @pytest.mark.parametrize(
@@ -241,8 +246,8 @@ async def test_the_card_shows_related_as_the_agents_claim_and_offers_same_as() -
     card = render_card(record, CardContext(channel=POLICY.channel(CH)))
     text = str(card.blocks)
     assert (
-        "Related: <https://github.com/acme-co/web/issues/42|acme-co/web#42> (agent says closed)"
-        in text
+        "Related: <https://github.com/acme-co/web/issues/42|acme-co/web#42> (agent says closed,"
+        " maybe the same request)" in text
     )
     assert "(agent says open)" in text
     buttons = [e for b in card.blocks if b["type"] == "actions" for e in b["elements"]]
@@ -392,3 +397,52 @@ async def test_undo_refuses_while_a_later_proposal_relies_on_the_binding(store: 
         await store.undo_duplicate(PID, by=ALICE)
     topic = await store.get_topic(topic_id)
     assert topic is not None and topic.topic.issue_number == 42
+
+
+async def test_a_merely_related_issue_gets_no_same_as() -> None:
+    # #337: the agent's text may say it's different; then the card offers no Same as.
+    store = MemoryStore()
+    record = await pending(store)
+    assert isinstance(record.proposal, IssueProposal)
+    related = [RelatedIssue(**{**WEB42, "likely_duplicate": False}), RelatedIssue(**WEB57)]
+    plain = record.model_copy(
+        update={"proposal": record.proposal.model_copy(update={"related": related})}
+    )
+    card = render_card(plain, CardContext(channel=POLICY.channel(CH)))
+    buttons = [e for b in card.blocks if b["type"] == "actions" for e in b["elements"]]
+    assert not [b for b in buttons if b["action_id"] == ACTION_SAME_AS]
+    assert "maybe the same request" not in str(card.blocks)
+    likely_second = [RelatedIssue(**WEB57), RelatedIssue(**WEB42)]
+    second = record.model_copy(
+        update={"proposal": record.proposal.model_copy(update={"related": likely_second})}
+    )
+    card = render_card(second, CardContext(channel=POLICY.channel(CH)))
+    [same] = [
+        e
+        for b in card.blocks
+        if b["type"] == "actions"
+        for e in b["elements"]
+        if e["action_id"] == ACTION_SAME_AS
+    ]
+    assert same["value"].endswith(":1")  # the likely one's own index
+
+
+def test_a_draft_without_the_new_flag_hashes_as_before() -> None:
+    # #337: likely_duplicate is left out of the hash while false, so a proposal drawn
+    # before the flag existed keeps its lock.
+    old = IssueProposal(
+        repo="acme-co/web",
+        title="T",
+        body="B",
+        confidence=0.5,
+        related=[RelatedIssue(repo="acme-co/web", number=57, state="open")],
+    )
+    assert "likely_duplicate" not in canonical_json(old, hashed=True)
+    marked = old.model_copy(
+        update={
+            "related": [
+                RelatedIssue(repo="acme-co/web", number=57, state="open", likely_duplicate=True)
+            ]
+        }
+    )
+    assert content_hash(marked) != content_hash(old)

@@ -158,6 +158,14 @@ def render_policy(policy: Policy) -> str:
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]
             lines += [f"{key} = {_bool(value)}" for key, value in own_help.items()]
+        if channel.summary is not None:
+            lines += [
+                "",
+                f"[channels.{channel_id}.summary]",
+                f"day = {toml_string(channel.summary.day)}",
+                f"time = {toml_string(channel.summary.time)}",
+                f"timezone = {toml_string(channel.summary.timezone)}",
+            ]
         own_questions = channel.questions.model_dump(exclude_none=True)
         if own_questions:
             lines += ["", f"[channels.{channel_id}.questions]"]
