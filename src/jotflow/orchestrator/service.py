@@ -725,8 +725,8 @@ class Orchestrator:
                 self.boards_off.add(board)
                 log.warning(
                     "board %s is off: the write token can't see or update it; give it "
-                    "Projects: Read and write on the organisation, and check the board's "
-                    "owner and number",
+                    "Projects: Read and write on the organisation (a classic token needs the "
+                    "project scope), and check the board's owner and number",
                     board,
                 )
 
