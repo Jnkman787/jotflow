@@ -1394,8 +1394,9 @@ class SqliteStore:
         self, channel_id: str, slot: datetime, topic_ids: Collection[str]
     ) -> None:
         async with self._write():
+            # This try's list replaces any earlier one, and older summaries' go.
             await self._db.execute(
-                "DELETE FROM summary_topics WHERE channel_id = ? AND slot = ?",
+                "DELETE FROM summary_topics WHERE channel_id = ? AND slot <= ?",
                 (channel_id, to_text(slot)),
             )
             await self._db.executemany(

@@ -541,6 +541,29 @@ async def test_a_retry_replaces_the_listed_topics(tmp_path: Path) -> None:
         await store.close()
 
 
+async def test_older_summaries_topics_are_pruned_never_the_latest(tmp_path: Path) -> None:
+    later = SLOT + timedelta(days=7)
+    for store in (MemoryStore(), await SqliteStore.open(tmp_path / "j.db")):
+        await store.set_summary_topics(CH, SLOT, ["a"])
+        await store.set_summary_topics("C0EXAMPLE2", SLOT, ["x"])
+        await store.set_summary_topics(CH, later, ["b"])
+        assert await store.summary_topics(CH, SLOT) == frozenset()  # pruned
+        assert await store.summary_topics(CH, later) == {"b"}  # the latest stays
+        assert await store.summary_topics("C0EXAMPLE2", SLOT) == {"x"}  # other channels too
+        await store.close()
+
+
+async def test_without_the_latest_summarys_topics_nothing_can_be_put_off() -> None:
+    store = MemoryStore()
+    topic, _ = await idea(store, 1)
+    run = summaries(store, Slack(), SLOT)
+    await run.tick()
+    await store.set_summary_topics(CH, SLOT, [])  # as if the rows were lost
+    value = f"{topic}|{SLOT.isoformat()}"
+    assert await run.defer("U0ALEX", CH, "1793000000.000001", value) == NOT_THIS_SUMMARY
+    assert await store.deferred_topics(CH, next_slot(SLOT, LONDON)) == []
+
+
 def test_the_summary_shows_who_put_an_item_off() -> None:
     blocks = [
         {"type": "section", "block_id": "item:t1", "text": {"type": "plain_text", "text": "x"}},

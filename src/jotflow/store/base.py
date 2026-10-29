@@ -1123,7 +1123,8 @@ class Store(Protocol):
         self, channel_id: str, slot: datetime, topic_ids: Collection[str]
     ) -> None:
         """Record the topics a summary offers Not this week for, replacing any earlier
-        try's, before it's posted (#315 review)."""
+        try's, before it's posted (#315 review). The channel's rows for older slots
+        are dropped: Not this week only works on the latest summary."""
         ...
 
     async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]: ...

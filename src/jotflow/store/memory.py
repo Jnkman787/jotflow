@@ -762,6 +762,8 @@ class MemoryStore:
         self, channel_id: str, slot: datetime, topic_ids: Collection[str]
     ) -> None:
         async with self._lock:
+            for key in [k for k in self._summary_topics if k[0] == channel_id and k[1] < slot]:
+                del self._summary_topics[key]
             self._summary_topics[(channel_id, slot)] = frozenset(topic_ids)
 
     async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]:
