@@ -669,7 +669,8 @@ class Orchestrator:
         if self._debouncer is None:
             return
         try:
-            await self._debouncer.note(decision)
+            author = event.get("user") if event is not None else None
+            await self._debouncer.note(decision, author if isinstance(author, str) else None)
         except Exception:
             log.exception("could not note a message for the debouncer")
 
