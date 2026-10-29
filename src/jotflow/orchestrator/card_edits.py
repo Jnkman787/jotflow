@@ -53,11 +53,24 @@ def _assignees(draft: IssueProposal | UpdateProposal) -> list[str]:
 
 
 def _with_assignees(
-    draft: IssueProposal | UpdateProposal, logins: list[str]
+    draft: IssueProposal | UpdateProposal, logins: list[str], added: str | None = None
 ) -> IssueProposal | UpdateProposal:
+    """The draft with ``logins`` as its assignees. Each keeps its reason, a removed one's
+    goes, and ``added``, a person's add from the card, says so (#305)."""
+    old = (
+        draft.assignee_reasons
+        if isinstance(draft, IssueProposal)
+        else draft.changes.assignee_reasons
+    )
+    wanted = {login.casefold() for login in logins}
+    reasons = [r.model_dump() for r in old if r.login.casefold() in wanted]
+    if added is not None and added.casefold() not in {r["login"].casefold() for r in reasons}:
+        reasons.append({"login": added, "why": "added_on_card"})
     if isinstance(draft, IssueProposal):
-        return IssueProposal.model_validate({**draft.model_dump(), "assignees": logins})
-    changes = draft.changes.model_dump() | {"add_assignees": logins}
+        return IssueProposal.model_validate(
+            {**draft.model_dump(), "assignees": logins, "assignee_reasons": reasons}
+        )
+    changes = draft.changes.model_dump() | {"add_assignees": logins, "assignee_reasons": reasons}
     return UpdateProposal.model_validate({**draft.model_dump(), "changes": changes})
 
 
@@ -130,7 +143,9 @@ class CardEdits:
         logins = _assignees(record.proposal)
         if link.github_login.casefold() in {login.casefold() for login in logins}:
             return await self._done(click, UNCHANGED, changed=False)
-        edited = _with_assignees(record.proposal, [*logins, link.github_login])
+        edited = _with_assignees(
+            record.proposal, [*logins, link.github_login], added=link.github_login
+        )
         await self._save(click, record, edited, "assign")
         return await self._done(click, f"Added {link.github_login} as an assignee.")
 

@@ -178,6 +178,10 @@ async def new_topic(tools: WriteTools, grant: Grant = DRAFT) -> str:
     return str(result.topic_id)
 
 
+# Bob, named as the owner in the thread's reply.
+NAMED_BOB = {"login": "acme-bob", "why": "named_owner", "source_ts": REPLY}
+
+
 def issue(topic_id: str, **fields: Any) -> ProposeIssueArgs:
     base: dict[str, Any] = {
         "topic_id": topic_id,
@@ -355,7 +359,7 @@ async def test_a_newer_proposal_supersedes_the_thread_s_pending_one(tools: Write
         ({"repo": "acme-co/secret"}, "is not one of channel"),
         ({"labels": ["wontfix"]}, "label list"),
         ({"sources": [{"channel_id": CH, "ts": "9.000100"}]}, "not in this run's packet"),
-        ({"assignees": ["acme-bob"]}, "is not the linked GitHub login of a participant"),
+        ({"assignees": ["acme-bob"]}, "give assignee acme-bob a reason"),
     ],
 )
 async def test_propose_issue_refusals(
@@ -374,7 +378,13 @@ async def test_an_assignee_must_be_a_linked_participant(
     topic_id = await new_topic(tools)
     await store.link_identity("U0BOB", "acme-bob")
     result: Any = await tools.propose_issue(
-        DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["Acme-Bob"])
+        DRAFT,
+        issue(
+            topic_id,
+            participants=["U0BOB"],
+            assignees=["Acme-Bob"],
+            assignee_reasons=[NAMED_BOB],
+        ),
     )
     assert result.state is ProposalState.PENDING
 
@@ -473,8 +483,11 @@ async def test_propose_update_assignees_follow_the_same_rule(
 ) -> None:
     topic_id = await new_topic(tools)
     await store.set_topic_issue(topic_id, "acme-co/web", 42)
-    args = update(topic_id, changes={"comment": "x", "add_assignees": ["acme-bob"]})
-    with pytest.raises(ToolError, match="not the linked GitHub login"):
+    args = update(
+        topic_id,
+        changes={"comment": "x", "add_assignees": ["acme-bob"], "assignee_reasons": [NAMED_BOB]},
+    )
+    with pytest.raises(ToolError, match="hasn't linked a GitHub login"):
         await tools.propose_update(DRAFT, args)
 
 
@@ -944,13 +957,22 @@ async def test_linking_through_the_command_is_what_makes_someone_assignable(
             return Person(user_id)
 
     topic_id = await new_topic(tools)
-    with pytest.raises(ToolError, match="not the linked GitHub login of a participant"):
+    with pytest.raises(ToolError, match="hasn't linked a GitHub login"):
         await tools.propose_issue(
-            DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["acme-bob"])
+            DRAFT,
+            issue(
+                topic_id,
+                participants=["U0BOB"],
+                assignees=["acme-bob"],
+                assignee_reasons=[NAMED_BOB],
+            ),
         )
     await LinkCommand(store, People()).handle("U0BOB", "link", "acme-bob")
     result: Any = await tools.propose_issue(
-        DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["Acme-Bob"])
+        DRAFT,
+        issue(
+            topic_id, participants=["U0BOB"], assignees=["Acme-Bob"], assignee_reasons=[NAMED_BOB]
+        ),
     )
     record = await store.get_proposal(result.proposal_id)
     assert record is not None and record.proposal.assignees == ["Acme-Bob"]  # as proposed

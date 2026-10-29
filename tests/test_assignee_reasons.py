@@ -1,0 +1,249 @@
+"""Every proposed assignee has a reason JotFlow can check, shown on the card (#305)."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
+
+import pytest
+
+from jotflow.models import AssigneeReason, IssueProposal, MessageRef, ProposalRecord
+from jotflow.orchestrator.card_edits import _with_assignees
+from jotflow.orchestrator.cards import CardContext, render_card
+from jotflow.policy import parse_policy
+from jotflow.store import MemoryStore
+from jotflow.store.hashing import content_hash
+from jotflow.whiteboard.tools import ToolError
+from jotflow.whiteboard.write_tools import WriteTools
+from tests.test_write_tools import (
+    CH,
+    DRAFT,
+    REPLY,
+    ROOT,
+    Clock,
+    Ids,
+    LiveStore,
+    Poster,
+    issue,
+    new_topic,
+)
+
+POLICY = parse_policy(
+    f"""
+[channels.{CH}]
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "Web"
+labels = ["enhancement"]
+owner_hints = ["U0OWNER"]
+"""
+)
+
+
+class Authors:
+    """Slack's word on who wrote each message: Bob wrote the reply, Alice the root."""
+
+    async def __call__(self, refs: Sequence[MessageRef]) -> set[str]:
+        return {"U0BOB" if ref.ts == REPLY else "U0ALICE" for ref in refs}
+
+
+@pytest.fixture
+def clock() -> Clock:
+    return Clock()
+
+
+@pytest.fixture
+def store(clock: Clock) -> LiveStore:
+    return LiveStore(clock)
+
+
+@pytest.fixture
+async def tools(store: Any, clock: Any) -> WriteTools:
+    packet = [
+        MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT),
+        MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT),
+    ]
+    await store.record_packet("run-1", packet)
+    await store.link_identity("U0BOB", "acme-bob")
+    await store.link_identity("U0ALICE", "acme-alice")
+    await store.link_identity("U0OWNER", "acme-owner")
+    return WriteTools(store, POLICY, Poster(), clock=clock, new_id=Ids(), authors=Authors())
+
+
+def asked(topic_id: str, login: str, why: str, ts: str | None = REPLY, **kw: Any) -> Any:
+    reason: dict[str, Any] = {"login": login, "why": why}
+    if ts is not None:
+        reason["source_ts"] = ts
+    return issue(
+        topic_id,
+        repo="acme-co/web",
+        labels=["enhancement"],
+        assignees=[login],
+        assignee_reasons=[reason],
+        **kw,
+    )
+
+
+async def test_a_volunteer_is_whoever_wrote_the_message(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "volunteered"))
+    assert result.proposal_id
+    # Alice didn't write Bob's reply, whatever the agent claims.
+    other = await new_topic(tools)
+    with pytest.raises(ToolError, match="didn't write message"):
+        await tools.propose_issue(DRAFT, asked(other, "acme-alice", "volunteered"))
+
+
+async def test_a_reasons_message_must_be_in_the_runs_packet(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match="not in this run's packet"):
+        await tools.propose_issue(
+            DRAFT, asked(topic_id, "acme-bob", "volunteered", ts="1792399999.000100")
+        )
+
+
+async def test_a_named_owner_must_be_in_the_thread(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match="must be a participant"):
+        await tools.propose_issue(DRAFT, asked(topic_id, "acme-alice", "named_owner"))
+    result: Any = await tools.propose_issue(
+        DRAFT, asked(topic_id, "acme-alice", "named_owner", participants=["U0ALICE"])
+    )
+    assert result.proposal_id
+
+
+async def test_an_owner_hint_must_be_the_repos_own(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(
+        DRAFT, asked(topic_id, "acme-owner", "owner_hint", ts=None)
+    )
+    assert result.proposal_id
+    other = await new_topic(tools)
+    with pytest.raises(ToolError, match="isn't one of acme-co/web's owner hints"):
+        await tools.propose_issue(DRAFT, asked(other, "acme-bob", "owner_hint", ts=None))
+
+
+async def test_the_agent_never_claims_a_card_add(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match="a person's reason"):
+        await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "added_on_card", ts=None))
+
+
+async def test_an_unlinked_login_is_never_assigned(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match="hasn't linked a GitHub login"):
+        await tools.propose_issue(DRAFT, asked(topic_id, "someone-else", "volunteered"))
+
+
+def test_a_reason_has_its_message_exactly_when_it_needs_one() -> None:
+    with pytest.raises(ValueError, match="needs the message"):
+        AssigneeReason(login="a", why="volunteered")
+    with pytest.raises(ValueError, match="has no source message"):
+        AssigneeReason(login="a", why="owner_hint", source_ts=REPLY)
+    with pytest.raises(ValueError, match="isn't an assignee"):
+        IssueProposal(
+            repo="acme-co/web",
+            title="t",
+            body="b",
+            confidence=0.9,
+            assignee_reasons=[AssigneeReason(login="a", why="owner_hint")],
+        )
+
+
+def test_old_drafts_keep_their_hash() -> None:
+    plain = IssueProposal(repo="acme-co/web", title="t", body="b", confidence=0.9)
+    assert "assignee_reasons" not in plain.model_dump_json(exclude_defaults=True)
+    hashed = content_hash(plain)
+    with_reason = plain.model_copy(
+        update={
+            "assignees": ["a"],
+            "assignee_reasons": [AssigneeReason(login="a", why="owner_hint")],
+        }
+    )
+    assert content_hash(with_reason) != hashed  # a reason is part of what's approved
+
+
+# --- the card -------------------------------------------------------------------------------
+
+
+def record(draft: IssueProposal) -> ProposalRecord:
+    from datetime import UTC, datetime
+
+    return ProposalRecord(
+        id="p1",
+        channel_id=CH,
+        thread_ts=ROOT,
+        run_id="r1",
+        proposal=draft,
+        created_at=datetime(2026, 10, 29, tzinfo=UTC),
+    )
+
+
+def test_the_card_says_why_in_its_own_words() -> None:
+    draft = IssueProposal(
+        repo="acme-co/web",
+        title="t",
+        body="b",
+        confidence=0.9,
+        assignees=["acme-bob", "acme-owner"],
+        assignee_reasons=[
+            AssigneeReason(login="acme-bob", why="volunteered", source_ts=REPLY),
+            AssigneeReason(login="acme-owner", why="owner_hint"),
+        ],
+    )
+    text = str(render_card(record(draft), CardContext(channel=POLICY.channel(CH))))
+    assert "acme-bob" in text and "volunteered in the thread" in text
+    assert "listed as an owner of this repo" in text
+
+
+def test_a_card_edit_keeps_reasons_in_step() -> None:
+    draft = IssueProposal(
+        repo="acme-co/web",
+        title="t",
+        body="b",
+        confidence=0.9,
+        assignees=["acme-bob"],
+        assignee_reasons=[AssigneeReason(login="acme-bob", why="volunteered", source_ts=REPLY)],
+    )
+    added = _with_assignees(draft, ["acme-bob", "acme-kim"], added="acme-kim")
+    assert isinstance(added, IssueProposal)
+    assert [(r.login, r.why) for r in added.assignee_reasons] == [
+        ("acme-bob", "volunteered"),
+        ("acme-kim", "added_on_card"),
+    ]
+    removed = _with_assignees(added, ["acme-kim"])
+    assert isinstance(removed, IssueProposal)
+    assert [r.login for r in removed.assignee_reasons] == ["acme-kim"]
+
+
+async def test_a_revision_keeps_a_reason_already_on_the_draft(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    """A person's card add has no message to prove; a revision may keep it as it is."""
+    from jotflow.whiteboard.write_tools import RevisedIssue, ReviseProposalArgs
+
+    topic_id = await new_topic(tools)
+    first: Any = await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "volunteered"))
+    found = await store.get_proposal(first.proposal_id)
+    assert found is not None
+    edited = _with_assignees(found.proposal, ["acme-bob", "acme-alice"], added="acme-alice")
+    await store.edit_proposal(found.id, edited, by="U0ALICE", field="assign")
+    current = await store.get_proposal(found.id)
+    assert current is not None and isinstance(current.proposal, IssueProposal)
+    revised = ReviseProposalArgs(
+        proposal_id=found.id,
+        base_revision=current.revision,
+        issue=RevisedIssue(
+            title="Export the dashboard table as CSV",
+            body="People want a CSV export, monthly.",
+            labels=["enhancement"],
+            assignees=["acme-bob", "acme-alice"],
+            assignee_reasons=list(current.proposal.assignee_reasons),
+        ),
+        sources=[MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT)],
+        confidence=0.9,
+    )
+    result: Any = await tools.revise_proposal(DRAFT, revised)
+    assert result.revised

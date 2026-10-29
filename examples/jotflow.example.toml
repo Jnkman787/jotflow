@@ -134,6 +134,11 @@ debounce_seconds = 60
 # covers every file in every repo it reaches, so only set this where that's
 # fine. The card lists every doc a draft read.
 # read_paths = ["README.md", "docs/plans/**/*.md", "docs/adr/*.md"]
+# owner_hints is optional: Slack member IDs of people who own this repo's area
+# (#305). The agent may propose one as an assignee when an idea plainly falls to
+# this repo, and the card says "listed as an owner of this repo". Only someone
+# with a linked GitHub login is ever assigned, and a person still approves.
+# owner_hints = ["U0123ABCD"]
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"
