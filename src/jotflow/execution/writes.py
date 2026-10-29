@@ -67,6 +67,22 @@ def _joined(names: Sequence[str]) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
+def _credited(names: Sequence[str], skip: str = "") -> list[str]:
+    """Each name once, made plain, without ``skip``, and at most :data:`MAX_NAMES`, with
+    "N others" for the rest. A name only ever appears as text: no ``@``, so it never pings."""
+    seen: set[str] = {skip.casefold()} if skip else set()
+    kept: list[str] = []
+    for raw in names:
+        name = clean_name(raw)
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            kept.append(name)
+    if len(kept) > MAX_NAMES:
+        rest = len(kept) - (MAX_NAMES - 1)
+        kept = [*kept[: MAX_NAMES - 1], f"{rest} others"]
+    return kept
+
+
 def footer(
     proposal_id: str,
     *,
@@ -74,23 +90,34 @@ def footer(
     others: Sequence[str] = (),
     permalinks: Sequence[str] = (),
     issue_links: Literal["permalinks", "none"] = "permalinks",
+    update: bool = False,
 ) -> str:
     """JotFlow's attribution and marker, appended to every body and comment it plans.
 
-    With ``issue_links = "none"`` it is the marker alone: no names, no links.
+    A new issue credits who raised it and everyone who added to it (#307). An update
+    credits who added the new information, ``others``. With ``issue_links = "none"``
+    it is the marker alone: no names, no links.
     """
     lines: list[str] = []
     if issue_links == "permalinks":
         who = clean_name(poster) if poster else ""
-        looped = [n for n in (clean_name(o) for o in others) if n and n != who][:MAX_NAMES]
-        if who and looped:
-            lines.append(f"Raised in Slack by {who}, with {_joined(looped)} looped in.")
-        elif who:
-            lines.append(f"Raised in Slack by {who}.")
-        elif looped:
-            lines.append(f"Raised in Slack, with {_joined(looped)} looped in.")
+        if update:
+            added = _credited(others)
+            lines.append(
+                f"Updated from Slack by {_joined(added)}." if added else "Updated from Slack."
+            )
         else:
-            lines.append("Raised in Slack.")
+            helped = _credited(others, skip=who)
+            if who and helped:
+                lines.append(
+                    f"Raised in Slack by {who}, with contributions from {_joined(helped)}."
+                )
+            elif who:
+                lines.append(f"Raised in Slack by {who}.")
+            elif helped:
+                lines.append(f"Raised in Slack, with contributions from {_joined(helped)}.")
+            else:
+                lines.append("Raised in Slack.")
         links = [link for link in permalinks if _is_permalink(link)]
         if links:
             lines.append("Slack: " + ", ".join(links))

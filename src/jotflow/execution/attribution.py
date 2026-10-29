@@ -1,10 +1,16 @@
-"""Who raised an approved proposal, and where in Slack, for its issue footer (#31).
+"""Who raised an approved proposal, who added to it, and where in Slack, for its
+issue footer (#31, #307).
 
 The execution packet never carries thread text. The footer needs only the
 thread root's author (as a user id, from the same lookup approval uses), the
-participants' display names, and the workspace URL to build permalinks. Each
-lookup may fail or be slow; then that part of the footer is left out, and the
-write still goes ahead.
+authors of the messages the idea is drawn from, their display names, and the
+workspace URL to build permalinks. Each lookup may fail or be slow; then that
+part of the footer is left out, and the write still goes ahead.
+
+A new issue credits everyone who contributed: the authors of its cited sources and
+of every other message linked to its topic in the same thread. An update credits
+only who added the new information, the authors of its own sources. Every author is
+one Slack confirms wrote the message, never the agent's participants list.
 """
 
 from __future__ import annotations
@@ -18,11 +24,14 @@ import anyio
 from jotflow.execution.writes import footer, permalink
 from jotflow.models import MessageRef, ProposalRecord
 from jotflow.policy import Policy
+from jotflow.store.base import Store
 
 log = logging.getLogger("jotflow.execution")
 
 # The whole people phase of an execution get_work, inside the 30 s request timeout.
 ATTRIBUTION_SECONDS = 10.0
+# The most messages whose authors are looked up for one footer, one Slack call each.
+MAX_CREDITED_MESSAGES = 30
 
 
 class Attribution(Protocol):
@@ -33,24 +42,53 @@ class Attribution(Protocol):
     async def workspace_url(self) -> str | None: ...
 
 
-async def _source_authors(attribution: Attribution, record: ProposalRecord) -> list[str]:
-    """Who wrote each cited source, in order, skipping any Slack cannot confirm."""
+async def _authors_of(attribution: Attribution, refs: Sequence[MessageRef]) -> list[str]:
+    """Who wrote each message, in order, skipping any Slack cannot confirm."""
     found: list[str] = []
-    for source in record.proposal.sources:
+    for ref in refs[:MAX_CREDITED_MESSAGES]:
         try:
-            authors = await attribution.authors([source])
+            authors = await attribution.authors([ref])
         except LookupError:
             continue  # deleted or never there: nobody is named for it
         found += sorted(a for a in authors if a not in found)
     return found
 
 
+async def _contributed(record: ProposalRecord, store: Store | None) -> list[MessageRef]:
+    """The messages a new issue credits: its sources, then the other messages linked to
+    its topic in the same thread, in time order. Never another thread's."""
+    refs = list(record.proposal.sources)
+    if store is None:
+        return refs
+    topics = {record.proposal.topic_id} if record.proposal.topic_id else set()
+    for source in record.proposal.sources:
+        link = await store.get_message(source.channel_id, source.ts)
+        if link is not None and link.topic_id is not None:
+            topics.add(link.topic_id)
+    seen = {ref.ts for ref in refs}
+    extra: list[MessageRef] = []
+    for topic_id in sorted(t for t in topics if t):
+        found = await store.get_topic(topic_id)
+        if found is None or found.topic.channel_id != record.channel_id:
+            continue
+        for ref in found.topic.messages:
+            in_thread = (ref.thread_ts or ref.ts) == record.thread_ts
+            if in_thread and ref.channel_id == record.channel_id and ref.ts not in seen:
+                seen.add(ref.ts)
+                extra.append(ref)
+    return refs + sorted(extra, key=lambda ref: float(ref.ts))
+
+
 async def execution_footer(
-    record: ProposalRecord, policy: Policy, attribution: Attribution | None
+    record: ProposalRecord,
+    policy: Policy,
+    attribution: Attribution | None,
+    store: Store | None = None,
 ) -> str:
     """The footer for ``record``'s writes. Never raises for a failed Slack lookup."""
     if policy.issue_links == "none":
         return footer(record.id, poster=None, issue_links="none")
+    update = record.proposal.kind == "update_issue"
     poster: str | None = None
     others: list[str] = []
     links: list[str] = []
@@ -58,14 +96,20 @@ async def execution_footer(
     if attribution is not None:
         with anyio.move_on_after(ATTRIBUTION_SECONDS):
             try:
-                root = MessageRef(channel_id=record.channel_id, ts=record.thread_ts)
-                authors = await attribution.authors([root])
-                poster_id = next(iter(authors), None)  # a bot's root has no person
-                if poster_id is not None:
-                    poster = await attribution.name(poster_id)
-                # "Looped in" names only people Slack confirms wrote a cited source,
-                # never the agent-written participants list (#156 review).
-                for user in await _source_authors(attribution, record):
+                poster_id: str | None = None
+                if not update:
+                    root = MessageRef(channel_id=record.channel_id, ts=record.thread_ts)
+                    authors = await attribution.authors([root])
+                    poster_id = next(iter(authors), None)  # a bot's root has no person
+                    if poster_id is not None:
+                        poster = await attribution.name(poster_id)
+                # Only people Slack confirms wrote a credited message, never the
+                # agent-written participants list (#156 review). An update credits its
+                # own sources: who added the new information (#307).
+                refs = (
+                    list(record.proposal.sources) if update else await _contributed(record, store)
+                )
+                for user in await _authors_of(attribution, refs):
                     if user != poster_id and (name := await attribution.name(user)):
                         others.append(name)
                 base = await attribution.workspace_url()
@@ -78,4 +122,4 @@ async def execution_footer(
             links.append(source.permalink)
         elif base:
             links.append(permalink(base, source.channel_id, source.ts, source.thread_ts))
-    return footer(record.id, poster=poster, others=others, permalinks=links)
+    return footer(record.id, poster=poster, others=others, permalinks=links, update=update)
