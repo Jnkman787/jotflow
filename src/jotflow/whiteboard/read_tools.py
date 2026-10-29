@@ -45,9 +45,11 @@ from jotflow.execution.writes import plan as plan_writes
 from jotflow.models import (
     RUN_KINDS,
     IssueDetails,
+    IssueProposal,
     MessageRef,
     PendingDraft,
     Proposal,
+    ProposalRecord,
     ProposalState,
     RunKind,
     RunStatus,
@@ -57,7 +59,7 @@ from jotflow.models import (
 )
 from jotflow.orchestrator.help import help_text
 from jotflow.orchestrator.topics import list_topics as build_topic_list
-from jotflow.policy import IssueLinks, Policy, PolicyViolation, UnknownChannelError
+from jotflow.policy import IssueLinks, IssuesPolicy, Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import Store, utc_now
 from jotflow.store.hashing import content_hash
@@ -405,6 +407,14 @@ class IssueUnavailable(Exception):
     """GitHub couldn't be asked right now. Never means the issue doesn't exist."""
 
 
+class LabelChecker(Protocol):
+    """Asks whether a repo has a label, through the drafting runner (#306 follow-up)."""
+
+    async def label_exists(self, owner: str, name: str, label: str) -> bool:
+        """True or False, or raises when GitHub couldn't be asked: never a guess."""
+        ...
+
+
 class IssueReader(Protocol):
     """Reads one issue through the drafting runner's read token (#273)."""
 
@@ -435,6 +445,7 @@ class NoWorkSource:
 Clock = Callable[[], datetime]
 
 operator_audit = logging.getLogger("jotflow.operator.audit")
+log = logging.getLogger("jotflow.read_tools")
 
 
 def read_tools(
@@ -447,6 +458,7 @@ def read_tools(
     repos: RepoCatalog | None = None,
     issues: Callable[[], IssueReader | None] = lambda: None,
     boards_off: Collection[str] = frozenset(),
+    labels: Callable[[], LabelChecker | None] = lambda: None,
 ) -> tuple[ToolSpec, ...]:
     """The read tools, bound to their dependencies. Built once at startup.
 
@@ -716,6 +728,40 @@ def read_tools(
             )
         return people
 
+    async def _issues_for(record: ProposalRecord) -> IssuesPolicy:
+        """What [issues] adds to this write: what the approval locked (#306 follow-up),
+        less its label if GitHub said the repo doesn't have it. Only a definite no
+        drops it; a busy or missing runner keeps it, so the write stops as before."""
+        added = IssuesPolicy.from_snapshot(record.approved_issues, policy.issues)
+        draft = record.proposal
+        label = added.label
+        if label is None or not isinstance(draft, IssueProposal):
+            return added
+        if label.casefold() in {own.casefold() for own in draft.labels}:
+            return added  # the draft's own, checked like the rest
+        if record.skipped_label is not None and record.skipped_label.casefold() == label.casefold():
+            return added.model_copy(update={"label": None})  # decided on an earlier try
+        checker = labels()
+        if checker is None:
+            return added
+        owner, _, name = draft.repo.partition("/")
+        try:
+            exists = await checker.label_exists(owner, name, label)
+        except Exception as exc:
+            log.warning(
+                "proposal %s: couldn't check the [issues] label (%s); it stays in the write",
+                record.id,
+                type(exc).__name__,
+            )
+            return added
+        if exists:
+            return added
+        await store.set_skipped_label(record.id, label)
+        log.warning(
+            "proposal %s: %s has no [issues] label; filing without it", record.id, draft.repo
+        )
+        return added.model_copy(update={"label": None})
+
     async def _execution(grant: Grant, run_proposal: str | None) -> ExecutionWork:
         if run_proposal != grant.proposal_id or grant.proposal_id is None:
             raise ToolError(f"run {grant.run_id} does not match its token")
@@ -731,7 +777,8 @@ def read_tools(
             raise ToolError(f"proposal {record.id} no longer matches what was approved")
         # JotFlow decides exactly what is written; the agent checks, then copies.
         tail = await execution_footer(record, policy, attribution, store)
-        checks, writes = plan_writes(record, tail, policy.issues)
+        added = await _issues_for(record)
+        checks, writes = plan_writes(record, tail, added)
         return ExecutionWork(
             run_id=grant.run_id,
             proposal_id=record.id,

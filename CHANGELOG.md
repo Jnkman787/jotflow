@@ -37,6 +37,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 ### Fixed
 
 - **A bot mention is no longer only a question (#329).** "@JotFlow add the date range to the ticket" in a filed issue's thread was answered as a question, and the request was dropped, even with questions off. Now a mention is read by drafting with the rest of the thread, so a request becomes a follow-up card to approve, and the question run still answers what it asks without saying a change is done. With questions off or limited, the private note says the message is still read. `ask:` is unchanged: it's only ever a question. A question run's answer that says it changed, filed or assigned something is refused, since it can't. Every mention now also starts the thread's drafting wait, so a channel that mostly asks the bot questions sees more drafting runs, at most one per thread per quiet window.
+- **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
 
 ### Security
 
@@ -110,6 +111,8 @@ A fix release. Upgrade by re-running setup with this version and replacing both 
   - `JOTFLOW_RUNNER_ALLOW_PUBLIC` and `JOTFLOW_MCP_ALLOW_PUBLIC` opt in to public addresses.
 
 ### Fixed
+
+- **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
 
 - **Setup and `jotflow check` catch a model key the runner never passes (#239).** An agent env file kept from before setup ran could set `ANTHROPIC_API_KEY` without listing it in `JOTFLOW_AGENT_ENV_ALLOW`, so every run failed to sign in, and `check` still passed. Setup now adds the key to that line and says so. `check` fails, naming the file and the line to set. A Claude account login with no key is left alone.
 - **The "Agent model" prompt shows its default,** as `[default]` or the model already set, like setup's other prompts (#239).

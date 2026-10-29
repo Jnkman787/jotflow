@@ -481,6 +481,19 @@ CREATE TABLE summary_topics (
 """,
         ),
     ),
+    # The [issues] settings a card showed and an approval locked, and a missing
+    # [issues] label left off the write (#306 follow-up). Settings as JSON, never text.
+    Migration(
+        21,
+        (
+            "ALTER TABLE proposals ADD COLUMN card_issues TEXT"
+            " /* JSON: the [issues] label and title_prefix the posted card showed */",
+            "ALTER TABLE proposals ADD COLUMN approved_issues TEXT"
+            " /* JSON: the [issues] settings in force when it was approved */",
+            "ALTER TABLE proposals ADD COLUMN skipped_label TEXT"
+            " /* the [issues] label left off because GitHub said it doesn't exist */",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version
