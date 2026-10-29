@@ -33,6 +33,7 @@ else the person typed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -114,6 +115,7 @@ TAKEN = (
     "your-github-login to prove it, and the link moves to you."
 )
 CHECKING = "Checking GitHub…"
+FAILED = "JotFlow couldn't finish this. Try Add me again in a moment."
 
 
 def _no_account(login: str) -> str:
@@ -327,6 +329,9 @@ class AddMe:
         self._monotonic = monotonic
         self._new_id = new_id
         self._recent: dict[str, deque[float]] = {}
+        # One filed-issue request at a time per person, so two clicks can't both pass
+        # the cap and the one-waiting-request check (CodeRabbit).
+        self._asking: dict[str, asyncio.Lock] = {}
 
     # The buttons
 
@@ -406,6 +411,10 @@ class AddMe:
         except Refused as refused:
             log.info("add me: the dialog was refused for user %s", submitted.user_id)
             text = str(refused)
+        except Exception:
+            # Never left on "Checking GitHub…": the dialog always gets an answer.
+            log.exception("add me: the dialog failed for user %s", submitted.user_id)
+            text = FAILED
         await self._slack.update_modal(submitted.view_id, result_modal(text))
         return text
 
@@ -535,6 +544,18 @@ class AddMe:
     ) -> tuple[str, str]:
         """Make the update adding ``user``'s own login, and file it at once only when
         their link is trusted and matches GitHub, and they may approve here."""
+        async with self._asking.setdefault(user, asyncio.Lock()):
+            return await self._self_add_locked(user, record, link, entered=entered, found=found)
+
+    async def _self_add_locked(
+        self,
+        user: str,
+        record: ProposalRecord,
+        link: IdentityLink,
+        *,
+        entered: bool,
+        found: Assignable | None,
+    ) -> tuple[str, str]:
         repo, number = self._issue(record)
         label = self._label(record)
         await self._check_may_ask(user, record)

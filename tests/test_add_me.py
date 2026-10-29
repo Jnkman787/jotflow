@@ -716,6 +716,35 @@ async def test_the_filed_dialog_rechecks_the_cap_before_github() -> None:
     assert rig.checks.calls == []
 
 
+async def test_two_clicks_at_once_make_one_request() -> None:
+    import asyncio
+
+    rig = Rig(approvers=[CAROL])
+    await rig.filed()
+    await rig.store.link_identity(ALEX, "octo-alex")
+    outcomes = await asyncio.gather(
+        rig.add_me.on_filed(filed_click()), rig.add_me.on_filed(filed_click())
+    )
+    assert sorted(outcomes) == ["carded", "refused"]
+    assert len(await rig.self_adds()) == 1
+
+
+async def test_an_unexpected_failure_still_answers_the_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rig = Rig()
+    await rig.card()
+    checked = await rig.add_me.check_submitted(submission("octo-alex", CARD))
+    assert isinstance(checked, Submitted)
+
+    async def broken(submitted: Any) -> str:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(rig.add_me, "_finish", broken)
+    assert await rig.add_me.finish_submitted(checked) == m.FAILED
+    assert rig.slack.shown() == m.FAILED
+
+
 # --- the reply's blocks -------------------------------------------------------------
 
 
