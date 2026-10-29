@@ -48,7 +48,10 @@ LATE_LIMIT = timedelta(hours=12)
 MAX_ITEMS = 20
 TICK_SECONDS = 60.0
 ACTION_NOT_THIS_WEEK = "jotflow_summary_defer"
+# Each link button has its own action id, since Slack refuses repeats in one block;
+# one pattern answers them all.
 ACTION_LINK = "jotflow_summary_link"
+ACTION_LINK_PATTERN = re.compile(r"^jotflow_summary_link:[a-z_]+$")
 # Slack errors that mean the bot can't post in the channel: skip the week quietly.
 GONE = frozenset({"not_in_channel", "channel_not_found", "is_archived", "missing_scope"})
 
@@ -306,7 +309,8 @@ def _plain(text: str) -> dict[str, Any]:
 
 
 def _link(label: str, url: str) -> dict[str, Any]:
-    return {"type": "button", "text": _plain(label), "url": url, "action_id": ACTION_LINK}
+    action = f"{ACTION_LINK}:{label.lower().replace(' ', '_')}"
+    return {"type": "button", "text": _plain(label), "url": url, "action_id": action}
 
 
 class WeeklySummaries:
@@ -535,5 +539,5 @@ def register_summary(
         except Exception:
             log.exception("Not this week failed")
 
-    app.action(ACTION_LINK)(link)
+    app.action(ACTION_LINK_PATTERN)(link)
     app.action(ACTION_NOT_THIS_WEEK)(not_this_week)

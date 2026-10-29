@@ -123,6 +123,10 @@ class Slack:
     async def post(self, channel_id: str, text: str, blocks: list[dict[str, Any]]) -> str:
         if self.error:
             raise _SlackError(self.error)
+        for block in blocks:  # Slack refuses a repeated action_id within one block
+            ids = [e.get("action_id") for e in block.get("elements", []) if "action_id" in e]
+            if len(ids) != len(set(ids)):
+                raise _SlackError("invalid_blocks")
         self.posts.append((channel_id, text, blocks))
         return f"1793000000.{len(self.posts):06d}"
 
@@ -408,3 +412,12 @@ async def test_a_filed_idea_whose_messages_were_all_deleted_is_left_out_too() ->
     slack = Slack()
     await summaries(store, slack, SLOT, People(deleted={"1790000001.000100"})).tick()
     assert "Filed and deleted" not in texts(slack.posts[0][2])
+
+
+def test_every_link_button_has_its_own_action_id_and_one_pattern_answers_them() -> None:
+    from jotflow.orchestrator.summary import ACTION_LINK_PATTERN, _link
+
+    ids = [_link(label, "https://x")["action_id"] for label in ("Thread", "Issue", "Open card")]
+    assert len(set(ids)) == 3
+    assert all(ACTION_LINK_PATTERN.match(i) for i in ids)
+    assert not ACTION_LINK_PATTERN.match(ACTION_NOT_THIS_WEEK)

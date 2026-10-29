@@ -124,7 +124,7 @@ A paused channel gets no summary. Its slot is skipped, not saved for later, and 
   - injected titles and names staying plain text
   - who may click Not this week
 - [ ] usage.md, architecture.md, the example config, the CHANGELOG (the follow-up for discussion routing is #318)
-- [ ] CodeRabbit once, `make check`, mark ready
+- [x] CodeRabbit once (one finding, fixed: each link button has its own action id), `make check`, mark ready
 
 ## Validation
 
