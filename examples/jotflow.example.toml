@@ -150,6 +150,14 @@ description = "The public REST API and its background jobs"
 # No labels line: any label that exists on example-org/api.
 
 [channels.G0EXAMPLE2]
+# Optional: the team's own guide to which repo, and which board, a request belongs
+# on (#317). Plain text, up to 8,000 characters, for the whole channel. The
+# drafting agent chooses by it, but only among the repos and boards listed here,
+# and it never overrides JotFlow's own rules. Change it by a reviewed edit to this
+# file, as for any policy.
+triage_guide = """
+Process changes and onboarding go to handbook, even when they mention a service.
+A request for planned work goes on the roadmap board."""
 
 [[channels.G0EXAMPLE2.repos]]
 repo = "example-org/handbook"

@@ -757,9 +757,8 @@ def _ask_policy(console: Console, existing: Policy | None, detected: str | None 
             if console.confirm(f"  Keep this channel's current repos ({nicknames})?"):
                 channels[channel_id] = previous
             else:
-                channels[channel_id] = ChannelPolicy(
-                    repos=_ask_channel_repos(console),
-                    debounce_seconds=previous.debounce_seconds,
+                channels[channel_id] = _with_new_repos(
+                    console, previous, _ask_channel_repos(console)
                 )
         else:
             channels[channel_id] = ChannelPolicy(repos=_ask_channel_repos(console))
@@ -775,6 +774,32 @@ def _ask_policy(console: Console, existing: Policy | None, detected: str | None 
     data["agent"] = {**(existing.agent.model_dump() if existing else {}), "preset": preset}
     data["channels"] = {cid: channel.model_dump() for cid, channel in channels.items()}
     return Policy.model_validate(data)
+
+
+def _with_new_repos(
+    console: Console, previous: ChannelPolicy, repos: tuple[RepoPolicy, ...]
+) -> ChannelPolicy:
+    """``previous`` with ``repos`` in place of its own, keeping its other settings,
+    such as its scopes, boards and triage guide (#317).
+
+    If they no longer fit, such as a board nickname that a new repo now uses,
+    only the debounce window and the triage guide are kept, and setup says so.
+    """
+    kept = previous.model_dump()
+    kept["repos"] = [repo.model_dump() for repo in repos]
+    try:
+        return ChannelPolicy.model_validate(kept)
+    except ValidationError:
+        console.say(
+            "  This channel's scopes, boards and other settings don't fit the new repos, "
+            "so only its debounce window and triage guide were kept. Add the rest back "
+            "in jotflow.toml."
+        )
+        return ChannelPolicy(
+            repos=repos,
+            debounce_seconds=previous.debounce_seconds,
+            triage_guide=previous.triage_guide,
+        )
 
 
 def _ask_preset(console: Console, existing: Policy | None, detected: str | None) -> str | None:

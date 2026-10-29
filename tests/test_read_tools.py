@@ -718,3 +718,28 @@ async def test_without_either_setting_the_brief_is_as_before(
     assert work.conversation is not None and work.conversation.channel is not None
     [repo] = work.conversation.channel.repos
     assert repo.conventions is None and repo.title_pattern is None
+
+
+async def test_a_channels_triage_guide_reaches_the_brief(store: MemoryStore, clock: Clock) -> None:
+    # #317: the team's guide to repo and board choice is policy, beside the repos.
+    policy = parse_policy(
+        f"""
+[channels.{CH}]
+triage_guide = "Billing emails go to api, even when they show on the dashboard."
+
+[[channels.{CH}.repos]]
+repo = "acme-co/web"
+nickname = "web"
+description = "The customer-facing website"
+"""
+    )
+    by_name = checked_registry(read_tools(store, policy, FakeSource(), clock=clock))
+    work: Work = await call(by_name["get_work"], await running(store))
+    assert work.conversation is not None and work.conversation.channel is not None
+    assert work.conversation.channel.triage_guide == (
+        "Billing emails go to api, even when they show on the dashboard."
+    )
+    fresh = MemoryStore(clock=clock)
+    plain: Work = await call(tools(fresh, clock)["get_work"], await running(fresh))
+    assert plain.conversation is not None and plain.conversation.channel is not None
+    assert plain.conversation.channel.triage_guide is None

@@ -397,3 +397,17 @@ def test_the_example_policy_has_a_board() -> None:
 
     example = load_policy(Path("examples/jotflow.example.toml"))
     assert any(c.boards for c in example.channels.values())
+
+
+def test_check_notes_each_channels_triage_guide_and_its_size() -> None:
+    # #317, beside the board note: the guide drafting chooses boards by.
+    from jotflow.commands.check import triage_notes
+
+    assert triage_notes(POLICY) == []
+    guided = parse_policy(
+        TOML.replace(f"[channels.{CH}]\n", f'[channels.{CH}]\ntriage_guide = "{"x" * 1240}"\n', 1)
+    )
+    assert triage_notes(guided) == [
+        f"{CH} has a 1,240 of 8,000 character triage guide, which drafting uses to choose "
+        "among its listed repos and boards"
+    ]

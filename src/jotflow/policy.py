@@ -140,6 +140,21 @@ class InvalidLabelError(PolicyViolation):
 
 # A team's conventions text for one repo, in characters (#216).
 MAX_CONVENTIONS = 2000
+# A channel's triage guide, in characters (#317).
+MAX_TRIAGE_GUIDE = 8000
+
+
+def _plain_policy_text(name: str, value: str | None, empty: str) -> str | None:
+    """Admin-written text the agent follows: never empty, and every line free of
+    invisible or bidi characters, so a reviewer of jotflow.toml sees all of it."""
+    if value is None:
+        return None
+    if not value.strip():
+        raise ValueError(f"{name} is empty; remove the line, or {empty}")
+    for line in value.splitlines():
+        if line.strip() and (problem := unsafe_text_problem(line.strip())):
+            raise ValueError(f"{name} {problem}")
+    return value.strip()
 
 
 class RepoPolicy(_Strict):
@@ -204,14 +219,7 @@ class RepoPolicy(_Strict):
     @field_validator("conventions")
     @classmethod
     def _plain_conventions(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value.strip():
-            raise ValueError("conventions is empty; remove the line, or write the rules")
-        for line in value.splitlines():
-            if line.strip() and (problem := unsafe_text_problem(line.strip())):
-                raise ValueError(f"conventions {problem}")
-        return value.strip()
+        return _plain_policy_text("conventions", value, "write the rules")
 
     @field_validator("title_pattern")
     @classmethod
@@ -458,12 +466,26 @@ class ChannelPolicy(_Strict):
     debounce_seconds: int | None = Field(
         default=None, ge=1, le=86_400, description="Overrides the top-level debounce window"
     )
+    triage_guide: str | None = Field(
+        default=None,
+        max_length=MAX_TRIAGE_GUIDE,
+        description=(
+            "Optional. The team's guide to which repo, and which board, a request belongs on, "
+            "in plain text. The drafting agent chooses by it, within the listed repos and "
+            "boards (#317)"
+        ),
+    )
     help: ChannelHelp = Field(
         default_factory=ChannelHelp, description="Overrides the top-level [help] settings"
     )
     questions: ChannelQuestions = Field(
         default_factory=ChannelQuestions, description="Overrides the top-level [questions]"
     )
+
+    @field_validator("triage_guide")
+    @classmethod
+    def _plain_triage_guide(cls, value: str | None) -> str | None:
+        return _plain_policy_text("triage_guide", value, "write the guide")
 
     @model_validator(mode="after")
     def _unique_repos(self) -> ChannelPolicy:

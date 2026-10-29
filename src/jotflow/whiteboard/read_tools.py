@@ -280,6 +280,13 @@ class ChannelBrief(BaseModel):
         default_factory=list,
         description="Boards a new issue may be added to after approval; propose only these",
     )
+    triage_guide: str | None = Field(
+        default=None,
+        description=(
+            "The team's guide to which repo and board a request belongs on, from its policy "
+            "file. Choose by it, among the listed repos and boards only (#317)"
+        ),
+    )
 
 
 class Person(BaseModel):
@@ -632,6 +639,7 @@ def read_tools(
                 for b in policy.channel(channel_id).boards
                 if b.board not in boards_off  # the write token can't update it (#309)
             ],
+            triage_guide=policy.channel(channel_id).triage_guide,
         )
 
     async def _people(thread: WorkThread) -> list[Person]:

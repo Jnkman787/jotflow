@@ -100,6 +100,9 @@ def render_policy(policy: Policy) -> str:
         lines += ["", f"[channels.{channel_id}]"]
         if channel.debounce_seconds is not None:
             lines.append(f"debounce_seconds = {channel.debounce_seconds}")
+        if channel.triage_guide is not None:
+            # The team's guide to choosing a repo and boards (#317), as written.
+            lines.append(f"triage_guide = {toml_string(channel.triage_guide)}")
         for repo in channel.repos:
             lines += [
                 "",
