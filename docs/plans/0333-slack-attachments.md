@@ -4,7 +4,7 @@
 
 - Issue: #333
 - Design: agreed with security on the issue, 2026-10-29, with five conditions
-- Status: in progress by the architect
+- Status: built by the architect, 2026-10-29; in review
 - Next safe action: review the PR against the design and conditions below
 
 ## Objective and done-when
@@ -49,11 +49,11 @@ The design is on #333. In short:
 
 ## Progress checklist
 
-- [ ] Policy setting and writer
-- [ ] File reader with the strict fetch and the secret scan
-- [ ] Packet files
-- [ ] propose_issue snapshot and refusals
-- [ ] Card lines
-- [ ] Execution check and the Attachments section, and the thread notice
-- [ ] Cleared drafts
-- [ ] Docs, threat model, CHANGELOG, and a replay fixture
+- [x] Policy setting and writer
+- [x] File reader with the strict fetch and the secret scan
+- [x] Packet files
+- [x] propose_issue snapshot and refusals
+- [x] Card lines
+- [x] Execution check and the Attachments section, and the thread notice
+- [x] Cleared drafts
+- [x] Docs, threat model, CHANGELOG, and a replay fixture
