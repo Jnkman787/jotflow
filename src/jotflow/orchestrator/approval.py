@@ -43,14 +43,15 @@ from jotflow.orchestrator.people import Person, SlackPeople
 from jotflow.policy import Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import content_hash
-from jotflow.store.base import MAX_AUTHOR_LOOKUPS as STORE_AUTHOR_LOOKUPS
 from jotflow.store.base import (
+    DUPLICATE_NOT_LIKELY,
     ContentChangedError,
     DraftClearedError,
     DuplicateRefusedError,
     Store,
     TransitionError,
 )
+from jotflow.store.base import MAX_AUTHOR_LOOKUPS as STORE_AUTHOR_LOOKUPS
 from jotflow.whiteboard.tools import ToolError
 from jotflow.whiteboard.write_tools import clean_question
 
@@ -511,6 +512,8 @@ class ApprovalHandler:
         except DraftClearedError:
             raise Refused(DISCARDED) from None
         except DuplicateRefusedError as refused:
+            if str(refused) == DUPLICATE_NOT_LIKELY:
+                await self._show(record)  # an old card's button: redraw it without one
             raise Refused(str(refused)) from None
         log.info("proposal %s marked a duplicate by user %s", record.id, click.user_id)
         await self._show(marked)

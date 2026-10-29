@@ -135,7 +135,12 @@ class DuplicateRefusedError(ConflictError):
 DUPLICATE_NOT_PENDING = "This proposal is no longer waiting, so it can't be marked the same."
 DUPLICATE_NOT_NEW = "Only a proposed new issue can be marked the same as an existing one."
 DUPLICATE_NO_CANDIDATE = "That related issue isn't on this proposal any more."
-DUPLICATE_NOT_LIKELY = "The agent didn't mark that issue as a likely duplicate."
+# Mostly a card drawn before #337, whose Same as was for any related issue (#338 review).
+DUPLICATE_NOT_LIKELY = (
+    "This Same as button is from before an upgrade: the agent didn't mark that issue as "
+    "maybe the same request, so the card is redrawn without it. If it is the same request, "
+    "say so with Request Changes, or Discard the card."
+)
 DUPLICATE_TOPIC_LINKED = (
     "This conversation is already linked to an issue, so it can't be marked the same as another."
 )
