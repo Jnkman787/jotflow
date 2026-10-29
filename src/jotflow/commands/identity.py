@@ -203,7 +203,7 @@ async def load_links(
     counts = LinkCounts()
     for number, plan in enumerate(plans, start=1):
         try:
-            await _apply(store, notifier, plan, counts, replace=replace)
+            await _apply(store, notifier, plan, counts, number, replace=replace)
         except LinkRefused:
             raise
         except Exception as exc:
@@ -218,7 +218,13 @@ async def load_links(
 
 
 async def _apply(
-    store: SqliteStore, notifier: SlackNote, plan: _Plan, counts: LinkCounts, *, replace: bool
+    store: SqliteStore,
+    notifier: SlackNote,
+    plan: _Plan,
+    counts: LinkCounts,
+    number: int,
+    *,
+    replace: bool,
 ) -> None:
     """One line's change, in one store transaction, then its private notes at once."""
     if plan.action == "unchanged":
@@ -232,8 +238,8 @@ async def _apply(
         done = await store.admin_link(plan.user, plan.login, plan.account_id, replace=replace)
     except ConflictError:
         raise LinkRefused(
-            f"a login was linked by someone else meanwhile, after {counts.linked} were "
-            "linked; run it again to finish"
+            f"stopped at link {number}, member {plan.user}: their link or that login changed "
+            f"while this ran, after {counts.linked} were linked; run it again to finish"
         ) from None
     counts.linked += 1
     notes: list[tuple[str, str]] = []
