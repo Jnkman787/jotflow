@@ -534,6 +534,44 @@ async def test_an_empty_question_after_cleaning_is_refused(tools: WriteTools) ->
         await tools.ask_channel(DRAFT, AskChannelArgs(text="<!here> @channel"))
 
 
+# point_to_help (#336)
+
+
+async def test_a_pointer_is_jotflows_own_text_once_a_thread(
+    tools: WriteTools, poster: Poster, clock: Clock
+) -> None:
+    from jotflow.whiteboard.write_tools import POINT_TO_HELP, PointToHelpArgs
+
+    first: Any = await tools.point_to_help(DRAFT, PointToHelpArgs(ts=ROOT))
+    assert poster.posts == [(CH, ROOT, POINT_TO_HELP)]
+    assert first.posted_ts == "1792310999.000001"
+    assert "ask:" in POINT_TO_HELP and "/jotflow help" in POINT_TO_HELP
+    # Another message, another run, a day later: the thread already has its pointer.
+    clock.tick(86400)
+    again: Any = await tools.point_to_help(DRAFT_2, PointToHelpArgs(ts=REPLY))
+    assert again.posted_ts is None and len(poster.posts) == 1
+
+
+async def test_a_pointer_needs_a_message_from_the_packet(tools: WriteTools) -> None:
+    from jotflow.whiteboard.write_tools import PointToHelpArgs
+
+    with pytest.raises(ToolError, match="not in this run's packet"):
+        await tools.point_to_help(DRAFT, PointToHelpArgs(ts="1792399999.000001"))
+
+
+async def test_a_pointer_slack_refused_can_be_tried_again(
+    tools: WriteTools, poster: Poster
+) -> None:
+    from jotflow.whiteboard.write_tools import PointToHelpArgs
+
+    poster.error = PostError("channel_not_found")
+    with pytest.raises(ToolError, match="Slack did not post the pointer"):
+        await tools.point_to_help(DRAFT, PointToHelpArgs(ts=ROOT))
+    poster.error = None
+    done: Any = await tools.point_to_help(DRAFT, PointToHelpArgs(ts=ROOT))
+    assert done.posted_ts is not None
+
+
 async def test_questions_are_rate_limited_per_thread_across_runs(
     tools: WriteTools, clock: Clock
 ) -> None:
@@ -683,6 +721,7 @@ def test_the_write_tools_register_with_their_kinds(store: MemoryStore) -> None:
         "revise_proposal": {RunKind.DRAFTING},
         "link_message": {RunKind.DRAFTING},
         "ask_channel": {RunKind.DRAFTING},
+        "point_to_help": {RunKind.DRAFTING},
         "answer": {RunKind.QUESTION},
         "record_result": {RunKind.EXECUTION},
     }
@@ -766,6 +805,7 @@ async def test_over_the_wire_a_refusal_is_a_tool_result_and_kinds_list_their_too
         "revise_proposal",
         "link_message",
         "ask_channel",
+        "point_to_help",
     }
     assert [t["name"] for t in exec_listed.json()["result"]["tools"]] == ["record_result"]
     result = refused.json()["result"]

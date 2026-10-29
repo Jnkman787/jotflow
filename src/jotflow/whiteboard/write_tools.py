@@ -28,7 +28,7 @@ import secrets
 import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, Protocol, TypeVar
 from urllib.parse import unquote
 
@@ -114,6 +114,15 @@ _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 _SPECIAL_MENTION = re.compile(r"<![^>]*>")
 _BARE_BROADCAST = re.compile(r"(?<![\w@])@(?:channel|here|everyone)\b", re.IGNORECASE)
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+# The reply to a message about JotFlow itself (#336): JotFlow's own words, never the agent's.
+POINT_TO_HELP = (
+    "This sounds like it's about JotFlow itself, so it isn't drafted as an issue. "
+    "To ask JotFlow something, start a message with ask: or mention it. "
+    "/jotflow help shows what it can do."
+)
+_EVER = datetime(2000, 1, 1, tzinfo=UTC)
 
 
 class ThreadPoster(Protocol):
@@ -280,6 +289,12 @@ class AskChannelArgs(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_QUESTION_LENGTH)
 
 
+class PointToHelpArgs(BaseModel):
+    ts: str = Field(
+        description="The message about JotFlow itself, as get_work served it, such as feedback"
+    )
+
+
 class AnswerArgs(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_ANSWER_LENGTH)
 
@@ -318,6 +333,12 @@ class LinkResult(BaseModel):
 
 class AskResult(BaseModel):
     posted_ts: str
+
+
+class PointResult(BaseModel):
+    posted_ts: str | None = Field(
+        default=None, description="The pointer JotFlow posted; none if the thread already had one"
+    )
 
 
 class AnswerResult(BaseModel):
@@ -1245,6 +1266,30 @@ class WriteTools:
 
         return await self._once(grant, "ask_channel", args, AskResult, act)
 
+    async def point_to_help(self, grant: Grant, arguments: Any) -> BaseModel:
+        """Point a message about JotFlow itself to ``ask:`` and ``/jotflow help`` (#336).
+
+        The reply is JotFlow's fixed text, never the agent's, posted at most once a thread.
+        """
+        args: PointToHelpArgs = arguments
+        thread = grant.thread_ts
+        if thread is None:  # pragma: no cover - drafting grants always name one
+            raise ToolError("this run has no thread to reply in")
+
+        async def act() -> PointResult:
+            await self._packet_ref(grant, args.ts)
+            if await self._store.count_thread_calls(
+                grant.channel_id, thread, "point_to_help", since=_EVER
+            ):
+                return PointResult()
+            try:
+                posted = await self._poster.post(grant.channel_id, thread, POINT_TO_HELP)
+            except PostError as refused:
+                raise ToolError(f"Slack did not post the pointer ({refused})") from None
+            return PointResult(posted_ts=posted)
+
+        return await self._once(grant, "point_to_help", args, PointResult, act)
+
     async def answer(self, grant: Grant, arguments: Any) -> BaseModel:
         """A question run's one answer, in its thread, as plain text (#57)."""
         args: AnswerArgs = arguments
@@ -1337,6 +1382,11 @@ _DESCRIPTIONS = {
         "Ask one short clarifying question in this run's own Slack thread, when you are "
         "unsure. Broadcast mentions, links and @-mentions are removed. Asked at most twice "
         "per run."
+    ),
+    "point_to_help": (
+        "For a message about JotFlow itself, such as feedback on it or how to use it: "
+        "JotFlow replies in the thread, once, with its own fixed pointer to ask: and "
+        "/jotflow help. You write nothing. Mark the message chatter too."
     ),
     "answer": (
         "Answer the question in this run's own Slack thread, once, in at most 3 short "
@@ -1432,6 +1482,7 @@ def write_tools(
         ("revise_proposal", ReviseProposalArgs, DRAFTING),
         ("link_message", LinkMessageArgs, DRAFTING),
         ("ask_channel", AskChannelArgs, DRAFTING),
+        ("point_to_help", PointToHelpArgs, DRAFTING),
         ("answer", AnswerArgs, ANSWERING),
         ("record_result", RecordResultArgs, EXECUTION),
     )

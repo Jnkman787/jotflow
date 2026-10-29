@@ -37,6 +37,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Fixed
 
+- **A message about JotFlow itself is no longer drafted as an idea (#336).** Feedback about JotFlow, or a question to it by name without `ask:` or a mention, is now chatter. JotFlow replies once in the thread with a fixed pointer to `ask:` and `/jotflow help`.
 - **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
 
 ### Security

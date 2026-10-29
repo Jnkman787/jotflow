@@ -44,6 +44,10 @@ think?", "+1", "not sure about that") is discussion, not a new idea. Link it
 to the topic it is about when that is clear from `topics` or `related`,
 otherwise mark it chatter. Discussion never needs a proposal or a question.
 
+A message about JotFlow itself, such as feedback on it or how to use it, is
+chatter, never a topic, even when it names the bot without `ask:` or a
+mention. Call `point_to_help` on it; JotFlow replies once a thread.
+
 ## 3. Hints
 
 A message's `hint` is the keyword its author typed: `idea` or `bug` suggests

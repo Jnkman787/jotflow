@@ -178,6 +178,17 @@ class AskChannelCall(_Strict):
     arguments: AskChannel
 
 
+class PointToHelp(_Strict):
+    ts: str = Field(min_length=1, max_length=40)
+
+
+class PointToHelpCall(_Strict):
+    """Point a message about JotFlow itself to ask: and /jotflow help (#336)."""
+
+    tool: Literal["point_to_help"]
+    arguments: PointToHelp
+
+
 class Answer(_Strict):
     text: str = Field(min_length=1, max_length=500)
 
@@ -256,6 +267,7 @@ ToolCall = Annotated[
     | ProposeUpdateCall
     | ReviseProposalCall
     | AskChannelCall
+    | PointToHelpCall
     | AnswerCall
     | ListRepoDocsCall
     | ReadRepoDocCall,
@@ -473,6 +485,10 @@ class Expected(_Strict):
     proposals: tuple[ExpectedProposal, ...] = ()
     asks: tuple[str, ...] = Field(
         default=(), description="Thread ts of each ask_channel call, in order"
+    )
+    pointers: tuple[str, ...] = Field(
+        default=(),
+        description="Thread ts of each pointer to ask: and /jotflow help JotFlow posted (#336)",
     )
     questions: tuple[str, ...] = Field(
         default=(),

@@ -52,6 +52,7 @@ def test_the_instructions_are_plain_bounded_ascii() -> None:
         "github_login",
         "never makes someone an assignee",
         "ask_channel",
+        "point_to_help",
         "below 0.6",
         "at most once per topic",
         "from_jotflow",
@@ -202,6 +203,10 @@ DRAFTING_RULES = {
     ),
     "leave a person's placement": "was placed by a person or by `re:`; leave it",
     "chatter never yields a proposal": "Chatter never yields a proposal",
+    "a message about JotFlow is chatter (#336)": (
+        "A message about JotFlow itself, such as feedback on it or how to use it, is chatter"
+    ),
+    "point it to help (#336)": "Call `point_to_help` on it",
     "a tentative idea is still an idea": "is still an idea: start a topic and propose it",
     "discussion is not a new idea": "is discussion, not a new idea",
     "discussion needs no proposal": "Discussion never needs a proposal or a question",
