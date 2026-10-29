@@ -344,3 +344,51 @@ async def test_a_proposal_from_another_thread_is_revised_once_this_thread_feeds_
     # The topic's first message is in this run's thread, so this thread feeds it.
     result: Any = await tools.revise_proposal(SECOND, revise(moved, body="Folded in from here."))
     assert result.revised
+
+
+async def test_a_discarded_failure_drafts_the_follow_up_but_a_plain_failure_waits(
+    tools: WriteTools, store: LiveStore
+) -> None:
+    from jotflow.orchestrator.card_sync import CardSync
+    from jotflow.orchestrator.cards import CardPublisher
+    from tests.test_card_sync import FakeCardPoster, FakePeople
+
+    armed: list[tuple[str, str]] = []
+
+    async def arm(channel_id: str, thread_ts: str) -> None:
+        armed.append((channel_id, thread_ts))
+
+    record = await pending(tools, store)
+    sync = CardSync(
+        store, POLICY, CardPublisher(store, FakeCardPoster()), FakePeople(), arm_thread=arm
+    )
+    await store.mark_follow_up_due(record.id)
+    await store.transition(
+        record.id,
+        ProposalState.APPROVED,
+        approved_by="U0DAVE",
+        expected_hash=content_hash(record.proposal),
+    )
+    await store.transition(record.id, ProposalState.EXECUTING)
+    await store.transition(record.id, ProposalState.FAILED)
+    await sync.sync()
+    assert armed == []  # a retry may still write it
+    await store.clear_draft(record.id)  # Discard
+    await sync.sync()
+    assert armed == [(CH, ROOT)]
+
+
+async def test_a_turned_down_topic_is_marked_for_the_re_draft(
+    tools: WriteTools, store: LiveStore
+) -> None:
+    from jotflow.whiteboard.read_tools import NoArguments, read_tools
+
+    record = await pending(tools, store)
+    specs = {s.name: s for s in read_tools(store, POLICY)}
+    listed: Any = await specs["list_topics"].handler(SECOND, NoArguments())
+    [before] = [t for t in listed.topics if t.id == record.proposal.topic_id]
+    assert before.rejected is None and before.issue_proposed
+    await store.transition(record.id, ProposalState.REJECTED)
+    listed = await specs["list_topics"].handler(SECOND, NoArguments())
+    [after] = [t for t in listed.topics if t.id == record.proposal.topic_id]
+    assert after.rejected is True and after.issue_proposed is None

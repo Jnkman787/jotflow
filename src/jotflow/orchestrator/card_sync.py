@@ -131,7 +131,7 @@ async def card_context(
 
 
 # Settled states after which a lost follow-up is drafted again (#304): written, or
-# turned down. Not failed: a retry may still write it.
+# turned down. A failed one only once discarded, since a retry may still write it.
 _FOLLOW_UP_STATES = frozenset(
     {ProposalState.APPLIED, ProposalState.REJECTED, ProposalState.SUPERSEDED}
 )
@@ -196,7 +196,8 @@ class CardSync:
     async def _follow_up(self, record: ProposalRecord) -> None:
         """A revision lost a race to this proposal settling (#304): once it's filed or
         turned down, draft its thread again, so the follow-up isn't lost."""
-        if record.state not in _FOLLOW_UP_STATES or self._arm is None:
+        discarded = record.state is ProposalState.FAILED and record.draft_cleared_at is not None
+        if (record.state not in _FOLLOW_UP_STATES and not discarded) or self._arm is None:
             return
         try:
             if await self._store.take_follow_up_due(record.id):

@@ -717,6 +717,13 @@ class TopicSummary(BaseModel):
             "revise it with revise_proposal to fold in new messages (#304)"
         ),
     )
+    rejected: Literal[True] | None = Field(
+        default=None,
+        description=(
+            "True when people turned down this topic's latest proposal. Don't propose it "
+            "again unless new messages change the request"
+        ),
+    )
 
 
 class TopicIndex(BaseModel):

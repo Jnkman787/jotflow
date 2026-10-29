@@ -93,6 +93,8 @@ A +1, thanks or discussion that adds nothing is no follow-up.
   once more on top of it. Never propose again for it.
 - The topic has `issue_proposed` but no `pending`: link the message and don't
   propose again.
+- The topic has `rejected`: people turned it down. Propose again only if the
+  new messages change the request.
 - The topic has an issue: `propose_update` on it, by default a `comment`
   summarising what's new. Change the body only when the request itself
   changes, such as its scope or acceptance.

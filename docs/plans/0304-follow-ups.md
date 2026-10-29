@@ -4,7 +4,7 @@
 
 - Issue: #304
 - Draft PR: #310
-- Status: approved by the lead, with the review conditions below. One choice is open with the lead: how reactions treat a revised card
+- Status: ready for review. Approved by the lead, the reviewer and security, with the conditions below built in
 - Last verified: origin/main b3afbf3, 2026-10-29
 - Next safe action: build. Migration 16 is this PR's, as the lead confirmed
 
@@ -14,10 +14,10 @@ A team using JotFlow found that ideas added to a thread while its card waits for
 
 From #304:
 
-- [ ] A reply to a pending proposal's thread revises that proposal's draft, and the card shows the revision (replay fixture).
-- [ ] A reply after the issue is filed yields an update proposal, defaulting to a comment (replay fixture).
-- [ ] A top-level follow-up about a filed issue is linked and yields an update, or a question when unclear (replay fixture).
-- [ ] Approval still locks exactly what the card shows.
+- [x] A reply to a pending proposal's thread revises that proposal's draft, and the card shows the revision (replay fixture).
+- [x] A reply after the issue is filed yields an update proposal, defaulting to a comment (replay fixture).
+- [x] A top-level follow-up about a filed issue is linked and yields an update, or a question when unclear (replay fixture).
+- [x] Approval still locks exactly what the card shows.
 
 **Out of scope:**
 
@@ -74,7 +74,7 @@ Authors are one row per user, as `proposal_participants` are, so any path that f
 - **Doc passages (#209):** the revised text runs the same long-passage check as `propose_*`. A flag from an earlier revision stays (security's condition 2).
 - **Losing a race (the reviewer's must-address 2):**
   - **The proposal is still pending, but `base_revision` is stale,** because a person edited it or another run revised it. The tool doesn't fail. It answers `{"revised": false, "revision": N, "draft": …}`, the current revision and draft. The agent retries once, in the same run, on top of them. The draft is the one the card already shows in this channel.
-  - **The proposal was approved, rejected or applied first.** The store sets `follow_up_due_at` on it. When it's applied, the thread notice arms the thread, so the next quiet window drafts the follow-up as a `propose_update`. When it's rejected, the thread is armed at once. So the follow-up is never left only to a later message.
+  - **The proposal was approved, rejected or applied first.** The store sets `follow_up_due_at` on it. The card loop arms the thread once the proposal is applied, rejected, superseded, or failed and then discarded (the reviewer's build note), so the next quiet window drafts the follow-up. After a rejection, the packet marks the topic `rejected`, so the re-draft proposes again only if the request changed.
 - **`added_by`** is the authors of the new sources, read through the same Slack lookup the approval gate uses for source authors, so the agent can't name them.
 
 ### The packet
@@ -97,7 +97,7 @@ The instructions cap is 9,500 bytes, and the file is 9,208. I'll make room by ti
 ### The card
 
 - **A revised card** gets a context line under its header: "Revised with new messages from Alice and Bob: body, labels." The names are display names, escaped. The field list is JotFlow's, never the agent's.
-- **Each changed field is marked on the card** "(changed in revision N)". A changed title also shows the previous title, so a quiet edit is hard to miss (the reviewer's nit). The marks come from `proposal_revisions`, not the draft, so they sit outside the hash. They only point at what to reread.
+- **Each changed field is marked on the card,** and the revision line ends "Reread before approving". The marks come from `proposal_revisions`, not the draft, so they sit outside the hash. They only point at what to reread. The previous title isn't shown: keeping old text outside the draft would escape draft clearing, and the lead accepted dropping it.
 - **An update card's header** says what it is: "Proposed comment on web#42", or "Proposed change to web#42's body" when the body changes.
 
 ### Replay
@@ -112,15 +112,13 @@ The instructions cap is 9,500 bytes, and the file is 9,208. I'll make room by ti
   - `follow-up-top-level`: a new post about a filed issue is linked and yields an update.
   - `follow-up-unclear`: a new post that could continue either of two topics gets a question.
 
-### Reactions on a revised card (open with the lead)
+### Reactions on a changed card (decided: C)
 
-A reaction names only the card's message, not what it showed. Suppose someone reacts while reading revision N, and a revision redraws the card in place. Their reaction could then approve N+1, and #304 lets anyone in the thread cause a revision. Three fixes were raised:
+A reaction names only the card's message, not what it showed, so a reaction made while reading one draft could approve a later one. #304 lets anyone in the thread cause a revision, so that becomes reachable by anyone.
 
-- **A. Fresh card per revision** (security, the reviewer). Each revision posts a new card message, which becomes `card_ts`. The old card loses its buttons and says "Revised: see the card below". A reaction approves only on the current `card_ts`, so one on the old message approves nothing.
-- **B. Compare `event_ts` with the revision's time** (the lead). This refuses a reaction older than the revision, or one whose `event_ts` is missing. Security objects that it compares Slack's clock with ours.
-- **C. No reaction approval on a revised card** (security's fallback). Once a proposal has a revision, only the hash-carrying button approves it. A reaction gets a fixed reply: "This proposal was revised, so approve it with the button."
+**The decision.** Once a pending card has changed in place, only its hash-carrying button approves it. That covers a revision from new messages or a person's card edit, such as repo, assign or unassign, as the reviewer asked: they redraw in place too. A reaction then gets a private reply to use the button. A never-changed card approves by reaction as before.
 
-I recommend C. It keeps the thread quiet, as the lead wants, and needs no clock comparison, as security asks. Buttons already lock the hash. The lead decides, and the build waits on this part only.
+There's no clock comparison and no second card message. The store's own records of revisions and edits say whether a card has changed. The lead chose this, and security and the reviewer agreed. A fresh card per revision (option A) and comparing `event_ts` (option B) were set aside.
 
 ### Approval: what's tested
 
@@ -129,7 +127,7 @@ I recommend C. It keeps the thread quiet, as the lead wants, and needs no clock 
 - Approving the redrawn card locks the revised draft's hash.
 - A revision built on a stale `base_revision` changes nothing, and answers with the current draft.
 - Under `require_second_approver`, someone whose message a revision added can't approve it. Source authors are re-read at approval, so this needs no stored state, and nothing is stored as a partial approval today (security's condition 1).
-- The reaction rule the lead chooses, including a reaction that arrives after the card was revised.
+- After any redraw, a reaction is refused with a private reply, including Slack's retry of a reaction made before it. A never-redrawn card approves by reaction as before.
 
 ## Threat model (security's condition 3)
 
@@ -150,20 +148,22 @@ A new row: anyone posting in a thread can change a pending draft. It's bounded b
 
 - [x] Confirm the issue is ready
 - [x] Commit this plan and open the draft PR
-- [ ] The lead and the reviewer review this plan, and product confirms the migration number
-- [ ] Store: migration 16, `revise_proposal`, `proposal_revisions`, both stores
-- [ ] The `revise_proposal` tool and the packet's `pending`
-- [ ] drafting.md step 6
-- [ ] The card: the revision line and the update header
-- [ ] Replay: `sees_until`, proposal keys, and the revision expectations
-- [ ] The five fixtures, and the approval tests
-- [ ] Docs: usage, architecture, the threat model, and the CHANGELOG
-- [ ] `make check` passes
-- [ ] Mark the PR ready for review
+- [x] The lead and the reviewer review this plan, and product confirms the migration number
+- [x] Store: migration 16, `revise_proposal`, `proposal_revisions`, both stores
+- [x] The `revise_proposal` tool and the packet's `pending`
+- [x] drafting.md step 6
+- [x] The card: the revision line and the update header
+- [x] Replay: `sees_until`, proposal keys, and the revision expectations
+- [x] The five fixtures, and the approval tests
+- [x] Docs: usage, architecture, the threat model, and the CHANGELOG
+- [x] `make check` passes
+- [x] Mark the PR ready for review
 
 ## Validation
 
-None yet.
+- `make check` is green.
+- `jotflow replay` and `--agent scripted` match for the four new fixtures. The plan's fifth case, a top-level follow-up about a filed issue, is the existing `existing-topic.json`.
+- The deploying team's store, counts only, confirmed both halves of the bug. Every pending proposal was still at revision 1, and a reply after filing got no update card. `follow-up-filed-reply.json` reproduces the second: a linked reply after filing yields `propose_update`.
 
 ## Handoff notes
 

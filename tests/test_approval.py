@@ -1244,3 +1244,35 @@ async def test_someone_whose_message_a_revision_added_cannot_approve_it() -> Non
     assert await rig.handler.on_approve(click(good, user=CAROL)) == "refused"
     assert rig.slack.ephemerals[-1][2] == OWN_PROPOSAL
     assert await rig.handler.on_approve(click(good, user=DAVE)) == "approved"
+
+
+async def test_a_reaction_on_a_redrawn_card_is_refused_with_a_private_reply() -> None:
+    # #304, C: once the card changed in place, only its hash-carrying button approves.
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    await _shown(rig, pid)
+    app = _reacting_app(rig)
+    await _revise(rig, pid, by=BOB, ts="1760781650.000100")
+    await _shown(rig, pid)  # redrawn, so the card isn't behind: the refusal is C's own
+    await _react(app)
+    assert await rig.state(pid) is ProposalState.PENDING
+    assert rig.slack.ephemerals[-1][1:] == (CAROL, approval_module.REDRAWN_USE_BUTTON)
+    assert rig.slack.replies == []  # private to the reactor, never in the thread
+    # Slack's retry of a reaction made before the revision is refused the same way.
+    await _react(app, n=1)
+    assert await rig.state(pid) is ProposalState.PENDING
+    # The redrawn card's button still approves.
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "approved"
+
+
+async def test_a_person_s_card_edit_also_ends_reaction_approval() -> None:
+    rig = Rig(reactions=True)
+    pid = await rig.proposal()
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and isinstance(record.proposal, IssueProposal)
+    edited = record.proposal.model_copy(update={"assignees": ["acme-bob"]})
+    await rig.store.edit_proposal(pid, edited, by=BOB, field="assign")
+    await _shown(rig, pid)
+    await _react(_reacting_app(rig))
+    assert await rig.state(pid) is ProposalState.PENDING
+    assert rig.slack.ephemerals[-1][2] == approval_module.REDRAWN_USE_BUTTON

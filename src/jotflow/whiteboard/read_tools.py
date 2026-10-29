@@ -437,9 +437,19 @@ def read_tools(
 
     async def _mark_proposed(channel_id: str, summary: TopicSummary) -> TopicSummary:
         """Flag a topic whose new issue is already proposed, so a second thread
-        joining it does not propose the same issue again (#23)."""
+        joining it does not propose the same issue again (#23), or whose latest
+        proposal people turned down, so a re-draft doesn't just repeat it (#304)."""
         if summary.issue_number is not None:
             return summary
+        latest = None
+        for thread_ts in summary.threads:
+            for record in await store.thread_proposals(channel_id, thread_ts):
+                if record.proposal.topic_id == summary.id and (
+                    latest is None or record.created_at > latest.created_at
+                ):
+                    latest = record
+        if latest is not None and latest.state is ProposalState.REJECTED:
+            summary = summary.model_copy(update={"rejected": True})
         for thread_ts in summary.threads:
             for record in await store.thread_proposals(channel_id, thread_ts):
                 draft = record.proposal
