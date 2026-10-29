@@ -32,6 +32,10 @@ What changed in each JotFlow release, for the people who run it. The format foll
 - **`jotflow replay --agent <preset> --model <model>` sets the model for question runs too (#59),** not only drafting runs, so a preset with no default model can replay a fixture's question runs.
 - **`jotflow rebuild` restores a thread's links as the agent's decision, not a person's (#279).** The original links were mostly the agent's, so a later drafting run can still move a rebuilt one, and a person's later choice wins. A `skip:` stays a person's. A message a person attached before the loss, for example with `re:`, comes back as the agent's too, so attach it again with `re:` to keep it fixed.
 
+### Fixed
+
+- **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
+
 ### Security
 
 - **The codex preset no longer fetches OpenAI's model catalog (#284).** With an API key, Codex fetched it on every run, and that catalog sets each model's tools. A change on OpenAI's side could have switched `gpt-5.5` into Codex's code mode, which adds a JavaScript `exec` tool, and JotFlow's model check wouldn't have caught it. Codex now uses the catalog bundled with the pinned release. Only teams on the `codex` preset are affected. Upgrade the agent image, which builds the config.
@@ -104,6 +108,8 @@ A fix release. Upgrade by re-running setup with this version and replacing both 
   - `JOTFLOW_RUNNER_ALLOW_PUBLIC` and `JOTFLOW_MCP_ALLOW_PUBLIC` opt in to public addresses.
 
 ### Fixed
+
+- **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
 
 - **Setup and `jotflow check` catch a model key the runner never passes (#239).** An agent env file kept from before setup ran could set `ANTHROPIC_API_KEY` without listing it in `JOTFLOW_AGENT_ENV_ALLOW`, so every run failed to sign in, and `check` still passed. Setup now adds the key to that line and says so. `check` fails, naming the file and the line to set. A Claude account login with no key is left alone.
 - **The "Agent model" prompt shows its default,** as `[default]` or the model already set, like setup's other prompts (#239).

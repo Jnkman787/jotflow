@@ -642,6 +642,19 @@ class ProposalRecord(BaseModel):
         default=None,
         description="Set when a person marked the proposal the same as an existing issue (#36)",
     )
+    # What [issues] adds to a new issue (#306 follow-up), as canonical JSON: what the
+    # posted card showed, and what was in force when it was approved. Execution plans
+    # with the approved one, so a later jotflow.toml change can't alter the write.
+    card_issues: str | None = Field(
+        default=None, description="The [issues] settings the posted card showed"
+    )
+    approved_issues: str | None = Field(
+        default=None, description="The [issues] settings in force when it was approved"
+    )
+    skipped_label: str | None = Field(
+        default=None,
+        description="The [issues] label left off the write because GitHub said it doesn't exist",
+    )
 
     @property
     def card_due(self) -> bool:

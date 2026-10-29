@@ -27,7 +27,7 @@ from jotflow.models import ChannelMode, ProposalState, RunKind
 from jotflow.orchestrator.card_sync import AUTO
 from jotflow.orchestrator.packet import Budget, Sleep, with_backoff
 from jotflow.orchestrator.people import Person, classify
-from jotflow.policy import Policy
+from jotflow.policy import IssuesPolicy, Policy
 from jotflow.store.base import Store, TransitionError
 from jotflow.store.hashing import content_hash
 
@@ -74,9 +74,11 @@ class AutoApprover:
     ``auto`` never approves something a person was already looking at.
     """
 
-    def __init__(self, store: Store, mode_for: ModeFor) -> None:
+    def __init__(self, store: Store, mode_for: ModeFor, issues: IssuesPolicy | None = None) -> None:
         self._store = store
         self._mode_for = mode_for
+        # The [issues] settings in force, locked with each approval (#306 follow-up).
+        self._issues = issues
 
     async def approve_due(self) -> int:
         approved = 0
@@ -92,6 +94,7 @@ class AutoApprover:
                     expected={ProposalState.PENDING},
                     approved_by=AUTO,
                     expected_hash=content_hash(record.proposal),
+                    issues=None if self._issues is None else self._issues.snapshot(),
                 )
             except TransitionError:
                 continue  # superseded or changed meanwhile: nothing to approve

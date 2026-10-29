@@ -73,6 +73,7 @@ from jotflow.adapters.presets import (
 )
 from jotflow.models import RunKind, is_bare_repo_name, is_owner_name
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
+from jotflow.policy import label_problem
 from jotflow.store.base import DEFAULT_RUN_TIMEOUTS
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, MAX_TOKEN_TTL_SECONDS, TOKEN_PREFIX
 
@@ -706,6 +707,17 @@ def runner_info(config: RunnerConfig) -> dict[str, Any]:
     }
 
 
+class LabelCheckRequest(BaseModel):
+    """Whether one repo has one label (#306 follow-up): a strict body, never a path,
+    since a label name may hold a space or a ``/``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner: str = Field(min_length=1, max_length=39)
+    name: str = Field(min_length=1, max_length=100)
+    label: str = Field(min_length=1, max_length=50)
+
+
 class MarkedIssuesRequest(BaseModel):
     """What JotFlow sends to read one repo's marked issues (#256): a body, no query."""
 
@@ -832,6 +844,43 @@ def build_runner_app(
             ", truncated" if found.truncated else "",
         )
         return JSONResponse(found.model_dump(mode="json"))
+
+    async def label_check(request: Request) -> Response:
+        # The drafting runner's read token, which already reads labels for drafting.
+        if config.read_token is None:
+            return JSONResponse({"error": "label checks are the drafting runner's"}, 404)
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = LabelCheckRequest.model_validate_json(body)
+        except ValidationError:
+            return JSONResponse({"error": "expected exactly owner, name and label"}, 400)
+        if not is_owner_name(asked.owner) or not is_bare_repo_name(asked.name):
+            return JSONResponse({"error": "not a GitHub repo"}, status_code=400)
+        if label_problem(asked.label) is not None:
+            return JSONResponse({"error": "not a label"}, status_code=400)
+        try:
+            exists = await github_repos.label_exists(
+                asked.owner,
+                asked.name,
+                asked.label,
+                config.read_token,
+                http=http,
+                api=config.github_api,
+            )
+        except github_repos.RateLimited:
+            # Never "no such label": a rate limit says nothing about the repo.
+            log.warning("label check in %s/%s: GitHub's rate limit", asked.owner, asked.name)
+            return JSONResponse({"error": "GitHub is rate limiting the read token"}, 503)
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning(
+                "label check in %s/%s failed: %s", asked.owner, asked.name, type(exc).__name__
+            )
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        return JSONResponse({"exists": exists})
 
     async def one_issue(request: Request) -> Response:
         # A question run's one issue (#273): the read token, path parameters only.
@@ -1122,6 +1171,7 @@ def build_runner_app(
             Route("/runs/{run_id}", stop, methods=["DELETE"]),
             # Before /repos/{owner}, which would otherwise take "jotflow-issues" as an owner.
             Route("/repos/jotflow-issues", marked, methods=["POST"]),
+            Route("/repos/labels/check", label_check, methods=["POST"]),
             Route("/identity", identity, methods=["GET"]),
             Route("/repos/{owner}", repos, methods=["GET"]),
             Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
