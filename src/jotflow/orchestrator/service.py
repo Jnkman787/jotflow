@@ -402,6 +402,8 @@ class Orchestrator:
             CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
             people,
             repos=self.repos,
+            # A revision that lost a race drafts its thread again once settled (#304).
+            arm_thread=self._arm_thread,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode)
