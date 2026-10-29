@@ -236,3 +236,13 @@ def test_question_settings_survive_a_rewrite() -> None:
         }
     )
     assert "[questions]" not in render_policy(plain)
+
+
+def test_a_triage_guide_survives_a_rewrite() -> None:
+    # Setup rewrites jotflow.toml; the team's guide must stay as written (#317).
+    guide = 'Billing emails go to "api", even on the dashboard.\n- Board: support.'
+    repo = {"repo": "acme/web", "nickname": "web", "description": "Web"}
+    policy = _policy(channels={"C0WEB": {"repos": [repo], "triage_guide": guide}})
+    text = render_policy(policy)
+    assert parse_policy(text) == policy
+    assert parse_policy(text).channels["C0WEB"].triage_guide == guide

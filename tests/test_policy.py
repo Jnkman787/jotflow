@@ -569,3 +569,38 @@ def test_at_most_five_scopes() -> None:
         f'\n[[channels.C0TEST1.scopes]]\nowner = "org{i}"\n' for i in range(6)
     )
     assert any("scopes" in p for p in problems(text))
+
+
+# A channel's triage guide (#317)
+
+
+def guided(value: str) -> str:
+    return ONE_REPO.replace("[channels.C0TEST1]\n", f"[channels.C0TEST1]\ntriage_guide = {value}\n")
+
+
+def test_a_triage_guide_may_span_lines_and_is_trimmed() -> None:
+    text = guided('"  Billing emails go to api.\\n- Board: support for anything a customer saw.  "')
+    channel = parse_policy(text).channels["C0TEST1"]
+    assert channel.triage_guide == (
+        "Billing emails go to api.\n- Board: support for anything a customer saw."
+    )
+    assert parse_policy(ONE_REPO).channels["C0TEST1"].triage_guide is None
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ('"   "', "triage_guide is empty"),
+        ('"Hidden\\u200bmark"', "invisible characters"),
+        ('"Bidi \\u202e trick"', "control characters"),
+        (f'"{"x" * 8001}"', "at most 8000 characters"),
+    ],
+)
+def test_a_triage_guide_must_be_plain_and_at_most_8000_characters(value: str, reason: str) -> None:
+    found = problems(guided(value))
+    assert any(reason in p for p in found), found
+
+
+def test_a_triage_guide_of_8000_characters_loads() -> None:
+    channel = parse_policy(guided(f'"{"x" * 8000}"')).channels["C0TEST1"]
+    assert channel.triage_guide is not None and len(channel.triage_guide) == 8000

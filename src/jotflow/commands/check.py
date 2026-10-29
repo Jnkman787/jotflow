@@ -39,7 +39,7 @@ from jotflow.envfile import read_env
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
 from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
-from jotflow.policy import Policy, PolicyError, load_policy
+from jotflow.policy import MAX_TRIAGE_GUIDE, Policy, PolicyError, load_policy
 from jotflow.title_pattern import times_out
 
 EXIT_OK = 0
@@ -312,6 +312,16 @@ def board_notes(policy: Policy) -> list[str]:
     ]
 
 
+def triage_notes(policy: Policy) -> list[str]:
+    """Each channel's triage guide and its size against the cap (#317)."""
+    return [
+        f"{channel_id} has a {len(channel.triage_guide):,} of {MAX_TRIAGE_GUIDE:,} character "
+        "triage guide, which drafting uses to choose among its listed repos and boards"
+        for channel_id, channel in policy.channels.items()
+        if channel.triage_guide is not None
+    ]
+
+
 def issue_notes(policy: Policy) -> list[str]:
     """What ``[issues]`` adds to every new issue, and what to make sure of (#306).
 
@@ -377,6 +387,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"note  docs: {note}")
     for note in board_notes(policy):
         print(f"note  boards: {note}")
+    for note in triage_notes(policy):
+        print(f"note  triage: {note}")
     for note in issue_notes(policy):
         print(f"note  issues: {note}")
     failures: list[str] = []

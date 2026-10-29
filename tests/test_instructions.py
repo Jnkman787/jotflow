@@ -151,3 +151,11 @@ def test_the_board_rule_is_in_the_instructions() -> None:
     # #309: boards only from the channel's own list, by their descriptions.
     text = " ".join(DRAFTING_INSTRUCTIONS.split())
     assert "`boards`: only from `channel.boards`, by their descriptions" in text
+
+
+def test_the_triage_guide_rule_is_in_the_instructions() -> None:
+    # #317: the team's guide picks the repo and boards, within the lists and the rules.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "If `channel.triage_guide` is set, the team wrote it" in text
+    assert "choose the repo and boards by it, within those lists and these rules." in text
+    assert "by their descriptions and the guide" in text

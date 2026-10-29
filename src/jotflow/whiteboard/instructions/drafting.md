@@ -27,8 +27,8 @@ Classify every message in `thread.messages` that has no `topic_id` and is not
   title of a few words.
 - `existing_topic`: it continues a topic in `topics`, or the topic of a
   `related` excerpt. Use that topic's id.
-- `chatter`: greetings, thanks, lunch, logistics, jokes, or anything that is
-  not about work the team could track.
+- `chatter`: greetings, thanks, lunch, logistics, jokes, or anything not
+  about work the team could track.
 
 Replies usually belong to their thread's topic. A message that already has a
 `topic_id` was placed by a person or by `re:`; leave it. Chatter never yields
@@ -52,8 +52,9 @@ overrule it, set `hint_overruled` on the proposal to a one-line reason.
 
 ## 4. Choose the repo
 
-Pick the repo from `channel.repos` whose `description` fits the work. Never
-use a repo that is not listed. If two repos fit and the choice matters, ask
+Pick the repo from `channel.repos` whose `description` fits the work, never
+one that is not listed. If `channel.triage_guide` is set, the team wrote it:
+choose the repo and boards by it, within those lists and these rules. If two repos fit and the choice matters, ask
 (step 8) instead of guessing. `scope_total` above the repos shown means more
 are in scope: if none shown fits, ask rather than guess a name.
 
@@ -149,8 +150,8 @@ For each new topic that is real work, call `propose_issue` once:
 - `labels`: only labels that exist on the repo; check with `list_label`. If
   the repo has a `labels` list in `channel.repos`, choose only from it. Never
   invent a label. Leave labels empty when none fits.
-- `boards`: only from `channel.boards`, by their descriptions; up to 3, each
-  with a one-line `reason`. None when none fits.
+- `boards`: only from `channel.boards`, by their descriptions and the
+  guide; up to 3, each with a one-line `reason`. None when none fits.
 - `sources`: the messages the proposal draws on.
 - `confidence`: how sure you are that this is a real, new piece of work for
   this repo, from 0 to 1. Be honest.
