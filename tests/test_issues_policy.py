@@ -102,8 +102,8 @@ def test_the_card_shows_what_will_be_filed() -> None:
     context = CardContext(channel=settings.channel("C0EXAMPLE1"), issues=settings.issues)
     text = str(render_card(record(), context))
     assert "[Slack] Export the dashboard to CSV" in text
-    # The draft's own label keeps its note; JotFlow's is marked as always added.
-    line = "Labels: enhancement (not checked against a list), from-slack (added to every issue)"
+    # JotFlow's label is marked as always added; the not-checked note is its own (#337).
+    line = "Labels: enhancement, from-slack (added to every issue)"
     assert line in text
 
 
