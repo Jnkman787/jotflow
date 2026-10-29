@@ -50,6 +50,7 @@ from jotflow.store.base import (
     OperatorToken,
     PendingThread,
     ProposalEdit,
+    ProposalRevision,
     ReactionKeyword,
     ReactionMark,
     Recovery,
@@ -64,12 +65,14 @@ from jotflow.store.base import (
     check_mark,
     check_new_proposal,
     check_notice,
+    check_revision,
     check_run_request,
     cleared_draft,
     edited_draft,
     plan_duplicate,
     plan_transition,
     plan_undo,
+    revised_draft,
     to_text,
     utc_now,
 )
@@ -100,6 +103,8 @@ class MemoryStore:
         self._notices: set[tuple[str, str, str]] = set()
         self._marks: dict[tuple[str, str, str, str], ReactionMark] = {}
         self._edits: list[ProposalEdit] = []
+        self._revisions: list[ProposalRevision] = []
+        self._follow_ups: set[str] = set()
         self._runs: dict[str, Run] = {}
         self._pending: dict[tuple[str, str], datetime] = {}
         self._calls: list[ToolCallRecord] = []
@@ -305,6 +310,62 @@ class MemoryStore:
 
     async def proposal_edits(self, proposal_id: str) -> list[ProposalEdit]:
         return [e for e in self._edits if e.proposal_id == proposal_id]
+
+    async def revise_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        run_id: str,
+        base_revision: int,
+        added_by: Collection[str],
+    ) -> ProposalRecord:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            done = sum(1 for r in self._revisions if r.proposal_id == proposal_id)
+            changed = check_revision(
+                record, draft, base_revision=base_revision, added_by=added_by, revisions=done
+            )
+            people = list(record.participants)
+            people += [u for u in dict.fromkeys(added_by) if u not in people]
+            updated = record.model_copy(
+                update={
+                    "proposal": revised_draft(record, draft),
+                    "participants": sorted(people),
+                    "revision": record.revision + 1,
+                },
+                deep=True,
+            )
+            self._proposals[proposal_id] = updated
+            self._revisions.append(
+                ProposalRevision(
+                    proposal_id,
+                    updated.revision,
+                    run_id,
+                    changed,
+                    tuple(sorted(set(added_by))),
+                    self._clock(),
+                )
+            )
+            return updated.model_copy(deep=True)
+
+    async def proposal_revisions(self, proposal_id: str) -> list[ProposalRevision]:
+        return [r for r in self._revisions if r.proposal_id == proposal_id]
+
+    async def mark_follow_up_due(self, proposal_id: str) -> None:
+        async with self._lock:
+            if proposal_id not in self._proposals:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            self._follow_ups.add(proposal_id)
+
+    async def take_follow_up_due(self, proposal_id: str) -> bool:
+        async with self._lock:
+            if proposal_id in self._follow_ups:
+                self._follow_ups.discard(proposal_id)
+                return True
+            return False
 
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
         check_id(ts, "card ts")

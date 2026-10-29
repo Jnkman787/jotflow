@@ -43,6 +43,7 @@ from jotflow.orchestrator.people import Person, SlackPeople
 from jotflow.policy import Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import content_hash
+from jotflow.store.base import MAX_AUTHOR_LOOKUPS as STORE_AUTHOR_LOOKUPS
 from jotflow.store.base import (
     ContentChangedError,
     DraftClearedError,
@@ -77,8 +78,15 @@ AUTHORS_UNKNOWN = (
     "while approvers are on. Try again, or request changes."
 )
 # Source messages checked for their authors; a proposal citing more is refused.
-MAX_AUTHOR_LOOKUPS = 25
+# One limit, shared with revisions, so a revised card stays approvable (#304).
+MAX_AUTHOR_LOOKUPS = STORE_AUTHOR_LOOKUPS
 NOT_THIS_CARD = "This card no longer matches a proposal JotFlow knows about."
+# Once a card has changed in place, only its button approves: the button carries the
+# hash of the draft it shows, and a reaction can't (#304).
+REDRAWN_USE_BUTTON = (
+    "This card changed since it was posted, so a reaction can't approve it. "
+    "Reread it, then use its Approve button."
+)
 STALE = "This card was out of date, so nothing was approved. It now shows the current draft."
 DISCARDED = "This draft was discarded, so it can no longer be approved."
 STALE_SAME_AS = "This card was out of date, so nothing was marked. It now shows the current draft."
@@ -296,6 +304,8 @@ class ApprovalHandler:
                 raise Refused(_already(record.state))
             if record.card_due:
                 raise Refused(CARD_UPDATING)
+            if await self._redrawn(record):
+                raise Refused(REDRAWN_USE_BUTTON)
             context = (
                 await self._context_for(record)
                 if self._context_for is not None
@@ -388,6 +398,18 @@ class ApprovalHandler:
         ):
             raise Refused(NOT_THIS_CARD)
         return record
+
+    async def _redrawn(self, record: ProposalRecord) -> bool:
+        """Whether the card was redrawn in place since it was first posted (#304).
+
+        A reaction names only the card's message, not what it showed, so one made
+        while someone read an earlier draft could approve a later one. A pending
+        card is redrawn in place only by a revision from new messages or a person's
+        edit from the card, and the store records both.
+        """
+        if await self._store.proposal_revisions(record.id):
+            return True
+        return bool(await self._store.proposal_edits(record.id))
 
     async def _check_may_approve(self, click: Click, record: ProposalRecord) -> None:
         """Who may approve: Approve's rule, which "same as" and its undo share (#36)."""

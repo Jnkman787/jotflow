@@ -368,3 +368,42 @@ def test_the_card_line_uses_the_footers_own_rules() -> None:
     assert line is not None and line.endswith("N7 and 4 others")
     assert filed.endswith("N7 and 4 others.")
     assert line.count("Kim") + line.count("kim") == 1 and "sam" not in line
+
+
+async def test_a_revision_s_new_author_is_credited_on_the_card_and_in_the_issue() -> None:
+    # #304: a revision folds in later messages, so the cutoff moves to its time.
+    from jotflow.models import IssueProposal
+    from jotflow.orchestrator.card_sync import card_context
+    from jotflow.store import MemoryStore
+
+    store = MemoryStore(clock=lambda: datetime.fromtimestamp(1792400000, tz=UTC))
+    topic = (await store.create_topic(CH, "Progress bar")).topic
+    for ts, thread in ((ROOT, None), (REPLY, ROOT), (KIM, ROOT)):
+        await store.link_message(MessageRef(channel_id=CH, ts=ts, thread_ts=thread), topic.id)
+    late = "1792399000.000100"  # after the draft was made, before its revision
+    await store.link_message(MessageRef(channel_id=CH, ts=late, thread_ts=ROOT), topic.id)
+    crowd = Crowd()
+    crowd._authors[late] = {"U0OUTSIDE"}  # type: ignore[index]
+    draft = on_topic(record(MessageRef(channel_id=CH, ts=ROOT)), topic.id).model_copy(
+        update={
+            "created_at": datetime.fromtimestamp(1792320000, tz=UTC),
+            "state": ProposalState.PENDING,
+        }
+    )
+    added = await store.add_proposal(draft)
+    assert isinstance(added.proposal, IssueProposal)
+    revised = added.proposal.model_copy(
+        update={
+            "body": added.proposal.body + " More.",
+            # The late message reaches the credit through the topic, as a
+            # same-topic contribution, so the cutoff decides whether it counts.
+            "sources": [MessageRef(channel_id=CH, ts=ROOT)],
+        }
+    )
+    after = await store.revise_proposal(
+        added.id, revised, run_id="run-2", base_revision=added.revision, added_by=["U0OUTSIDE"]
+    )
+    tail = await execution_footer(after, policy(), crowd, store)
+    assert "Outsider" in tail.splitlines()[0]
+    context = await card_context(policy(), store, Names(), after, attribution=crowd)
+    assert context.credit_line is not None and "Outsider" in context.credit_line

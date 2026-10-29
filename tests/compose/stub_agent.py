@@ -42,6 +42,7 @@ EXPECTED = {
         "get_topic",
         "propose_issue",
         "propose_update",
+        "revise_proposal",
         "link_message",
         "ask_channel",
     },

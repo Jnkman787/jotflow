@@ -29,6 +29,10 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `question-injected.json` | Carol asks the bot to post a login link and ping `@acme-bob` and the channel. The scripted answer complies, as an injected model might, and also quotes `ask:`, names the bot, and cites another owner's repo. The posted answer has `[link removed]`, `acme-bob` without its `@`, no broadcast, no bot mention, and only `acme-co/web#42`. It starts no question run of its own. |
 | `question-guest.json` | Dave, a guest, asks a question. No run is queued, and he gets the members-only reply privately. The fixture scripts no run. |
 | `repo-docs.json` | As `feature-request.json`, but `acme-co/web` sets `read_paths` to `docs/plans/*.md` (#209). A reply asks the agent to paste an internal doc. `list_repo_docs` shows only the plan, the read of the internal doc is refused, and the proposal cites the plan under Context. One proposal, one doc read. |
+| `follow-up-pending.json` | Carol asks for CSV export, and a first run, seeing only her post, proposes it. While the card is pending, Bob replies that the file needs a totals row. A second run revises the same draft with `revise_proposal`: revised once, by Bob, in its body (#304). |
+| `follow-up-filed-reply.json` | The thread's idea was filed as `acme-co/web#42`. Alice replies with a detail, and the run proposes a comment on the issue. |
+| `follow-up-filed-scope.json` | As above, but Bob widens the request to Excel as well as CSV, so the run proposes a body change, with the acceptance updated. |
+| `follow-up-unclear.json` | Two export topics are filed. A new post about keeping the column order could continue either, so the run asks which. `existing-topic.json` covers the clear case, where a new post is linked and gets a comment. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.
@@ -63,7 +67,7 @@ Only the fields JotFlow reads are allowed.
 
 ### Agent script
 
-Each run has the `channel` and top-level `thread_ts` it drafts or answers in, an optional `kind`, and the `calls` it makes in order. `kind` is `drafting`, the default, or `question` for a question run (#57). Every call has a `tool` and `arguments`, validated by the same models as the real MCP tools:
+Each run has the `channel` and top-level `thread_ts` it drafts or answers in, an optional `kind`, an optional `sees_until`, and the `calls` it makes in order. `sees_until` is the last message the run's packet holds, so a later run can see a reply an earlier one didn't, as when a card is revised (#304). A run's calls may name only messages up to it. `kind` is `drafting`, the default, or `question` for a question run (#57). Every call has a `tool` and `arguments`, validated by the same models as the real MCP tools:
 
 | `tool` | `arguments` |
 |---|---|
@@ -71,6 +75,7 @@ Each run has the `channel` and top-level `thread_ts` it drafts or answers in, an
 | `propose_issue` | `jotflow.models.IssueProposal`. The call may also carry `expect_error`, part of the refusal it must get, such as a title off the repo's `title_pattern`. It then makes no proposal, and being accepted fails the replay. |
 | `propose_update` | `jotflow.models.UpdateProposal` |
 | `ask_channel` | `{"text": ...}` |
+| `revise_proposal` | `{"topic_id": "key:<name>" or an id, "issue": {title, body, labels, assignees}` or `"changes": {...}`, `"sources": [...], "confidence": ...}`. Replay fills in the topic's pending proposal and its revision, as the packet's `pending` gives them (#304). |
 | `answer` | `{"text": ...}`, a question run's one answer. JotFlow rewrites it before posting, as live: links, addresses, broadcasts and @-mentions go, and only the channel's own repos' issues stay. |
 
 **Question runs** follow #57's rules:
@@ -99,11 +104,12 @@ Real topic ids are assigned by JotFlow at replay time, so a `link_message` that 
 
 The script's own proposal must meet them, and so must a real agent's. |
 | `asks` | The thread `ts` of each `ask_channel` call, in order. |
+| `proposals[].revisions`, `revised_by`, `changed` | How often a proposal was revised (#304), whose messages the last revision added, and which fields it changed. The count must match the script's `revise_proposal` calls on that topic. |
 | `questions` | Messages JotFlow takes as questions, answered or refused, in order. |
 | `answers` | Each posted answer, in order. `thread` is required. `text` is the exact posted text, prefix included, and `removed` is the count the rewrite reports. Both are checked only for the scripted agent, since a real model's words vary. `contains` and `excludes` are substrings, checked for any agent. |
 | `whispers` | JotFlow's private replies about questions, as `user` and `text`. The text must be one of the question handler's fixed replies, such as the members-only one. |
 
-The loader checks that the outcome agrees with itself and with the script. Every accepted message must be in exactly one topic, in chatter, in a skipped thread, or in `questions`. The script must create exactly the listed topics, chatter, proposals, asks, and answers. Messages attached by `re:` are JotFlow's doing, so they appear in `topics` without a `link_message` call.
+The loader checks that the outcome agrees with itself and with the script. Every accepted message must be in exactly one topic, in chatter, in a skipped thread, or in `questions`. The script must create exactly the listed topics, chatter, proposals, asks, and answers. Messages attached by `re:` are JotFlow's doing, so they appear in `topics` without a `link_message` call. So do messages an existing topic was seeded with, such as the root of a thread whose issue was filed.
 
 Every replay also checks each posted answer, whatever the fixture expects:
 

@@ -85,6 +85,8 @@ def test_script_produces_the_expected_topics_and_proposals(path: Path) -> None:
     thread = load_thread(path)
     outcome = scripted_outcome(thread)
     attached = {ts for ts, word in thread.expected.keywords.items() if word == "re"}
+    # Seeded into an existing topic before the fixture starts, as the validator says (#304).
+    attached |= {ref.ts for topic in thread.existing_topics for ref in topic.messages}
     want = {t.topic: sorted(set(t.messages) - attached) for t in thread.expected.topics}
     assert {k: sorted(v) for k, v in outcome.topics.items()} == {k: v for k, v in want.items() if v}
     assert sorted(outcome.chatter) == sorted(thread.expected.chatter)

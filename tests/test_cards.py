@@ -299,7 +299,8 @@ def test_an_update_card() -> None:
     )
     card = render_card(record(update), context())
     plain = texts(card, "plain_text")
-    assert "Proposed update to web#42" in plain
+    # A body change is named as one, so it isn't mistaken for a comment (#304).
+    assert "Proposed change to web#42's description" in plain
     assert {"New description:", "New description", "Comment:", INJECTION} <= set(plain)
     assert "Add labels: bug" in plain
     assert "Remove labels: wontfix" in plain
@@ -635,3 +636,58 @@ def test_a_cleared_card_shows_no_hint_reason() -> None:
     cleared = cleared_draft(issue(hint_overruled=REASON))
     card = _state(ProposalState.REJECTED, proposal=cleared, draft_cleared_at=NOW)
     assert "Hint overruled" not in all_text(card) and REASON not in all_text(card)
+
+
+# Revisions from new messages (#304)
+
+
+def test_a_revised_card_names_who_added_what_and_marks_it() -> None:
+    from datetime import UTC, datetime
+
+    from jotflow.store.base import ProposalRevision
+
+    rec = record()
+    revised = ProposalRevision(
+        rec.id, 3, "run-2", ("title", "body", "labels"), ("U0BOB", "U0CAROL"), datetime.now(UTC)
+    )
+    context = CardContext(
+        channel=TWO_REPOS,
+        names={"U0BOB": "Bob", "U0CAROL": "Carol"},
+        revisions=(revised,),
+    )
+    card = render_card(rec, context)
+    text = json.dumps(card.blocks)
+    assert (
+        "Revised with new messages from Bob and Carol: title, description, labels changed." in text
+    )
+    assert "Reread before approving." in text
+    assert "Title changed in this revision:" in text
+    assert "Description changed in this revision:" in text
+    assert "(changed)" in text
+    # The marks sit outside what the Approve button locks: the hash is the draft's.
+    assert f"{rec.id}:{content_hash(rec.proposal)}" in text
+    twice = CardContext(channel=TWO_REPOS, revisions=(revised, revised))
+    assert "Revised 2 times with new messages from U0BOB and U0CAROL:" in json.dumps(
+        render_card(rec, twice).blocks
+    )
+
+
+def test_an_update_header_says_comment_or_description() -> None:
+    from jotflow.orchestrator.cards import _update_header
+
+    def update(**changes: Any) -> UpdateProposal:
+        return UpdateProposal(
+            topic_id="t1",
+            repo="acme-co/web",
+            issue_number=42,
+            changes=IssueChanges(**changes),
+            confidence=0.9,
+        )
+
+    assert _update_header(update(comment="x"), "web") == "Proposed comment on web#42"
+    assert _update_header(update(body="x", comment="y"), "web") == (
+        "Proposed change to web#42's description"
+    )
+    assert _update_header(update(comment="x", add_labels=["bug"]), "web") == (
+        "Proposed update to web#42"
+    )

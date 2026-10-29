@@ -76,8 +76,16 @@ async def play(thread: SavedThread, index: int, config_path: Path) -> int:
                     raise ReplayError(f"the script names topic {topic} before it exists")
                 return topics[topic]
 
+            # Each topic's pending draft, as the packet gives it, for a revision (#304).
+            pending = {
+                t["id"]: (t["pending"]["proposal_id"], t["pending"]["revision"])
+                for t in conversation["topics"]["topics"]
+                if t.get("pending")
+            }
             for call in run.calls:
-                tool, arguments = scripted_call(call, resolve, sorted(set(participants)))
+                tool, arguments = scripted_call(
+                    call, resolve, sorted(set(participants)), pending.get
+                )
                 result = await client.call_tool(tool, arguments)
                 expected = getattr(call, "expect_error", None)
                 if expected is not None:

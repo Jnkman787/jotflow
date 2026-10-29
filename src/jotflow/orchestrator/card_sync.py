@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
@@ -153,7 +153,15 @@ async def card_context(
         repos=channel_repos,
         docs_read=tuple(docs_read),
         docs_copied=tuple(docs_copied),
+        revisions=tuple(await store.proposal_revisions(record.id)),
     )
+
+
+# Settled states after which a lost follow-up is drafted again (#304): written, or
+# turned down. A failed one only once discarded, since a retry may still write it.
+_FOLLOW_UP_STATES = frozenset(
+    {ProposalState.APPLIED, ProposalState.REJECTED, ProposalState.SUPERSEDED}
+)
 
 
 class CardSync:
@@ -168,10 +176,12 @@ class CardSync:
         *,
         clock: Callable[[], datetime] = utc_now,
         repos: RepoCatalog | None = None,
+        arm_thread: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
         self._repos = repos
+        self._arm = arm_thread
         self._publisher = publisher
         self._people = people
         self._clock = clock
@@ -206,7 +216,23 @@ class CardSync:
             record = await self._store.get_proposal(seen.id)
             if record is None or not record.card_due:
                 return False
-            return await self._draw_now(record)
+            drawn = await self._draw_now(record)
+        await self._follow_up(record)
+        return drawn
+
+    async def _follow_up(self, record: ProposalRecord) -> None:
+        """A revision lost a race to this proposal settling (#304): once it's filed or
+        turned down, draft its thread again, so the follow-up isn't lost."""
+        discarded = record.state is ProposalState.FAILED and record.draft_cleared_at is not None
+        if (record.state not in _FOLLOW_UP_STATES and not discarded) or self._arm is None:
+            return
+        try:
+            if await self._store.take_follow_up_due(record.id):
+                await self._arm(record.channel_id, record.thread_ts)
+        except Exception as exc:
+            log.warning(
+                "proposal %s: could not queue its follow-up (%s)", record.id, type(exc).__name__
+            )
 
     async def _draw_now(self, record: ProposalRecord) -> bool:
         try:
