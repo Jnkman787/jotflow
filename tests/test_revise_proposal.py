@@ -290,3 +290,57 @@ async def test_an_approved_proposal_waits_for_its_write_before_the_follow_up(
     await sync.sync()
     assert armed == []  # still being written: the follow-up waits for the issue
     assert await store.take_follow_up_due(record.id)  # and is still due
+
+
+async def test_a_pending_update_is_revised_with_changes(
+    tools: WriteTools, store: LiveStore
+) -> None:
+    from tests.test_write_tools import update
+
+    topic: Any = await tools.link_message(DRAFT, link())
+    await store.set_topic_issue(topic.topic_id, "acme-co/web", 42)
+    proposed: Any = await tools.propose_update(DRAFT, update(topic.topic_id))
+    record = await store.get_proposal(proposed.proposal_id)
+    assert record is not None
+    args = ReviseProposalArgs.model_validate(
+        {
+            "proposal_id": record.id,
+            "base_revision": record.revision,
+            "changes": {"comment": "Also apply the date filter, and the totals row."},
+            "sources": [{"channel_id": CH, "ts": REPLY}],
+            "confidence": 0.9,
+        }
+    )
+    result: Any = await tools.revise_proposal(SECOND, args)
+    assert result.revised and result.changed == ["comment", "labels"]
+    from jotflow.whiteboard.write_tools import RevisedIssue
+
+    wrong = args.model_copy(
+        update={
+            "changes": None,
+            "issue": RevisedIssue(title="x", body="y"),
+            "base_revision": result.revision,
+        }
+    )
+    with pytest.raises(ToolError, match="revise it with `changes`"):
+        await tools.revise_proposal(SECOND, wrong)
+    bad = args.model_copy(
+        update={
+            "changes": args.changes.model_copy(update={"comment": "Ask @someone."}),  # type: ignore[union-attr]
+            "base_revision": result.revision,
+        }
+    )
+    with pytest.raises(ToolError, match="someone"):
+        await tools.revise_proposal(SECOND, bad)
+
+
+async def test_a_proposal_from_another_thread_is_revised_once_this_thread_feeds_its_topic(
+    tools: WriteTools, store: LiveStore
+) -> None:
+    record = await pending(tools, store)
+    other = "1792399999.000100"
+    moved = record.model_copy(update={"id": "p-elsewhere", "thread_ts": other})
+    await store.add_proposal(moved)
+    # The topic's first message is in this run's thread, so this thread feeds it.
+    result: Any = await tools.revise_proposal(SECOND, revise(moved, body="Folded in from here."))
+    assert result.revised
