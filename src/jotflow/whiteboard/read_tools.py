@@ -29,6 +29,7 @@ never hands a drafting run an empty thread.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections import OrderedDict
@@ -70,6 +71,7 @@ from jotflow.orchestrator.slack_files import current as current_file
 from jotflow.orchestrator.topics import list_topics as build_topic_list
 from jotflow.policy import IssueLinks, Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
+from jotflow.store import ConflictError
 from jotflow.store.base import Store, ToolCallRecord, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
@@ -757,17 +759,19 @@ def read_tools(
             if ok:
                 kept.append((attached.name, attached.text))
                 continue
-            await store.record_tool_call(
-                ToolCallRecord(
-                    run_id=f"attachments:{record.id}",
-                    tool=LEFT_OUT,
-                    args_hash=attached.file_id,
-                    channel_id=record.channel_id,
-                    thread_ts=record.thread_ts,
-                    result_json=json.dumps({"name": attached.name}),
-                    called_at=clock(),
+            # A retried get_work for the same execution records it once (#346 review).
+            with contextlib.suppress(ConflictError):
+                await store.record_tool_call(
+                    ToolCallRecord(
+                        run_id=f"attachments:{record.id}",
+                        tool=LEFT_OUT,
+                        args_hash=attached.file_id,
+                        channel_id=record.channel_id,
+                        thread_ts=record.thread_ts,
+                        result_json=json.dumps({"name": attached.name}),
+                        called_at=clock(),
+                    )
                 )
-            )
         return kept
 
     async def _execution(grant: Grant, run_proposal: str | None) -> ExecutionWork:

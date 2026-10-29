@@ -18,6 +18,7 @@ text is never logged, and nothing here stores it.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -67,16 +68,44 @@ _SECRETS = (
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
-    re.compile(
-        r"(?im)^\s*[\w.-]*(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)"
-        r"[\w.-]*\s*[:=]\s*\S+"
-    ),
 )
+# A line that sets a password, secret, token or key: the keyword, then within a few
+# characters ":" or "=" and a value. Found with str.find and one bounded, anchored
+# match per hit, never a pattern with overlapping repeats, so it's linear (#346 review).
+_SECRET_WORDS: tuple[str, ...] = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "apikey",
+    "api_key",
+    "api-key",
+    "privatekey",
+    "private_key",
+    "private-key",
+)
+# Quotes too, so a JSON or YAML key such as "password": "x" counts.
+_ASSIGNED = re.compile(r"[\w.\"'-]{0,32}\s{0,8}[:=]\s{0,8}\S")
+
+
+def _sets_a_secret(text: str) -> bool:
+    for line in text.splitlines():
+        # Each hit costs one bounded match, so a whole line is still linear.
+        lowered = line.lower()
+        for word in _SECRET_WORDS:
+            at = lowered.find(word)
+            while at != -1:
+                if _ASSIGNED.match(lowered, at + len(word)):
+                    return True
+                at = lowered.find(word, at + 1)
+    return False
 
 
 def looks_secret(text: str) -> bool:
-    """Whether ``text`` has a credential's shape: a token, key, JWT or password line."""
-    return any(pattern.search(text) for pattern in _SECRETS)
+    """Whether ``text`` has a credential's shape: a token, key, JWT or a line that sets
+    a password or secret. Best-effort: a safety net for common shapes, not a guarantee.
+    """
+    return _sets_a_secret(text) or any(pattern.search(text) for pattern in _SECRETS)
 
 
 class FileSlack(Protocol):
@@ -210,7 +239,8 @@ async def read_text(file: FileFacts, slack: FileSlack) -> FileText:
     text = decode(data)
     if text is None:
         return FileText(reason=NOT_READABLE)
-    if looks_secret(text):
+    # Off the event loop, so no regex cost ever stalls JotFlow (#346 review).
+    if await asyncio.to_thread(looks_secret, text):
         log.info("file %s not read: it has a credential's shape", file.file_id)
         return FileText(reason=LOOKS_SECRET)
     return FileText(text=text, sha256=hashlib.sha256(data).hexdigest())

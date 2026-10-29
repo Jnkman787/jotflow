@@ -571,3 +571,68 @@ async def test_get_work_records_only_the_files_it_gave_text_for() -> None:
     await call(specs["get_work"], grant)
     assert await store.find_tool_call(grant.run_id, SERVED_FILE, "F0DOC1") is not None
     assert await store.find_tool_call(grant.run_id, SERVED_FILE, "F0IMG2") is None
+
+
+@pytest.mark.parametrize("word", ["password", "token.", "secretx", "api_key", "secret:"])
+def test_the_secret_scan_is_linear_on_32_kib_of_a_repeated_keyword(word: str) -> None:
+    # #346 review: the old password-line pattern took 1.4 to 2.0 s on these inputs.
+    import time
+
+    text = word * (32 * 1024 // len(word))
+    started = time.perf_counter()
+    looks_secret(text)
+    assert time.perf_counter() - started < 0.05
+
+
+def test_a_key_late_in_a_long_line_is_still_found() -> None:
+    assert looks_secret("x" * 600 + ' "password": "hunter2"')
+
+
+async def test_a_retried_execution_records_a_left_out_file_once() -> None:
+    # #346 review: get_work may run twice for one execution, after a restart.
+    from datetime import UTC, datetime
+
+    from jotflow.models import RunKind
+    from jotflow.orchestrator.slack_files import LEFT_OUT
+    from jotflow.store.base import AUTO_APPROVER
+    from jotflow.whiteboard.read_tools import read_tools
+    from tests.test_read_tools import CH as RCH
+    from tests.test_read_tools import POLICY as RPOLICY
+    from tests.test_read_tools import POST, FakeSource, call, checked_registry, running
+    from tests.test_read_tools import Clock as RClock
+
+    files = Files({"F0DOC1": b"Changed.\n"})
+    files.raw["F0DOC1"]["channels"] = [RCH]
+    store = MemoryStore()
+    old = b"Old.\n"
+    draft = IssueProposal(
+        repo="acme-co/web",
+        title="T",
+        body="B",
+        confidence=0.9,
+        attached=[
+            AttachedFile(
+                file_id="F0DOC1",
+                name="doc.md",
+                size=len(old),
+                sha256=hashlib.sha256(old).hexdigest(),
+                text=old.decode(),
+            )
+        ],
+    )
+    await store.add_proposal(
+        ProposalRecord(
+            id="p1",
+            channel_id=RCH,
+            thread_ts=POST,
+            run_id="r0",
+            proposal=draft,
+            created_at=datetime(2026, 10, 29, 8, 0, tzinfo=UTC),
+        )
+    )
+    await store.transition("p1", ProposalState.APPROVED, approved_by=AUTO_APPROVER)
+    specs = checked_registry(read_tools(store, RPOLICY, FakeSource(), clock=RClock(), files=files))
+    grant = await running(store, RunKind.EXECUTION, proposal_id="p1")
+    await call(specs["get_work"], grant)
+    await call(specs["get_work"], grant)  # no ConflictError
+    assert len(await store.tool_call_results("attachments:p1", (LEFT_OUT,))) == 1
