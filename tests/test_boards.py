@@ -345,3 +345,21 @@ def test_policy_without_boards_is_unchanged() -> None:
         }
     )
     assert plain.channel(CH).boards == ()
+
+
+def test_check_names_the_boards_and_the_permission_they_need() -> None:
+    from jotflow.commands.check import board_notes
+
+    [note] = board_notes(POLICY)
+    assert note.startswith("acme-co/3, acme-co/7: the write token needs Projects: Read and write")
+    assert "Only organisation boards work." in note
+    assert board_notes(parse_policy(TOML.split(f"[[channels.{CH}.boards]]")[0])) == []
+
+
+def test_the_example_policy_has_a_board() -> None:
+    from pathlib import Path
+
+    from jotflow.policy import load_policy
+
+    example = load_policy(Path("examples/jotflow.example.toml"))
+    assert any(c.boards for c in example.channels.values())

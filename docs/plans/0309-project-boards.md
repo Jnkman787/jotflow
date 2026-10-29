@@ -6,7 +6,7 @@
 - Draft PR: #311
 - Status: plan approved by the lead and security (2026-10-29), with security's five conditions below. Code is next, configured boards first
 - Last verified: origin/main b3afbf3, 2026-10-29, with github-mcp-server 2.0.2's projects tools listed offline from the pinned binary
-- Next safe action: build PR 1, configured org boards
+- Next safe action: review PR 1 (#311). Then PR 1b, the card's board edit with migration 17, once #310 (migration 16) merges. Then PR 2, discovery
 
 ## Objective and done-when
 
@@ -137,9 +137,14 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 - [x] Read the issue, and list the pinned server's projects tools
 - [x] Commit this plan and open the draft PR
 - [x] The lead and security decide 1 to 4
-- [ ] Code, in the PRs decision 2 settles
+- [x] PR 1: configured org boards, propose, card display, the fixed add, the access check at start, docs
+- [ ] PR 1b: the card's board edit, a multi-select, with migration 17 rebuilding `proposal_edits`' CHECK, after #310
+- [ ] PR 2: discovery, under security's condition 3
 
 ## Validation
+
+- PR 1: `make check` is green. The GraphQL calls are tested against a fake endpoint, covering errors, null nodes, wrong shapes, a mismatched item, rate limits and size caps. A presets test shows no preset gives any run kind a projects tool.
+- Each board add is recorded in the existing tool-call ledger, keyed by proposal and board, so it needs no migration. Only the card edit does.
 
 The projects tool list comes from github-mcp-server 2.0.2 run offline, in a loopback-only network namespace, with `--toolsets projects` and a dummy token. No GitHub call was made.
 

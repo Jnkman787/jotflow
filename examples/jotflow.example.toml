@@ -164,6 +164,17 @@ include_archived = false
 description = "Backend services and shared libraries"
 aliases = { auth = "service-authentication" }
 
+# GitHub Projects boards an approved issue may be added to (#309). Organisation
+# boards only, as owner/number from the board's URL. The description is your own,
+# and it's what the drafting agent proposes boards by: GitHub's own goes stale.
+# The write token needs Projects: Read and write on the organisation. After
+# approval JotFlow adds the issue itself, through the exec runner; no agent gets
+# a projects tool.
+[[channels.G0EXAMPLE2.boards]]
+board = "example-org/4"
+nickname = "roadmap"
+description = "Planned work for the next two quarters"
+
 # This channel keeps its own help quieter: no pinned guide.
 [channels.G0EXAMPLE2.help]
 guide = false
