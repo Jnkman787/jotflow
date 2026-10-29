@@ -516,6 +516,14 @@ class ChannelPolicy(_Strict):
             "boards (#317)"
         ),
     )
+    attachments: Literal["off", "names", "text"] = Field(
+        default="names",
+        description=(
+            "What drafting learns of a message's Slack files (#333): nothing, each file's "
+            "name, type and size, or also a small text file's text, which a proposal may "
+            "then copy into the issue. text needs the bot's files:read scope"
+        ),
+    )
     help: ChannelHelp = Field(
         default_factory=ChannelHelp, description="Overrides the top-level [help] settings"
     )
@@ -795,6 +803,11 @@ class Policy(_Strict):
         """The channel's help settings, each one its own or the top-level default."""
         own = self.channel(channel_id).help.model_dump(exclude_none=True)
         return self.help.model_copy(update=own)
+
+    def attachments_for(self, channel_id: str) -> str:
+        """A channel's ``attachments`` setting (#333), or "off" for an unlisted one."""
+        found = self.channels.get(channel_id)
+        return found.attachments if found is not None else "off"
 
     def questions_for(self, channel_id: str) -> QuestionsPolicy:
         """The channel's question settings, each one its own or the top-level default."""

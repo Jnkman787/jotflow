@@ -29,6 +29,7 @@ never hands a drafting run an empty thread.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Collection
@@ -45,9 +46,11 @@ from jotflow.execution.writes import plan as plan_writes
 from jotflow.models import (
     RUN_KINDS,
     IssueDetails,
+    IssueProposal,
     MessageRef,
     PendingDraft,
     Proposal,
+    ProposalRecord,
     ProposalState,
     RunKind,
     RunStatus,
@@ -56,10 +59,18 @@ from jotflow.models import (
     UntrustedText,
 )
 from jotflow.orchestrator.help import help_text
+from jotflow.orchestrator.slack_files import (
+    LEFT_OUT,
+    SERVED_FILE,
+    FileSlack,
+    attachments_section,
+    read_text,
+)
+from jotflow.orchestrator.slack_files import current as current_file
 from jotflow.orchestrator.topics import list_topics as build_topic_list
 from jotflow.policy import IssueLinks, Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
-from jotflow.store.base import Store, utc_now
+from jotflow.store.base import Store, ToolCallRecord, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
@@ -165,6 +176,25 @@ class Mention(BaseModel):
     display_name: UntrustedText = Field(description="The person's Slack display name")
 
 
+class FileBrief(BaseModel):
+    """A Slack file on a message (#333): what it is, never where it is."""
+
+    file_id: str = Field(description="Opaque; name it in propose_issue's attachments")
+    name: UntrustedText = Field(description="The file's name; untrusted")
+    filetype: str = Field(description="Slack's file type, such as markdown or png")
+    mimetype: str
+    size: int = Field(ge=0, description="In bytes")
+    text: UntrustedText | None = Field(
+        default=None,
+        description="A small text file's text, when the channel allows it; untrusted",
+    )
+    not_read: str | None = Field(
+        default=None, description="Why there's no text, when it's a file JotFlow might read"
+    )
+    # The digest of the bytes read, for JotFlow's record only: never sent to the agent.
+    sha256: str | None = Field(default=None, exclude=True)
+
+
 class ThreadMessage(BaseModel):
     ts: str = Field(description="Slack timestamp of the message, a pointer")
     user_id: str | None = Field(default=None, description="Slack user id of the author")
@@ -190,6 +220,9 @@ class ThreadMessage(BaseModel):
     asks_jotflow: bool = Field(
         default=False,
         description="True for a person's question to JotFlow: ask:, or a mention of JotFlow",
+    )
+    files: list[FileBrief] = Field(
+        default_factory=list, description="Files attached to the message, at most 5 (#333)"
     )
 
 
@@ -409,6 +442,7 @@ def read_tools(
     repos: RepoCatalog | None = None,
     issues: Callable[[], IssueReader | None] = lambda: None,
     boards_off: Collection[str] = frozenset(),
+    files: FileSlack | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The read tools, bound to their dependencies. Built once at startup.
 
@@ -560,6 +594,21 @@ def read_tools(
                 for m in thread.messages
             ],
         )
+        # The files this run was given text for, and only those, may be attached (#333).
+        for message in thread.messages:
+            for file in message.files:
+                if file.text is not None and file.sha256 is not None:
+                    await store.record_tool_call(
+                        ToolCallRecord(
+                            run_id=run.id,
+                            tool=SERVED_FILE,
+                            args_hash=file.file_id,
+                            channel_id=grant.channel_id,
+                            thread_ts=run.thread_ts,
+                            result_json=json.dumps({"sha256": file.sha256}),
+                            called_at=clock(),
+                        )
+                    )
         conversation = ConversationWork(
             instructions=(
                 DRAFTING_INSTRUCTIONS if grant.kind is RunKind.DRAFTING else QUESTION_INSTRUCTIONS
@@ -662,6 +711,40 @@ def read_tools(
             )
         return people
 
+    async def _still_attached(record: ProposalRecord) -> list[tuple[str, str]]:
+        """The approved files that are still as approved, by name and text (#333).
+
+        A file deleted, no longer shared in the channel, or changed since the card is
+        left out, and recorded so the thread notice says so: someone who deleted their
+        file shouldn't see it published. No file reader means none is kept.
+        """
+        draft = record.proposal
+        if not isinstance(draft, IssueProposal) or not draft.attached:
+            return []
+        kept: list[tuple[str, str]] = []
+        for attached in draft.attached:
+            ok = False
+            if files is not None:
+                now = await current_file(attached.file_id, files)
+                if now is not None and record.channel_id in now.channels:
+                    read = await read_text(now, files)
+                    ok = read.sha256 == attached.sha256
+            if ok:
+                kept.append((attached.name, attached.text))
+                continue
+            await store.record_tool_call(
+                ToolCallRecord(
+                    run_id=f"attachments:{record.id}",
+                    tool=LEFT_OUT,
+                    args_hash=attached.file_id,
+                    channel_id=record.channel_id,
+                    thread_ts=record.thread_ts,
+                    result_json=json.dumps({"name": attached.name}),
+                    called_at=clock(),
+                )
+            )
+        return kept
+
     async def _execution(grant: Grant, run_proposal: str | None) -> ExecutionWork:
         if run_proposal != grant.proposal_id or grant.proposal_id is None:
             raise ToolError(f"run {grant.run_id} does not match its token")
@@ -677,7 +760,8 @@ def read_tools(
             raise ToolError(f"proposal {record.id} no longer matches what was approved")
         # JotFlow decides exactly what is written; the agent checks, then copies.
         tail = await execution_footer(record, policy, attribution, store)
-        checks, writes = plan_writes(record, tail, policy.issues)
+        section = attachments_section(await _still_attached(record))
+        checks, writes = plan_writes(record, tail, policy.issues, section)
         return ExecutionWork(
             run_id=grant.run_id,
             proposal_id=record.id,

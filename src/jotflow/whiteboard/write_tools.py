@@ -29,14 +29,17 @@ import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Annotated, Any, Literal, Protocol, TypeVar
 from urllib.parse import unquote
 
 import anyio
 from pydantic import BaseModel, Field, model_validator
 
 from jotflow.models import (
+    MAX_ATTACHED,
     MAX_RELATED,
+    SLACK_FILE_ID,
+    AttachedFile,
     ChannelMode,
     ExecutionResult,
     IssueChanges,
@@ -51,6 +54,13 @@ from jotflow.models import (
     RunStatus,
     UpdateProposal,
 )
+from jotflow.orchestrator.slack_files import (
+    SERVED_FILE,
+    FileSlack,
+    attachments_section,
+    read_text,
+)
+from jotflow.orchestrator.slack_files import current as current_file
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
@@ -134,16 +144,38 @@ def _check_participants(value: list[str]) -> list[str]:
     return sorted(set(value))
 
 
+# Attachments (#333): fixed reasons, never quoting the file.
+ATTACH_OFF = "this channel's attachments setting doesn't allow copying file text into issues"
+ATTACH_NOT_SERVED = "isn't a file this run was given the text of"
+ATTACH_GONE = "is no longer shared in this channel"
+ATTACH_CHANGED = "changed since this run read it; draft from the thread again"
+ATTACH_SLACK_LINK = "holds a Slack link, and this channel sends none to GitHub"
+ATTACH_TOO_LONG = "the body with its attachments would pass GitHub's length limit; attach fewer"
+# GitHub's issue body limit is 65,536 characters; JotFlow's footer needs the rest.
+MAX_BODY_WITH_FILES = 60_000
+
+
 class ProposeIssueArgs(IssueProposal):
     participants: list[str] = Field(
         default_factory=list,
         description="Slack user ids of the poster and anyone mentioned. Informational: "
         "they are never made assignees.",
     )
+    attachments: list[Annotated[str, Field(pattern=SLACK_FILE_ID)]] = Field(
+        default_factory=list,
+        max_length=MAX_ATTACHED,
+        description=(
+            "Optional. Up to 3 `file_id`s of files in this thread whose `text` the packet "
+            "gave. JotFlow copies each file's text into the issue, as a code block (#333)"
+        ),
+    )
 
     @model_validator(mode="after")
     def _participants(self) -> ProposeIssueArgs:
         self.participants = _check_participants(self.participants)
+        if self.attached:
+            # JotFlow reads and snapshots the files itself: never the agent's text.
+            raise ValueError("attached is JotFlow's; name files in attachments instead")
         return self
 
 
@@ -504,8 +536,11 @@ class WriteTools:
         docs: DocReads | None = None,
         authors: Authors | None = None,
         boards_off: Collection[str] = frozenset(),
+        files: FileSlack | None = None,
     ) -> None:
         self._store = store
+        # JotFlow's own Slack file reader, for attachments (#333).
+        self._files = files
         self._policy = policy
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
@@ -665,6 +700,48 @@ class WriteTools:
             if text and _SLACK_LINK.search(_for_link_check(text)):
                 raise ToolError(NO_SLACK_LINKS)
 
+    async def _attach(self, grant: Grant, file_ids: list[str], body: str) -> list[AttachedFile]:
+        """Each named file's text, read again by JotFlow and snapshotted (#333).
+
+        Only a file this run's packet gave text for, still shared in this channel,
+        unchanged since, with no credential's shape, and, under issue_links none, no
+        Slack link. The issue stays inside GitHub's body limit, or it's refused.
+        """
+        if not file_ids:
+            return []
+        if self._policy.attachments_for(grant.channel_id) != "text" or self._files is None:
+            raise ToolError(ATTACH_OFF)
+        out: list[AttachedFile] = []
+        for file_id in dict.fromkeys(file_ids):
+            served = await self._store.find_tool_call(grant.run_id, SERVED_FILE, file_id)
+            if served is None:
+                raise ToolError(f"{file_id} {ATTACH_NOT_SERVED}")
+            file = await current_file(file_id, self._files)
+            if file is None or grant.channel_id not in file.channels:
+                raise ToolError(f"{file_id} {ATTACH_GONE}")
+            read = await read_text(file, self._files)
+            if read.text is None or read.sha256 is None:
+                raise ToolError(f"{file_id}: {read.reason or ATTACH_GONE}")
+            if read.sha256 != json.loads(served).get("sha256"):
+                raise ToolError(f"{file_id} {ATTACH_CHANGED}")
+            try:
+                self._check_no_slack_links(read.text)
+            except ToolError:
+                raise ToolError(f"{file_id} {ATTACH_SLACK_LINK}") from None
+            out.append(
+                AttachedFile(
+                    file_id=file_id,
+                    name=file.name,
+                    size=len(read.text.encode()),
+                    sha256=read.sha256,
+                    text=read.text,
+                )
+            )
+        section = attachments_section([(a.name, a.text) for a in out])
+        if len(body) + len(section) > MAX_BODY_WITH_FILES:
+            raise ToolError(ATTACH_TOO_LONG)
+        return out
+
     def _related(
         self, grant: Grant, related: list[RelatedIssue], *, own: tuple[str, int] | None = None
     ) -> tuple[list[RelatedIssue], int]:
@@ -793,14 +870,16 @@ class WriteTools:
             await self._check_mentions(args.participants, args.title, args.body)
             await self._check_assignees(args.assignees, args.participants)
             related, dropped = self._related(grant, args.related)
+            attached = await self._attach(grant, args.attachments, args.body)
             draft = IssueProposal.model_validate(
                 {
-                    **args.model_dump(exclude={"participants"}),
+                    **args.model_dump(exclude={"participants", "attachments"}),
                     "repo": repo,
                     "labels": labels,
                     "sources": await self._sources(grant, args.sources),
                     "related": [r.model_dump() for r in related],
                     "boards": [b.model_dump() for b in self._boards(grant, args.boards)],
+                    "attached": [a.model_dump() for a in attached],
                 }
             )
             result = await self._add(grant, draft, args.participants)
@@ -1142,6 +1221,7 @@ def write_tools(
     docs: DocReads | None = None,
     authors: Authors | None = None,
     boards_off: Collection[str] = frozenset(),
+    files: FileSlack | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
     tools = WriteTools(
@@ -1154,6 +1234,7 @@ def write_tools(
         docs=docs,
         authors=authors,
         boards_off=boards_off,
+        files=files,
     )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
         ("propose_issue", ProposeIssueArgs, DRAFTING),

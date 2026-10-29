@@ -355,6 +355,27 @@ class ProposedBoard(BaseModel):
     reason: str = Field(min_length=1, max_length=200, description="One line: why it belongs there")
 
 
+MAX_ATTACHED = 3
+MAX_ATTACHMENT_BYTES = 32 * 1024
+SLACK_FILE_ID = r"^F[A-Z0-9]{2,30}$"
+
+
+class AttachedFile(BaseModel):
+    """A Slack file's text as JotFlow read it when the proposal was made (#333).
+
+    JotFlow fills this, never the agent. Approval's hash covers it, so the issue
+    gets exactly the text the card showed, whatever happens to the file later.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: str = Field(pattern=SLACK_FILE_ID)
+    name: str = Field(min_length=1, max_length=100, description="Cleaned; shown as plain text")
+    size: int = Field(ge=0, le=MAX_ATTACHMENT_BYTES)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$", description="Of the file's bytes as read")
+    text: str = Field(max_length=MAX_ATTACHMENT_BYTES)
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -394,6 +415,11 @@ class IssueProposal(BaseModel):
         default_factory=list,
         max_length=MAX_PROPOSED_BOARDS,
         description="Optional. Up to 3 of channel.boards to add the issue to after approval",
+    )
+    attached: list[AttachedFile] = Field(
+        default_factory=list,
+        max_length=MAX_ATTACHED,
+        description="Set by JotFlow from `attachments`, never by the agent (#333)",
     )
 
 

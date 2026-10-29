@@ -400,7 +400,14 @@ def cleared_draft(
     if isinstance(proposal, IssueProposal):
         # Board reasons are the agent's words too; the boards themselves stay (#309).
         boards = [b.model_copy(update={"reason": CLEARED_REASON}) for b in proposal.boards]
-        update = {"title": CLEARED_TITLE, "body": "", "hint_overruled": None, "boards": boards}
+        # An attached file's text is draft content too (#333, security's condition 4).
+        update = {
+            "title": CLEARED_TITLE,
+            "body": "",
+            "hint_overruled": None,
+            "boards": boards,
+            "attached": [],
+        }
         return proposal.model_copy(update=update, deep=True)
     changes = proposal.changes.model_copy(update={"body": None, "comment": None})
     return proposal.model_copy(update={"changes": changes, "hint_overruled": None}, deep=True)

@@ -36,8 +36,23 @@ from jotflow.models import TopicIndex, UntrustedText
 from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.questions import mentions_bot
+from jotflow.orchestrator.slack_files import (
+    MAX_THREAD_TEXT,
+    TEXT_OFF,
+    THREAD_FULL,
+    FileSlack,
+    is_text,
+    message_files,
+    read_text,
+)
 from jotflow.store.base import Store
-from jotflow.whiteboard.read_tools import Mention, RelatedExcerpt, ThreadMessage, WorkThread
+from jotflow.whiteboard.read_tools import (
+    FileBrief,
+    Mention,
+    RelatedExcerpt,
+    ThreadMessage,
+    WorkThread,
+)
 from jotflow.whiteboard.tools import ToolError
 
 log = logging.getLogger("jotflow.packet")
@@ -325,10 +340,15 @@ class SlackWorkSource:
         *,
         bot: BotIdentity | None = None,
         sleep: Sleep = asyncio.sleep,
+        files: FileSlack | None = None,
+        attachments_for: Callable[[str], str] = lambda channel_id: "names",
     ) -> None:
         self._reader = reader
         self._store = store
         self._bot = bot
+        # Slack files (#333): what each channel shows, and JotFlow's own file reader.
+        self._files = files
+        self._attachments_for = attachments_for
         self._sleep = sleep
         self._names = _Names(reader, sleep)
         # One wait budget per get_work call, handed from thread() to related().
@@ -443,6 +463,7 @@ class SlackWorkSource:
             self._message(m, rest, topic_id, names, hints.get(str(m["ts"])))
             for m, rest, topic_id in kept
         ]
+        messages = await self._with_files(channel_id, [m for m, _, _ in kept], messages)
         trimmed, trimmed_out = _trim(messages)
         omitted = skipped_while_paging + trimmed_out
         log.info(
@@ -491,6 +512,51 @@ class SlackWorkSource:
             from_jotflow=self._from_jotflow(raw),
             asks_jotflow=self._asks_jotflow(raw, keyword),
         )
+
+    async def _with_files(
+        self, channel_id: str, raw: list[Mapping[str, Any]], messages: list[ThreadMessage]
+    ) -> list[ThreadMessage]:
+        """Each message's files, as the channel's ``attachments`` setting allows (#333).
+
+        Never a URL. With ``text``, JotFlow reads a small text file itself, up to
+        :data:`MAX_THREAD_TEXT` for the thread, and gives its text as untrusted.
+        """
+        setting = self._attachments_for(channel_id)
+        if setting == "off":
+            return messages
+        used = 0
+        out: list[ThreadMessage] = []
+        for source, message in zip(raw, messages, strict=True):
+            found = [] if self._from_jotflow(source) else message_files(source)
+            briefs: list[FileBrief] = []
+            for file in found:
+                text: str | None = None
+                reason: str | None = None
+                read_sha: str | None = None
+                if is_text(file):
+                    if setting != "text" or self._files is None:
+                        reason = TEXT_OFF
+                    elif used + file.size > MAX_THREAD_TEXT:
+                        reason = THREAD_FULL
+                    else:
+                        read = await read_text(file, self._files)
+                        text, reason, read_sha = read.text, read.reason, read.sha256
+                        if text is not None:
+                            used += len(text.encode())
+                briefs.append(
+                    FileBrief(
+                        file_id=file.file_id,
+                        name=UntrustedText(text=file.name),
+                        filetype=file.filetype,
+                        mimetype=file.mimetype,
+                        size=file.size,
+                        text=UntrustedText(text=text) if text is not None else None,
+                        not_read=reason,
+                        sha256=read_sha,
+                    )
+                )
+            out.append(message.model_copy(update={"files": briefs}) if briefs else message)
+        return out
 
     def _asks_jotflow(self, raw: Mapping[str, Any], keyword: str | None) -> bool:
         """A person asked JotFlow a question: ``ask:``, or a mention of the bot (#57)."""

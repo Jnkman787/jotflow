@@ -81,6 +81,7 @@ from jotflow.orchestrator.questions import (
 )
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
+from jotflow.orchestrator.slack_files import BoltFileSlack
 from jotflow.orchestrator.summary import BoltSummarySlack, WeeklySummaries
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.orchestrator.verify import Verifier, VerifyCommand
@@ -488,7 +489,15 @@ class Orchestrator:
         self._help = HelpHandler(
             self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
-        source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
+        # Slack files (#333): JotFlow's own reader, used only where a channel allows it.
+        files = BoltFileSlack(self._client)
+        source = SlackWorkSource(
+            BoltSlackReader(self._client),
+            self._store,
+            bot=self._identity,
+            files=files,
+            attachments_for=self._policy.attachments_for,
+        )
         # Repo docs for drafting (#209): no tools at all unless a repo sets read_paths.
         # The runner client is made below, so the tools look it up when called.
         doc_reads = DocReads(self._store)
@@ -502,6 +511,7 @@ class Orchestrator:
                 repos=self.repos,
                 issues=self._issue_reader,
                 boards_off=self.boards_off,
+                files=files,
             ),
             *write_tools(
                 self._store,
@@ -512,6 +522,7 @@ class Orchestrator:
                 boards_off=self.boards_off,
                 # Who wrote a revision's new messages, as approval reads them (#304).
                 authors=attribution.authors,
+                files=files,
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
