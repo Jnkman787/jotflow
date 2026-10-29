@@ -651,12 +651,23 @@ class MemoryStore:
                             secrets.token_hex(8), displaced, OPERATOR_REMOVER, self._clock()
                         )
                     )
+            own = self._identities.get(slack_user_id)
+            replaced_own: str | None = None
+            if own is not None and own.github_login.casefold() != github_login.casefold():
+                if not replace:
+                    raise ConflictError(f"{slack_user_id} has another GitHub login linked")
+                replaced_own = own.github_login
+                self._unlinks.append(
+                    IdentityUnlink(
+                        secrets.token_hex(8), slack_user_id, OPERATOR_REMOVER, self._clock()
+                    )
+                )
             self._codes.pop(slack_user_id, None)
             link = IdentityLink(
                 slack_user_id, github_login, False, self._clock(), None, github_id, "admin"
             )
             self._identities[slack_user_id] = link
-            return Verified(link, displaced)
+            return Verified(link, displaced, replaced_own)
 
     # Operator tokens
 

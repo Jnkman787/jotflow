@@ -177,7 +177,9 @@ async def load_links(
     - another login: refused without ``--replace``; with it, changed, recorded as by
       ``operator``, and the person is told, naming both logins
 
-    A run that stops partway can be run again: lines already done count as unchanged.
+    Each line's change is one store transaction, and its private notes go out right
+    after it commits. A run that stops partway names the member it stopped at, so the
+    operator can tell them, and can be run again: lines already done count as unchanged.
     """
     plans: list[_Plan] = []
     for number, (user, login) in enumerate(pairs, start=1):
@@ -199,37 +201,55 @@ async def load_links(
         current = await store.get_identity(user)
         plans.append(_plan(number, user, found.login, found.id, current, replace))
     counts = LinkCounts()
-    for plan in plans:
-        if plan.action == "unchanged":
-            counts.unchanged += 1
-            continue
-        if plan.action == "keep":
-            await store.fill_github_id(plan.user, plan.account_id)
-            counts.kept_verified += 1
-            continue
-        if plan.action == "replace_own":
-            await store.remove_identity(plan.user, removed_by=OPERATOR_REMOVER)
+    for number, plan in enumerate(plans, start=1):
         try:
-            done = await store.admin_link(plan.user, plan.login, plan.account_id, replace=replace)
-        except ConflictError:
+            await _apply(store, notifier, plan, counts, replace=replace)
+        except LinkRefused:
+            raise
+        except Exception as exc:
+            # Stopped partway: say which member was in flight, so the operator can tell
+            # them, and that the run can be run again (#305 review).
             raise LinkRefused(
-                f"a login was linked by someone else meanwhile, after {counts.linked} were "
-                "linked; run it again to finish"
+                f"stopped at link {number}, member {plan.user} ({type(exc).__name__}), after "
+                f"{counts.linked} were linked. That member may need telling; run it again to "
+                "finish"
             ) from None
-        counts.linked += 1
-        if plan.action == "replace_own" and plan.old_login is not None:
-            counts.replaced += 1
-            counts.notes.append((plan.user, changed_note(plan.old_login, plan.login)))
-        if done.displaced is not None:
-            counts.replaced += 1
-            counts.notes.append((done.displaced, removal_note(None)))
-    for user, text in counts.notes:
+    return counts
+
+
+async def _apply(
+    store: SqliteStore, notifier: SlackNote, plan: _Plan, counts: LinkCounts, *, replace: bool
+) -> None:
+    """One line's change, in one store transaction, then its private notes at once."""
+    if plan.action == "unchanged":
+        counts.unchanged += 1
+        return
+    if plan.action == "keep":
+        await store.fill_github_id(plan.user, plan.account_id)
+        counts.kept_verified += 1
+        return
+    try:
+        done = await store.admin_link(plan.user, plan.login, plan.account_id, replace=replace)
+    except ConflictError:
+        raise LinkRefused(
+            f"a login was linked by someone else meanwhile, after {counts.linked} were "
+            "linked; run it again to finish"
+        ) from None
+    counts.linked += 1
+    notes: list[tuple[str, str]] = []
+    if done.replaced_own is not None:
+        counts.replaced += 1
+        notes.append((plan.user, changed_note(done.replaced_own, plan.login)))
+    if done.displaced is not None:
+        counts.replaced += 1
+        notes.append((done.displaced, removal_note(None)))
+    for user, text in notes:  # right after their change committed, never batched
+        counts.notes.append((user, text))
         try:
             await notifier.tell(user, text)
             counts.told += 1
         except Exception:  # told or not, the count says so
             pass
-    return counts
 
 
 def _plan(
