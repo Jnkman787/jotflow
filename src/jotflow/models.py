@@ -678,3 +678,28 @@ class TopicIndex(BaseModel):
         if not data["more"]:
             del data["more"]
         return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+
+# What the drafting runner says about a person, for assigning by request (#305).
+
+
+class Account(BaseModel):
+    """What GitHub says about a login. ``missing`` has no id."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    account: Literal["user", "organization", "missing"]
+    id: int | None = Field(default=None, ge=1, le=2**53)
+    login: str | None = Field(default=None, max_length=39)
+
+
+class Assignable(Account):
+    """An account, and whether it can be assigned issues in one repo."""
+
+    assignable: bool = False
+
+
+class Membership(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    member: Literal["yes", "no", "hidden"]
