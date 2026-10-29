@@ -72,7 +72,7 @@ description = "Planned work for the next two quarters"
 owner = "acme-co"
 numbers = [12, 14]             # recommended: these boards, by number
 marker = "jotflow:triage"      # or a word in the board's short description...
-creators = ["acme-lead"]       # ...counted only on boards these accounts created
+creators = [{ login = "acme-lead", id = 1001 }]  # ...on boards these accounts created, by id
 exclude = ["* (archive)"]      # title globs that only leave boards out
 description = "Each team's own board"
 aliases = { design = 12 }

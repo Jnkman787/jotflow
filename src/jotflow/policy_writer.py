@@ -163,7 +163,10 @@ def render_policy(policy: Policy) -> str:
             if found.marker is not None:
                 lines.append(f"marker = {toml_string(found.marker)}")
             if found.creators:
-                lines.append(f"creators = [{', '.join(toml_string(c) for c in found.creators)}]")
+                pairs = ", ".join(
+                    f"{{ login = {toml_string(c.login)}, id = {c.id} }}" for c in found.creators
+                )
+                lines.append(f"creators = [{pairs}]")
             if found.exclude:
                 lines.append(f"exclude = [{', '.join(toml_string(g) for g in found.exclude)}]")
             if found.description is not None:

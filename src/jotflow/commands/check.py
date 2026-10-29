@@ -36,6 +36,7 @@ from jotflow.commands.run import (
 )
 from jotflow.config import Settings
 from jotflow.envfile import read_env
+from jotflow.github_cli import gh_user_id
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
 from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
@@ -322,6 +323,44 @@ def board_notes(policy: Policy) -> list[str]:
     return notes
 
 
+def creator_notes(policy: Policy, lookup: Callable[[str], int | None]) -> list[tuple[str, str]]:
+    """Each pinned board creator against the id its login has now (#348).
+
+    Only ever printed: check never writes jotflow.toml, so nothing re-pins a creator
+    to another account. Returns (level, text) pairs.
+    """
+    out: list[tuple[str, str]] = []
+    seen: set[int] = set()
+    for channel in policy.channels.values():
+        for scope in channel.board_scopes:
+            for creator in scope.creators:
+                if creator.id in seen:
+                    continue
+                seen.add(creator.id)
+                now = lookup(creator.login)
+                if now is None:
+                    out.append(
+                        (
+                            "note",
+                            f"creator {creator.login} is pinned to id {creator.id}; "
+                            "the GitHub CLI couldn't confirm it",
+                        )
+                    )
+                elif now == creator.id:
+                    out.append(("ok", f"creator {creator.login} is id {creator.id}"))
+                else:
+                    out.append(
+                        (
+                            "warn",
+                            f"creator {creator.login} is pinned to id {creator.id}, but that "
+                            f"login is now id {now}. Its boards aren't counted. If the "
+                            "account changed hands, fix the line by hand after checking who "
+                            "holds it",
+                        )
+                    )
+    return out
+
+
 def triage_notes(policy: Policy) -> list[str]:
     """Each channel's triage guide and its size against the cap (#317)."""
     return [
@@ -397,6 +436,9 @@ def run(args: argparse.Namespace) -> int:
         print(f"note  docs: {note}")
     for note in board_notes(policy):
         print(f"note  boards: {note}")
+    if any(s.creators for c in policy.channels.values() for s in c.board_scopes):
+        for level, text in creator_notes(policy, gh_user_id):
+            print(f"{level:<5} boards: {text}")
     for note in triage_notes(policy):
         print(f"note  triage: {note}")
     for note in issue_notes(policy):

@@ -105,8 +105,9 @@ class BoardCatalog:
             for i, _ in enumerate(channel.board_scopes)
         }
         # login (casefolded) -> account id, for the logins that resolved to a person.
-        self._ids: dict[str, int] = {}
-        self._unresolved: set[str] = set()
+        # Each pinned creator id, with the id its login resolved to when checked (#348).
+        self._checked: dict[int, int | None] = {}
+        self._mismatched: set[int] = set()
         # The write token's answer for a found board, kept once it is a real one.
         # It only decides what is offered: every add checks again, live (decision 5).
         self._writable: dict[str, bool] = {}
@@ -124,29 +125,41 @@ class BoardCatalog:
     # Finding
 
     async def _creator_ids(self, scope: BoardScopePolicy) -> list[int]:
-        """The scope's creators as account ids. A login not resolved yet is tried again;
-        one that isn't a person's account drops out, which fails closed."""
+        """The scope's pinned creator ids, each matched as jotflow.toml gives it (#348).
+
+        The id is the authority, never the login. Each pair is checked once: if the
+        login now belongs to a different account, someone else may hold that name,
+        so the creator is dropped with a warning until an admin fixes the line. A
+        login that no longer resolves, or a lookup that fails, keeps the pinned id,
+        which still names the same person after a rename.
+        """
         ids: list[int] = []
-        for login in scope.creators:
-            key = login.casefold()
-            if key not in self._ids and self._resolve is not None:
+        for creator in scope.creators:
+            if creator.id not in self._checked and self._resolve is not None:
                 try:
-                    found = await self._resolve(login)
+                    now = await self._resolve(creator.login)
                 except Exception as exc:
-                    log.warning("could not look up board creator %s: %s", login, type(exc).__name__)
-                    continue
-                if found is None:
-                    if key not in self._unresolved:
-                        log.warning(
-                            "board creator %s isn't a GitHub person's account; it's left out",
-                            login,
-                        )
-                    self._unresolved.add(key)
-                    continue
-                self._ids[key] = found
-                self._unresolved.discard(key)
-            if key in self._ids:
-                ids.append(self._ids[key])
+                    log.warning(
+                        "board creator %s couldn't be checked (%s); its pinned id still counts",
+                        creator.login,
+                        type(exc).__name__,
+                    )
+                    now = None
+                else:
+                    self._checked[creator.id] = now
+            now = self._checked.get(creator.id)
+            if now is not None and now != creator.id:
+                if creator.id not in self._mismatched:
+                    self._mismatched.add(creator.id)
+                    log.warning(
+                        "board creator %s is pinned to id %d, but that login is now id %d; "
+                        "it isn't counted until jotflow.toml is fixed",
+                        creator.login,
+                        creator.id,
+                        now,
+                    )
+                continue
+            ids.append(creator.id)
         return ids
 
     async def refresh(self, channel_id: str, index: int) -> bool:

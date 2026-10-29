@@ -534,6 +534,26 @@ def _title_glob(value: str) -> str:
 TitleGlob = Annotated[str, AfterValidator(_title_glob)]
 
 
+class BoardCreator(_Strict):
+    """A person whose boards a marker counts for (#348 review): pinned by GitHub
+    account id, which survives a rename and can't be claimed by someone else. The
+    login is a label to review it by, never what's matched."""
+
+    login: str = Field(description="Their GitHub login, as a label")
+    id: int = Field(
+        ge=1,
+        le=2**53,
+        description="Their GitHub account id: the one matched. jotflow check prints it",
+    )
+
+    @field_validator("login")
+    @classmethod
+    def _login(cls, value: str) -> str:
+        if not is_github_login(value) or value.endswith("[bot]"):
+            raise ValueError(f"{shown(value)} is not a person's GitHub login")
+        return value
+
+
 class BoardScopePolicy(_Strict):
     """An organisation's boards a channel finds live, beside its listed ones (#309 PR 2).
 
@@ -552,10 +572,13 @@ class BoardScopePolicy(_Strict):
         default=None,
         description="A word such as jotflow:triage in a board's short description",
     )
-    creators: tuple[str, ...] = Field(
+    creators: tuple[BoardCreator, ...] = Field(
         default=(),
         max_length=MAX_CREATORS,
-        description="GitHub logins whose boards the marker counts for; required with marker",
+        description=(
+            "People whose boards the marker counts for, each as { login, id }: the id is "
+            "matched, never the login. Required with marker"
+        ),
     )
     exclude: tuple[TitleGlob, ...] = Field(
         default=(), max_length=MAX_GLOBS, description="Globs on board titles to leave out"
@@ -586,12 +609,24 @@ class BoardScopePolicy(_Strict):
             raise ValueError("a marker is lowercase name:word, such as jotflow:triage")
         return value
 
+    @field_validator("creators", mode="before")
+    @classmethod
+    def _pinned(cls, value: object) -> object:
+        # A bare login is the old form, and has no id to match: refuse it, saying how.
+        if isinstance(value, list | tuple):
+            for item in value:
+                if isinstance(item, str):
+                    raise ValueError(
+                        f"creator {shown(item)} needs its GitHub account id: write "
+                        f'{{ login = "{item}", id = ... }}; jotflow check prints the id'
+                    )
+        return value
+
     @field_validator("creators")
     @classmethod
-    def _creators(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for login in value:
-            if not is_github_login(login) or login.endswith("[bot]"):
-                raise ValueError(f"{shown(login)} is not a person's GitHub login")
+    def _unique(cls, value: tuple[BoardCreator, ...]) -> tuple[BoardCreator, ...]:
+        if len({c.id for c in value}) != len(value):
+            raise ValueError("a creator id is listed more than once")
         return value
 
     @field_validator("description")

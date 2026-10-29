@@ -60,7 +60,7 @@ description = "Planned work for the next two quarters"
 owner = "example-org"
 numbers = [12, 14, 3]
 marker = "jotflow:triage"
-creators = ["example-lead"]
+creators = [{{ login = "example-lead", id = 1001 }}]
 exclude = ["* (archive)"]
 description = "Each team's own board"
 aliases = {{ design = 12 }}
@@ -130,10 +130,22 @@ async def find(fake: Pages, **scope: Any) -> list[FoundBoard]:
     [
         ('exclude = ["x"]', "needs numbers or a marker; titles alone never count"),
         ('marker = "jotflow:triage"', "a marker needs creators"),
-        ('marker = "Triage"\ncreators = ["example-lead"]', "lowercase name:word"),
+        (
+            'marker = "Triage"\ncreators = [{ login = "example-lead", id = 1 }]',
+            "lowercase name:word",
+        ),
         ("numbers = [0]", "from 1 to 1,000,000,000"),
         ("numbers = [4, 4]", "listed more than once"),
-        ('marker = "jotflow:x"\ncreators = ["some-bot[bot]"]', "not a person's GitHub login"),
+        (
+            'marker = "jotflow:x"\ncreators = [{ login = "some-bot[bot]", id = 1 }]',
+            "not a person's",
+        ),
+        ('marker = "jotflow:x"\ncreators = ["example-lead"]', "needs its GitHub account id"),
+        ('marker = "jotflow:x"\ncreators = [{ login = "example-lead" }]', "id"),
+        (
+            'marker = "jotflow:x"\ncreators = [{ login = "a", id = 5 }, { login = "b", id = 5 }]',
+            "listed more than once",
+        ),
         ('numbers = [4]\nexclude = ["bad\\u202etitle"]', "a title glob is 1 to 100 plain"),
     ],
 )
@@ -349,15 +361,85 @@ async def test_found_boards_follow_listed_ones_marked_with_their_nicknames() -> 
     assert boards.board(CH, "EXAMPLE-ORG/12") == entries[1]
 
 
-async def test_a_creator_who_isnt_a_person_drops_out_and_fails_closed() -> None:
-    finder, clock = Finder(), Clock()
+@pytest.mark.parametrize(
+    ("now", "counted"),
+    [
+        (LEAD_ID, (LEAD_ID,)),  # the pinned id still holds the login
+        (2002, ()),  # the login now belongs to someone else: never matched
+        (None, (LEAD_ID,)),  # renamed, or not resolvable: the pinned id still names them
+    ],
+)
+async def test_creators_match_by_pinned_id_and_a_changed_hand_drops_out(
+    now: int | None, counted: tuple[int, ...], caplog: pytest.LogCaptureFixture
+) -> None:
+    # #348 review: the id in jotflow.toml is the authority, never the login.
+    finder = Finder()
 
     async def resolve(login: str) -> int | None:
-        return None  # an organisation, or no such account
+        return now
 
-    boards = BoardCatalog(POLICY, finder=finder, resolve=resolve, clock=clock)
+    boards = BoardCatalog(POLICY, finder=finder, resolve=resolve, clock=Clock())
     await boards.refresh(CH, 0)
-    assert finder.asked[0][3] == ()  # no creator ids: the marker matches nothing
+    assert finder.asked[0][3] == counted
+    if now == 2002:
+        assert "pinned to id 1001, but that login is now id 2002" in caplog.text
+
+
+async def test_a_failed_creator_lookup_keeps_the_pinned_id_and_tries_again() -> None:
+    finder, calls = Finder(), []
+
+    async def resolve(login: str) -> int | None:
+        calls.append(login)
+        raise ConnectionError("runner")
+
+    boards = BoardCatalog(POLICY, finder=finder, resolve=resolve, clock=Clock())
+    await boards.refresh(CH, 0)
+    await boards.refresh(CH, 0)
+    assert [a[3] for a in finder.asked] == [(LEAD_ID,), (LEAD_ID,)]
+    assert len(calls) == 2  # not cached: checked again at the next refresh
+
+
+def test_check_prints_each_creators_id_and_never_rewrites_the_policy(
+    tmp_path: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from jotflow.commands.check import creator_notes
+
+    assert creator_notes(POLICY, lambda login: LEAD_ID) == [
+        ("ok", "creator example-lead is id 1001")
+    ]
+    [(level, text)] = creator_notes(POLICY, lambda login: 2002)
+    assert level == "warn" and "is now id 2002" in text and "fix the line by hand" in text
+    [(level, _)] = creator_notes(POLICY, lambda login: None)
+    assert level == "note"
+    # A plain check run reads jotflow.toml and never writes it, so nothing re-pins.
+    path = tmp_path / "jotflow.toml"
+    path.write_text(TOML)
+    before = path.read_bytes()
+    from jotflow.policy import load_policy
+
+    creator_notes(load_policy(path), lambda login: 2002)
+    assert path.read_bytes() == before
+
+
+def test_gh_user_id_reads_a_persons_id_only() -> None:
+    import json as _json
+    import subprocess
+
+    from jotflow.github_cli import gh_user_id
+
+    def run(answer: dict[str, Any]) -> Any:
+        def call(args: list[str], **kw: Any) -> Any:
+            assert args[1:] == ["api", "users/example-lead"]
+            return subprocess.CompletedProcess(args, 0, stdout=_json.dumps(answer), stderr="")
+
+        return call
+
+    which = lambda name: "/usr/bin/gh"  # noqa: E731
+    assert gh_user_id("example-lead", which=which, run=run({"id": 1001, "type": "User"})) == 1001
+    org = run({"id": 9, "type": "Organization"})
+    assert gh_user_id("example-lead", which=which, run=org) is None
+    assert gh_user_id("bad login", which=which, run=run({"id": 1, "type": "User"})) is None
+    assert gh_user_id("example-lead", which=lambda n: None, run=run({})) is None
 
 
 async def test_a_stale_listing_counts_as_none_and_a_failed_refresh_keeps_the_last() -> None:
