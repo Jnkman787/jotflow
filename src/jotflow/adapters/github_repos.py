@@ -19,11 +19,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import httpx2
 from pydantic import ValidationError
 
 from jotflow.models import DiscoveredRepo, is_bare_repo_name, is_owner_name, under_owner
+from jotflow.policy import label_problem
 
 API = "https://api.github.com"
 PAGE_SIZE = 100
@@ -102,6 +104,28 @@ async def _page(http: httpx2.AsyncClient, url: str, token: str, budget: int) -> 
             if len(body) > budget:
                 break
         return response.status_code, body
+
+
+async def label_exists(
+    owner: str, name: str, label: str, token: str, *, http: httpx2.AsyncClient, api: str = API
+) -> bool:
+    """Whether ``owner/name`` has ``label`` (#306 follow-up). 404 is no; a rate limit
+    raises, and any other answer is an error, never a no.
+
+    The label is percent-encoded into the path here, so a space or a ``/`` in its
+    name can't change which URL is asked.
+    """
+    if not is_owner_name(owner) or not is_bare_repo_name(name):
+        raise GithubError("not a GitHub repo")
+    if label_problem(label) is not None:
+        raise GithubError("not a label")
+    url = f"{api}/repos/{owner}/{name}/labels/{quote(label, safe='')}"
+    status, _ = await _page(http, url, token, 64 * 1024)
+    if status == 200:
+        return True
+    if status == 404:
+        return False
+    raise GithubError(f"GitHub answered {status}")
 
 
 async def list_repos(

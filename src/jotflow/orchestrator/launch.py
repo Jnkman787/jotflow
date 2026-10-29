@@ -60,6 +60,7 @@ from jotflow.models import (
 )
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.orchestrator.runs import RunLifecycle
+from jotflow.policy import label_problem
 from jotflow.store.base import Store
 from jotflow.store.titles import clean_title
 from jotflow.whiteboard.write_tools import PostError, ThreadPoster
@@ -255,6 +256,16 @@ class BoardAddedWire(BaseModel):
 MAX_MARKED_BYTES = 8_000_000
 # The largest answer about one person (#305).
 MAX_PERSON_BYTES = 4 * 1024
+
+
+class LabelCheck(BaseModel):
+    """The runner's answer to a label check: only whether it exists."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    exists: bool
+
+
 _Person = TypeVar("_Person", Account, Assignable, Membership)
 # The largest single issue's details (#273).
 MAX_ISSUE_BYTES = 64 * 1024
@@ -448,6 +459,28 @@ class RunnerClient:
         if not is_github_login(login) or login.endswith("[bot]"):
             raise RunnerError("not a GitHub account")
         return await self._person(f"/orgs/{org}/members/{login}", Membership, None)
+
+    async def label_exists(self, owner: str, name: str, label: str) -> bool:
+        """Whether ``owner/name`` has ``label``, from the drafting runner (#306 follow-up).
+
+        Raises :class:`GithubBusy` for a rate limit or GitHub failing, never "no".
+        """
+        if not is_owner_name(owner) or not is_bare_repo_name(name):
+            raise RunnerError("not a GitHub repo")
+        if label_problem(label) is not None:
+            raise RunnerError("not a label")
+        body = {"owner": owner, "name": name, "label": label}
+        response = await self._call("POST", RunKind.DRAFTING, "/repos/labels/check", json=body)
+        if response.status_code in (502, 503):
+            raise GithubBusy("GitHub couldn't be asked right now")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_PERSON_BYTES:
+            raise RunnerError("the runner's answer was too large")
+        try:
+            return LabelCheck.model_validate_json(response.content).exists
+        except ValidationError:
+            raise RunnerError("the runner's answer was not a label check") from None
 
     async def _person(self, path: str, model: type[_Person], login: str | None) -> _Person:
         response = await self._call("GET", RunKind.DRAFTING, path)
