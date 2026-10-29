@@ -122,6 +122,13 @@ class GithubBusy(RunnerError):
     """
 
 
+class NotThisProposal(RunnerError):
+    """The runner found the recorded issue lacks the proposal's marker (#309)."""
+
+    def __init__(self) -> None:
+        super().__init__("the recorded issue isn't this proposal's")
+
+
 def _refused(status: int) -> RunnerError:
     return RunnerError(_REFUSALS.get(status, f"the runner answered {status}"))
 
@@ -532,14 +539,24 @@ class RunnerClient:
         except ValidationError:
             raise RunnerError("the runner's reply was not a board access answer") from None
 
-    async def add_to_board(self, repo: str, issue_number: int, board: str) -> None:
-        """Ask the execution runner to add issue ``repo#issue_number`` to ``board`` (#309)."""
+    async def add_to_board(
+        self, repo: str, issue_number: int, board: str, proposal_id: str
+    ) -> None:
+        """Ask the execution runner to add issue ``repo#issue_number`` to ``board`` (#309),
+        if its body carries ``proposal_id``'s marker."""
         response = await self._call(
             "POST",
             RunKind.EXECUTION,
             "/boards/add",
-            json={"repo": repo, "issue_number": issue_number, "board": board},
+            json={
+                "repo": repo,
+                "issue_number": issue_number,
+                "board": board,
+                "proposal_id": proposal_id,
+            },
         )
+        if response.status_code == 422:
+            raise NotThisProposal
         if response.status_code == 429:
             raise RunnerError("GitHub's rate limit", retry="rate_limited")
         if response.status_code != 200:

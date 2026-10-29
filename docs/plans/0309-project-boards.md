@@ -42,11 +42,11 @@ The pinned github-mcp-server 2.0.2's `projects` toolset has three tools, which I
 
 ### 1. The add is a fixed call in the execution runner, not an agent tool
 
-The agent writes the issue as today and reports it with `record_result`. JotFlow then asks the execution runner to add it to each approved board, with `POST /boards/add` and a strict JSON body: `{"repo": "owner/name", "issue_number": N, "board": "owner/N"}`. The runner refuses a query string, as RunnerGate does, and a body that isn't exactly that.
+The agent writes the issue as today and reports it with `record_result`. JotFlow then asks the execution runner to add it to each approved board, with `POST /boards/add` and a strict JSON body: `{"repo": "owner/name", "issue_number": N, "board": "owner/N", "proposal_id": "<id>"}`. Security's addendum after PR 1 (2026-10-29): the runner adds the issue only if its body carries the proposal's marker line, read in the same issue lookup, and otherwise refuses for good. The runner refuses a query string, as RunnerGate does, and a body that isn't exactly that.
 
 The runner makes three fixed GraphQL calls with the write token, each validated:
 
-- the issue's node id, from `repository(owner, name).issue(number)`;
+- the issue's node id and body, from `repository(owner, name).issue(number)`;
 - the board's node id, from `organization(login).projectV2(number)`;
 - `addProjectV2ItemById`.
 

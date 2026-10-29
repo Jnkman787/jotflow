@@ -221,8 +221,17 @@ class FakeRunner:
     def __init__(self) -> None:
         self.added: list[tuple[str, int, str]] = []
         self.fail: set[str] = set()
+        self.not_its: set[str] = set()  # proposals whose recorded issue lacks the marker
+        self.asked: list[str] = []
 
-    async def add_to_board(self, repo: str, issue_number: int, board: str) -> None:
+    async def add_to_board(
+        self, repo: str, issue_number: int, board: str, proposal_id: str
+    ) -> None:
+        from jotflow.orchestrator.launch import NotThisProposal
+
+        self.asked.append(proposal_id)
+        if proposal_id in self.not_its:
+            raise NotThisProposal
         if board in self.fail:
             raise ConnectionError("runner")
         self.added.append((repo, issue_number, board))
@@ -307,6 +316,22 @@ async def test_the_thread_notice_says_where_the_issue_went() -> None:
     assert await notice.tell() == 1
     [(_, _, text)] = slack.replies
     assert text.endswith("Added to roadmap, support.")
+
+
+async def test_an_issue_without_the_proposals_marker_is_refused_once_and_named() -> None:
+    store, runner = MemoryStore(), FakeRunner()
+    runner.not_its = {"p1"}
+    adder = BoardAdder(store, POLICY, runner)
+    first = await adder.add_all(applied("https://github.com/acme-co/web/issues/5"))
+    assert runner.added == [] and runner.asked == ["p1", "p1"]
+    assert first.refused == ["roadmap", "support"] and not first.retry
+    assert first.notice() == (
+        "Didn't add it to roadmap, support: "
+        "the recorded issue doesn't carry this proposal's marker."
+    )
+    again = await adder.add_all(applied("https://github.com/acme-co/web/issues/5"))
+    assert runner.asked == ["p1", "p1"]  # a fixed refusal: never asked again
+    assert again.refused == ["roadmap", "support"]
 
 
 # The start-up check

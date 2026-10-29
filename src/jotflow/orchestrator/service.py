@@ -776,8 +776,10 @@ class _RunnerBoards:
     def __init__(self, service: Orchestrator) -> None:
         self._service = service
 
-    async def add_to_board(self, repo: str, issue_number: int, board: str) -> None:
+    async def add_to_board(
+        self, repo: str, issue_number: int, board: str, proposal_id: str
+    ) -> None:
         runner = self._service._runner
         if runner is None:
             raise RunnerError("no runner to ask")
-        await runner.add_to_board(repo, issue_number, board)
+        await runner.add_to_board(repo, issue_number, board, proposal_id)
