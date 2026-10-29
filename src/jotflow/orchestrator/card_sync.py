@@ -126,6 +126,7 @@ async def card_context(
         repos=channel_repos,
         docs_read=tuple(docs_read),
         docs_copied=tuple(docs_copied),
+        revisions=tuple(await store.proposal_revisions(record.id)),
     )
 
 
