@@ -190,6 +190,20 @@ class _FixtureReader:
         messages = [_slack_message(m) for m in thread][:limit]
         return {"ok": True, "messages": messages, "has_more": False}
 
+    async def history(
+        self, channel: str, *, oldest: str, latest: str, limit: int
+    ) -> Mapping[str, Any]:
+        # Top-level posts in the window, newest first, as Slack answers (#334).
+        posts = [
+            m
+            for m in self._accepted
+            if m.channel == channel
+            and m.root == m.ts
+            and float(oldest) < float(m.ts) < float(latest)
+        ]
+        posts.sort(key=lambda m: m.ts, reverse=True)
+        return {"ok": True, "messages": [_slack_message(m) for m in posts][:limit]}
+
     async def user(self, user_id: str) -> Mapping[str, Any]:
         found = self._thread.users.get(user_id)
         name = found.name if found else user_id
@@ -674,7 +688,25 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
     }
     checks.append(_equal("keywords", found, dict(expected.keywords)))
     checks += await _question_checks(replay)
+    if replay.thread.expected.follows:
+        checks.append(await _follows_check(replay))
     return checks
+
+
+async def _follows_check(replay: _Replay) -> Check:
+    """Each listed thread's packet names the author's earlier post (#334)."""
+    if replay.reader is None:
+        return Check("follows", False, "no fixture reader")
+    bot = replay.thread.workspace.bot
+    source = SlackWorkSource(replay.reader, replay.store, bot=BotIdentity(bot.user_id, bot.bot_id))
+    channel = _channel(replay.thread)
+    replay.reader.until = None
+    found: dict[str, str] = {}
+    for thread_ts in replay.thread.expected.follows:
+        work = await source.thread(channel, thread_ts)
+        if work.follows is not None:
+            found[thread_ts] = work.follows.ts
+    return _equal("follows", found, dict(replay.thread.expected.follows))
 
 
 async def _revision_check(replay: _Replay) -> Check:

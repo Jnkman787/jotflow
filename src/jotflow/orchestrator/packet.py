@@ -48,6 +48,7 @@ from jotflow.orchestrator.slack_files import (
 from jotflow.store.base import Store
 from jotflow.whiteboard.read_tools import (
     FileBrief,
+    FollowsPost,
     Mention,
     RelatedExcerpt,
     ThreadMessage,
@@ -66,6 +67,9 @@ KEEP_HEAD = 10  # replies kept after the root when trimming
 KEEP_TAIL = 60  # most recent replies kept when trimming
 MIN_TAIL = 5
 MAX_RELATED = 3
+# A top-level post this soon after the same author's previous one likely adds to it (#334).
+FOLLOWS_WITHIN = 120
+FOLLOWS_LOOKBACK = 20  # channel messages read, at most, to find it
 EXCERPT_CHARS = 280
 PAGE_SIZE = 200
 
@@ -170,6 +174,10 @@ class SlackReader(Protocol):
 
     async def user(self, user_id: str) -> Mapping[str, Any]: ...
 
+    async def history(
+        self, channel: str, *, oldest: str, latest: str, limit: int
+    ) -> Mapping[str, Any]: ...
+
 
 class BoltSlackReader:
     """:class:`SlackReader` over slack-sdk's client, with the bot token's scopes."""
@@ -200,6 +208,15 @@ class BoltSlackReader:
 
     async def user(self, user_id: str) -> Mapping[str, Any]:
         response = await self._client.users_info(user=user_id)
+        return response.data if isinstance(response.data, dict) else {}
+
+    async def history(
+        self, channel: str, *, oldest: str, latest: str, limit: int
+    ) -> Mapping[str, Any]:
+        # Top-level posts only, in a short window just before one post (#334).
+        response = await self._client.conversations_history(
+            channel=channel, oldest=oldest, latest=latest, limit=limit, inclusive=False
+        )
         return response.data if isinstance(response.data, dict) else {}
 
 
@@ -476,9 +493,70 @@ class SlackWorkSource:
         if len(self._budgets) >= NAME_CACHE_SIZE:  # pragma: no cover - one run per thread
             self._budgets.clear()
         self._budgets[(channel_id, thread_ts)] = budget
+        follows = await self._follows(channel_id, root, budget) if root is not None else None
         return WorkThread(
-            channel_id=channel_id, thread_ts=thread_ts, messages=trimmed, omitted=omitted
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            messages=trimmed,
+            omitted=omitted,
+            follows=follows,
         )
+
+    async def _follows(
+        self, channel: str, root: Mapping[str, Any], budget: Budget
+    ) -> FollowsPost | None:
+        """The author's own previous top-level post, if it came just before (#334).
+
+        One read of the channel's few messages in the window before this post. A
+        failure means no hint: the thread is drafted on its own, as before.
+        """
+        author, ts = _author_id(root), str(root.get("ts") or "")
+        if author is None or self._from_jotflow(root) or root.get("bot_id"):
+            return None
+        try:
+            posted = float(ts)
+        except ValueError:
+            return None
+        oldest = f"{posted - FOLLOWS_WITHIN:.6f}"
+        try:
+            page = await with_backoff(
+                partial(
+                    self._reader.history,
+                    channel,
+                    oldest=oldest,
+                    latest=ts,
+                    limit=FOLLOWS_LOOKBACK,
+                ),
+                what="conversations.history",
+                sleep=self._sleep,
+                budget=budget,
+            )
+        except Exception as exc:  # a hint must never cost the packet
+            log.info("no follows hint for channel=%s: %s", channel, type(exc).__name__)
+            return None
+        before = []
+        for message in page.get("messages") or []:
+            if not isinstance(message, Mapping) or _author_id(message) != author:
+                continue
+            other = str(message.get("ts") or "")
+            parent = message.get("thread_ts")
+            if parent not in (None, other) or message.get("bot_id"):
+                continue  # a reply in some thread, not a top-level post
+            if message.get("subtype") not in NEW_MESSAGE_SUBTYPES:
+                continue
+            try:
+                gap = posted - float(other)
+            except ValueError:
+                continue
+            if 0 < gap <= FOLLOWS_WITHIN:
+                before.append((gap, other))
+        if not before:
+            return None
+        gap, other = min(before)  # the nearest one
+        skipped, topic_id = await self._kept_by_person_as_chatter(channel, other)
+        if skipped:
+            return None  # a person said skip: for it
+        return FollowsPost(ts=other, seconds_before=int(gap), topic_id=topic_id)
 
     def _message(
         self,

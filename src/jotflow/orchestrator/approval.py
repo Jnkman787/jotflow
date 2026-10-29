@@ -40,7 +40,7 @@ from jotflow.orchestrator.cards import (
     approvable,
 )
 from jotflow.orchestrator.people import Person, SlackPeople
-from jotflow.policy import Policy, PolicyViolation, UnknownChannelError
+from jotflow.policy import IssuesPolicy, Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import content_hash
 from jotflow.store.base import MAX_AUTHOR_LOOKUPS as STORE_AUTHOR_LOOKUPS
@@ -48,6 +48,7 @@ from jotflow.store.base import (
     ContentChangedError,
     DraftClearedError,
     DuplicateRefusedError,
+    NotLikelyDuplicateError,
     Store,
     TransitionError,
 )
@@ -104,6 +105,10 @@ NOT_WRITABLE = (
 )
 WRITE_UNCHECKED = (
     "JotFlow couldn't check write access to {repo}, so nothing was approved. Try again."
+)
+ISSUES_CHANGED = (
+    "What JotFlow adds to every issue changed since this card was drawn, so nothing was "
+    "approved. The card now shows what would be filed."
 )
 PAUSED = "JotFlow is paused in this channel. Nothing is written until someone sets it back."
 
@@ -183,7 +188,9 @@ class ApprovalHandler:
         arm_thread: ArmThread | None = None,
         context_for: ContextFor | None = None,
         repos: RepoCatalog | None = None,
+        redraw: Refresh | None = None,
     ) -> None:
+        self._redraw = redraw
         self._context_for = context_for
         self._store = store
         self._policy = policy
@@ -463,6 +470,7 @@ class ApprovalHandler:
         if record.state not in (ProposalState.PENDING, ProposalState.FAILED):
             raise Refused(_already(record.state))
         await self._check_repo(record)
+        issues = await self._check_issues(record)
         try:
             approved = await self._store.transition(
                 record.id,
@@ -470,6 +478,7 @@ class ApprovalHandler:
                 expected={ProposalState.PENDING, ProposalState.FAILED},
                 approved_by=click.user_id,
                 expected_hash=match.group(2),
+                issues=issues,
             )
         except ContentChangedError:
             await self._show(record)
@@ -485,6 +494,20 @@ class ApprovalHandler:
         log.info("proposal %s approved by user %s; execution queued", approved.id, click.user_id)
         await self._show(approved)
         return "approved"
+
+    async def _check_issues(self, record: ProposalRecord) -> str:
+        """The [issues] settings the approval locks, once the card showed them (#306
+        follow-up). If jotflow.toml changed them since the card was drawn, it's redrawn
+        and nothing is approved, so what's approved is what the card showed."""
+        current = self._policy.issues.snapshot()
+        shown = record.card_issues
+        if shown is None and self._policy.issues == IssuesPolicy():
+            return current  # drawn before snapshots, with nothing added then or now
+        if shown != current:
+            if self._redraw is not None:
+                await self._redraw(record.id)
+            raise Refused(ISSUES_CHANGED)
+        return current
 
     async def _check_repo(self, record: ProposalRecord) -> None:
         """A found repo must still be in scope, and reachable by the write token (#236).
@@ -541,6 +564,9 @@ class ApprovalHandler:
             raise Refused(STALE_SAME_AS) from None
         except DraftClearedError:
             raise Refused(DISCARDED) from None
+        except NotLikelyDuplicateError as refused:
+            await self._show(record)  # an old card's button: redraw it without one
+            raise Refused(str(refused)) from None
         except DuplicateRefusedError as refused:
             raise Refused(str(refused)) from None
         log.info("proposal %s marked a duplicate by user %s", record.id, click.user_id)

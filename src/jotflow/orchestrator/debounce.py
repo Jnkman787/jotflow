@@ -36,6 +36,7 @@ from datetime import datetime, timedelta
 
 from jotflow.models import MessageRef
 from jotflow.orchestrator.ingest import Accepted, Decision
+from jotflow.orchestrator.packet import FOLLOWS_WITHIN
 from jotflow.policy import Policy
 from jotflow.store.base import Clock, Store, utc_now
 
@@ -61,13 +62,21 @@ class Debouncer:
         self._policy = policy
         self._clock = clock
         self._due: dict[Thread, datetime] = {}
+        # Each person's last top-level post in a channel, by its Slack ts (#334). In
+        # memory: a restart only loses the ordering below, not the packet's hint.
+        self._last_post: dict[tuple[str, str], tuple[float, Thread]] = {}
 
     def pending(self) -> dict[Thread, datetime]:
         """Threads waiting out their window, with when each falls due."""
         return dict(self._due)
 
-    async def note(self, decision: Decision) -> Thread | None:
-        """Take one ingest decision. Returns the thread it re-armed, if any."""
+    async def note(self, decision: Decision, author: str | None = None) -> Thread | None:
+        """Take one ingest decision. Returns the thread it re-armed, if any.
+
+        A top-level post that comes seconds after the same ``author``'s previous one
+        waits until a window after that one's run is due, so the earlier post's
+        topic exists for the later one to join (#334).
+        """
         if not isinstance(decision, Accepted) or decision.kind != "message":
             return None
         ref = decision.ref
@@ -76,6 +85,8 @@ class Debouncer:
         thread = thread_of(ref)
         window = timedelta(seconds=self._policy.debounce_for(ref.channel_id))
         due = self._clock() + window
+        if author is not None and not (ref.thread_ts and ref.thread_ts != ref.ts):
+            due = self._after_previous_post(ref, author, thread, due, window)
         # The durable copy first, so a failed save is never a thread that
         # waits in memory and then silently queues nothing (#130).
         await self._store.arm_thread(thread.channel_id, thread.thread_ts, due)
@@ -83,6 +94,27 @@ class Debouncer:
         if ref.thread_ts and ref.thread_ts != ref.ts:
             await self._join_parents_topic(ref)
         return thread
+
+    def _after_previous_post(
+        self, ref: MessageRef, author: str, thread: Thread, due: datetime, window: timedelta
+    ) -> datetime:
+        try:
+            posted = float(ref.ts)
+        except ValueError:
+            return due
+        key = (ref.channel_id, author)
+        previous = self._last_post.get(key)
+        # Only posts inside the window matter, so older entries go (#339 review).
+        self._last_post = {
+            k: v for k, v in self._last_post.items() if posted - v[0] <= FOLLOWS_WITHIN
+        }
+        self._last_post[key] = (posted, thread)
+        if previous is None or not 0 < posted - previous[0] <= FOLLOWS_WITHIN:
+            return due
+        earlier = self._due.get(previous[1])
+        if earlier is None or previous[1] == thread:
+            return due  # already drafted, or the same thread: nothing to wait for
+        return max(due, earlier + window)
 
     async def arm(self, channel_id: str, thread_ts: str) -> Thread:
         """(Re)start a thread's quiet window for a message ingest never sees.

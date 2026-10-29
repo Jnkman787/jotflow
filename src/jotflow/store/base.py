@@ -131,11 +131,21 @@ class DuplicateRefusedError(ConflictError):
     """A "same as" or its undo can't apply; ``str()`` is the fixed reason (#36)."""
 
 
+class NotLikelyDuplicateError(DuplicateRefusedError):
+    """A Same as on an issue the agent didn't mark a likely duplicate: mostly a card
+    drawn before #337, which offered it for any related issue (#342 review)."""
+
+
 # The fixed reasons a person sees. None quotes the draft, the issue, or the person.
 DUPLICATE_NOT_PENDING = "This proposal is no longer waiting, so it can't be marked the same."
 DUPLICATE_NOT_NEW = "Only a proposed new issue can be marked the same as an existing one."
 DUPLICATE_NO_CANDIDATE = "That related issue isn't on this proposal any more."
-DUPLICATE_NOT_LIKELY = "The agent didn't mark that issue as a likely duplicate."
+# Mostly a card drawn before #337, whose Same as was for any related issue (#338 review).
+DUPLICATE_NOT_LIKELY = (
+    "This Same as button is from before an upgrade: the agent didn't mark that issue as "
+    "maybe the same request, so the card is redrawn without it. If it is the same request, "
+    "say so with Request Changes, or Discard the card."
+)
 DUPLICATE_TOPIC_LINKED = (
     "This conversation is already linked to an issue, so it can't be marked the same as another."
 )
@@ -178,7 +188,7 @@ def plan_duplicate(record: ProposalRecord, index: int, expected_hash: str) -> Re
         raise DuplicateRefusedError(DUPLICATE_NO_CANDIDATE)
     # Only an issue the agent itself called a likely duplicate, as the card offers (#337).
     if not draft.related[index].likely_duplicate:
-        raise DuplicateRefusedError(DUPLICATE_NOT_LIKELY)
+        raise NotLikelyDuplicateError(DUPLICATE_NOT_LIKELY)
     return draft.related[index]
 
 
@@ -694,6 +704,9 @@ class TransitionChanges:
     approved_at: datetime | None
     result: ExecutionResult | None
     clear_draft: bool = False
+    # A fresh approval records the [issues] settings in force (#306 follow-up).
+    sets_issues: bool = False
+    issues: str | None = None
 
 
 def plan_transition(
@@ -705,6 +718,7 @@ def plan_transition(
     expected_hash: str | None,
     result: ExecutionResult | None,
     now: datetime,
+    issues: str | None = None,
 ) -> TransitionChanges:
     """Check a requested transition against the record and return what to write.
 
@@ -722,6 +736,7 @@ def plan_transition(
         expected_hash=expected_hash,
         result=result,
         now=now,
+        issues=issues,
     )
     if to in FINAL_STATES and record.draft_cleared_at is None:
         return replace(changes, clear_draft=True)
@@ -737,6 +752,7 @@ def _plan(
     expected_hash: str | None,
     result: ExecutionResult | None,
     now: datetime,
+    issues: str | None = None,
 ) -> TransitionChanges:
     """Check a requested transition against the record and return what to write.
 
@@ -753,6 +769,8 @@ def _plan(
         raise ValueError("approved_by and expected_hash only apply when approving")
     if result is not None and to not in (ProposalState.APPLIED, ProposalState.FAILED):
         raise ValueError("a result only applies when a proposal is applied or fails")
+    if issues is not None and to is not ProposalState.APPROVED:
+        raise ValueError("the [issues] settings only apply when approving")
 
     changes = TransitionChanges(
         state=to,
@@ -776,7 +794,9 @@ def _plan(
             raise ContentChangedError(
                 f"proposal {record.id} changed after its card was shown; show it again"
             )
-        return TransitionChanges(to, locked, approved_by, now, record.result)
+        return TransitionChanges(
+            to, locked, approved_by, now, record.result, sets_issues=True, issues=issues
+        )
     if to is ProposalState.APPLIED:
         if result is None or not result.matches(record.proposal):
             raise ValueError("applying needs a result whose issue URL matches the proposal")
@@ -898,8 +918,13 @@ class Store(Protocol):
         approved_by: str | None = None,
         expected_hash: str | None = None,
         result: ExecutionResult | None = None,
+        issues: str | None = None,
     ) -> ProposalRecord:
-        """Move a proposal to ``to`` atomically; see :func:`plan_transition`."""
+        """Move a proposal to ``to`` atomically; see :func:`plan_transition`.
+
+        ``issues``, only when approving, records the [issues] settings in force, which
+        execution then plans with (#306 follow-up).
+        """
         ...
 
     async def edit_proposal(
@@ -967,9 +992,17 @@ class Store(Protocol):
         """
         ...
 
-    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+    async def mark_card_shown(
+        self, proposal_id: str, revision: int, issues: str | None = None
+    ) -> None:
         """Record that the card now shows ``revision``. Never moves backwards, so a
-        change that landed while the card was being drawn keeps it due."""
+        change that landed while the card was being drawn keeps it due. ``issues``
+        is the [issues] settings it was drawn with (#306 follow-up)."""
+        ...
+
+    async def set_skipped_label(self, proposal_id: str, label: str) -> None:
+        """Record that the write left off the [issues] ``label``, which GitHub said
+        doesn't exist, so the thread can say so (#306 follow-up)."""
         ...
 
     async def threads_due(self, limit: int = 50) -> list[ProposalRecord]:

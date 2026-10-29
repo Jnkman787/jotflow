@@ -265,6 +265,7 @@ class MemoryStore:
         approved_by: str | None = None,
         expected_hash: str | None = None,
         result: ExecutionResult | None = None,
+        issues: str | None = None,
     ) -> ProposalRecord:
         async with self._lock:
             record = self._proposals.get(proposal_id)
@@ -278,6 +279,7 @@ class MemoryStore:
                 expected_hash=expected_hash,
                 result=result,
                 now=self._clock(),
+                issues=issues,
             )
             update: dict[str, object] = {
                 "revision": record.revision + 1,
@@ -287,6 +289,8 @@ class MemoryStore:
                 "approved_at": changes.approved_at,
                 "result": changes.result,
             }
+            if changes.sets_issues:
+                update["approved_issues"] = changes.issues
             if changes.clear_draft:
                 update |= self._cleared(record)
             updated = record.model_copy(update=update, deep=True)
@@ -395,13 +399,25 @@ class MemoryStore:
         due.sort(key=lambda r: (r.created_at, r.id))
         return [r.model_copy(deep=True) for r in due[:limit]]
 
-    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+    async def mark_card_shown(
+        self, proposal_id: str, revision: int, issues: str | None = None
+    ) -> None:
         async with self._lock:
             record = self._proposals.get(proposal_id)
             if record is None:
                 raise NotFoundError(f"no proposal {proposal_id}")
             shown = max(record.card_revision or 0, min(revision, record.revision))
-            self._proposals[proposal_id] = record.model_copy(update={"card_revision": shown})
+            update: dict[str, object] = {"card_revision": shown}
+            if issues is not None:
+                update["card_issues"] = issues
+            self._proposals[proposal_id] = record.model_copy(update=update)
+
+    async def set_skipped_label(self, proposal_id: str, label: str) -> None:
+        async with self._lock:
+            record = self._proposals.get(proposal_id)
+            if record is None:
+                raise NotFoundError(f"no proposal {proposal_id}")
+            self._proposals[proposal_id] = record.model_copy(update={"skipped_label": label})
 
     async def threads_due(self, limit: int = 50) -> list[ProposalRecord]:
         due = [

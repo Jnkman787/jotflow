@@ -95,7 +95,7 @@ from jotflow.whiteboard.doc_tools import (
     probe_docs,
 )
 from jotflow.whiteboard.operator_tokens import GateTokens, OperatorTokens
-from jotflow.whiteboard.read_tools import IssueReader, IssueUnavailable, read_tools
+from jotflow.whiteboard.read_tools import IssueReader, IssueUnavailable, LabelChecker, read_tools
 from jotflow.whiteboard.tokens import TokenCheck, TokenRegistry
 from jotflow.whiteboard.tools import ToolSpec
 from jotflow.whiteboard.write_tools import write_tools
@@ -366,6 +366,13 @@ class Orchestrator:
             return None
         return self._runner
 
+    def _label_checker(self) -> LabelChecker | None:
+        """The drafting runner, when it's on, for an [issues] label check before a write
+        (#306 follow-up). Without it the label stays, so a missing one stops the write."""
+        if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
+            return None
+        return self._runner
+
     def _issue_reader(self) -> IssueReader | None:
         """The drafting runner, when question runs are on, for get_issue (#273)."""
         if self._runner is None or RunKind.QUESTION not in self.kinds.on:
@@ -412,7 +419,7 @@ class Orchestrator:
             boards_off=self.boards_off,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
-        self.auto = AutoApprover(self._store, self.channel_mode)
+        self.auto = AutoApprover(self._store, self.channel_mode, self._policy.issues)
         # Once an issue is written, its thread hears where it went (#32).
         self.threads = ThreadNotice(
             self._store,
@@ -468,6 +475,7 @@ class Orchestrator:
             arm_thread=self._arm_thread,
             context_for=drawn_with,
             repos=self.repos,
+            redraw=self.cards.redraw,
         )
         # The card's repo dropdown and assign buttons pass the same gate (#160).
         self.edits = CardEdits(
@@ -510,6 +518,7 @@ class Orchestrator:
                 attribution=attribution,
                 repos=self.repos,
                 issues=self._issue_reader,
+                labels=self._label_checker,
                 boards_off=self.boards_off,
                 files=files,
             ),
@@ -680,7 +689,8 @@ class Orchestrator:
         if self._debouncer is None:
             return
         try:
-            await self._debouncer.note(decision)
+            author = event.get("user") if event is not None else None
+            await self._debouncer.note(decision, author if isinstance(author, str) else None)
         except Exception:
             log.exception("could not note a message for the debouncer")
 

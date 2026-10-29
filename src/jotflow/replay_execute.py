@@ -46,6 +46,7 @@ from jotflow.execution.writes import PlannedWrite, with_kept_markers
 from jotflow.execution.writes import plan as plan_writes
 from jotflow.models import IssueProposal, ProposalRecord, ProposalState, RunKind, RunStatus
 from jotflow.orchestrator.slack_files import attachments_section
+from jotflow.policy import IssuesPolicy
 from jotflow.replay import Check, Prepared, ReplayError, ReplayReport, prepare, run_script
 from jotflow.replay_agent import (
     AGENTS,
@@ -271,8 +272,12 @@ async def _execute_one(
     # A fixture's files never change, so every approved one is still as approved (#333).
     draft = record.proposal
     files = [(a.name, a.text) for a in draft.attached] if isinstance(draft, IssueProposal) else []
+    policy = state.thread.policy
     checks, writes = plan_writes(
-        record, tail, state.thread.policy.issues, attachments_section(files)
+        record,
+        tail,
+        IssuesPolicy.from_snapshot(record.approved_issues, policy.issues),
+        attachments_section(files),
     )
     missing = sorted(set(checks.labels) - set(repos[repo].labels))
     expected = [(w.tool, _expected(w, repos, repo)) for w in writes]

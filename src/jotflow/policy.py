@@ -12,6 +12,7 @@ See ``examples/jotflow.example.toml`` for a complete file.
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import tomllib
 from collections.abc import Iterable
@@ -726,6 +727,15 @@ class IssuesPolicy(_Strict):
         if self.label and self.label.casefold() not in {label.casefold() for label in kept}:
             kept.append(self.label)
         return kept
+
+    def snapshot(self) -> str:
+        """These settings as canonical JSON, as a card or an approval records them."""
+        return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def from_snapshot(cls, snapshot: str | None, current: IssuesPolicy) -> IssuesPolicy:
+        """The settings a snapshot recorded, or ``current`` for one made before snapshots."""
+        return current if snapshot is None else cls.model_validate_json(snapshot)
 
     def bare_title(self, title: str) -> str:
         """A filed title without the prefix, as ``jotflow rebuild`` restores a topic's."""
