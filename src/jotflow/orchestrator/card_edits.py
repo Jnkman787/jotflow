@@ -30,7 +30,7 @@ from jotflow.orchestrator.cards import (
     BOARDS_BLOCK,
     MAX_CARD_BOARDS,
 )
-from jotflow.policy import BoardPolicy, Policy, PolicyViolation, RepoPolicy
+from jotflow.policy import _NICKNAME, BoardPolicy, Policy, PolicyViolation, RepoPolicy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import (
     ADDED_ON_CARD,
@@ -63,7 +63,6 @@ UPDATE_HAS_NO_BOARDS = "An update to an existing issue doesn't change its boards
 # The menu's block id, "jotflow_boards:<proposal id>", and a chosen option's value,
 # a board nickname. Anything else is a malformed payload.
 _BOARDS_BLOCK = re.compile(rf"{BOARDS_BLOCK}:(?P<id>[0-9a-f]{{16}})")
-_NICKNAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 
 
 class Tell(Protocol):
@@ -217,7 +216,8 @@ class CardEdits:
         boards = [
             ProposedBoard(board=b.board, reason=reasons.get(b.board, ADDED_ON_CARD)) for b in chosen
         ]
-        if [b.board for b in boards] == [b.board for b in draft.boards]:
+        # The order means nothing on the card or to the add, so only the set counts.
+        if {b.board for b in boards} == {b.board for b in draft.boards}:
             return await self._done(click, UNCHANGED, changed=False)
         edited = draft.model_copy(update={"boards": boards})
         await self._save(click, record, edited, "boards")

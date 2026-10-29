@@ -185,6 +185,16 @@ async def test_the_same_boards_change_nothing() -> None:
     assert await rig.store.proposal_edits(PID) == []
 
 
+async def test_reordering_the_same_boards_changes_nothing() -> None:
+    # The order means nothing, so it adds no edit and leaves reactions on.
+    rig = Rig()
+    await rig.proposal(ROADMAP, ProposedBoard(board="acme-co/7", reason="Reported"))
+    await click(rig.app(), menu("support", "roadmap"))
+    assert rig.slack.ephemerals == [(CH, BOB, UNCHANGED)]
+    assert await rig.store.proposal_edits(PID) == []
+    assert [b for b, _ in await rig.boards()] == ["acme-co/3", "acme-co/7"]
+
+
 @pytest.mark.parametrize(
     ("chosen", "refusal"),
     [
