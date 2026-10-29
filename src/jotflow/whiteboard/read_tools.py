@@ -365,6 +365,14 @@ class Person(BaseModel):
     )
 
 
+# A fixed fact for a question run (#329): the same message may also reach drafting.
+QUESTION_NOTICE = (
+    DRAFTING_NOTICE + " This run can't change anything: it can only answer. Drafting may "
+    "propose a card from the same message, for a person to approve. Never say that "
+    "anything was changed, filed, created or assigned."
+)
+
+
 class ConversationWork(BaseModel):
     """A drafting or question run's packet: its thread, the topics, and related excerpts."""
 
@@ -657,6 +665,7 @@ def read_tools(
                         )
                     )
         conversation = ConversationWork(
+            notice=QUESTION_NOTICE if grant.kind is RunKind.QUESTION else DRAFTING_NOTICE,
             instructions=(
                 DRAFTING_INSTRUCTIONS if grant.kind is RunKind.DRAFTING else QUESTION_INSTRUCTIONS
             ),

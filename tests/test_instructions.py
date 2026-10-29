@@ -120,6 +120,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "title_pattern",
         "proposal_id",  # pending's, for revise_proposal (#304)
         "github_description",  # packet fields for a scope (#236)
+        "asks_jotflow",  # a message that asked JotFlow (#329)
         "file_id",  # a message's file, for attachments (#333)
         "likely_duplicate",  # a related issue's (#337)
         "scope_total",
@@ -205,6 +206,15 @@ DRAFTING_RULES = {
     "a tentative idea is still an idea": "is still an idea: start a topic and propose it",
     "discussion is not a new idea": "is discussion, not a new idea",
     "discussion needs no proposal": "Discussion never needs a proposal or a question",
+    "a question to JotFlow is discussion (#329)": (
+        "If it only asks JotFlow something, it's discussion"
+    ),
+    "never a topic from a question to JotFlow (#329)": (
+        "never start a topic from it, and don't contradict JotFlow's answer"
+    ),
+    "a change asked of JotFlow is a follow-up (#329)": (
+        "If it asks for a change to tracked work, it's a follow-up (step 6)."
+    ),
     # 3. Hints
     "follow the hint unless": "Follow it unless the text clearly says otherwise",
     "say why a hint was overruled": "set `hint_overruled` on the proposal to a one-line reason",

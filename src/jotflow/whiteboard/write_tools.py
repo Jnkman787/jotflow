@@ -90,6 +90,30 @@ MAX_QUESTION_LENGTH = 500
 MAX_ANSWER_LENGTH = 500
 # Every answer says whose it is, so nobody mistakes it for a person or a JotFlow fact.
 ANSWER_PREFIX = "Answer from the agent:"
+# A question run changes nothing, so its answer may never say it did (#329). First
+# person only: "#42 was created last week" is fine, "I've filed it" is not.
+_CLAIM = re.compile(
+    r"\b(?:i|we|jotflow)(?:['\u2019]ve| have| has)?\s+(?:just\s+|now\s+|already\s+)?"
+    r"(?:created|filed|opened|assigned|added|updated|changed|edited|closed|made|moved)\b",
+    re.IGNORECASE,
+)
+CLAIMS_A_CHANGE = (
+    "an answer can't say a change was made: this run changes nothing, and any change "
+    "comes as a card for a person to approve. Answer only what was asked."
+)
+
+
+def claims_a_change(text: str) -> bool:
+    """Whether ``text`` says, in the first person, that something was changed (#329).
+
+    Read as written and folded: invisible format characters such as a zero-width
+    space removed, then compatibility forms folded, so neither hides a claim.
+    """
+    visible = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    folded = unicodedata.normalize("NFKC", visible)
+    return any(_CLAIM.search(reading) for reading in (text, folded))
+
+
 MAX_PARTICIPANTS = 50
 
 DRAFTING = frozenset({RunKind.DRAFTING})
@@ -1251,6 +1275,9 @@ class WriteTools:
         thread = grant.thread_ts
         if thread is None:  # pragma: no cover - question grants always name one
             raise ToolError("this run has no thread to answer in")
+        if claims_a_change(args.text):
+            # Refused before it counts, so the run can answer the question instead (#329).
+            raise ToolError(CLAIMS_A_CHANGE)
 
         async def act() -> AnswerResult:
             await self._cap(grant, ("answer",), 1, "answers")

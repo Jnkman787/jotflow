@@ -52,6 +52,8 @@ MEMBERS_ONLY = "Questions are answered for this workspace's own members only."
 TOO_MANY = "JotFlow is answering a lot of questions here right now. Try again in a few minutes."
 TOO_SOON = "You asked JotFlow a question a moment ago. Try again in a minute."
 OFF = "Questions aren't turned on in this channel."
+# A mention isn't only a question: drafting reads it with the thread either way (#329).
+STILL_READ = " Your message is still read with the thread's ideas."
 
 Outcome = Literal["queued", "not_a_question", "refused", "limited", "off"]
 
@@ -84,8 +86,17 @@ def mentions_bot(text: str, bot_user_id: str) -> bool:
 
 
 def is_question(text: str, bot_user_id: str) -> bool:
+    return is_ask(text) or mentions_bot(text, bot_user_id)
+
+
+def is_ask(text: str) -> bool:
+    """``ask:``: the person said it's a question, so it's only ever a question (#329).
+
+    A bot mention is a question too, but it's also a message to the thread: it may
+    ask for a change to a draft or an issue, so drafting reads it as well.
+    """
     keyword, _ = split_keyword(text)
-    return keyword == "ask" or mentions_bot(text, bot_user_id)
+    return keyword == "ask"
 
 
 class QuestionHandler:
@@ -121,6 +132,8 @@ class QuestionHandler:
             return Asked("not_a_question")
         thread_ts = event.get("thread_ts") if isinstance(event.get("thread_ts"), str) else None
         thread = thread_ts or ts
+        # A mention also goes to drafting, so a "not now" reply says it isn't lost (#329).
+        also = "" if is_ask(text) else STILL_READ
         if not isinstance(user, str) or not _SLACK_USER.fullmatch(user):
             return Asked("refused")
         try:
@@ -128,29 +141,31 @@ class QuestionHandler:
         except UnknownChannelError:
             return Asked("not_a_question")
         if not settings.enabled:
-            await self._tell(channel, user, thread, OFF)
+            await self._tell(channel, user, thread, OFF + also)
             return Asked("off")
         if not await self._may_ask(event, user):
-            await self._tell(channel, user, thread, MEMBERS_ONLY)
+            await self._tell(channel, user, thread, MEMBERS_ONLY + also)
             log.info("question in %s refused: the asker isn't a member of this workspace", channel)
             return Asked("refused")
         now = self._monotonic()
         last = self._asked_at.get((channel, user))
         if last is not None and now - last < settings.per_person_seconds:
-            await self._tell(channel, user, thread, TOO_SOON)
+            await self._tell(channel, user, thread, TOO_SOON + also)
             return Asked("limited")
         since = self._clock() - timedelta(hours=1)
         if await self._store.count_runs(channel, RunKind.QUESTION, since=since) >= (
             settings.per_hour
         ):
-            await self._tell(channel, user, thread, TOO_MANY)
+            await self._tell(channel, user, thread, TOO_MANY + also)
             log.info("question in %s not queued: the channel's hourly limit is reached", channel)
             return Asked("limited")
-        # Not an idea, so drafting skips it. The agent's mark, not a person's, so a
-        # question that starts a thread doesn't keep the thread's ideas out.
-        await self._store.mark_chatter(
-            MessageRef(channel_id=channel, ts=ts, thread_ts=thread_ts), by="agent"
-        )
+        if is_ask(text):
+            # Not an idea, so drafting skips it. The agent's mark, not a person's, so a
+            # question that starts a thread doesn't keep the thread's ideas out. A
+            # mention isn't marked: drafting reads it, as a follow-up or discussion (#329).
+            await self._store.mark_chatter(
+                MessageRef(channel_id=channel, ts=ts, thread_ts=thread_ts), by="agent"
+            )
         # One queued question run per thread: enqueue_run returns the one already queued.
         run = await self._store.enqueue_run(RunKind.QUESTION, channel, thread)
         self._asked_at[(channel, user)] = now
