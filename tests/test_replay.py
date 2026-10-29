@@ -81,6 +81,20 @@ async def test_a_mismatch_is_reported() -> None:
     assert "Does not match the expected outcome." in report.render()
 
 
+def _untagged_request(data: dict[str, Any]) -> None:
+    """The change request without its tag: just a bot post, so its "12 weeks" is nobody's."""
+    del next(e for e in data["events"] if e.get("metadata"))["metadata"]
+
+
+async def test_only_a_tagged_change_requests_words_count_as_given() -> None:
+    good = await replay(builtin_thread("change-request-scope"))
+    assert good.ok
+    thread = parse_thread(_broken("change-request-scope", _untagged_request), source="test")
+    report = await replay(thread)
+    (invented,) = [c for c in report.checks if c.name == "no invented numbers or links"]
+    assert invented.ok is False
+
+
 async def test_a_refused_tool_call_stops_the_replay() -> None:
     thread = builtin_thread("mentions")
 

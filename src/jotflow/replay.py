@@ -945,7 +945,14 @@ async def invariants(replay: _Replay) -> list[Check]:
     """Rules every run must keep, whatever the fixture expects (#23)."""
     channel = _channel(replay.thread)
     logins = {u.github.casefold() for u in replay.thread.users.values() if u.github}
-    thread_text = "\n".join(m.text or "" for m in replay.accepted)
+    # A person's words: what ingest accepted, and their change requests JotFlow posted (#330).
+    bot = replay.thread.workspace.bot.user_id
+    requests = [
+        m
+        for m in _own_posts(replay.thread)
+        if change_request_by(m.model_dump(exclude_none=True), bot) is not None
+    ]
+    thread_text = "\n".join(m.text or "" for m in [*replay.accepted, *requests])
     from_chatter: list[str] = []
     unlinked: list[str] = []
     invented: list[str] = []

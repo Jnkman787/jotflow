@@ -143,7 +143,7 @@
       "thread_ts": "1792330000.000100",
       "user": "U0JOTBOT",
       "bot_id": "B0JOTBOT",
-      "text": "Change request from <@U0ALICE>:\nPlease cover the weekly summary report as well.",
+      "text": "Change request from <@U0ALICE>:\nPlease cover the weekly summary report as well, with its last 12 weeks.",
       "metadata": {
         "event_type": "jotflow_change_request",
         "event_payload": {
@@ -203,7 +203,7 @@
             "topic_id": "key:csv-export",
             "issue": {
               "title": "Export report tables as CSV",
-              "body": "## Problem\nPeople copy report tables by hand when they need them elsewhere.\n\n## Proposal\nExport any report table as a CSV file.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Add an Export CSV action to each report table.\n2. Write the visible columns and rows to the file.\n3. Offer the same export on the weekly summary report.\n\n## Acceptance\n- [ ] Every report table can be exported as a CSV file\n- [ ] The weekly summary report can be exported too\n",
+              "body": "## Problem\nPeople copy report tables by hand when they need them elsewhere.\n\n## Proposal\nExport any report table as a CSV file.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Add an Export CSV action to each report table.\n2. Write the visible columns and rows to the file.\n3. Offer the same export on the weekly summary report, with its last 12 weeks.\n\n## Acceptance\n- [ ] Every report table can be exported as a CSV file\n- [ ] The weekly summary report can be exported too\n",
               "labels": [
                 "enhancement"
               ],
