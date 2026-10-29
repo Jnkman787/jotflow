@@ -22,13 +22,14 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from jotflow.models import MessageRef, ProposalRecord, RunKind, RunStatus
+from jotflow.models import IssueProposal, MessageRef, ProposalRecord, RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.packet import SlackWorkSource
 from jotflow.orchestrator.questions import QuestionHandler
 from jotflow.orchestrator.runs import RunLifecycle, StartedRun
+from jotflow.orchestrator.slack_files import TooLarge
 from jotflow.store import MemoryStore, Store
 from jotflow.testing.threads import (
     FIXTURE_LISTED_AT,
@@ -36,6 +37,7 @@ from jotflow.testing.threads import (
     AgentRun,
     AnswerCall,
     AskChannelCall,
+    FixtureFile,
     LinkMessageCall,
     ListRepoDocsCall,
     MessageEvent,
@@ -247,7 +249,49 @@ def _slack_message(message: MessageEvent) -> dict[str, Any]:
         value = getattr(message, key)
         if value is not None:
             data[key] = value
+    if message.files:
+        data["files"] = [_slack_file(f, message.channel) for f in message.files]
     return data
+
+
+def _slack_file(file: FixtureFile, channel: str) -> dict[str, Any]:
+    """A fixture file as Slack describes one, url_private included, as live (#333)."""
+    return {
+        "id": file.id,
+        "name": file.name,
+        "filetype": file.filetype,
+        "mimetype": file.mimetype,
+        "size": len(file.text.encode()),
+        "url_private": f"https://files.slack.com/files-pri/T0FIXTURE-{file.id}/{file.id}",
+        "channels": [channel],
+    }
+
+
+class FixtureFiles:
+    """files.info and the download, answered from the fixture's messages (#333)."""
+
+    def __init__(self, thread: SavedThread) -> None:
+        self._files: dict[str, tuple[FixtureFile, str]] = {}
+        for event in thread.events:
+            if isinstance(event, MessageEvent):
+                for file in event.files:
+                    self._files[file.id] = (file, event.channel)
+
+    async def info(self, file_id: str) -> Mapping[str, Any]:
+        found = self._files.get(file_id)
+        if found is None:
+            raise LookupError("file_not_found")
+        return _slack_file(*found)
+
+    async def download(self, url: str, limit: int) -> bytes:
+        file_id = url.rsplit("/", 1)[-1]
+        found = self._files.get(file_id)
+        if found is None:
+            raise LookupError("file_not_found")
+        data = found[0].text.encode()
+        if len(data) > limit:
+            raise TooLarge
+        return data
 
 
 @dataclass
@@ -629,6 +673,8 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
             )
         )
     checks.append(await _revision_check(replay))
+    if any(p.attached for p in expected.proposals):
+        checks.append(await _attached_check(replay, by_store_id))
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
     docs_read = []
     for run_id in replay.run_ids:
@@ -746,6 +792,20 @@ def _channel(thread: SavedThread) -> str:
     return next(iter(thread.policy.channels))
 
 
+async def _attached_check(replay: _Replay, by_store_id: dict[str, str]) -> Check:
+    """The Slack files each new issue's draft includes, by name (#333)."""
+    channel = _channel(replay.thread)
+    got: dict[str, list[str]] = {}
+    for root in sorted({run.thread_ts for run in replay.thread.agent}):
+        for proposal in await replay.store.thread_proposals(channel, root):
+            draft = proposal.proposal
+            if isinstance(draft, IssueProposal) and draft.attached:
+                topic = by_store_id.get(draft.topic_id or "", draft.topic_id or "")
+                got[topic] = [a.name for a in draft.attached]
+    want = {p.topic: list(p.attached) for p in replay.thread.expected.proposals if p.attached}
+    return _equal("attachments", got, want)
+
+
 def _equal(name: str, got: Any, want: Any) -> Check:
     if got == want:
         return Check(name, True, f"{len(want)} as expected")
@@ -781,7 +841,14 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
     attribution = FixtureAttribution(thread)
     bot = thread.workspace.bot
     reader = _FixtureReader(thread, messages)
-    source = SlackWorkSource(reader, active, bot=BotIdentity(bot.user_id, bot.bot_id))
+    files = FixtureFiles(thread)
+    source = SlackWorkSource(
+        reader,
+        active,
+        bot=BotIdentity(bot.user_id, bot.bot_id),
+        files=files,
+        attachments_for=thread.policy.attachments_for,
+    )
     repos = fixture_catalog(thread, clock)
     # Repo docs (#209): the fixture's files stand in for the drafting runner.
     docs = DocReads(active)
@@ -790,7 +857,13 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
         spec.name: spec
         for spec in (
             *read_tools(
-                active, thread.policy, source, clock=clock, attribution=attribution, repos=repos
+                active,
+                thread.policy,
+                source,
+                clock=clock,
+                attribution=attribution,
+                repos=repos,
+                files=files,
             ),
             *write_tools(
                 active,
@@ -800,6 +873,7 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
                 repos=repos,
                 docs=docs,
                 authors=attribution.authors,
+                files=files,
                 mentions=attribution.mentions,
             ),
             *doc_tools(active, thread.policy, lambda: fixture_docs, docs, clock=clock),

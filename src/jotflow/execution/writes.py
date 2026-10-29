@@ -204,12 +204,17 @@ def _owner_repo(repo: str) -> tuple[str, str]:
 
 
 def plan(
-    record: ProposalRecord, tail: str, issues: IssuesPolicy | None = None
+    record: ProposalRecord,
+    tail: str,
+    issues: IssuesPolicy | None = None,
+    attachments: str = "",
 ) -> tuple[PlannedChecks, list[PlannedWrite]]:
     """The checks and writes for ``record``, with ``tail`` from :func:`footer`.
 
     A new issue gets ``issues``' title prefix and label (#306), which the card showed.
     The label is checked like the draft's own, so a missing one stops the write.
+    ``attachments`` is JotFlow's own Attachments section for the files that are
+    still as approved (#333), put between the body and the footer.
     """
     draft = record.proposal
     owner, name = _owner_repo(draft.repo)
@@ -222,7 +227,9 @@ def plan(
             "owner": owner,
             "repo": name,
             "title": added.filed_title(draft.title),
-            "body": _with_footer(draft.body, tail),
+            "body": _with_footer(
+                f"{draft.body.rstrip()}\n\n{attachments}" if attachments else draft.body, tail
+            ),
         }
         if labels:
             arguments["labels"] = labels
