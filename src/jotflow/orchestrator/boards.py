@@ -8,9 +8,11 @@ only if, at that moment:
 - it is still in the channel's ``boards`` in jotflow.toml;
 - it was in the approved draft, so in the hash a person locked;
 - the issue is the one ``record_result`` recorded, in the approved repo;
-- and the runner finds the proposal's marker line in that issue's body, so an
-  execution agent can't record another issue in the repo and get it boarded.
-  A missing marker is a fixed refusal, never retried, and named in the notice.
+- and the runner finds the proposal's marker line in that issue's body, and
+  the issue's author is the write token's own login, so an execution agent
+  can't record another issue in the repo and get it boarded, even one where
+  someone pasted the marker. Either failure is a fixed refusal, never retried,
+  and named in the notice.
 
 Each attempt is recorded in the tool-call ledger, so a restart neither adds a
 board twice nor forgets a failure. A board that keeps failing is named in the
@@ -68,7 +70,7 @@ class BoardResults:
             parts.append(
                 "Didn't add it to "
                 + ", ".join(self.refused)
-                + ": the recorded issue doesn't carry this proposal's marker."
+                + ": the recorded issue isn't one JotFlow filed for this proposal."
             )
         return " ".join(parts)
 
@@ -141,8 +143,8 @@ class BoardAdder:
             added, refused = True, False
         except NotThisProposal:
             log.warning(
-                "proposal %s: its recorded issue lacks the proposal's marker, so it isn't "
-                "added to board %s",
+                "proposal %s: its recorded issue isn't one JotFlow filed for it, so it "
+                "isn't added to board %s",
                 record.id,
                 board,
             )

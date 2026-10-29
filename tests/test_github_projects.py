@@ -21,12 +21,21 @@ BODY = "People want a CSV export.\n\n---\n<!-- jotflow:proposal:p1 -->"
 BOARD_NODE = "PVT_kwDOexample3"
 
 
+BOT = "example-jotflow-bot"
+
+
+def issue_with(body: str, author: str | None = BOT, viewer: str = BOT) -> dict[str, Any]:
+    login = None if author is None else {"login": author}
+    issue = {"id": ISSUE_NODE, "body": body, "author": login}
+    return {"data": {"viewer": {"login": viewer}, "repository": {"issue": issue}}}
+
+
 class FakeGraphql:
     """GitHub's GraphQL endpoint: answers each constant query from a table."""
 
     def __init__(self, **answers: Any) -> None:
         self.answers = {
-            ISSUE_ID: {"data": {"repository": {"issue": {"id": ISSUE_NODE, "body": BODY}}}},
+            ISSUE_ID: issue_with(BODY),
             BOARD_ID: {
                 "data": {"organization": {"projectV2": {"id": BOARD_NODE, "viewerCanUpdate": True}}}
             },
@@ -276,10 +285,6 @@ async def test_an_add_to_a_board_the_token_cant_see_still_fails() -> None:
 # The issue must be the proposal's own (#309, security's addendum)
 
 
-def issue_with(body: str) -> dict[str, Any]:
-    return {"data": {"repository": {"issue": {"id": ISSUE_NODE, "body": body}}}}
-
-
 @pytest.mark.parametrize(
     "body",
     [
@@ -352,3 +357,44 @@ async def test_the_runner_refuses_another_proposals_issue_with_a_fixed_answer(
         )
         assert loose.status_code == 400
     assert [json.loads(r.content)["query"] for r in fake.seen] == [ISSUE_ID]
+
+
+# The issue must be one the write token filed (#311 review, #256's rule)
+
+
+@pytest.mark.parametrize("author", ["example-alice", None])
+async def test_an_issue_with_the_marker_but_another_author_is_never_added(
+    author: str | None,
+) -> None:
+    # A collaborator pasted the marker into their own issue, or its author is gone.
+    fake = FakeGraphql()
+    fake.answers[ISSUE_ID] = issue_with(BODY, author=author)
+    with pytest.raises(github_projects.NotThisProposals, match="wasn't filed by the write token"):
+        await add_issue("example-org/web", 5, "example-org/3", PID, WRITE, http=fake.client())
+    assert [s["query"] for s in fake.seen] == [ISSUE_ID]  # no board lookup, no add
+
+
+async def test_the_author_matches_the_write_token_ignoring_case() -> None:
+    fake = FakeGraphql()
+    fake.answers[ISSUE_ID] = issue_with(BODY, author="Example-JotFlow-Bot")
+    assert await add_issue("example-org/web", 42, "example-org/3", PID, WRITE, http=fake.client())
+    assert "viewer { login }" in ISSUE_ID and "author { login }" in ISSUE_ID
+
+
+async def test_the_runner_refuses_another_authors_issue_with_the_same_fixed_answer(
+    tmp_path: Path,
+) -> None:
+    graphql = FakeGraphql()
+    graphql.answers[ISSUE_ID] = issue_with(BODY, author="example-alice")
+    async with runner_http(tmp_path, FakeGithub({"/graphql": graphql}), execution=True) as http:
+        refused = await http.post(
+            "/boards/add",
+            json={
+                "repo": "example-org/web",
+                "issue_number": 5,
+                "board": "example-org/3",
+                "proposal_id": PID,
+            },
+        )
+    assert refused.status_code == 422
+    assert refused.json() == {"error": "the issue isn't this proposal's"}

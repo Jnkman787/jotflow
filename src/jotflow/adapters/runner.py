@@ -989,7 +989,8 @@ def build_runner_app(
             return JSONResponse({"error": "GitHub's rate limit"}, status_code=429)
         except github_projects.NotThisProposals:
             log.warning(
-                "not adding an issue to board %s: it lacks its proposal's marker", asked.board
+                "not adding an issue to board %s: it isn't one JotFlow filed for its proposal",
+                asked.board,
             )
             return JSONResponse({"error": "the issue isn't this proposal's"}, status_code=422)
         except (github_repos.GithubError, httpx2.HTTPError) as exc:

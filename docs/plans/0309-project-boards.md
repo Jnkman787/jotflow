@@ -6,7 +6,7 @@
 - Draft PR: #311
 - Status: plan approved by the lead and security (2026-10-29), with security's five conditions below. Code is next, configured boards first
 - Last verified: origin/main b3afbf3, 2026-10-29, with github-mcp-server 2.0.2's projects tools listed offline from the pinned binary
-- Next safe action: review PR 1 (#311). Then PR 1b, the card's board edit with migration 19, once #310 (migration 16) merges. Then PR 2, discovery
+- Next safe action: PR 1 (#311), the marker check (#320) and the plan fix (#319) are merged, and the startup-check fix with the author check is #323. Next is PR 1b, the card's board edit with migration 19, once product's migrations 17 (#305) and 18 (#308) land. Then PR 2, discovery
 
 ## Objective and done-when
 

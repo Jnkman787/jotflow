@@ -8,8 +8,10 @@ to add it to each approved board, and these three constant GraphQL queries do
 it with the write token:
 
 - :data:`ISSUE_ID`: the issue's node id and body, from its repo and number.
-  The body must carry this proposal's marker line, so an execution agent can't
-  report another issue in the approved repo and get that one boarded
+  The body must carry this proposal's marker line, and the issue's author must
+  be the token's own login, read in the same query as ``viewer``, so an
+  execution agent can't report another issue in the approved repo and get that
+  one boarded
 - :data:`BOARD_ID`: an organisation board's node id, and whether the token may
   update it
 - :data:`ADD_ITEM`: ``addProjectV2ItemById``, which returns the item that is
@@ -45,7 +47,9 @@ MAX_ISSUE_BYTES = 512 * 1024
 # Constant queries: only the variables below ever change.
 ISSUE_ID = (
     "query($owner: String!, $name: String!, $number: Int!) {"
-    " repository(owner: $owner, name: $name) { issue(number: $number) { id body } } }"
+    " viewer { login }"
+    " repository(owner: $owner, name: $name) {"
+    " issue(number: $number) { id body author { login } } } }"
 )
 BOARD_ID = (
     "query($owner: String!, $number: Int!) {"
@@ -66,8 +70,13 @@ class _Node(_Strict):
     id: str = Field(min_length=1, max_length=200)
 
 
+class _Login(_Strict):
+    login: str = Field(min_length=1, max_length=100)
+
+
 class _Issue(_Node):
     body: str
+    author: _Login | None  # null for a deleted account: never the write token's
 
 
 class _IssueHolder(_Strict):
@@ -75,6 +84,7 @@ class _IssueHolder(_Strict):
 
 
 class _IssueData(_Strict):
+    viewer: _Login
     repository: _IssueHolder
 
 
@@ -123,8 +133,8 @@ class NotThisProposals(GithubError):
     """The issue doesn't carry the proposal's marker line, so it isn't the one
     the approved proposal produced. Fixed: trying again won't change it."""
 
-    def __init__(self) -> None:
-        super().__init__("the issue doesn't carry this proposal's marker")
+    def __init__(self, reason: str = "the issue doesn't carry this proposal's marker") -> None:
+        super().__init__(reason)
 
 
 def carries_marker(body: str, proposal_id: str) -> bool:
@@ -248,8 +258,15 @@ async def add_issue(
         url=url,
         max_bytes=MAX_ISSUE_BYTES,
     )
-    if not carries_marker(issue.repository.issue.body, proposal_id):
+    found_issue = issue.repository.issue
+    if not carries_marker(found_issue.body, proposal_id):
         raise NotThisProposals
+    # The marker shows the body names this proposal, not who wrote it: anyone who
+    # may edit an issue in the repo could paste it. Only the write token files
+    # JotFlow's issues (#256's rule, #311 review).
+    author = found_issue.author.login if found_issue.author else None
+    if author is None or author.casefold() != issue.viewer.login.casefold():
+        raise NotThisProposals("the issue wasn't filed by the write token")
     found: _BoardData = await _ask(
         http, token, BOARD_ID, {"owner": board_owner, "number": number}, _BoardData, url=url
     )
