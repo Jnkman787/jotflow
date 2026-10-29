@@ -462,8 +462,10 @@ def read_tools(
             found = None
             for thread in summary.threads:
                 for record in await store.thread_proposals(channel_id, thread):
+                    # Live, not only pending: revising an approved one leaves the
+                    # follow-up due, so it's drafted again once the issue is filed.
                     if (
-                        record.state is ProposalState.PENDING
+                        record.state in LIVE_PROPOSAL_STATES
                         and record.proposal.topic_id == summary.id
                         and record.draft_cleared_at is None
                     ):

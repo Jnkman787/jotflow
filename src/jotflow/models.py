@@ -645,6 +645,10 @@ class PendingDraft(BaseModel):
 
     proposal_id: str
     revision: int = Field(description="Pass as base_revision; a stale one isn't applied")
+    state: ProposalState = Field(
+        default=ProposalState.PENDING,
+        description="pending is revised; approved or being written leaves it due for later",
+    )
     kind: Literal["create_issue", "update_issue"]
     title: UntrustedText | None = None
     body: UntrustedText | None = None
@@ -665,6 +669,7 @@ class PendingDraft(BaseModel):
             return cls(
                 proposal_id=record.id,
                 revision=record.revision,
+                state=record.state,
                 kind="create_issue",
                 title=text(draft.title),
                 body=text(draft.body),
@@ -675,6 +680,7 @@ class PendingDraft(BaseModel):
         return cls(
             proposal_id=record.id,
             revision=record.revision,
+            state=record.state,
             kind="update_issue",
             body=text(changes.body),
             comment=text(changes.comment),
