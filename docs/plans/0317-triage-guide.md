@@ -3,8 +3,8 @@
 ## Links and status
 
 - Issue: #317
-- Draft PR: to open with this plan
-- Status: planned by the architect, 2026-10-29. Code follows in the same PR
+- PR: #322
+- Status: planned and built by the architect, 2026-10-29, in one PR
 - Last verified: origin/main after #310, 2026-10-29
 - Next safe action: review the plan and the code together
 
