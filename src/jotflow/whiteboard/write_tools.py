@@ -94,7 +94,14 @@ CLAIMS_A_CHANGE = (
 
 
 def claims_a_change(text: str) -> bool:
-    return _CLAIM.search(text) is not None
+    """Whether ``text`` says, in the first person, that something was changed (#329).
+
+    Read as written and folded: invisible format characters such as a zero-width
+    space removed, then compatibility forms folded, so neither hides a claim.
+    """
+    visible = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    folded = unicodedata.normalize("NFKC", visible)
+    return any(_CLAIM.search(reading) for reading in (text, folded))
 
 
 MAX_PARTICIPANTS = 50

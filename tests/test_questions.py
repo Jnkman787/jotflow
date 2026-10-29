@@ -469,3 +469,15 @@ async def test_three_quick_mentions_in_one_thread_start_one_question_run() -> No
     runs = await store.thread_runs(CH, "1.0")
     assert [r.kind for r in runs] == [RunKind.QUESTION]
     assert slack.whispers[0][3].startswith(TOO_SOON)
+
+
+
+def test_a_claim_split_by_an_invisible_character_is_still_refused() -> None:
+    # #341 review: zero-width or full-width characters can't hide "I've filed it".
+    from jotflow.whiteboard.write_tools import claims_a_change
+
+    assert claims_a_change("I\u200b've filed it")
+    assert claims_a_change("I've f\u200biled it")
+    assert claims_a_change("I\u2060 have assigned Alice")
+    assert claims_a_change("\uff29've updated #42")  # a full-width I
+    assert not claims_a_change("acme-co/web#42 was\u200b created last week")
