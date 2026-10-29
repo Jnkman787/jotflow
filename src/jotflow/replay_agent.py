@@ -216,6 +216,8 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
     for index, run in play_order(state.thread):
         started = await start_scripted(state, prepared.lifecycle, run)
         kind = started.run.kind
+        if state.reader is not None:
+            state.reader.until = run.sees_until  # later messages aren't posted yet (#304)
         state.run_ids.append(started.run.id)
         preset = _preset(options, index)
         config = RunnerConfig(

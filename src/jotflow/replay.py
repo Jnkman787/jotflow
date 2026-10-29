@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from jotflow.models import MessageRef, RunKind, RunStatus
+from jotflow.models import MessageRef, ProposalRecord, RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
 from jotflow.orchestrator.keywords import split_keyword
@@ -43,6 +43,7 @@ from jotflow.testing.threads import (
     ProposeUpdateCall,
     ReactionEvent,
     ReadRepoDocCall,
+    ReviseProposalCall,
     SavedThread,
     fixture_catalog,
     invented_commands,
@@ -51,7 +52,7 @@ from jotflow.testing.threads import (
     play_order,
 )
 from jotflow.whiteboard.doc_tools import READ_TOOL, DocReads, doc_tools
-from jotflow.whiteboard.read_tools import read_tools
+from jotflow.whiteboard.read_tools import LIVE_PROPOSAL_STATES, read_tools
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolError, ToolSpec
 from jotflow.whiteboard.write_tools import write_tools
@@ -164,11 +165,19 @@ class _FixtureReader:
     def __init__(self, thread: SavedThread, accepted: Sequence[MessageEvent]) -> None:
         self._thread = thread
         self._accepted = accepted
+        # The last message the current run sees; later ones aren't posted yet (#304).
+        self.until: str | None = None
 
     async def replies(
         self, channel: str, ts: str, *, cursor: str | None, limit: int
     ) -> Mapping[str, Any]:
-        thread = [m for m in self._accepted if m.channel == channel and m.root == ts]
+        thread = [
+            m
+            for m in self._accepted
+            if m.channel == channel
+            and m.root == ts
+            and (self.until is None or float(m.ts) <= float(self.until))
+        ]
         thread.sort(key=lambda m: (m.ts != ts, m.ts))  # the parent first, as Slack does
         messages = [_slack_message(m) for m in thread][:limit]
         return {"ok": True, "messages": messages, "has_more": False}
@@ -232,6 +241,7 @@ class _Replay:
     accepted: list[MessageEvent] = field(default_factory=list)  # messages ingest accepted
     attribution: FixtureAttribution | None = None
     slack: _FixtureSlack | None = None
+    reader: _FixtureReader | None = None
     removed: list[int] = field(default_factory=list)  # what each answer's rewrite removed
     exact: bool = True  # the scripted agent: its answers' exact words are checked
     run_ids: list[str] = field(default_factory=list)  # the scripted runs, in order
@@ -392,6 +402,8 @@ async def run_script(
         if grant is None:  # pragma: no cover - the token was issued a moment ago
             raise ReplayError("the run's token was refused")
         replay.run_ids.append(started.run.id)
+        if replay.reader is not None:
+            replay.reader.until = run.sees_until
         try:
             await replay.call(grant, "get_work", {})
             participants = _participants(replay.thread, accepted, run.thread_ts)
@@ -427,10 +439,48 @@ async def start_scripted(replay: _Replay, lifecycle: RunLifecycle, run: AgentRun
     return started
 
 
+async def _live_proposal(replay: _Replay, topic_id: str) -> ProposalRecord | None:
+    """The topic's proposal still in play, as the packet's ``pending`` would give it."""
+    record = await replay.store.get_topic(topic_id)
+    if record is None:
+        return None
+    threads = {ref.thread_ts or ref.ts for ref in record.topic.messages}
+    for thread in sorted(threads):
+        for proposal in await replay.store.thread_proposals(_channel(replay.thread), thread):
+            if proposal.proposal.topic_id == topic_id and proposal.state in LIVE_PROPOSAL_STATES:
+                return proposal
+    return None
+
+
 def scripted_call(
-    call: Any, resolve: Callable[[str | None], str | None], participants: list[str]
+    call: Any,
+    resolve: Callable[[str | None], str | None],
+    participants: list[str],
+    pending_of: Callable[[str], tuple[str, int] | None] = lambda _: None,
 ) -> tuple[str, dict[str, Any]]:
-    """A fixture's scripted call as the tool name and arguments a client sends."""
+    """A fixture's scripted call as the tool name and arguments a client sends.
+
+    ``pending_of`` maps a topic id to its pending proposal's id and revision, for a
+    scripted revision (#304): replay reads it from the store, the stand-in agent from
+    its packet.
+    """
+    if isinstance(call, ReviseProposalCall):
+        revise = call.arguments
+        topic = resolve(revise.topic_id) or ""
+        found = pending_of(topic)
+        if found is None:
+            raise ReplayError(f"topic {revise.topic_id} has no pending draft to revise")
+        arguments: dict[str, Any] = {
+            "proposal_id": found[0],
+            "base_revision": found[1],
+            "sources": [s.model_dump(mode="json", exclude_none=True) for s in revise.sources],
+            "confidence": revise.confidence,
+        }
+        if revise.issue is not None:
+            arguments["issue"] = revise.issue.model_dump(mode="json")
+        if revise.changes is not None:
+            arguments["changes"] = revise.changes.model_dump(mode="json")
+        return "revise_proposal", arguments
     if isinstance(call, LinkMessageCall):
         decision = call.arguments
         return "link_message", {
@@ -458,7 +508,12 @@ def scripted_call(
 
 
 async def _make_call(replay: _Replay, grant: Grant, call: Any, participants: list[str]) -> None:
-    tool, arguments = scripted_call(call, replay.resolve, participants)
+    pending: dict[str, tuple[str, int]] = {}
+    if isinstance(call, ReviseProposalCall):
+        topic = replay.resolve(call.arguments.topic_id) or ""
+        if (record := await _live_proposal(replay, topic)) is not None:
+            pending[topic] = (record.id, record.revision)
+    tool, arguments = scripted_call(call, replay.resolve, participants, pending.get)
     expected = getattr(call, "expect_error", None)
     if expected is not None:
         # A call the script expects to be refused, such as a title off its pattern.
@@ -553,6 +608,7 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
                 "; ".join(form_problems) or f"{len(shaped)} as expected",
             )
         )
+    checks.append(await _revision_check(replay))
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
     docs_read = []
     for run_id in replay.run_ids:
@@ -567,6 +623,32 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
     checks.append(_equal("keywords", found, dict(expected.keywords)))
     checks += await _question_checks(replay)
     return checks
+
+
+async def _revision_check(replay: _Replay) -> Check:
+    """Each proposal was revised as often as expected, by whom, and in what (#304)."""
+    channel = _channel(replay.thread)
+    by_store_id = {v: k for k, v in replay.topics.items()}
+    problems: list[str] = []
+    expected = replay.thread.expected.proposals
+    for root in sorted({run.thread_ts for run in replay.thread.agent}):
+        for record in await replay.store.thread_proposals(channel, root):
+            draft = record.proposal
+            topic = by_store_id.get(draft.topic_id or "", draft.topic_id or "")
+            key = (draft.kind, draft.repo.casefold(), topic, getattr(draft, "issue_number", None))
+            want = next((p for p in expected if p.key() == key), None)
+            if want is None:
+                continue
+            revisions = await replay.store.proposal_revisions(record.id)
+            if len(revisions) != want.revisions:
+                problems.append(f"{topic} revised {len(revisions)} times, not {want.revisions}")
+                continue
+            if revisions and want.revised_by and revisions[-1].added_by != tuple(want.revised_by):
+                problems.append(f"{topic}'s last revision added {list(revisions[-1].added_by)}")
+            if revisions and want.changed and revisions[-1].changed != tuple(want.changed):
+                problems.append(f"{topic}'s last revision changed {list(revisions[-1].changed)}")
+    total = sum(p.revisions for p in expected)
+    return Check("revisions", not problems, "; ".join(problems) or f"{total} as expected")
 
 
 async def _question_checks(replay: _Replay) -> list[Check]:
@@ -660,9 +742,8 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
     accepted, ignored, messages = _ingest(thread)
     attribution = FixtureAttribution(thread)
     bot = thread.workspace.bot
-    source = SlackWorkSource(
-        _FixtureReader(thread, messages), active, bot=BotIdentity(bot.user_id, bot.bot_id)
-    )
+    reader = _FixtureReader(thread, messages)
+    source = SlackWorkSource(reader, active, bot=BotIdentity(bot.user_id, bot.bot_id))
     repos = fixture_catalog(thread, clock)
     # Repo docs (#209): the fixture's files stand in for the drafting runner.
     docs = DocReads(active)
@@ -694,6 +775,7 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
         accepted=messages,
         attribution=attribution,
         slack=_FixtureSlack(thread),
+        reader=reader,
     )
     _record_answers(state)
     registry = TokenRegistry(clock=clock.mono)

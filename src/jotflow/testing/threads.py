@@ -29,7 +29,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from jotflow.models import (
     Classification,
     DiscoveredRepo,
+    IssueChanges,
     IssueProposal,
+    MessageRef,
     Topic,
     UpdateProposal,
 )
@@ -197,10 +199,43 @@ class ReadRepoDocCall(_Strict):
         return self
 
 
+class RevisedIssueDraft(_Strict):
+    title: str = Field(min_length=1, max_length=256)
+    body: str
+    labels: tuple[str, ...] = ()
+    assignees: tuple[str, ...] = ()
+
+
+class ReviseArguments(_Strict):
+    """What a scripted revision says. Replay fills in the proposal id and its revision."""
+
+    topic_id: str = Field(
+        description="The topic whose pending draft it revises: key:<name> or an id"
+    )
+    issue: RevisedIssueDraft | None = None
+    changes: IssueChanges | None = None
+    sources: tuple[MessageRef, ...] = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _one_draft(self) -> ReviseArguments:
+        if (self.issue is None) == (self.changes is None):
+            raise ValueError("a revision gives exactly one of issue or changes")
+        return self
+
+
+class ReviseProposalCall(_Strict):
+    """A ``revise_proposal`` call (#304): fold new messages into a topic's pending draft."""
+
+    tool: Literal["revise_proposal"]
+    arguments: ReviseArguments
+
+
 ToolCall = Annotated[
     LinkMessageCall
     | ProposeIssueCall
     | ProposeUpdateCall
+    | ReviseProposalCall
     | AskChannelCall
     | AnswerCall
     | ListRepoDocsCall
@@ -217,6 +252,10 @@ class AgentRun(_Strict):
     channel: str
     thread_ts: str = Field(description="The thread this run drafts or answers in")
     kind: Literal["drafting", "question"] = "drafting"
+    sees_until: str | None = Field(
+        default=None,
+        description="The last message ts this run's packet holds; later ones aren't posted yet",
+    )
     calls: tuple[ToolCall, ...]
 
 
@@ -244,6 +283,12 @@ class ExpectedProposal(_Strict):
         default=(),
         description="Labels the proposal must not set, such as one a planted issue asks for",
     )
+    # Revisions from new messages (#304).
+    revisions: int = Field(default=0, ge=0, description="How many times it was revised")
+    revised_by: tuple[str, ...] = Field(
+        default=(), description="Slack user ids the last revision added messages from"
+    )
+    changed: tuple[str, ...] = Field(default=(), description="Fields the last revision changed")
 
     @model_validator(mode="after")
     def _form_is_for_new_issues(self) -> ExpectedProposal:
@@ -587,8 +632,17 @@ def _script_problems(thread: SavedThread) -> list[str]:
                 f"agent[{r}]: thread_ts {run.thread_ts} is not a top-level message in {run.channel}"
             )
         problems += _kind_problems(thread, r, run)
+        problems += _sees_problems(thread, r, run)
         for c, call in enumerate(run.calls):
             where = f"agent[{r}].calls[{c}]"
+            if isinstance(call, ReviseProposalCall):
+                if call.arguments.topic_id not in topics:
+                    problems.append(
+                        f"{where}: topic {call.arguments.topic_id} is neither existing nor declared"
+                    )
+                for source in call.arguments.sources:
+                    if source.ts not in messages:
+                        problems.append(f"{where}: source {source.ts} is not in events")
             if isinstance(call, LinkMessageCall):
                 problems += _link_problems(where, call, messages, topics)
                 if call.topic_key is not None:
@@ -596,6 +650,32 @@ def _script_problems(thread: SavedThread) -> list[str]:
             elif isinstance(call, ProposeIssueCall | ProposeUpdateCall):
                 problems += _proposal_problems(where, run.channel, call, thread, topics)
     return problems
+
+
+def _call_messages(call: ToolCall) -> list[str]:
+    """The message ts a scripted call names."""
+    if isinstance(call, LinkMessageCall):
+        return [call.arguments.message.ts]
+    if isinstance(call, ProposeIssueCall | ProposeUpdateCall):
+        return [s.ts for s in call.arguments.sources]
+    if isinstance(call, ReviseProposalCall):
+        return [s.ts for s in call.arguments.sources]
+    return []
+
+
+def _sees_problems(thread: SavedThread, r: int, run: AgentRun) -> list[str]:
+    """A run that sees part of its thread names only messages it can see (#304)."""
+    if run.sees_until is None:
+        return []
+    if run.sees_until not in thread.messages:
+        return [f"agent[{r}]: sees_until {run.sees_until} is not a message in events"]
+    limit = float(run.sees_until)
+    return [
+        f"agent[{r}]: message {ts} comes after its sees_until"
+        for call in run.calls
+        for ts in _call_messages(call)
+        if float(ts) > limit
+    ]
 
 
 def _kind_problems(thread: SavedThread, r: int, run: AgentRun) -> list[str]:
@@ -682,6 +762,7 @@ class Outcome:
     drafts: list[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = field(default_factory=list)
     asks: list[str] = field(default_factory=list)
     answers: list[str] = field(default_factory=list)  # the thread of each answer, in order
+    revisions: dict[str, int] = field(default_factory=dict)  # topic -> revise calls (#304)
 
 
 def play_order(thread: SavedThread) -> list[tuple[int, AgentRun]]:
@@ -744,6 +825,9 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
                 outcome.asks.append(run.thread_ts)
             elif isinstance(call, AnswerCall):
                 outcome.answers.append(run.thread_ts)
+            elif isinstance(call, ReviseProposalCall):
+                topic = call.arguments.topic_id
+                outcome.revisions[topic] = outcome.revisions.get(topic, 0) + 1
             elif isinstance(call, ProposeUpdateCall):
                 update = call.arguments
                 outcome.proposals.append(
@@ -803,6 +887,9 @@ def _expected_problems(thread: SavedThread) -> list[str]:
     want_topics = {t.topic: list(t.messages) for t in expected.topics}
     # Messages a re: keyword attaches are JotFlow's doing, not the agent's.
     attached = {ts for ts, word in expected.keywords.items() if word == "re"}
+    # A message seeded into an existing topic was linked before the fixture starts,
+    # such as the root of a thread whose issue was filed (#304).
+    attached |= {ref.ts for topic in thread.existing_topics for ref in topic.messages}
     script_topics = outcome.topics
     for topic, tss in want_topics.items():
         got = script_topics.get(topic, [])
@@ -830,6 +917,12 @@ def _expected_problems(thread: SavedThread) -> list[str]:
             f"expected.asks: lists {list(expected.asks)} but the script asks in {outcome.asks}"
         )
     problems += _question_problems(thread, outcome)
+    for index, want in enumerate(expected.proposals):
+        if want.revisions != outcome.revisions.get(want.topic, 0):
+            problems.append(
+                f"expected.proposals[{index}]: revisions {want.revisions}, but the script "
+                f"revises {want.topic} {outcome.revisions.get(want.topic, 0)} times"
+            )
     return problems
 
 
