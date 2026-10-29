@@ -1063,6 +1063,20 @@ class SqliteStore:
             )
         return Verified(self._identity(_found(row)), displaced)
 
+    async def fill_github_id(self, slack_user_id: str, github_id: int) -> IdentityLink | None:
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        async with self._write():
+            await self._db.execute(
+                "UPDATE identity_links SET github_id = ? WHERE slack_user_id = ?"
+                " AND github_id IS NULL",
+                (github_id, slack_user_id),
+            )
+            row = await self._one(
+                "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return None if row is None else self._identity(row)
+
     async def admin_link(
         self, slack_user_id: str, github_login: str, github_id: int, *, replace: bool = False
     ) -> Verified:

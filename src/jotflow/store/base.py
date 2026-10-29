@@ -1002,6 +1002,14 @@ class Store(Protocol):
         """
         ...
 
+    async def fill_github_id(self, slack_user_id: str, github_id: int) -> IdentityLink | None:
+        """Store GitHub's account id on the person's link if it has none (#305).
+
+        Nothing else changes: not the login, not who made it, not its verification.
+        Returns the link, or None if they have none.
+        """
+        ...
+
     async def identity_for_login(self, github_login: str) -> IdentityLink | None:
         """Whoever has linked ``github_login``, compared without case."""
         ...

@@ -32,6 +32,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from slack_sdk.web.async_client import AsyncWebClient
 
@@ -67,7 +68,10 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     link.add_argument(
         "--replace",
         action="store_true",
-        help="Take a login from whoever has it now, and tell them privately",
+        help=(
+            "Take a login from whoever has it now, or change a member's own link, and tell "
+            "them privately. A run that stops partway is safe to run again"
+        ),
     )
     unlink = sub.add_parser("unlink", help="Remove someone's GitHub link and tell them privately")
     unlink.add_argument("member_id", help="Their Slack member ID, such as U0123ABCD")
@@ -93,9 +97,11 @@ class LinkRefused(Exception):
 class LinkCounts:
     linked: int = 0
     unchanged: int = 0
+    kept_verified: int = 0
     replaced: int = 0
     told: int = 0
-    displaced: list[str] = field(default_factory=list)
+    # (Slack id, the note they get), for everyone whose link this run changed.
+    notes: list[tuple[str, str]] = field(default_factory=list)
 
 
 def read_pairs(args: argparse.Namespace) -> list[tuple[str, str]]:
@@ -134,6 +140,24 @@ def read_pairs(args: argparse.Namespace) -> list[tuple[str, str]]:
     return pairs
 
 
+@dataclass(frozen=True)
+class _Plan:
+    user: str
+    login: str
+    account_id: int
+    action: str  # link, unchanged, keep, or replace_own
+    old_login: str | None = None
+
+
+def changed_note(old: str, new: str) -> str:
+    """What someone is told when an admin changes their link to another login (#305)."""
+    return (
+        f"Whoever runs JotFlow changed the GitHub login linked to your Slack account from "
+        f"{old} to {new}. Cards show it as linked by an admin. If that's wrong, tell them, or "
+        "link your own with /jotflow link your-github-login."
+    )
+
+
 async def load_links(
     store: SqliteStore,
     runner: RunnerClient,
@@ -142,12 +166,20 @@ async def load_links(
     *,
     replace: bool,
 ) -> LinkCounts:
-    """Look every login up first, and refuse before writing anything if one fails.
+    """Look every login up and plan every line first, refusing before any write if one
+    fails. Then link them one by one.
 
-    Then link them one by one. Only a login someone takes in the meantime can stop
-    that part, and the message says how many were linked before it.
+    For someone who already has a link (#305 review):
+    - the same login, with a matching or no account id: a verified link is kept as it
+      is, its id filled in if missing; an unverified one becomes the admin's
+    - the same login with another account id: refused, since the login was renamed or
+      reused
+    - another login: refused without ``--replace``; with it, changed, recorded as by
+      ``operator``, and the person is told, naming both logins
+
+    A run that stops partway can be run again: lines already done count as unchanged.
     """
-    accounts: list[tuple[str, str, int]] = []
+    plans: list[_Plan] = []
     for number, (user, login) in enumerate(pairs, start=1):
         try:
             found = await runner.account(login)
@@ -164,36 +196,64 @@ async def load_links(
             raise LinkRefused(
                 f"link {number}: someone else has linked that login; pass --replace to take it"
             )
-        accounts.append((user, found.login, found.id))
-    counts = LinkCounts()
-    for user, login, account_id in accounts:
         current = await store.get_identity(user)
-        if (
-            current is not None
-            and current.linked_by == "admin"
-            and current.github_login == login
-            and current.github_id == account_id
-        ):
+        plans.append(_plan(number, user, found.login, found.id, current, replace))
+    counts = LinkCounts()
+    for plan in plans:
+        if plan.action == "unchanged":
             counts.unchanged += 1
             continue
+        if plan.action == "keep":
+            await store.fill_github_id(plan.user, plan.account_id)
+            counts.kept_verified += 1
+            continue
+        if plan.action == "replace_own":
+            await store.remove_identity(plan.user, removed_by=OPERATOR_REMOVER)
         try:
-            done = await store.admin_link(user, login, account_id, replace=replace)
+            done = await store.admin_link(plan.user, plan.login, plan.account_id, replace=replace)
         except ConflictError:
             raise LinkRefused(
                 f"a login was linked by someone else meanwhile, after {counts.linked} were "
                 "linked; run it again to finish"
             ) from None
         counts.linked += 1
+        if plan.action == "replace_own" and plan.old_login is not None:
+            counts.replaced += 1
+            counts.notes.append((plan.user, changed_note(plan.old_login, plan.login)))
         if done.displaced is not None:
             counts.replaced += 1
-            counts.displaced.append(done.displaced)
-    for displaced in counts.displaced:
+            counts.notes.append((done.displaced, removal_note(None)))
+    for user, text in counts.notes:
         try:
-            await notifier.tell(displaced, removal_note(None))
+            await notifier.tell(user, text)
             counts.told += 1
         except Exception:  # told or not, the count says so
             pass
     return counts
+
+
+def _plan(
+    number: int, user: str, login: str, account_id: int, current: Any, replace: bool
+) -> _Plan:
+    if current is None:
+        return _Plan(user, login, account_id, "link")
+    if current.github_login.casefold() == login.casefold():
+        if current.github_id is not None and current.github_id != account_id:
+            raise LinkRefused(
+                f"link {number}: that login now names a different GitHub account than the "
+                "one already linked; it was renamed or reused, so nothing was linked"
+            )
+        if current.verified:
+            return _Plan(user, login, account_id, "keep")  # never downgraded to an admin's
+        if current.linked_by == "admin" and current.github_id == account_id:
+            return _Plan(user, login, account_id, "unchanged")
+        return _Plan(user, login, account_id, "link")
+    if not replace:
+        raise LinkRefused(
+            f"link {number}: that member already has a different GitHub login linked; "
+            "pass --replace to change it, and they'll be told"
+        )
+    return _Plan(user, login, account_id, "replace_own", old_login=current.github_login)
 
 
 async def _link(args: argparse.Namespace, pairs: list[tuple[str, str]]) -> LinkCounts:
@@ -227,7 +287,8 @@ def run_link(args: argparse.Namespace) -> int:
         )
         return EXIT_STORE
     print(
-        f"linked {counts.linked}, unchanged {counts.unchanged}, replaced {counts.replaced}"
+        f"linked {counts.linked}, unchanged {counts.unchanged}, "
+        f"already verified and kept {counts.kept_verified}, replaced {counts.replaced}"
         + (f" (told {counts.told} of them privately)" if counts.replaced else "")
     )
     return EXIT_OK

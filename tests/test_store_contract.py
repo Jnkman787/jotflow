@@ -1326,3 +1326,18 @@ async def test_verifying_an_admin_link_makes_it_the_persons(store: Store) -> Non
 async def test_an_admin_link_needs_a_real_account_id(store: Store, bad: Any) -> None:
     with pytest.raises(ValueError):
         await store.admin_link("U0BOB", "octo-example", bad)
+
+
+async def test_filling_an_account_id_changes_nothing_else(store: Store) -> None:
+    assert await store.fill_github_id("U0NOBODY", 5) is None
+    await store.link_identity("U0BOB", "octo-example")
+    before = await store.get_identity("U0BOB")
+    filled = await store.fill_github_id("U0BOB", 583231)
+    assert filled is not None and filled.github_id == 583231
+    assert before is not None and (filled.github_login, filled.verified, filled.linked_by) == (
+        before.github_login,
+        before.verified,
+        before.linked_by,
+    )
+    again = await store.fill_github_id("U0BOB", 7)  # never replaces an id it has
+    assert again is not None and again.github_id == 583231

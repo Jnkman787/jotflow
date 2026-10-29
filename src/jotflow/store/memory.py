@@ -615,6 +615,18 @@ class MemoryStore:
             self._identities[slack_user_id] = link
             return Verified(link, displaced)
 
+    async def fill_github_id(self, slack_user_id: str, github_id: int) -> IdentityLink | None:
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        async with self._lock:
+            link = self._identities.get(slack_user_id)
+            if link is None:
+                return None
+            if link.github_id is None:
+                link = replace(link, github_id=github_id)
+                self._identities[slack_user_id] = link
+            return link
+
     async def admin_link(
         self, slack_user_id: str, github_login: str, github_id: int, *, replace: bool = False
     ) -> Verified:

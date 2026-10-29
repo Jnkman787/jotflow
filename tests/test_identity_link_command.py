@@ -185,7 +185,7 @@ def test_the_command_prints_counts_never_logins(
     )
     out = capsys.readouterr()
     assert code == command.EXIT_OK
-    assert out.out.strip() == "linked 1, unchanged 0, replaced 0"
+    assert out.out.strip() == "linked 1, unchanged 0, already verified and kept 0, replaced 0"
     assert "octo-example" not in out.out + out.err
 
 
@@ -242,3 +242,111 @@ def test_a_file_that_isnt_utf8_is_refused_not_a_crash(
     path.write_bytes(b"slack_member_id,github_login\nU0BOB,\xff\xfe\n")
     assert command.run(args(action="link", file=path)) == command.EXIT_REFUSED
     assert "can't read the file (UnicodeDecodeError)" in capsys.readouterr().err
+
+
+# Someone who already has a link (#305 review)
+
+
+async def verified(store: MemoryStore, user: str, login: str, account_id: int | None) -> None:
+    from jotflow.store.base import IdentityCode
+
+    await store.link_identity(user, login)
+    if account_id is not None:
+        from datetime import UTC, datetime, timedelta
+
+        await store.start_verification(
+            IdentityCode(user, login, "d" * 64, datetime.now(UTC) + timedelta(minutes=5))
+        )
+        await store.finish_verification(user, github_login=login, github_id=account_id)
+
+
+async def test_a_persons_own_verified_link_is_kept_as_it_is() -> None:
+    store = MemoryStore()
+    await verified(store, "U0BOB", "octo-example", 583231)
+    before = await store.get_identity("U0BOB")
+    counts = await load_links(
+        store,
+        Runner(),
+        Notes(),
+        [("U0BOB", "Octo-Example")],
+        replace=False,  # type: ignore[arg-type]
+    )
+    assert (counts.linked, counts.kept_verified) == (0, 1)
+    after = await store.get_identity("U0BOB")
+    assert after == before  # still verified, still theirs, never an admin's
+
+
+async def test_a_verified_link_without_an_id_gets_one_and_nothing_else() -> None:
+    store = MemoryStore()
+    await store.link_identity("U0BOB", "octo-example")
+    from dataclasses import replace as changed
+
+    link = await store.get_identity("U0BOB")
+    assert link is not None
+    store._identities["U0BOB"] = changed(link, verified=True)  # verified before #195 kept ids
+    counts = await load_links(
+        store,
+        Runner(),
+        Notes(),
+        [("U0BOB", "octo-example")],
+        replace=False,  # type: ignore[arg-type]
+    )
+    after = await store.get_identity("U0BOB")
+    assert counts.kept_verified == 1
+    assert after is not None and (after.verified, after.linked_by, after.github_id) == (
+        True,
+        "self",
+        583231,
+    )
+
+
+async def test_the_same_login_naming_another_account_is_refused() -> None:
+    store = MemoryStore()
+    await verified(store, "U0BOB", "octo-example", 111)  # an older account by that login
+    with pytest.raises(LinkRefused, match="renamed or reused"):
+        await load_links(
+            store,
+            Runner(),
+            Notes(),
+            [("U0BOB", "octo-example")],
+            replace=True,  # type: ignore[arg-type]
+        )
+    link = await store.get_identity("U0BOB")
+    assert link is not None and link.github_id == 111 and link.verified
+
+
+async def test_changing_a_persons_own_login_needs_replace_and_tells_them() -> None:
+    store = MemoryStore()
+    await verified(store, "U0BOB", "kim-example", 9001)
+    with pytest.raises(LinkRefused, match="different GitHub login linked"):
+        await load_links(
+            store,
+            Runner(),
+            Notes(),
+            [("U0BOB", "octo-example")],
+            replace=False,  # type: ignore[arg-type]
+        )
+    still = await store.get_identity("U0BOB")
+    assert still is not None and still.github_login == "kim-example"
+    notes = Notes()
+    counts = await load_links(
+        store,
+        Runner(),
+        notes,
+        [("U0BOB", "octo-example")],
+        replace=True,  # type: ignore[arg-type]
+    )
+    assert (counts.linked, counts.replaced, counts.told) == (1, 1, 1) and notes.told == ["U0BOB"]
+    link = await store.get_identity("U0BOB")
+    assert link is not None and (link.github_login, link.linked_by, link.verified) == (
+        "octo-example",
+        "admin",
+        False,  # the old verification was for the old login
+    )
+    [removed] = await store.identity_unlinks()
+    assert (removed.slack_user_id, removed.removed_by) == ("U0BOB", "operator")
+
+
+def test_the_note_names_both_logins() -> None:
+    text = command.changed_note("kim-example", "octo-example")
+    assert "from kim-example to octo-example" in text
