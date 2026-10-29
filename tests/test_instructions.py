@@ -166,3 +166,12 @@ def test_the_likely_duplicate_rule_is_in_the_instructions() -> None:
     # #337: the card offers Same as only for an issue the agent marks.
     text = " ".join(DRAFTING_INSTRUCTIONS.split())
     assert "Set `likely_duplicate` only on one that may be the same request." in text
+
+
+def test_a_question_to_jotflow_is_never_drafted_as_an_idea() -> None:
+    # #329, with product's #336: a mention now reaches drafting, so a pure question
+    # to the bot is discussion, never a topic of its own.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "If it only asks JotFlow something, it's discussion" in text
+    assert "never start a topic from it, and don't contradict JotFlow's answer" in text
+    assert "If it asks for a change to tracked work, it's a follow-up (step 6)." in text

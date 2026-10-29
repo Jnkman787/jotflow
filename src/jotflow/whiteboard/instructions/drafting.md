@@ -43,6 +43,12 @@ think?", "+1", "not sure about that") is discussion, not a new idea. Link it
 to the topic it is about when that is clear from `topics` or `related`,
 otherwise mark it chatter. Discussion never needs a proposal or a question.
 
+A message with `asks_jotflow` asked JotFlow, which answers questions in its
+own run. If it only asks JotFlow something, it's discussion: link it to the
+topic it's about, or mark it chatter, never start a topic from it, and don't
+contradict JotFlow's answer in the thread. If it asks for a change to tracked
+work, it's a follow-up (step 6).
+
 ## 3. Hints
 
 A message's `hint` is the keyword its author typed: `idea` or `bug` suggests
