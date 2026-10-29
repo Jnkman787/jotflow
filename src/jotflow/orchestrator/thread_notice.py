@@ -11,6 +11,9 @@ it is posted. The reply is built by JotFlow alone, from the repo's nickname
 and the issue URL that ``record_result`` checked against the approved repo.
 Nothing in it is agent-written. With ``issue_links = "none"`` the reply still
 carries the URL, since that is what a rebuild reads (#38).
+
+The reply is sent as blocks: the same text, and an Add me button (#305). Its
+``text`` is exactly the reply above, which a rebuild reads.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from typing import Any, Protocol
 
 from jotflow.models import ProposalRecord
 from jotflow.orchestrator.boards import BoardAdder
+from jotflow.orchestrator.cards import ACTION_ADD_ME_FILED
 from jotflow.policy import Policy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import Store, utc_now
@@ -51,7 +55,27 @@ _REPLY_FINAL = frozenset(
 class ThreadSlack(Protocol):
     async def react(self, channel_id: str, ts: str, name: str) -> None: ...
 
-    async def reply(self, channel_id: str, thread_ts: str, text: str) -> None: ...
+    async def reply(
+        self, channel_id: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
+    ) -> None: ...
+
+
+def reply_blocks(text: str, proposal_id: str) -> list[dict[str, Any]]:
+    """The filed-issue reply as blocks: its text, built by JotFlow, and Add me (#305)."""
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Add me", "emoji": False},
+                    "action_id": ACTION_ADD_ME_FILED,
+                    "value": proposal_id,
+                }
+            ],
+        },
+    ]
 
 
 def slack_error(exc: Exception) -> str | None:
@@ -61,6 +85,13 @@ def slack_error(exc: Exception) -> str | None:
     except Exception:
         return None
     return code if isinstance(code, str) else None
+
+
+def filed_issue(record: ProposalRecord) -> tuple[str, int] | None:
+    """The issue an applied proposal wrote, as owner/name and number, from its stored URL."""
+    url = record.result.issue_url if record.result else None
+    match = _ISSUE_URL.fullmatch(url or "")
+    return (match["repo"], int(match["number"])) if match else None
 
 
 def reply_text(
@@ -144,7 +175,9 @@ class ThreadNotice:
             text = f"{text} {skipped}"
         try:
             await self._react_on_sources(record)
-            await self._slack.reply(record.channel_id, record.thread_ts, text)
+            await self._slack.reply(
+                record.channel_id, record.thread_ts, text, reply_blocks(text, record.id)
+            )
         except Exception as exc:
             code = slack_error(exc)
             if code in _REPLY_FINAL:
@@ -196,11 +229,15 @@ class BoltThreadSlack:
     async def react(self, channel_id: str, ts: str, name: str) -> None:
         await self._client.reactions_add(channel=channel_id, timestamp=ts, name=name)
 
-    async def reply(self, channel_id: str, thread_ts: str, text: str) -> None:
+    async def reply(
+        self, channel_id: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
+    ) -> None:
+        extra: dict[str, Any] = {"blocks": blocks} if blocks is not None else {}
         await self._client.chat_postMessage(
             channel=channel_id,
             thread_ts=thread_ts,
             text=text,
             unfurl_links=False,
             unfurl_media=False,
+            **extra,
         )

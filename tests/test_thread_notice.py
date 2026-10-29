@@ -50,6 +50,7 @@ class FakeThreadSlack:
     def __init__(self) -> None:
         self.reactions: list[tuple[str, str, str]] = []
         self.replies: list[tuple[str, str, str]] = []
+        self.blocks: list[list[dict[str, Any]] | None] = []
         self.react_errors: dict[str, str] = {}
         self.reply_failures: list[Exception] = []
 
@@ -58,10 +59,13 @@ class FakeThreadSlack:
             raise SlackError(self.react_errors[ts])
         self.reactions.append((channel_id, ts, name))
 
-    async def reply(self, channel_id: str, thread_ts: str, text: str) -> None:
+    async def reply(
+        self, channel_id: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
+    ) -> None:
         if self.reply_failures:
             raise self.reply_failures.pop(0)
         self.replies.append((channel_id, thread_ts, text))
+        self.blocks.append(blocks)
 
 
 class Clock:

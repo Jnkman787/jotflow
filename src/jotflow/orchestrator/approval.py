@@ -349,6 +349,39 @@ class ApprovalHandler:
         """
         return await self._guarded(body, action)
 
+    async def member_click(
+        self, body: Mapping[str, Any], action: Callable[[Click], Awaitable[str]]
+    ) -> str:
+        """Run ``action`` for a click any member may make on one of JotFlow's messages
+        that isn't a card, such as Add me on a filed issue's reply (#305).
+
+        A member of this workspace, not a guest or external user, in a channel the
+        policy lists and that isn't paused. No approver rule: ``action`` applies its own.
+        Returns the action's outcome, ``"refused"``, or ``"ignored"``.
+        """
+        click = _click(body)
+        if click is None or click.channel_id is None or click.message_ts is None:
+            log.warning("a click payload was malformed; ignored")
+            return "ignored"
+        try:
+            await self._check_person(body, click.user_id)
+            if click.channel_id not in self._policy.channels:
+                raise Refused(NOT_ALLOWED)
+            await self._check_not_paused(click.channel_id)
+            return await action(click)
+        except Refused as refused:
+            log.info("click refused for user %s", click.user_id)
+            await self._tell(click.user_id, str(refused), channel=click.channel_id)
+            return "refused"
+
+    async def check_member(self, body: Mapping[str, Any], user_id: str, channel_id: str) -> None:
+        """A dialog's submitter is a member, not a guest or external, and ``channel_id``
+        is a listed channel that isn't paused. Raises :class:`Refused` (#305)."""
+        await self._check_person(body, user_id)
+        if channel_id not in self._policy.channels:
+            raise Refused(NOT_ALLOWED)
+        await self._check_not_paused(channel_id)
+
     async def _guarded(
         self,
         body: Mapping[str, Any],

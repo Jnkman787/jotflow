@@ -662,6 +662,13 @@ class IdentityPolicy(_Strict):
         default=(),
         description="Slack user ids that may unlink anyone; approvers always may",
     )
+    github_org: Owner | None = Field(
+        default=None,
+        description=(
+            "A GitHub organization an Add me self-add must belong to (#305). The read "
+            "token then needs the organization's Members: Read-only permission"
+        ),
+    )
 
     @model_validator(mode="after")
     def _unique_admins(self) -> IdentityPolicy:

@@ -62,6 +62,9 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
 }
 
 AUTO_APPROVER = "auto"
+# The run id of a proposal a person made with an Add me button (#305), which no agent
+# drafted. A new draft doesn't supersede it, and auto mode never approves it.
+SELF_ADD_RUN = "add-me"
 
 # Once final, a proposal's drafted text is cleared (#102). Failed is not final:
 # a person may retry it, until the draft is cleared explicitly.
@@ -1041,7 +1044,11 @@ class Store(Protocol):
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         """Mark every other pending proposal in the thread superseded, clearing their
-        drafts; return their ids."""
+        drafts; return their ids. A person's Add me request (#305) is never superseded."""
+        ...
+
+    async def count_self_adds(self, slack_user_id: str, since: datetime) -> int:
+        """How many Add me requests ``slack_user_id`` made since ``since`` (#305)."""
         ...
 
     # Identity links

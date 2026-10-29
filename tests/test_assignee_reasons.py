@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from jotflow.models import AssigneeReason, IssueProposal, MessageRef, ProposalRecord
-from jotflow.orchestrator.card_edits import _with_assignees
+from jotflow.orchestrator.card_edits import with_assignees
 from jotflow.orchestrator.cards import CardContext, render_card
 from jotflow.policy import parse_policy
 from jotflow.store import MemoryStore
@@ -230,13 +230,13 @@ def test_a_card_edit_keeps_reasons_in_step() -> None:
         assignees=["acme-bob"],
         assignee_reasons=[AssigneeReason(login="acme-bob", why="volunteered", source_ts=REPLY)],
     )
-    added = _with_assignees(draft, ["acme-bob", "acme-kim"], added="acme-kim")
+    added = with_assignees(draft, ["acme-bob", "acme-kim"], added="acme-kim")
     assert isinstance(added, IssueProposal)
     assert [(r.login, r.why) for r in added.assignee_reasons] == [
         ("acme-bob", "volunteered"),
         ("acme-kim", "added_on_card"),
     ]
-    removed = _with_assignees(added, ["acme-kim"])
+    removed = with_assignees(added, ["acme-kim"])
     assert isinstance(removed, IssueProposal)
     assert [r.login for r in removed.assignee_reasons] == ["acme-kim"]
 
@@ -251,7 +251,7 @@ async def test_a_revision_keeps_a_reason_already_on_the_draft(
     first: Any = await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "volunteered"))
     found = await store.get_proposal(first.proposal_id)
     assert found is not None
-    edited = _with_assignees(found.proposal, ["acme-bob", "acme-alice"], added="acme-alice")
+    edited = with_assignees(found.proposal, ["acme-bob", "acme-alice"], added="acme-alice")
     await store.edit_proposal(found.id, edited, by="U0ALICE", field="assign")
     current = await store.get_proposal(found.id)
     assert current is not None and isinstance(current.proposal, IssueProposal)

@@ -48,6 +48,7 @@ from jotflow.store.base import (
     MAX_SUMMARY_ATTEMPTS,
     OPERATOR_REMOVER,
     REVISED_FIELDS,
+    SELF_ADD_RUN,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -569,8 +570,8 @@ class SqliteStore:
         async with self._write():
             rows = await self._all(
                 "SELECT id, draft_json FROM proposals WHERE channel_id = ? AND thread_ts = ?"
-                " AND state = 'pending' AND id != ? ORDER BY id",
-                (channel_id, thread_ts, keep_id),
+                " AND state = 'pending' AND id != ? AND run_id != ? ORDER BY id",
+                (channel_id, thread_ts, keep_id, SELF_ADD_RUN),
             )
             now = to_text(self._clock())
             for row in rows:
@@ -908,6 +909,15 @@ class SqliteStore:
             row["github_id"],
             "admin" if row["linked_by"] == "admin" else "self",
         )
+
+    async def count_self_adds(self, slack_user_id: str, since: datetime) -> int:
+        row = await self._one(
+            "SELECT COUNT(*) AS n FROM proposals p JOIN proposal_participants pp"
+            " ON pp.proposal_id = p.id WHERE p.run_id = ? AND pp.slack_user_id = ?"
+            " AND p.created_at >= ?",
+            (SELF_ADD_RUN, slack_user_id, to_text(since)),
+        )
+        return int(row["n"]) if row is not None else 0
 
     async def link_identity(self, slack_user_id: str, github_login: str) -> IdentityLink:
         check_id(slack_user_id, "Slack user id")

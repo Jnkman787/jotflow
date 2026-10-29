@@ -36,6 +36,7 @@ from jotflow.store.base import (
     DUPLICATE_TOPIC_LINKED,
     MAX_SUMMARY_ATTEMPTS,
     OPERATOR_REMOVER,
+    SELF_ADD_RUN,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -534,6 +535,7 @@ class MemoryStore:
                 and r.thread_ts == thread_ts
                 and r.state is ProposalState.PENDING
                 and r.id != keep_id
+                and r.run_id != SELF_ADD_RUN
             )
             for proposal_id in ids:
                 record = self._proposals[proposal_id]
@@ -544,6 +546,15 @@ class MemoryStore:
                 }
                 self._proposals[proposal_id] = record.model_copy(update=update, deep=True)
             return ids
+
+    async def count_self_adds(self, slack_user_id: str, since: datetime) -> int:
+        return sum(
+            1
+            for r in self._proposals.values()
+            if r.run_id == SELF_ADD_RUN
+            and slack_user_id in r.participants
+            and r.created_at >= since
+        )
 
     # Identity links
 

@@ -52,6 +52,7 @@ from jotflow.models import (
     RunKind,
     expected_runner_preset,
 )
+from jotflow.orchestrator.add_me import AddMe, AddMeSlack, BoltAddMeSlack, PersonChecks
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
 from jotflow.orchestrator.boards import BoardAdder
 from jotflow.orchestrator.card_edits import CardEdits
@@ -287,6 +288,7 @@ class Orchestrator:
         link_notifier: Notifier | None = None,
         mode_slack: ModeSlack | None = None,
         thread_slack: ThreadSlack | None = None,
+        add_me_slack: AddMeSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -315,6 +317,8 @@ class Orchestrator:
         self._link_notifier = link_notifier
         self.approval: ApprovalHandler | None = None
         self.edits: CardEdits | None = None
+        self._add_me_slack = add_me_slack
+        self.add_me: AddMe | None = None
         self._mode_slack = mode_slack
         self._thread_slack = thread_slack
         self.threads: ThreadNotice | None = None
@@ -368,6 +372,12 @@ class Orchestrator:
     def _label_checker(self) -> LabelChecker | None:
         """The drafting runner, when it's on, for an [issues] label check before a write
         (#306 follow-up). Without it the label stays, so a missing one stops the write."""
+        if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
+            return None
+        return self._runner
+
+    def _person_checks(self) -> PersonChecks | None:
+        """The drafting runner, when drafting is on, for Add me's GitHub checks (#305)."""
         if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
             return None
         return self._runner
@@ -485,6 +495,16 @@ class Orchestrator:
             refresh=self.cards.refresh,
             repos=self.repos,
             boards_off=self.boards_off,
+        )
+        # Add me on a card or a filed issue's reply, through the same gate (#305).
+        self.add_me = AddMe(
+            self._store,
+            self._policy,
+            self.approval,
+            self._add_me_slack or BoltAddMeSlack(self._client),
+            self._person_checks,
+            refresh=self.cards.refresh,
+            repos=self.repos,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(

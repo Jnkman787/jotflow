@@ -33,6 +33,7 @@ from jotflow.policy import BoardPolicy, ChannelPolicy, IssuesPolicy, RepoPolicy
 from jotflow.store.base import (
     ADDED_ON_CARD,
     AUTO_APPROVER,
+    SELF_ADD_RUN,
     IdentityLink,
     ProposalRevision,
     Store,
@@ -65,6 +66,9 @@ ACTION_BOARDS = "jotflow_boards"
 # sends no option, so the proposal comes from its block (#309).
 BOARDS_BLOCK = "jotflow_boards"
 MAX_CARD_BOARDS = 3  # as propose_issue allows
+# Add me (#305): on a pending or failed card, and on the reply once an issue is filed.
+ACTION_ADD_ME = "jotflow_add_me"
+ACTION_ADD_ME_FILED = "jotflow_add_me_filed"
 
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 _PERMALINK = re.compile(
@@ -485,6 +489,23 @@ def _update_header(draft: UpdateProposal, nickname: str) -> str:
     return f"Proposed update to {issue}"
 
 
+def _self_add_block(record: ProposalRecord, context: CardContext, logins: Sequence[str]) -> Block:
+    """Whose Add me request this is, and whose word the login rests on (#305).
+
+    No agent drafted it. A login the person entered themselves is their claim alone,
+    so the card says so in their name.
+    """
+    user = record.participants[0] if record.participants else None
+    name = context.names.get(user, user) if user else "Someone"
+    line = f"{name} asked to be added with Add me."
+    link = context.identities.get(user) if user else None
+    if link is not None and not link.trusted:
+        for login in logins:
+            if login.casefold() == link.github_login.casefold():
+                line += f" {name} says {login} is their GitHub account (unverified)."
+    return _context(line)
+
+
 def _update_blocks(
     record: ProposalRecord,
     draft: UpdateProposal,
@@ -514,7 +535,10 @@ def _update_blocks(
         blocks.append(_context(note))
     if changes.remove_assignees:
         blocks.append(_approved_context("Unassign: " + ", ".join(changes.remove_assignees)))
-    blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
+    if record.run_id == SELF_ADD_RUN:
+        blocks.append(_self_add_block(record, context, changes.add_assignees))
+    else:
+        blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
     blocks += _hint_blocks(draft)
     blocks += _people_blocks(record, context, changes.add_assignees, pending, compact)
     if context.credit_line:
@@ -764,7 +788,10 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
     if pending:
         if not approvable and show_body:
             blocks.append(_context(SHORTENED))
-        actions = [_button("Request Changes", ACTION_REQUEST_CHANGES, record.id)]
+        actions = [
+            _button("Request Changes", ACTION_REQUEST_CHANGES, record.id),
+            _button("Add me", ACTION_ADD_ME, f"{record.id}:me"),
+        ]
         if approvable:
             approve = _button(
                 "Approve",
@@ -787,7 +814,10 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
                 actions.append(same)
         blocks.append({"type": "actions", "elements": actions})
     elif retryable:
-        actions = [_button("Discard", ACTION_DISCARD, record.id, style="danger")]
+        actions = [
+            _button("Discard", ACTION_DISCARD, record.id, style="danger"),
+            _button("Add me", ACTION_ADD_ME, f"{record.id}:me"),
+        ]
         if approvable:
             # The same lock as Approve: a retry writes exactly what this card shows.
             retry = _button("Retry", ACTION_RETRY, f"{record.id}:{content_hash(record.proposal)}")
