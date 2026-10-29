@@ -698,9 +698,10 @@ class Orchestrator:
 
     async def _check_boards(self) -> None:
         """Ask the exec runner whether its write token may update each configured
-        board (#309). One it can't, or that can't be checked, is turned off: drafting
-        doesn't see it, and propose_issue refuses it. A pre-check: the add's own
-        failure is the real one."""
+        board (#309). One it can't is turned off: drafting doesn't see it, and
+        propose_issue refuses it. One that can't be checked, such as during a GitHub
+        outage or a rate limit, stays on (#311 review): this is a pre-check, and the
+        add's own failure, named in the thread, is the real one."""
         boards = {b.board for c in self._policy.channels.values() for b in c.boards}
         if not boards:
             return
@@ -713,13 +714,19 @@ class Orchestrator:
             try:
                 ok = await self._runner.board_access(owner, int(number))
             except RunnerError as exc:
-                log.warning("board %s is off: its access couldn't be checked (%s)", board, exc)
-                ok = False
+                log.warning(
+                    "board %s stays on: its access couldn't be checked at start (%s). If "
+                    "adding to it fails, the thread will say so",
+                    board,
+                    exc,
+                )
+                continue
             if not ok:
                 self.boards_off.add(board)
                 log.warning(
-                    "board %s is off: the write token can't update it; give it Projects: "
-                    "Read and write on the organisation",
+                    "board %s is off: the write token can't see or update it; give it "
+                    "Projects: Read and write on the organisation, and check the board's "
+                    "owner and number",
                     board,
                 )
 

@@ -21,12 +21,21 @@ BODY = "People want a CSV export.\n\n---\n<!-- jotflow:proposal:p1 -->"
 BOARD_NODE = "PVT_kwDOexample3"
 
 
+BOT = "example-jotflow-bot"
+
+
+def issue_with(body: str, author: str | None = BOT, viewer: str = BOT) -> dict[str, Any]:
+    login = None if author is None else {"login": author}
+    issue = {"id": ISSUE_NODE, "body": body, "author": login}
+    return {"data": {"viewer": {"login": viewer}, "repository": {"issue": issue}}}
+
+
 class FakeGraphql:
     """GitHub's GraphQL endpoint: answers each constant query from a table."""
 
     def __init__(self, **answers: Any) -> None:
         self.answers = {
-            ISSUE_ID: {"data": {"repository": {"issue": {"id": ISSUE_NODE, "body": BODY}}}},
+            ISSUE_ID: issue_with(BODY),
             BOARD_ID: {
                 "data": {"organization": {"projectV2": {"id": BOARD_NODE, "viewerCanUpdate": True}}}
             },
@@ -210,11 +219,70 @@ def test_the_queries_are_constant_strings() -> None:
     assert github_projects.MAX_NUMBER == 10**9
 
 
+# A real no, against a check that failed (#311 review)
+
+NOT_FOUND = {
+    "data": {"organization": {"projectV2": None}},
+    "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a ProjectV2"}],
+}
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        NOT_FOUND,
+        {"data": {"organization": None}, "errors": [{"type": "FORBIDDEN", "message": "no"}]},
+        {"data": {"organization": {"projectV2": None}}},
+        {"data": {"organization": None}},
+        {"data": {"organization": {"projectV2": {"id": BOARD_NODE, "viewerCanUpdate": False}}}},
+    ],
+)
+async def test_a_board_the_token_cant_see_or_update_is_a_no(answer: Any) -> None:
+    fake = FakeGraphql()
+    fake.answers[BOARD_ID] = answer
+    assert await board_access("example-org", 3, WRITE, http=fake.client()) is False
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx2.Response(502, text="bad gateway"),
+        httpx2.Response(200, text="not json"),
+        {"errors": [{"type": "INTERNAL", "message": "Something went wrong"}], "data": None},
+        {"errors": [{"type": "NOT_FOUND"}, {"type": "INTERNAL"}], "data": None},
+        {"data": {"organization": {"projectV2": {"id": BOARD_NODE}}}},
+    ],
+)
+async def test_a_check_that_fails_is_no_answer_not_a_no(answer: Any) -> None:
+    fake = FakeGraphql()
+    fake.answers[BOARD_ID] = answer
+    with pytest.raises(GithubError) as raised:
+        await board_access("example-org", 3, WRITE, http=fake.client())
+    assert not isinstance(raised.value, github_projects.Denied)
+
+
+async def test_a_rate_limited_check_is_its_own_answer(tmp_path: Path) -> None:
+    graphql = FakeGraphql()
+    graphql.answers[BOARD_ID] = httpx2.Response(403, headers={"x-ratelimit-remaining": "0"})
+    with pytest.raises(RateLimited):
+        await board_access("example-org", 3, WRITE, http=graphql.client())
+    async with runner_http(tmp_path, FakeGithub({"/graphql": graphql}), execution=True) as http:
+        assert (await http.get("/boards/example-org/3/access")).status_code == 429
+        graphql.answers[BOARD_ID] = httpx2.Response(502, text="bad gateway")
+        assert (await http.get("/boards/example-org/3/access")).status_code == 502
+        graphql.answers[BOARD_ID] = NOT_FOUND
+        answer = await http.get("/boards/example-org/3/access")
+        assert answer.status_code == 200 and answer.json() == {"can_update": False}
+
+
+async def test_an_add_to_a_board_the_token_cant_see_still_fails() -> None:
+    fake = FakeGraphql()
+    fake.answers[BOARD_ID] = NOT_FOUND
+    with pytest.raises(GithubError):
+        await add_issue("example-org/web", 42, "example-org/3", PID, WRITE, http=fake.client())
+
+
 # The issue must be the proposal's own (#309, security's addendum)
-
-
-def issue_with(body: str) -> dict[str, Any]:
-    return {"data": {"repository": {"issue": {"id": ISSUE_NODE, "body": body}}}}
 
 
 @pytest.mark.parametrize(
@@ -289,3 +357,44 @@ async def test_the_runner_refuses_another_proposals_issue_with_a_fixed_answer(
         )
         assert loose.status_code == 400
     assert [json.loads(r.content)["query"] for r in fake.seen] == [ISSUE_ID]
+
+
+# The issue must be one the write token filed (#311 review, #256's rule)
+
+
+@pytest.mark.parametrize("author", ["example-alice", None])
+async def test_an_issue_with_the_marker_but_another_author_is_never_added(
+    author: str | None,
+) -> None:
+    # A collaborator pasted the marker into their own issue, or its author is gone.
+    fake = FakeGraphql()
+    fake.answers[ISSUE_ID] = issue_with(BODY, author=author)
+    with pytest.raises(github_projects.NotThisProposals, match="wasn't filed by the write token"):
+        await add_issue("example-org/web", 5, "example-org/3", PID, WRITE, http=fake.client())
+    assert [s["query"] for s in fake.seen] == [ISSUE_ID]  # no board lookup, no add
+
+
+async def test_the_author_matches_the_write_token_ignoring_case() -> None:
+    fake = FakeGraphql()
+    fake.answers[ISSUE_ID] = issue_with(BODY, author="Example-JotFlow-Bot")
+    assert await add_issue("example-org/web", 42, "example-org/3", PID, WRITE, http=fake.client())
+    assert "viewer { login }" in ISSUE_ID and "author { login }" in ISSUE_ID
+
+
+async def test_the_runner_refuses_another_authors_issue_with_the_same_fixed_answer(
+    tmp_path: Path,
+) -> None:
+    graphql = FakeGraphql()
+    graphql.answers[ISSUE_ID] = issue_with(BODY, author="example-alice")
+    async with runner_http(tmp_path, FakeGithub({"/graphql": graphql}), execution=True) as http:
+        refused = await http.post(
+            "/boards/add",
+            json={
+                "repo": "example-org/web",
+                "issue_number": 5,
+                "board": "example-org/3",
+                "proposal_id": PID,
+            },
+        )
+    assert refused.status_code == 422
+    assert refused.json() == {"error": "the issue isn't this proposal's"}

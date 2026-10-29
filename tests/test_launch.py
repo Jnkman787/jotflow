@@ -852,6 +852,15 @@ async def test_a_refused_execution_is_retried_with_a_delay_then_fails_with_one_n
     await rig.client.aclose()
 
 
+@pytest.mark.parametrize(("status", "retry"), [(429, "rate_limited"), (502, "github")])
+async def test_a_board_check_github_couldnt_answer_says_so(status: int, retry: str) -> None:
+    # #311 review: no answer from GitHub is not a missing permission.
+    client = recording_client(Recorder(status, {"error": "x"}))
+    with pytest.raises(RunnerError) as caught:
+        await client.board_access("acme-co", 3)
+    assert caught.value.retry == retry
+
+
 async def test_a_board_add_names_the_proposal_and_a_marker_refusal_is_its_own() -> None:
     from jotflow.orchestrator.launch import NotThisProposal
 
