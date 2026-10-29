@@ -118,7 +118,7 @@ The file is CSV with a `slack_member_id,github_login` header. Every line is chec
 - no Slack ID or login twice in the file
 - no login already linked to a different person, unless `--replace` is passed. Then that person is told privately, as `identity unlink` does, and the removal is recorded as by `operator`.
 
-**Stored with `linked_by = "admin"`**, in migration 18, which adds `linked_by` to `identity_links`. Existing rows read as `"self"`. `/jotflow verify` still sets `verified` and `verified_at`.
+**Stored with `linked_by = "admin"`**, in migration 17, which adds `linked_by` to `identity_links`. Existing rows read as `"self"`. `/jotflow verify` still sets `verified` and `verified_at`.
 
 **On the card,** an admin link shows "(linked by an admin)" rather than "(unverified)". It counts like a verified link for open question 1.
 
@@ -137,7 +137,7 @@ The command prints counts only, never logins: linked, unchanged, replaced, refus
 The lead and security decided on 2026-10-29:
 
 1. **Both checks.** "Can be assigned in this repo", through `GET /repos/{o}/{r}/assignees/{login}`, is always required. When `[identity] github_org` is set, org membership through `GET /orgs/{org}/members/{login}` is required too. If the read token can't see private memberships, the check fails closed, with a reason telling the admin to grant **Members: Read-only**.
-2. **Migration 18.** #304 has 16 and #309 has 17.
+2. **Migration 17.** #304 has 16. The lead swapped #309 to 18 on 2026-10-29, so no number is left empty.
 3. **A self-add on a filed issue files at once only when all of these hold:**
    - a workspace member, not a guest or external, in an unpaused channel
    - adding exactly their own login and nothing else
@@ -152,9 +152,16 @@ The lead and security decided on 2026-10-29:
 
 ## Delivery
 
+**Done so far:** the runner's person checks, in #316: `/accounts/{login}`, `/repos/{o}/{n}/assignable/{login}` and `/orgs/{org}/members/{login}`, with their `RunnerClient` methods.
+
+**Notes from #316's review, for the Add me PR:**
+- **Rate limits** go in front of all three checks, per Slack user, not only the assignable one. Account existence and org membership reveal things too (security).
+- **The org check's permission:** with a fine-grained read token, `/orgs/{org}/members/{login}` needs the org's **Members: Read-only** permission. Without it every check comes back `hidden`, and every unlinked person is refused. The modal's error and the setup docs name that permission (reviewer).
+- **What that permission widens:** with **Members: Read-only**, the read token can see every private membership in the org. install.md and the threat model say so where the permission is documented (security).
+
 Three PRs, each closing part of #305, with the last saying Fixes #305:
 
-1. **Links:** migration 18 (`linked_by`), `jotflow identity link` with the account id stored, and "(linked by an admin)" on cards.
+1. **Links:** migration 17 (`linked_by`), `jotflow identity link` with the account id stored, and "(linked by an admin)" on cards.
 2. **Reasons:** `AssigneeReason`, `owner_hints`, the write tools' checks, drafting.md, and the card's reasons, with the "add me" replay fixture.
 3. **Add me:** the buttons, the modal, the runner's assignable and org calls and the client, self-add per decisions 3 and 4, and the caps.
 
@@ -180,11 +187,11 @@ Three PRs, each closing part of #305, with the last saying Fixes #305:
 - [ ] The write tools' reason checks, and drafting.md
 - [ ] The card's reasons and Add me, plus the filed-reply blocks and their button
 - [ ] The modal, the runner's assignable call, and the client
-- [ ] Migration 18 and `jotflow identity link`
+- [ ] Migration 17 and `jotflow identity link`
 - [ ] Self-add on a filed issue, per open question 1
 - [ ] Tests:
   - replay fixtures for a volunteer on a draft and on a filed issue, with an injected line that must assign no one
-  - card rendering, the click rules, the modal's errors against a fake GitHub, bulk-link validation, the rebuild text pin, and migration 18
+  - card rendering, the click rules, the modal's errors against a fake GitHub, bulk-link validation, the rebuild text pin, and migration 17
 - [ ] architecture.md, usage.md, the threat-model rows for identity squatting and self-add, presets.md if the tool schema changes, and the CHANGELOG
 - [ ] CodeRabbit once, `make check`, mark ready
 
