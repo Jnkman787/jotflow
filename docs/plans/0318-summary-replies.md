@@ -31,7 +31,7 @@ From #318:
 
 - **The pointer:** JotFlow links the reply to the item's topic as the poster's own decision, `linked_by = "person"`, exactly as `re: web#42` does, and confirms with its usual reaction.
 - **The note:** JotFlow posts one note in the item's own thread: "<@U0ALEX> replied about this in the weekly summary: <permalink|the reply>". The text is fixed, and the link is a permalink built from the workspace URL, the channel and the ts. No reply text is copied, and there's at most one note per reply.
-- **No agent run reads the summary's thread.** Replies there don't arm drafting, and they never did, as replies to JotFlow's own top-level post. The item's thread isn't drafted again because of the note: the note is JotFlow's own message.
+- **No agent run reads the summary's thread.** Today, since #308, a reply in the summary's thread arms a drafting run for that thread, as any reply does. That run sees the summary, as JotFlow's own post, and the replies. This design stops it: a reply in a posted summary's thread doesn't arm drafting, and only `re: N` routes it. See open question 4. The item's thread isn't drafted again because of the note, since the note is JotFlow's own message.
 - **A person continues it.** To change the draft, someone replies in the item's thread, or uses Request Changes on its card, where #304 and #330 already work.
 
 ### Who may route
@@ -49,6 +49,8 @@ From #318:
 1. **Security: is a pointer plus a note enough to "reach" the item?** The alternative is for a drafting run on the item to read routed replies. Its packet would add messages members explicitly routed to that topic with `re: N`, fetched one by one, marked as routed. That widens #269's own-thread rule, narrowly, and I'd keep it for a later issue unless you think it's needed now.
 2. **Security: should older summaries' numbers route?** I propose yes, since a pointer is harmless. The alternative is the latest summary only, as Not this week does.
 3. **The lead: the migration number,** and whether a mistyped "re: 9" gets a fixed private reply ("That summary has no item 9") or only no reaction. I propose the private reply, through the existing keyword refusal path.
+
+4. **The lead and security: what about a new idea posted in the summary's thread?** Under this design it's never drafted. JotFlow could reply privately, once, saying "To suggest a new idea, post it in the channel, not in the summary's thread." Or the thread could keep drafting as today, for anything without `re: N`. I propose the private reply, since drafting the summary's thread mixes every idea's discussion into one packet.
 
 ## Progress checklist
 
