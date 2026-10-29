@@ -120,6 +120,7 @@ async def card_context(
     )
     return CardContext(
         channel=channel,
+        issues=policy.issues,
         names=names,
         identities=identities,
         visibility={repo: seen} if seen != "unknown" else {},
