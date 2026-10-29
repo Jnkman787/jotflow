@@ -513,7 +513,7 @@ class Orchestrator:
         )
         # The weekly summary (#308), for channels that set one, whether or not runs are on.
         self.summaries: WeeklySummaries | None = None
-        self.summary_slack = BoltSummarySlack(self._client)
+        self.summary_slack = BoltSummarySlack(self._client, self._identity.user_id)
         self.summary_names = people
         if any(c.summary is not None for c in self._policy.channels.values()):
             self.summaries = WeeklySummaries(

@@ -20,6 +20,11 @@ Rules (security, #315):
 - **Once a week.** The store holds a row per channel and slot, claimed before
   posting, so a restart never posts twice. A slot missed by more than
   :data:`LATE_LIMIT` is skipped rather than posted days late.
+- **A failure isn't proof nothing was posted.** Slack may post and the reply be
+  lost, or JotFlow may stop between posting and recording it. So every post
+  carries message metadata naming its slot, and before retrying a failed or
+  stale claim JotFlow reads the channel's history since the slot for its own
+  post. If it's there, the slot is recorded as posted with that message.
 """
 
 from __future__ import annotations
@@ -52,6 +57,10 @@ ACTION_NOT_THIS_WEEK = "jotflow_summary_defer"
 # one pattern answers them all.
 ACTION_LINK = "jotflow_summary_link"
 ACTION_LINK_PATTERN = re.compile(r"^jotflow_summary_link:[a-z_]+$")
+# The message metadata every summary carries, so a retry can find an earlier post.
+METADATA_EVENT = "jotflow_summary"
+# How far back through the channel's history a retry looks, in pages of 200.
+HISTORY_PAGES = 10
 # Slack errors that mean the bot can't post in the channel: skip the week quietly.
 GONE = frozenset({"not_in_channel", "channel_not_found", "is_archived", "missing_scope"})
 
@@ -115,7 +124,13 @@ class Item:
 
 
 class SummarySlack(Protocol):
-    async def post(self, channel_id: str, text: str, blocks: list[dict[str, Any]]) -> str: ...
+    async def post(
+        self, channel_id: str, text: str, blocks: list[dict[str, Any]], slot: datetime
+    ) -> str: ...
+
+    async def find(self, channel_id: str, slot: datetime) -> str | None:
+        """JotFlow's own summary post for ``slot`` in the channel, by its metadata."""
+        ...
 
     async def update(
         self, channel_id: str, ts: str, text: str, blocks: list[dict[str, Any]]
@@ -352,6 +367,8 @@ class WeeklySummaries:
             return False
         if not await self._store.start_summary(channel_id, slot):
             return False
+        if existing is not None and await self._found_earlier(channel_id, slot):
+            return False
         if now - slot > LATE_LIMIT:
             log.info("summary for %s at %s missed by too long; skipped", channel_id, slot)
             await self._store.finish_summary(channel_id, slot, "skipped")
@@ -384,7 +401,7 @@ class WeeklySummaries:
                 card_links=links,
                 late=now - slot > timedelta(minutes=5),
             )
-            ts = await self._slack.post(channel_id, text, blocks)
+            ts = await self._slack.post(channel_id, text, blocks, slot)
         except Exception as exc:
             error = slack_error(exc)
             if error in GONE:
@@ -396,6 +413,27 @@ class WeeklySummaries:
             return False
         await self._store.finish_summary(channel_id, slot, "posted", ts)
         log.info("summary for %s posted with %d idea(s)", channel_id, len(items))
+        return True
+
+    async def _found_earlier(self, channel_id: str, slot: datetime) -> bool:
+        """A retry: whether an earlier try did post after all, recording it if so.
+
+        If the history can't be read, nothing is posted this time: the claim is
+        marked failed, and tried again later.
+        """
+        try:
+            ts = await self._slack.find(channel_id, slot)
+        except Exception as exc:
+            error = slack_error(exc) or type(exc).__name__
+            log.warning(
+                "summary for %s: couldn't check for an earlier post (%s)", channel_id, error
+            )
+            await self._store.finish_summary(channel_id, slot, "failed")
+            return True
+        if ts is None:
+            return False
+        log.info("summary for %s was posted on an earlier try; recorded", channel_id)
+        await self._store.finish_summary(channel_id, slot, "posted", ts)
         return True
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -458,6 +496,25 @@ def deferred_blocks(
     return out
 
 
+def summary_metadata(slot: datetime) -> dict[str, Any]:
+    return {"event_type": METADATA_EVENT, "event_payload": {"slot": slot.isoformat()}}
+
+
+def is_summary_post(message: Mapping[str, Any], slot: datetime, bot_user_id: str | None) -> bool:
+    """Whether a history message is JotFlow's own summary post for ``slot``.
+
+    Only JotFlow's bot user counts, so another app's message with the same
+    metadata never stops a summary.
+    """
+    if bot_user_id is None or message.get("user") != bot_user_id:
+        return False
+    metadata = message.get("metadata")
+    if not isinstance(metadata, Mapping) or metadata.get("event_type") != METADATA_EVENT:
+        return False
+    payload = metadata.get("event_payload")
+    return isinstance(payload, Mapping) and payload.get("slot") == slot.isoformat()
+
+
 def slack_error(exc: Exception) -> str | None:
     response = getattr(exc, "response", None)
     data = getattr(response, "data", None)
@@ -469,14 +526,44 @@ def slack_error(exc: Exception) -> str | None:
 class BoltSummarySlack:
     """The summary's Slack calls: post and edit in the channel, and a card's link."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, bot_user_id: str | None = None) -> None:
         self._client = client
+        self._bot = bot_user_id
 
-    async def post(self, channel_id: str, text: str, blocks: list[dict[str, Any]]) -> str:
+    async def post(
+        self, channel_id: str, text: str, blocks: list[dict[str, Any]], slot: datetime
+    ) -> str:
         response = await self._client.chat_postMessage(
-            channel=channel_id, text=text, blocks=blocks, unfurl_links=False, unfurl_media=False
+            channel=channel_id,
+            text=text,
+            blocks=blocks,
+            metadata=summary_metadata(slot),
+            unfurl_links=False,
+            unfurl_media=False,
         )
         return str(response["ts"])
+
+    async def find(self, channel_id: str, slot: datetime) -> str | None:
+        """Top-level messages since the slot, by JotFlow's bot, with this slot's metadata."""
+        cursor: str | None = None
+        oldest = f"{(slot - timedelta(minutes=1)).timestamp():.6f}"
+        for _ in range(HISTORY_PAGES):
+            kwargs: dict[str, Any] = {
+                "channel": channel_id,
+                "oldest": oldest,
+                "limit": 200,
+                "include_all_metadata": True,
+            }
+            if cursor:
+                kwargs["cursor"] = cursor
+            response = await self._client.conversations_history(**kwargs)
+            for message in response.get("messages") or []:
+                if is_summary_post(message, slot, self._bot):
+                    return str(message["ts"])
+            cursor = (response.get("response_metadata") or {}).get("next_cursor") or None
+            if not cursor:
+                return None
+        return None
 
     async def update(
         self, channel_id: str, ts: str, text: str, blocks: list[dict[str, Any]]

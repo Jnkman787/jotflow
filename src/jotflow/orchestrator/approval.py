@@ -369,7 +369,9 @@ class ApprovalHandler:
 
         A member of this workspace, not a guest or external user, in a channel the
         policy lists and that isn't paused, and an approver when approvers are on.
-        Returns the action's outcome, ``"refused"``, or ``"ignored"``.
+        It doesn't bind the click to a message: the action must check the click's
+        message is the one it acts for, as ``defer`` does with the stored summary's
+        ts. Returns the action's outcome, ``"refused"``, or ``"ignored"``.
         """
         click = _click(body)
         if click is None or click.channel_id is None or click.message_ts is None:

@@ -29,6 +29,7 @@ from jotflow.orchestrator.summary import (
 from jotflow.policy import ChannelSummary, PolicyError, parse_policy
 from jotflow.policy_writer import render_policy
 from jotflow.store import MemoryStore, SqliteStore
+from jotflow.store.base import SUMMARY_POSTING_STALE
 
 CH = "C0EXAMPLE1"
 LONDON = ChannelSummary(day="monday", time="09:30", timezone="Europe/London")
@@ -116,11 +117,19 @@ class People:
 
 
 class Slack:
-    def __init__(self, error: str | None = None) -> None:
+    def __init__(self, error: str | None = None, *, lose_reply: bool = False) -> None:
         self.posts: list[tuple[str, str, list[dict[str, Any]]]] = []
         self.error = error
+        # Slack posts, but the reply never reaches JotFlow.
+        self.lose_reply = lose_reply
+        # The channel's history, as find reads it: (channel, slot, ts) per post.
+        self.history: list[tuple[str, datetime, str]] = []
+        self.history_error: str | None = None
+        self.finds = 0
 
-    async def post(self, channel_id: str, text: str, blocks: list[dict[str, Any]]) -> str:
+    async def post(
+        self, channel_id: str, text: str, blocks: list[dict[str, Any]], slot: datetime
+    ) -> str:
         if self.error:
             raise _SlackError(self.error)
         for block in blocks:  # Slack refuses a repeated action_id within one block
@@ -128,7 +137,20 @@ class Slack:
             if len(ids) != len(set(ids)):
                 raise _SlackError("invalid_blocks")
         self.posts.append((channel_id, text, blocks))
-        return f"1793000000.{len(self.posts):06d}"
+        ts = f"1793000000.{len(self.posts):06d}"
+        self.history.append((channel_id, slot, ts))
+        if self.lose_reply:
+            raise TimeoutError("the reply was lost")
+        return ts
+
+    async def find(self, channel_id: str, slot: datetime) -> str | None:
+        self.finds += 1
+        if self.history_error:
+            raise _SlackError(self.history_error)
+        for channel, posted_slot, ts in self.history:
+            if channel == channel_id and posted_slot == slot:
+                return ts
+        return None
 
     async def update(self, channel_id: str, ts: str, text: str, blocks: Any) -> None:
         pass
@@ -241,6 +263,123 @@ async def test_a_restart_never_posts_the_same_week_twice(tmp_path: Path) -> None
     finally:
         await again.close()
     assert len(slack.posts) == 1
+
+
+async def test_a_post_slack_made_despite_an_error_is_found_not_repeated() -> None:
+    store = MemoryStore()
+    await idea(store, 1)
+    slack = Slack(lose_reply=True)
+    assert await summaries(store, slack, SLOT).tick() == []
+    post = await store.get_summary(CH, SLOT)
+    assert post is not None and post.status == "failed"
+    slack.lose_reply = False
+    assert await summaries(store, slack, SLOT + timedelta(minutes=1)).tick() == []
+    assert len(slack.posts) == 1  # never posted again
+    post = await store.get_summary(CH, SLOT)
+    assert post is not None and (post.status, post.ts) == ("posted", "1793000000.000001")
+    # Not this week works on the post found.
+    assert post.ts == slack.history[0][2]
+
+
+async def test_a_crash_after_posting_is_found_once_the_claim_goes_stale(tmp_path: Path) -> None:
+    db = tmp_path / "j.db"
+    slack = Slack()
+    first = await SqliteStore.open(db, clock=lambda: SLOT)
+    try:
+        await idea(first, 1)
+        # JotFlow stopped after Slack posted, before recording it.
+        assert await first.start_summary(CH, SLOT)
+        await slack.post(CH, "summary", [], SLOT)
+    finally:
+        await first.close()
+    later = SLOT + SUMMARY_POSTING_STALE + timedelta(minutes=1)
+    again = await SqliteStore.open(db, clock=lambda: later)
+    try:
+        assert await summaries(again, slack, later).tick() == []
+        post = await again.get_summary(CH, SLOT)
+        assert post is not None and post.status == "posted"
+    finally:
+        await again.close()
+    assert len(slack.posts) == 1
+
+
+async def test_a_first_try_never_reads_the_history() -> None:
+    store = MemoryStore()
+    slack = Slack()
+    assert await summaries(store, slack, SLOT).tick() == [CH]
+    assert slack.finds == 0
+
+
+async def test_an_unreadable_history_posts_nothing_and_tries_again_later() -> None:
+    store = MemoryStore()
+    slack = Slack("ratelimited")
+    await summaries(store, slack, SLOT).tick()
+    slack.error, slack.history_error = None, "ratelimited"
+    assert await summaries(store, slack, SLOT + timedelta(minutes=1)).tick() == []
+    assert slack.posts == []
+    post = await store.get_summary(CH, SLOT)
+    assert post is not None and post.status == "failed"
+    slack.history_error = None
+    assert await summaries(store, slack, SLOT + timedelta(minutes=2)).tick() == [CH]
+
+
+class History:
+    """conversations.history, a page at a time."""
+
+    def __init__(self, pages: list[list[dict[str, Any]]]) -> None:
+        self.pages = pages
+        self.calls: list[dict[str, Any]] = []
+        self.posted: list[dict[str, Any]] = []
+
+    async def conversations_history(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        page = len(self.calls) - 1
+        more = page + 1 < len(self.pages)
+        return {
+            "messages": self.pages[page],
+            "response_metadata": {"next_cursor": f"c{page + 1}" if more else ""},
+        }
+
+    async def chat_postMessage(self, **kwargs: Any) -> dict[str, Any]:
+        self.posted.append(kwargs)
+        return {"ts": "1793000000.000009"}
+
+
+def history_message(ts: str, user: str = "U0JOTFLOW", slot: datetime = SLOT) -> dict[str, Any]:
+    return {"ts": ts, "user": user, "metadata": module.summary_metadata(slot)}
+
+
+async def test_the_adapter_tags_posts_and_finds_only_its_own() -> None:
+    client = History(
+        [
+            [
+                history_message("1.1", user="U0OTHERAPP"),  # another app, same metadata
+                history_message("1.2", slot=SLOT - timedelta(days=7)),  # last week's
+                {"ts": "1.3", "user": "U0JOTFLOW"},  # no metadata
+            ],
+            [history_message("1.4")],
+        ]
+    )
+    slack = module.BoltSummarySlack(client, "U0JOTFLOW")
+    assert await slack.find(CH, SLOT) == "1.4"
+    assert client.calls[0]["include_all_metadata"] is True
+    assert client.calls[0]["oldest"] == f"{(SLOT - timedelta(minutes=1)).timestamp():.6f}"
+    assert client.calls[1]["cursor"] == "c1"
+    await slack.post(CH, "text", [], SLOT)
+    assert client.posted[0]["metadata"] == {
+        "event_type": "jotflow_summary",
+        "event_payload": {"slot": SLOT.isoformat()},
+    }
+    assert await module.BoltSummarySlack(History([[]]), "U0JOTFLOW").find(CH, SLOT) is None
+    # Without knowing its own user, JotFlow trusts no message.
+    assert await module.BoltSummarySlack(History([[history_message("1.4")]])).find(CH, SLOT) is None
+
+
+async def test_the_adapter_stops_after_its_page_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(module, "HISTORY_PAGES", 2)
+    client = History([[], [], [history_message("1.4")]])
+    assert await module.BoltSummarySlack(client, "U0JOTFLOW").find(CH, SLOT) is None
+    assert len(client.calls) == 2
 
 
 @pytest.mark.parametrize(
