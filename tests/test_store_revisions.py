@@ -178,3 +178,30 @@ def test_an_updates_changed_fields() -> None:
     )
     new = old.model_copy(update={"changes": IssueChanges(comment="b", add_labels=["bug"])})
     assert revision_changes(old, new) == ("comment", "labels")
+
+
+async def test_a_revision_past_approvals_source_cap_is_refused(store: Store) -> None:
+    from jotflow.store.base import MAX_AUTHOR_LOOKUPS, TOO_MANY_SOURCES
+
+    record = await store.add_proposal(_proposal_record())
+    draft = record.proposal
+    assert isinstance(draft, IssueProposal)
+
+    def sources(n: int) -> list[MessageRef]:
+        return [
+            MessageRef(channel_id=CH, ts=f"1792310{500 + i:03d}.000100", thread_ts=THREAD)
+            for i in range(n)
+        ]
+
+    # Up to the cap with the thread's root: still approvable, so accepted.
+    at_cap = draft.model_copy(update={"body": "v2", "sources": sources(MAX_AUTHOR_LOOKUPS - 1)})
+    record = await store.revise_proposal(
+        "p1", at_cap, run_id="r", base_revision=record.revision, added_by=[]
+    )
+    over = draft.model_copy(update={"body": "v3", "sources": sources(MAX_AUTHOR_LOOKUPS)})
+    with pytest.raises(ValueError, match="more than 25 messages") as refused:
+        await store.revise_proposal(
+            "p1", over, run_id="r", base_revision=record.revision, added_by=[]
+        )
+    assert str(refused.value) == TOO_MANY_SOURCES
+    assert "ask in the thread instead" in TOO_MANY_SOURCES

@@ -466,6 +466,13 @@ REVISED_FIELDS: tuple[RevisedField, ...] = (
 )
 # At most this many revisions a proposal; past it, the agent asks instead.
 MAX_REVISIONS = 10
+# Approval looks up who wrote each of a proposal's messages, its thread's root and
+# its sources, and refuses past this many, so a revision must stay within it (#304).
+MAX_AUTHOR_LOOKUPS = 25
+TOO_MANY_SOURCES = (
+    f"the revised draft would draw on more than {MAX_AUTHOR_LOOKUPS} messages, which "
+    "approval can't check; ask in the thread instead, or propose the rest as its own issue"
+)
 
 
 @dataclass(frozen=True)
@@ -568,9 +575,15 @@ def check_revision(
         raise ValueError("a revision keeps the proposal's kind")
     if revisions >= MAX_REVISIONS:
         raise ValueError(f"proposal {record.id} was revised {MAX_REVISIONS} times already")
-    changed = revision_changes(record.proposal, revised_draft(record, draft))
+    merged = revised_draft(record, draft)
+    changed = revision_changes(record.proposal, merged)
     if not changed:
         raise ValueError("the revision changes nothing the card shows")
+    lookups = {record.thread_ts} | {
+        ref.ts for ref in merged.sources if ref.channel_id == record.channel_id
+    }
+    if len(lookups) > MAX_AUTHOR_LOOKUPS:
+        raise ValueError(TOO_MANY_SOURCES)
     return changed
 
 

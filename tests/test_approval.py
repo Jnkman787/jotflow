@@ -1276,3 +1276,25 @@ async def test_a_person_s_card_edit_also_ends_reaction_approval() -> None:
     await _react(_reacting_app(rig))
     assert await rig.state(pid) is ProposalState.PENDING
     assert rig.slack.ephemerals[-1][2] == approval_module.REDRAWN_USE_BUTTON
+
+
+async def test_a_card_revised_up_to_the_source_cap_still_approves() -> None:
+    # #304: revisions stop at approval's author-lookup cap, so the card never gets stuck.
+    from jotflow.models import MessageRef
+    from jotflow.store.base import MAX_AUTHOR_LOOKUPS
+
+    assert approval_module.MAX_AUTHOR_LOOKUPS == MAX_AUTHOR_LOOKUPS
+    rig = Rig()
+    pid = await rig.proposal()
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and isinstance(record.proposal, IssueProposal)
+    refs = []
+    for i in range(MAX_AUTHOR_LOOKUPS - 1):
+        ts = f"1760781{700 + i:03d}.000100"
+        rig.slack.written_by[ts] = DAVE
+        refs.append(MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD))
+    revised = record.proposal.model_copy(update={"body": "Folded in.", "sources": refs})
+    await rig.store.revise_proposal(
+        pid, revised, run_id="run-2", base_revision=record.revision, added_by=[DAVE]
+    )
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "approved"

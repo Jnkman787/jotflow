@@ -43,6 +43,7 @@ from jotflow.orchestrator.people import Person, SlackPeople
 from jotflow.policy import Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import content_hash
+from jotflow.store.base import MAX_AUTHOR_LOOKUPS as STORE_AUTHOR_LOOKUPS
 from jotflow.store.base import (
     ContentChangedError,
     DraftClearedError,
@@ -77,7 +78,8 @@ AUTHORS_UNKNOWN = (
     "while approvers are on. Try again, or request changes."
 )
 # Source messages checked for their authors; a proposal citing more is refused.
-MAX_AUTHOR_LOOKUPS = 25
+# One limit, shared with revisions, so a revised card stays approvable (#304).
+MAX_AUTHOR_LOOKUPS = STORE_AUTHOR_LOOKUPS
 NOT_THIS_CARD = "This card no longer matches a proposal JotFlow knows about."
 # Once a card has changed in place, only its button approves: the button carries the
 # hash of the draft it shows, and a reaction can't (#304).
