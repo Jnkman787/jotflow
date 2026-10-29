@@ -183,6 +183,17 @@ ATTACH_TOO_LONG = "the body with its attachments would pass GitHub's length limi
 MAX_BODY_WITH_FILES = 60_000
 
 
+def _check_body_with_files(body: str, files: Sequence[AttachedFile]) -> None:
+    """The issue body with its Attachments section stays inside GitHub's limit (#346
+    follow-up): checked when files are attached, and again when a revision changes
+    the body they go with."""
+    if not files:
+        return
+    section = attachments_section([(a.name, a.text) for a in files])
+    if len(body) + len(section) > MAX_BODY_WITH_FILES:
+        raise ToolError(ATTACH_TOO_LONG)
+
+
 class ProposeIssueArgs(IssueProposal):
     participants: list[str] = Field(
         default_factory=list,
@@ -840,9 +851,7 @@ class WriteTools:
                     text=read.text,
                 )
             )
-        section = attachments_section([(a.name, a.text) for a in out])
-        if len(body) + len(section) > MAX_BODY_WITH_FILES:
-            raise ToolError(ATTACH_TOO_LONG)
+        _check_body_with_files(body, out)
         return out
 
     def _related(
@@ -1180,6 +1189,8 @@ class WriteTools:
         if isinstance(draft, IssueProposal):
             await self._check_title(grant, draft.repo, draft.title)
             self._check_no_slack_links(draft.title, draft.body)
+            # A revision keeps its files, so its new body must still fit with them.
+            _check_body_with_files(draft.body, draft.attached)
             await self._check_mentions(participants, draft.title, draft.body)
             kept = old.assignee_reasons if isinstance(old, IssueProposal) else []
             legacy = _unreasoned(old.assignees, kept) if isinstance(old, IssueProposal) else []
