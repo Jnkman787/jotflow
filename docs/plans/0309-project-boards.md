@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #309
-- Draft PR: to be opened with this plan
+- Draft PR: #311
 - Status: planning only, for the lead and security before any code. Decisions 1 to 4 below need them
 - Last verified: origin/main b3afbf3, 2026-10-29, with github-mcp-server 2.0.2's projects tools listed offline from the pinned binary
 - Next safe action: the lead and security decide 1 to 4
@@ -117,7 +117,7 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 ## Progress checklist
 
 - [x] Read the issue, and list the pinned server's projects tools
-- [ ] Commit this plan and open the draft PR
+- [x] Commit this plan and open the draft PR
 - [ ] The lead and security decide 1 to 4
 - [ ] Code, in the PRs decision 2 settles
 
