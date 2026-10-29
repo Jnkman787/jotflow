@@ -149,6 +149,15 @@ nickname = "api"
 description = "The public REST API and its background jobs"
 # No labels line: any label that exists on example-org/api.
 
+# A weekly post listing this channel's ideas (#308), off unless this table is
+# here. Each idea shows its title, who suggested it and added to it, the day, its
+# status, and buttons for its thread, its card, and Not this week, which puts it
+# off to the next summary. A paused channel gets none that week.
+# [channels.C0EXAMPLE1.summary]
+# day = "monday"          # monday to sunday
+# time = "09:30"          # 24-hour, in the timezone below
+# timezone = "Europe/London"
+
 [channels.G0EXAMPLE2]
 # Optional: the team's own guide to which repo, and which board, a request belongs
 # on (#317). Plain text, up to 8,000 characters, for the whole channel. The
