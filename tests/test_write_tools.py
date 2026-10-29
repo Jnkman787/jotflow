@@ -382,6 +382,8 @@ async def test_an_assignee_must_be_a_linked_participant(
 ) -> None:
     topic_id = await new_topic(tools)
     await store.link_identity("U0BOB", "acme-bob")
+    # Named by someone else, so the link must be one Bob proved (#305 review).
+    await store.finish_verification("U0BOB", github_login="acme-bob", github_id=42)
     result: Any = await tools.propose_issue(
         DRAFT,
         issue(
@@ -973,6 +975,12 @@ async def test_linking_through_the_command_is_what_makes_someone_assignable(
             ),
         )
     await LinkCommand(store, People()).handle("U0BOB", "link", "acme-bob")
+    named = issue(
+        topic_id, participants=["U0BOB"], assignees=["Acme-Bob"], assignee_reasons=[NAMED_BOB]
+    )
+    with pytest.raises(ToolError, match="isn't verified"):  # self-declared isn't enough here
+        await tools.propose_issue(DRAFT, named)
+    await store.finish_verification("U0BOB", github_login="acme-bob", github_id=42)
     result: Any = await tools.propose_issue(
         DRAFT,
         issue(

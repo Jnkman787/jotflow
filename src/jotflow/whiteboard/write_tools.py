@@ -653,6 +653,7 @@ class WriteTools:
         reasons: list[AssigneeReason],
         participants: list[str],
         kept: Sequence[AssigneeReason] = (),
+        legacy: Sequence[str] = (),
     ) -> None:
         """Every assignee is a linked login with one reason JotFlow can check (#305).
 
@@ -667,8 +668,11 @@ class WriteTools:
             return
         by_login = {reason.login.casefold(): reason for reason in reasons}
         standing = {(r.login.casefold(), r.why, r.source_ts) for r in kept}
+        old = {login.casefold() for login in legacy}
         for login in assignees:
             reason = by_login.get(login.casefold())
+            if reason is None and login.casefold() in old:
+                continue  # on the draft from before reasons existed: it stands as approved
             if reason is None:
                 raise ToolError(
                     f"give assignee {login} a reason: volunteered, named_owner or owner_hint"
@@ -687,6 +691,7 @@ class WriteTools:
                 hints = self._repos.repo(grant.channel_id, repo).owner_hints or ()
                 if link.slack_user_id not in hints:
                     raise ToolError(f"{login} isn't one of {repo}'s owner hints")
+                _check_trusted(login, link, "an owner hint")
                 continue
             assert reason.source_ts is not None  # the model requires it for these two
             ref = await self._packet_ref(grant, reason.source_ts)
@@ -701,6 +706,8 @@ class WriteTools:
                     f"message {reason.source_ts} doesn't @-mention {login}: a named owner's "
                     "reason is a message naming them"
                 )
+            else:
+                _check_trusted(login, link, "a named owner")
 
     async def _check_mentions(self, participants: list[str], *texts: str | None) -> None:
         """Only a linked participant may be @-mentioned in what goes to GitHub (#250)."""
@@ -1037,14 +1044,26 @@ class WriteTools:
             self._check_no_slack_links(draft.title, draft.body)
             await self._check_mentions(participants, draft.title, draft.body)
             kept = old.assignee_reasons if isinstance(old, IssueProposal) else []
+            legacy = _unreasoned(old.assignees, kept) if isinstance(old, IssueProposal) else []
             await self._check_assignees(
-                grant, draft.repo, draft.assignees, draft.assignee_reasons, participants, kept
+                grant,
+                draft.repo,
+                draft.assignees,
+                draft.assignee_reasons,
+                participants,
+                kept,
+                legacy,
             )
         else:
             changes = draft.changes
             self._check_no_slack_links(changes.body, changes.comment)
             await self._check_mentions(participants, changes.body, changes.comment)
             kept = old.changes.assignee_reasons if isinstance(old, UpdateProposal) else []
+            legacy = (
+                _unreasoned(old.changes.add_assignees, kept)
+                if isinstance(old, UpdateProposal)
+                else []
+            )
             await self._check_assignees(
                 grant,
                 draft.repo,
@@ -1052,6 +1071,7 @@ class WriteTools:
                 changes.assignee_reasons,
                 participants,
                 kept,
+                legacy,
             )
 
     async def link_message(self, grant: Grant, arguments: Any) -> BaseModel:
@@ -1218,6 +1238,29 @@ _DESCRIPTIONS = {
         "wrote, or the error that stopped you. Call it once."
     ),
 }
+
+
+def _unreasoned(assignees: Sequence[str], reasons: Sequence[AssigneeReason]) -> list[str]:
+    """A draft's assignees with no reason: those from before reasons existed (#305)."""
+    given = {reason.login.casefold() for reason in reasons}
+    return [login for login in assignees if login.casefold() not in given]
+
+
+def _check_trusted(login: str, link: Any, what: str) -> None:
+    """Someone else nominated them, so the link must be one they proved, or an admin made:
+    an unverified login could name a stranger's account, with nobody in the thread
+    making that claim (#305 review). A volunteer speaks for themselves and needn't."""
+    if not _trusted(link):
+        raise ToolError(
+            f"{login}'s GitHub link isn't verified, so they can't be assigned as {what}; "
+            "leave them out and ask who should own it"
+        )
+
+
+def _trusted(link: Any) -> bool:
+    """A link someone proved, or an admin made, with GitHub's account id kept (#305)."""
+    made_by_admin = getattr(link, "linked_by", "self") == "admin"
+    return bool(link.verified or made_by_admin) and link.github_id is not None
 
 
 def write_tools(

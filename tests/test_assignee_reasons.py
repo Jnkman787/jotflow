@@ -66,9 +66,10 @@ async def tools(store: Any, clock: Any) -> WriteTools:
         MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT),
     ]
     await store.record_packet("run-1", packet)
-    await store.link_identity("U0BOB", "acme-bob")
-    await store.link_identity("U0ALICE", "acme-alice")
-    await store.link_identity("U0OWNER", "acme-owner")
+    await store.link_identity("U0BOB", "acme-bob")  # self-declared: fine for a volunteer
+    # Nominated by others, so these must be links the person proved (#305 review).
+    await store.finish_verification("U0ALICE", github_login="acme-alice", github_id=11)
+    await store.finish_verification("U0OWNER", github_login="acme-owner", github_id=12)
     return WriteTools(
         store, POLICY, Poster(), clock=clock, new_id=Ids(), authors=Authors(), mentions=Mentions()
     )
@@ -128,7 +129,7 @@ async def test_a_named_owner_is_whoever_the_message_mentions(tools: WriteTools) 
 
 async def test_without_slack_a_named_owner_is_refused(store: Any, clock: Any) -> None:
     await store.record_packet("run-1", [MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT)])
-    await store.link_identity("U0ALICE", "acme-alice")
+    await store.finish_verification("U0ALICE", github_login="acme-alice", github_id=11)
     blind = WriteTools(store, POLICY, Poster(), clock=clock, new_id=Ids())
     topic_id = await new_topic(blind)
     with pytest.raises(ToolError, match="can't be checked here"):
@@ -262,6 +263,57 @@ async def test_a_revision_keeps_a_reason_already_on_the_draft(
             labels=["enhancement"],
             assignees=["acme-bob", "acme-alice"],
             assignee_reasons=list(current.proposal.assignee_reasons),
+        ),
+        sources=[MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT)],
+        confidence=0.9,
+    )
+    result: Any = await tools.revise_proposal(DRAFT, revised)
+    assert result.revised
+
+
+@pytest.mark.parametrize(("why", "ts"), [("named_owner", ROOT), ("owner_hint", None)])
+async def test_someone_nominated_needs_a_verified_link(
+    tools: WriteTools, store: Any, why: str, ts: str | None
+) -> None:
+    """An unverified login could name a stranger's account, with nobody present claiming it."""
+    await store.link_identity("U0ALICE", "acme-alice")  # back to self-declared
+    await store.link_identity("U0OWNER", "acme-owner")
+    login = "acme-alice" if why == "named_owner" else "acme-owner"
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match=r"isn't verified.*ask who should own it"):
+        await tools.propose_issue(DRAFT, asked(topic_id, login, why, ts=ts))
+
+
+async def test_a_volunteer_needs_no_verified_link(tools: WriteTools, store: Any) -> None:
+    link = await store.get_identity("U0BOB")
+    assert link is not None and not link.verified  # they spoke for themselves
+    topic_id = await new_topic(tools)
+    result: Any = await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "volunteered"))
+    assert result.proposal_id
+
+
+async def test_an_assignee_from_before_reasons_stands_in_a_revision(
+    tools: WriteTools, store: Any
+) -> None:
+    """A draft made before #325 has assignees and no reasons; a revision may keep them."""
+    from jotflow.whiteboard.write_tools import RevisedIssue, ReviseProposalArgs
+
+    topic_id = await new_topic(tools)
+    first: Any = await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "volunteered"))
+    found = await store.get_proposal(first.proposal_id)
+    assert found is not None and isinstance(found.proposal, IssueProposal)
+    old = found.proposal.model_copy(update={"assignee_reasons": []})  # as stored before #325
+    await store.edit_proposal(found.id, old, by="U0ALICE", field="assign")
+    current = await store.get_proposal(found.id)
+    assert current is not None
+    revised = ReviseProposalArgs(
+        proposal_id=found.id,
+        base_revision=current.revision,
+        issue=RevisedIssue(
+            title="Export the dashboard table as CSV",
+            body="People want a CSV export, monthly.",
+            labels=["enhancement"],
+            assignees=["acme-bob"],
         ),
         sources=[MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT)],
         confidence=0.9,
