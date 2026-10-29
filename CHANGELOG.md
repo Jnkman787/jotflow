@@ -21,6 +21,8 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Changed
 
+- **The drafting instructions may now be up to 14,000 bytes, from 10,000.** The 0.5.0 fixes each add a drafting rule, and trimming the file to fit had twice dropped a rule by accident. This costs about 1,000 more input tokens per drafting run. A test now pins every load-bearing rule by a phrase, so a later edit can't silently delete one.
+
 - **Quieter cards (#337).** **Same as** is offered only for a related issue the agent marks as maybe the same request, not for every related issue. The card says "maybe the same request" beside it. The separate "Repo visibility was not checked" and "(not checked against a list)" notes are now one quiet "Not checked" line with the card's details. The public-repo warning is unchanged.
 
 - **The agent runner refuses code-loading Node options (#294).** `NODE_OPTIONS` reaches every agent run, so the runner now allows only a short list of harmless options, such as `--max-old-space-size=N`, `--no-warnings` and `--use-openssl-ca`, and refuses to start on anything else, such as `--require` or `--inspect`. The copilot preset also checks `COPILOT_PROVIDER_BASE_URL` more strictly: an https address with a host and no login.
