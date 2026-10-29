@@ -42,6 +42,7 @@ from jotflow.models import (
     MessageRef,
     ProposalRecord,
     ProposalState,
+    ProposedBoard,
     RelatedIssue,
     RunKind,
     RunStatus,
@@ -82,6 +83,7 @@ ANSWERING = frozenset({RunKind.QUESTION})
 EXECUTION = frozenset({RunKind.EXECUTION})
 
 PROPOSE_TOOLS = ("propose_issue", "propose_update")
+MAX_BOARD_REASON = 200
 # A result lands while the write is in progress: executing, or reconciling when a
 # retry after an interrupted run finds the marker it left (or gives up).
 RESULT_STATES = frozenset({ProposalState.EXECUTING, ProposalState.RECONCILING})
@@ -625,6 +627,26 @@ class WriteTools:
             kept.append(entry.model_copy(update={"repo": repo}))
         return kept, len(related) - len(kept)
 
+    def _boards(self, grant: Grant, boards: list[ProposedBoard]) -> list[ProposedBoard]:
+        """Only the channel's own boards, each once, as owner/number (#309).
+
+        The reason is the agent's, so it is cleaned like a question and shown as
+        plain text. Boards are in the draft, so approval locks them.
+        """
+        listed = self._policy.channel(grant.channel_id)
+        kept: list[ProposedBoard] = []
+        for proposed in boards:
+            board = listed.board(proposed.board)
+            if board is None:
+                raise ToolError(f"{proposed.board} isn't one of this channel's boards")
+            if any(k.board == board.board for k in kept):
+                continue
+            reason = clean_question(proposed.reason)[:MAX_BOARD_REASON].strip()
+            if not reason:
+                raise ToolError("a board's reason has no words left once cleaned")
+            kept.append(ProposedBoard(board=board.board, reason=reason))
+        return kept
+
     def _repo_and_labels(self, grant: Grant, repo: str, labels: list[str]) -> tuple[str, list[str]]:
         try:
             policy = self._repos.repo(grant.channel_id, repo)
@@ -713,6 +735,7 @@ class WriteTools:
                     "labels": labels,
                     "sources": await self._sources(grant, args.sources),
                     "related": [r.model_dump() for r in related],
+                    "boards": [b.model_dump() for b in self._boards(grant, args.boards)],
                 }
             )
             result = await self._add(grant, draft, args.participants)
