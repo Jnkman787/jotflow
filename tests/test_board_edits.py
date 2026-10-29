@@ -269,7 +269,8 @@ async def test_the_migration_keeps_every_edit_and_allows_a_board_edit(tmp_path: 
     from tests.test_runs import START, THREAD
 
     path = tmp_path / "jotflow.db"
-    old = await SqliteStore.open(path, migrations=MIGRATIONS[:-1])
+    # The store as it was before migration 19 rebuilt the edit table.
+    old = await SqliteStore.open(path, migrations=[m for m in MIGRATIONS if m.version < 19])
     await old.close()
     draft = IssueProposal(repo="acme-co/web", title="T", body="B", confidence=0.5)
     with opened(path) as db:

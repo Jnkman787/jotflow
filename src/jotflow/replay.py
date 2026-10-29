@@ -148,6 +148,12 @@ class FixtureAttribution:
                 found.add(message.user)
         return found
 
+    async def mentions(self, ref: MessageRef) -> set[str]:
+        message = self._thread.messages.get(ref.ts)
+        if message is None:
+            raise LookupError(f"message {ref.ts} was not found")
+        return set(re.findall(r"<@([UW][A-Z0-9]{2,})(?:\|[^>]*)?>", message.text or ""))
+
     async def name(self, user_id: str) -> str | None:
         user = self._thread.users.get(user_id)
         return user.name if user else None
@@ -836,6 +842,7 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
                 docs=docs,
                 authors=attribution.authors,
                 files=files,
+                mentions=attribution.mentions,
             ),
             *doc_tools(active, thread.policy, lambda: fixture_docs, docs, clock=clock),
         )

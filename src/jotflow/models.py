@@ -376,6 +376,59 @@ class AttachedFile(BaseModel):
     text: str = Field(max_length=MAX_ATTACHMENT_BYTES)
 
 
+# Why an assignee is proposed (#305). A fixed choice, so no agent text reaches the card.
+AssigneeWhy = Literal["volunteered", "named_owner", "owner_hint", "added_on_card"]
+ASSIGNEE_REASON_TEXT: dict[str, str] = {
+    "volunteered": "volunteered in the thread",
+    "named_owner": "named as the owner in the thread",
+    "owner_hint": "listed as an owner of this repo",
+    "added_on_card": "added on the card",
+}
+
+
+class AssigneeReason(BaseModel):
+    """Why one assignee is proposed, and the message that shows it, if any (#305)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    login: str = Field(min_length=1, max_length=39, description="The assignee's GitHub login")
+    why: AssigneeWhy = Field(
+        description=(
+            "volunteered: they said they'll take or help with it, in source_ts. "
+            "named_owner: the thread names them as its owner, in source_ts. "
+            "owner_hint: a repo owner hint from channel.repos. "
+            "added_on_card is a person's, never the agent's"
+        )
+    )
+    source_ts: str | None = Field(
+        default=None,
+        pattern=rf"^{_SLACK_TS}$",
+        description="The message that shows it: needed for volunteered and named_owner",
+    )
+
+    @model_validator(mode="after")
+    def _source(self) -> AssigneeReason:
+        needs = self.why in ("volunteered", "named_owner")
+        if needs and self.source_ts is None:
+            raise ValueError(f"a {self.why} assignee needs the message that shows it")
+        if not needs and self.source_ts is not None:
+            raise ValueError(f"a {self.why} assignee has no source message")
+        return self
+
+
+def check_reasons(assignees: list[str], reasons: list[AssigneeReason]) -> None:
+    """Each reason is for one of the assignees, and none twice. Old drafts have none."""
+    wanted = {login.casefold() for login in assignees}
+    seen: set[str] = set()
+    for reason in reasons:
+        key = reason.login.casefold()
+        if key not in wanted:
+            raise ValueError(f"a reason names {reason.login}, who isn't an assignee")
+        if key in seen:
+            raise ValueError(f"{reason.login} has more than one reason")
+        seen.add(key)
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -389,6 +442,9 @@ class IssueProposal(BaseModel):
     body: str
     labels: list[str] = Field(default_factory=list)
     assignees: list[str] = Field(default_factory=list, description="GitHub logins")
+    assignee_reasons: list[AssigneeReason] = Field(
+        default_factory=list, max_length=10, description="One reason for each assignee (#305)"
+    )
     project: str | None = None
     size: str | None = None
     sources: list[MessageRef] = Field(
@@ -422,6 +478,11 @@ class IssueProposal(BaseModel):
         description="Set by JotFlow from `attachments`, never by the agent (#333)",
     )
 
+    @model_validator(mode="after")
+    def _reasons(self) -> IssueProposal:
+        check_reasons(self.assignees, self.assignee_reasons)
+        return self
+
 
 class IssueChanges(BaseModel):
     """The subset of an issue an update may touch. All fields optional."""
@@ -432,6 +493,14 @@ class IssueChanges(BaseModel):
     remove_labels: list[str] = Field(default_factory=list)
     add_assignees: list[str] = Field(default_factory=list)
     remove_assignees: list[str] = Field(default_factory=list)
+    assignee_reasons: list[AssigneeReason] = Field(
+        default_factory=list, max_length=10, description="One reason for each added assignee"
+    )
+
+    @model_validator(mode="after")
+    def _reasons(self) -> IssueChanges:
+        check_reasons(self.add_assignees, self.assignee_reasons)
+        return self
 
 
 class UpdateProposal(BaseModel):

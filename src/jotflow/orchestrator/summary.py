@@ -401,6 +401,9 @@ class WeeklySummaries:
                 card_links=links,
                 late=now - slot > timedelta(minutes=5),
             )
+            # What Not this week may put off: only the topics this post offers it for.
+            offered = [item.topic_id for item in items[:MAX_ITEMS] if item.waiting]
+            await self._store.set_summary_topics(channel_id, slot, offered)
             ts = await self._slack.post(channel_id, text, blocks, slot)
         except Exception as exc:
             error = slack_error(exc)
@@ -449,8 +452,9 @@ class WeeklySummaries:
     async def defer(self, user_id: str, channel_id: str, message_ts: str, value: str) -> str:
         """Put a topic off to the next summary, after the gate checked who clicked.
 
-        The click must come from this week's own summary message, for a topic it
-        lists. Returns the fixed reply for the person.
+        The click must come from the channel's latest summary message, by its stored
+        ts, for a topic that summary offered Not this week for, as recorded before
+        it was posted. Returns the fixed reply for the person.
         """
         topic_id, _, raw_slot = value.partition("|")
         setting = self._policy.channels.get(channel_id)
@@ -461,8 +465,13 @@ class WeeklySummaries:
             return NOT_THIS_SUMMARY
         if summary is None or slot.tzinfo is None:
             return NOT_THIS_SUMMARY
-        post = await self._store.get_summary(channel_id, slot.astimezone(UTC))
+        slot = slot.astimezone(UTC)
+        if slot != latest_slot(self._clock(), summary):
+            return NOT_THIS_SUMMARY  # a later summary has replaced it
+        post = await self._store.get_summary(channel_id, slot)
         if post is None or post.ts != message_ts or post.status != "posted":
+            return NOT_THIS_SUMMARY
+        if topic_id not in await self._store.summary_topics(channel_id, slot):
             return NOT_THIS_SUMMARY
         topic = await self._store.get_topic(topic_id)
         if topic is None or topic.topic.channel_id != channel_id:

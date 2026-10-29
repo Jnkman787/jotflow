@@ -22,6 +22,7 @@ from datetime import UTC
 from typing import Any, Literal, Protocol
 
 from jotflow.models import (
+    ASSIGNEE_REASON_TEXT,
     IssueProposal,
     ProposalRecord,
     ProposalState,
@@ -284,6 +285,26 @@ def _assignee_note(context: CardContext, login: str) -> str:
     return " (unverified)" if link is not None else " (not linked to anyone in Slack)"
 
 
+def _reasons(record: ProposalRecord) -> dict[str, str]:
+    """Each assignee's reason, by login without case, in JotFlow's own words' keys (#305)."""
+    draft = record.proposal
+    listed = (
+        draft.assignee_reasons
+        if isinstance(draft, IssueProposal)
+        else draft.changes.assignee_reasons
+    )
+    return {reason.login.casefold(): reason.why for reason in listed}
+
+
+def _said(given: Mapping[str, str], login: str, shape: str) -> str:
+    """The reason's own words for ``login``, in ``shape``, or nothing if it has none."""
+    why = given.get(login.casefold())
+    if why is None:
+        return ""
+    words = ASSIGNEE_REASON_TEXT[why]
+    return (" " + shape.format(words)) if shape.startswith("(") else shape.format(words)
+
+
 def _people_blocks(
     record: ProposalRecord,
     context: CardContext,
@@ -295,15 +316,21 @@ def _people_blocks(
         # Too many people for a row each: one line per group, no buttons.
         blocks: list[Block] = []
         if assignees:
-            line = ", ".join(f"{login}{_assignee_note(context, login)}" for login in assignees)
+            given = _reasons(record)
+            line = ", ".join(
+                f"{login}{_assignee_note(context, login)}{_said(given, login, '({})')}"
+                for login in assignees
+            )
             blocks.append(_approved_context(f"Assignees: {line}"))
         if record.participants:
             names = ", ".join(context.names.get(u, u) for u in record.participants)
             blocks.append(_context(f"Involved: {names}"))
         return blocks
     blocks = []
+    given = _reasons(record)
     for login in assignees:
-        block = _section(f"Assignee: {login}{_assignee_note(context, login)}")
+        note = _assignee_note(context, login)
+        block = _section(f"Assignee: {login}{note}{_said(given, login, ', {}')}")
         if pending:
             block["accessory"] = _button("Remove", ACTION_UNASSIGN, f"{record.id}:{login}")
         blocks.append(block)

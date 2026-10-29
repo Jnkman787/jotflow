@@ -1390,6 +1390,28 @@ class SqliteStore:
             )
         return None if row is None else self._summary(row)
 
+    async def set_summary_topics(
+        self, channel_id: str, slot: datetime, topic_ids: Collection[str]
+    ) -> None:
+        async with self._write():
+            # This try's list replaces any earlier one, and older summaries' go.
+            await self._db.execute(
+                "DELETE FROM summary_topics WHERE channel_id = ? AND slot <= ?",
+                (channel_id, to_text(slot)),
+            )
+            await self._db.executemany(
+                "INSERT INTO summary_topics (channel_id, slot, topic_id) VALUES (?, ?, ?)",
+                [(channel_id, to_text(slot), topic_id) for topic_id in sorted(set(topic_ids))],
+            )
+
+    async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT topic_id FROM summary_topics WHERE channel_id = ? AND slot = ?",
+                (channel_id, to_text(slot)),
+            )
+        return frozenset(row["topic_id"] for row in rows)
+
     @staticmethod
     def _deferral(row: aiosqlite.Row) -> SummaryDeferral:
         return SummaryDeferral(

@@ -318,7 +318,7 @@ def attachment_notes(policy: Policy) -> list[str]:
     if not channels:
         return []
     return [
-        f"{', '.join(channels)} set attachments = \"text\": the bot token needs the "
+        f'{", ".join(channels)} set attachments = "text": the bot token needs the '
         "files:read scope, which lets it read every file in every channel the bot is in. "
         "Add it under OAuth & Permissions and reinstall the app. Without it, files show by "
         "name only. A small text file's text may then be copied into an issue, as the card shows."
