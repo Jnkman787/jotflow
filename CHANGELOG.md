@@ -37,6 +37,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 ### Fixed
 
 - **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
+- **A Request Changes note now revises the waiting card (#330).** JotFlow posts the note in the thread as its own message, and drafting used to skip JotFlow's messages, so the change was often lost. The post now carries who asked, the next run revises the draft from it, even into a different kind of work, and the card and the filed issue credit that person.
 
 ### Security
 
