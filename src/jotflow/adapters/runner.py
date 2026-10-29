@@ -37,7 +37,7 @@ import shlex
 import shutil
 import signal
 import tempfile
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
@@ -53,7 +53,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from jotflow.adapters import github_docs, github_issues, github_proof, github_repos
+from jotflow.adapters import github_docs, github_issues, github_people, github_proof, github_repos
 from jotflow.adapters import isolation as isolation_mod
 from jotflow.adapters.presets import (
     DEFAULT_GITHUB_MCP,
@@ -842,6 +842,54 @@ def build_runner_app(
             return JSONResponse({"error": "no such issue"}, status_code=404)
         return JSONResponse(found.model_dump(mode="json"))
 
+    async def _person(what: str, call: Callable[[str], Awaitable[BaseModel]]) -> Response:
+        """One of #305's person reads: the read token only, fixed replies on failure."""
+        if config.read_token is None:
+            return JSONResponse({"error": "person checks are the drafting runner's"}, 404)
+        try:
+            found = await call(config.read_token)
+        except github_repos.RateLimited:
+            # Never "no such account": a rate limit says nothing about the person.
+            log.warning("%s: GitHub's rate limit", what)
+            return JSONResponse({"error": "GitHub is rate limiting the read token"}, 503)
+        except github_repos.GithubError as exc:
+            if str(exc) in ("not a GitHub account", "not a GitHub repo"):
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            log.warning("%s failed: %s", what, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        except httpx2.HTTPError as exc:
+            log.warning("%s failed: %s", what, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
+        return JSONResponse(found.model_dump(mode="json"))
+
+    async def person_account(request: Request) -> Response:
+        login = request.path_params["login"]
+        return await _person(
+            "account check",
+            lambda token: github_people.account(login, token, http=http, api=config.github_api),
+        )
+
+    async def person_assignable(request: Request) -> Response:
+        owner, name = request.path_params["owner"], request.path_params["name"]
+        login = request.path_params["login"]
+        return await _person(
+            f"assignable check in {owner}/{name}"
+            if is_owner_name(owner) and is_bare_repo_name(name)
+            else "assignable check",
+            lambda token: github_people.assignable(
+                owner, name, login, token, http=http, api=config.github_api
+            ),
+        )
+
+    async def person_member(request: Request) -> Response:
+        org, login = request.path_params["org"], request.path_params["login"]
+        return await _person(
+            f"membership check in {org}" if is_owner_name(org) else "membership check",
+            lambda token: github_people.membership(
+                org, login, token, http=http, api=config.github_api
+            ),
+        )
+
     async def identity(_: Request) -> Response:
         # The write token's own login, so JotFlow trusts only issues it wrote (#256).
         if config.write_token is None:
@@ -997,6 +1045,10 @@ def build_runner_app(
             Route("/repos/{owner}", repos, methods=["GET"]),
             Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
             Route("/repos/{owner}/{name}/issues/{number}", one_issue, methods=["GET"]),
+            # Assigning by request (#305): who an account is, and where it may be assigned.
+            Route("/accounts/{login}", person_account, methods=["GET"]),
+            Route("/repos/{owner}/{name}/assignable/{login}", person_assignable, methods=["GET"]),
+            Route("/orgs/{org}/members/{login}", person_member, methods=["GET"]),
         ]
     )
     return RunnerGate(app, secret=config.secret, allowed_hosts=config.allowed_hosts)
