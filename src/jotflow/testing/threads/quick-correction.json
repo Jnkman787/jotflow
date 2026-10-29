@@ -1,0 +1,267 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "quick-correction",
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        },
+        {
+          "number": 42,
+          "title": "Export the dashboard table as CSV",
+          "state": "open",
+          "body": "Finance needs a monthly CSV of the dashboard table.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "description": "As quick-addition.json, but Carol's quick second post corrects the first (#334). The run revises the pending draft to the east line screens.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792330000.000100",
+      "user": "U0CAROL",
+      "text": "Show the new dashboard on the west line screens."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792330030.000100",
+      "user": "U0CAROL",
+      "text": "correction: the east line screens, not the west"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792330000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792330000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "screens",
+          "title": "New dashboard on the line screens"
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:screens",
+            "repo": "acme-co/web",
+            "title": "Show the new dashboard on the west line screens",
+            "body": "## Problem\nThe west line screens still show the old dashboard.\n\n## Proposal\nShow the new dashboard on the west line screens.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Point the west line screens at the new dashboard.\n\n## Acceptance\n- [ ] The west line screens show the new dashboard\n",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792330000.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792330030.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792330030.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.85,
+            "topic_id": "key:screens"
+          }
+        },
+        {
+          "tool": "revise_proposal",
+          "arguments": {
+            "topic_id": "key:screens",
+            "issue": {
+              "title": "Show the new dashboard on the east line screens",
+              "body": "## Problem\nThe east line screens still show the old dashboard.\n\n## Proposal\nShow the new dashboard on the east line screens.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Point the east line screens at the new dashboard.\n\n## Acceptance\n- [ ] The east line screens show the new dashboard\n",
+              "labels": [
+                "enhancement"
+              ],
+              "assignees": []
+            },
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792330030.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "Two top-level posts, one topic, and one create_issue proposal revised once by Carol's correction: its title and body changed.",
+    "accepted": [
+      "1792330000.000100",
+      "1792330030.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:screens",
+        "messages": [
+          "1792330000.000100",
+          "1792330030.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:screens",
+        "revisions": 1,
+        "revised_by": [
+          "U0CAROL"
+        ],
+        "changed": [
+          "title",
+          "body"
+        ],
+        "body_sections": [
+          "## Problem",
+          "## Proposal",
+          "## Suggested approach",
+          "## Acceptance"
+        ]
+      }
+    ],
+    "follows": {
+      "1792330030.000100": "1792330000.000100"
+    }
+  }
+}

@@ -82,6 +82,15 @@ def reply_text(
     return f"{verb} <{match.group(0)}|{label}#{number}>"
 
 
+def skipped_line(record: ProposalRecord) -> str | None:
+    """What the thread hears about an [issues] label left off (#306 follow-up)."""
+    label = record.skipped_label
+    if label is None:
+        return None
+    shown = label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return f"Filed without the label {shown}, which doesn't exist in {record.proposal.repo}."
+
+
 class ThreadNotice:
     """Reacts on an applied proposal's source messages and replies with its issue link."""
 
@@ -131,6 +140,8 @@ class ThreadNotice:
                 return False
             if line := boards.notice():
                 text = f"{text} {line}"
+        if (skipped := skipped_line(record)) is not None:
+            text = f"{text} {skipped}"
         try:
             await self._react_on_sources(record)
             await self._slack.reply(record.channel_id, record.thread_ts, text)

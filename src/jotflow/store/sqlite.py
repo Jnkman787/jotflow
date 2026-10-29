@@ -429,6 +429,9 @@ class SqliteStore:
             else from_text(row["draft_cleared_at"]),
             duplicate=_duplicate(row),
             created_at=from_text(row["created_at"]),
+            card_issues=row["card_issues"],
+            approved_issues=row["approved_issues"],
+            skipped_label=row["skipped_label"],
         )
 
     async def _get_proposal(self, proposal_id: str) -> ProposalRecord | None:
@@ -514,6 +517,7 @@ class SqliteStore:
         approved_by: str | None = None,
         expected_hash: str | None = None,
         result: ExecutionResult | None = None,
+        issues: str | None = None,
     ) -> ProposalRecord:
         async with self._write():
             record = await self._get_proposal(proposal_id)
@@ -527,12 +531,14 @@ class SqliteStore:
                 expected_hash=expected_hash,
                 result=result,
                 now=self._clock(),
+                issues=issues,
             )
             now = to_text(self._clock())
             cursor = await self._db.execute(
                 """
                 UPDATE proposals SET state = ?, content_hash = ?, approved_by = ?,
-                    approved_at = ?, result_json = ?, updated_at = ?, revision = revision + 1
+                    approved_at = ?, result_json = ?, updated_at = ?, revision = revision + 1,
+                    approved_issues = CASE WHEN ? THEN ? ELSE approved_issues END
                 WHERE id = ? AND state = ?
                 """,
                 (
@@ -542,6 +548,8 @@ class SqliteStore:
                     None if changes.approved_at is None else to_text(changes.approved_at),
                     None if changes.result is None else changes.result.model_dump_json(),
                     now,
+                    changes.sets_issues,
+                    changes.issues,
                     proposal_id,
                     record.state.value,
                 ),
@@ -767,13 +775,24 @@ class SqliteStore:
             )
             return [await self._proposal(row) for row in rows]
 
-    async def mark_card_shown(self, proposal_id: str, revision: int) -> None:
+    async def mark_card_shown(
+        self, proposal_id: str, revision: int, issues: str | None = None
+    ) -> None:
         async with self._write():
             cursor = await self._db.execute(
                 "UPDATE proposals"
-                " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision))"
+                " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision)),"
+                " card_issues = COALESCE(?, card_issues)"
                 " WHERE id = ?",
-                (revision, proposal_id),
+                (revision, issues, proposal_id),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError(f"no proposal {proposal_id}")
+
+    async def set_skipped_label(self, proposal_id: str, label: str) -> None:
+        async with self._write():
+            cursor = await self._db.execute(
+                "UPDATE proposals SET skipped_label = ? WHERE id = ?", (label, proposal_id)
             )
             if cursor.rowcount == 0:
                 raise NotFoundError(f"no proposal {proposal_id}")

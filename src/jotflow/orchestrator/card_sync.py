@@ -27,7 +27,7 @@ from jotflow.board_catalog import BoardCatalog
 from jotflow.execution.attribution import Attribution, credit
 from jotflow.models import ProposalRecord, ProposalState, RepoVisibility
 from jotflow.orchestrator.cards import CardContext, CardPublisher, Visibility
-from jotflow.policy import Policy, UnknownChannelError
+from jotflow.policy import IssuesPolicy, Policy, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import AUTO_APPROVER, IdentityLink, Store, utc_now
 from jotflow.whiteboard.doc_tools import PASSAGES, READ_TOOL, card_lines
@@ -149,7 +149,8 @@ async def card_context(
     return CardContext(
         channel=channel,
         credit_line=await _credit_line(policy, store, attribution, record),
-        issues=policy.issues,
+        # Once approved, what the approval locked; before, what would be filed now.
+        issues=IssuesPolicy.from_snapshot(record.approved_issues, policy.issues),
         names=names,
         identities=identities,
         visibility={repo: seen} if seen != "unknown" else {},
@@ -211,6 +212,15 @@ class CardSync:
                 drawn += 1
         return drawn
 
+    async def redraw(self, proposal_id: str) -> bool:
+        """Draw one proposal's card now even if the store says it's current, such as
+        when jotflow.toml's [issues] changed since it was drawn (#306 follow-up)."""
+        async with self._lock:
+            record = await self._store.get_proposal(proposal_id)
+            if record is None:
+                return False
+            return await self._draw_now(record)
+
     async def refresh(self, proposal_id: str) -> bool:
         """Draw one proposal's card now, if it is due. For callers that just changed it."""
         record = await self._store.get_proposal(proposal_id)
@@ -258,7 +268,8 @@ class CardSync:
                 boards=self._boards,
             )
             await self._publisher.show(record, context)
-            await self._store.mark_card_shown(record.id, record.revision)
+            # What [issues] the card showed, so an approval can check it (#306 follow-up).
+            await self._store.mark_card_shown(record.id, record.revision, context.issues.snapshot())
         except UnknownChannelError:
             # jotflow.toml no longer lists the channel: there is nowhere to draw it.
             log.warning("proposal %s: its channel is not configured; no card", record.id)

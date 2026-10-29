@@ -6,6 +6,8 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Added
 
+- **A quick second post adds to your first (#334).** "Show the new dashboard on the west line screens", then seconds later a new post, "And the east screen." Each was drafted alone. Now the drafting packet says when a top-level post came within two minutes of the same person's previous one, and its run waits until the first is drafted, so the second can revise that card or follow up its issue. A different idea still gets its own card.
+
 - **A weekly summary of each channel's ideas, opt-in (#308).** `[channels.<id>.summary]` with a `day`, `time` and `timezone` posts the past week's ideas once a week. Each shows its title, who suggested and added to it, its status, and buttons for its thread, card and issue. **Not this week** puts an idea off to the next summary. Removed or rejected ideas are never reposted, and paused channels get none. This adds store migrations 18 and 20, so rolling back means restoring the backup from before the upgrade, then removing any `summary` tables from `jotflow.toml`.
 - **`jotflow identity link` loads a team's GitHub links at once (#305).** Run it on the host with a CSV file of Slack member IDs and GitHub logins, or with one pair. It looks each login up through the drafting runner first, stores GitHub's account id with it, and writes nothing if any line is wrong. Cards show these links as "(linked by an admin)". This adds store migration 17, so rolling back means restoring the backup from before the upgrade.
 - **Ask to be assigned in the thread, and see why each assignee was chosen (#305).** "Add me" or "I'll help with this" makes the agent add you, if your GitHub login is linked, to the waiting card or to the filed issue. Every proposed assignee now has a reason, which the card shows in JotFlow's own words, and JotFlow checks it, so a volunteer must have written the message themselves. A repo can list `owner_hints` in `jotflow.toml`. Before rolling back, remove `owner_hints`, since older versions refuse keys they don't know.
@@ -32,6 +34,10 @@ What changed in each JotFlow release, for the people who run it. The format foll
 - **`read_paths` works with the codex preset (#274).** Codex's MCP resource tools can't be turned off, but the GitHub server it starts serves no repository content behind them. The runner checks that at every start and won't start otherwise. `jotflow check` no longer fails the pair, and drafting stays on.
 - **`jotflow replay --agent <preset> --model <model>` sets the model for question runs too (#59),** not only drafting runs, so a preset with no default model can replay a fixture's question runs.
 - **`jotflow rebuild` restores a thread's links as the agent's decision, not a person's (#279).** The original links were mostly the agent's, so a later drafting run can still move a rebuilt one, and a person's later choice wins. A `skip:` stays a person's. A message a person attached before the loss, for example with `re:`, comes back as the agent's too, so attach it again with `re:` to keep it fixed.
+
+### Fixed
+
+- **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
 
 ### Security
 
@@ -105,6 +111,8 @@ A fix release. Upgrade by re-running setup with this version and replacing both 
   - `JOTFLOW_RUNNER_ALLOW_PUBLIC` and `JOTFLOW_MCP_ALLOW_PUBLIC` opt in to public addresses.
 
 ### Fixed
+
+- **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
 
 - **Setup and `jotflow check` catch a model key the runner never passes (#239).** An agent env file kept from before setup ran could set `ANTHROPIC_API_KEY` without listing it in `JOTFLOW_AGENT_ENV_ALLOW`, so every run failed to sign in, and `check` still passed. Setup now adds the key to that line and says so. `check` fails, naming the file and the line to set. A Claude account login with no key is left alone.
 - **The "Agent model" prompt shows its default,** as `[default]` or the model already set, like setup's other prompts (#239).
