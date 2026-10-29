@@ -73,6 +73,9 @@ class CardContext:
 
     channel: ChannelPolicy
     names: Mapping[str, str] = field(default_factory=dict)  # Slack user id -> display name
+    # Who the issue's footer will name, computed as the write computes it, so approval
+    # covers every name sent to GitHub (#307 review). None: names aren't sent.
+    credit_line: str | None = None
     identities: Mapping[str, IdentityLink] = field(default_factory=dict)  # by Slack user id
     visibility: Mapping[str, Visibility] = field(default_factory=dict)  # by owner/name, any case
     # Every repo the channel may feed now, listed and found by a scope (#236).
@@ -306,6 +309,8 @@ def _draft_blocks(
         blocks.append(_approved_context("   ".join(details)))
         blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
+        if context.credit_line:
+            blocks.append(_approved_context(context.credit_line))
         return blocks, header
     header = f"Proposed update to {_nickname(context, draft.repo)}#{draft.issue_number}"
     return _update_blocks(record, draft, context, entry, pending, show_body, compact), header
@@ -338,6 +343,8 @@ def _update_blocks(
     blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
     blocks += _hint_blocks(draft)
     blocks += _people_blocks(record, context, changes.add_assignees, pending, compact)
+    if context.credit_line:
+        blocks.append(_approved_context(context.credit_line))
     return blocks
 
 

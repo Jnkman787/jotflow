@@ -4,7 +4,7 @@
 
 - Issue: #307
 - PR: #313
-- Status: ready for review
+- Status: ready for review, with security's two review points and the reviewer's timing nit folded in
 - Last verified: 2026-10-29, `make check` on the branch
 - Next safe action: review
 
@@ -32,6 +32,14 @@ The footer named who raised the idea, and the cited sources' authors as "looped 
   - The footer goes only to GitHub, so nothing new is posted in Slack.
 - **`issue_links = "none"`:** the marker alone, as before.
 - **Files:** `execution/writes.py` (`footer`, `_credited`) and `execution/attribution.py` (`_contributed`, `_authors_of`). The store reaches `execution_footer` from the read tools and replay.
+
+## Review changes
+
+Security and the lead asked for two things before merge, and the reviewer for a third:
+
+1. **The card shows exactly who will be credited.** A "Credited in the issue: ..." line, from the same `credit()` function the footer uses, so approval covers every name sent to GitHub. It's "Credited in the update: ..." for an update. When the names can't be looked up within 5 seconds, the card says so.
+2. **Only messages up to the draft count.** The cutoff is the proposal's `created_at`, not `approved_at`, because the card computes the set the same way. With `approved_at`, a message linked after the card's last redraw but before the click would still reach the footer unseen. A later message reaches the issue through an update.
+3. **The links come first.** The workspace URL is fetched before the people lookups, with its own share of the time. Each name is looked up once per footer. So a slow Slack can cost names, but not the "Slack:" links.
 
 ## Validation
 

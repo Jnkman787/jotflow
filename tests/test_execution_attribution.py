@@ -109,7 +109,10 @@ async def test_looped_in_names_only_confirmed_source_authors() -> None:
 
 async def test_a_failed_lookup_leaves_people_out_and_still_marks() -> None:
     tail = await execution_footer(record(*SOURCES), policy(), Fake(LookupError("gone")))
-    assert tail.splitlines() == ["Raised in Slack.", marker("p1")]
+    first, links, last = tail.splitlines()
+    assert (first, last) == ("Raised in Slack.", marker("p1"))
+    # The links don't depend on the people lookups (#307 review).
+    assert links.startswith("Slack: https://acme-co.slack.com/archives/")
 
 
 async def test_a_slow_lookup_is_cut_short(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,7 +125,9 @@ async def test_a_slow_lookup_is_cut_short(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(module, "ATTRIBUTION_SECONDS", 0.05)
     tail = await execution_footer(record(*SOURCES), policy(), Slow())
-    assert tail.splitlines() == ["Raised in Slack.", marker("p1")]
+    first, links, last = tail.splitlines()
+    assert (first, last) == ("Raised in Slack.", marker("p1"))
+    assert links.startswith("Slack: ")  # a slow people lookup no longer costs the links
 
 
 async def test_issue_links_none_is_the_marker_alone() -> None:
@@ -271,3 +276,82 @@ async def test_a_draft_for_one_topic_never_credits_another_topics_people() -> No
     tail = await execution_footer(draft, policy(), crowd, store)
     assert "Outsider" not in tail
     assert "contributions from Alex here and kim here." in tail.splitlines()[0]
+
+
+# The card names exactly who the footer will credit (#307 review)
+
+
+class Names:
+    async def name(self, user_id: str) -> str | None:
+        return None
+
+
+async def card_line(draft: ProposalRecord, store: Any, links: str = "") -> str | None:
+    from jotflow.orchestrator.card_sync import card_context
+
+    context = await card_context(policy(links), store, Names(), draft, attribution=Crowd())
+    return context.credit_line
+
+
+def on_topic(draft: ProposalRecord, topic_id: str) -> ProposalRecord:
+    return draft.model_copy(
+        update={"proposal": draft.proposal.model_copy(update={"topic_id": topic_id})}
+    )
+
+
+async def test_the_card_shows_the_names_the_footer_will_carry() -> None:
+    store, topic_id = await topic_store()
+    draft = on_topic(record(MessageRef(channel_id=CH, ts=ROOT)), topic_id)
+    assert await card_line(draft, store) == (
+        "Credited in the issue: raised by Sam, with contributions from Alex here, kim here"
+    )
+    tail = await execution_footer(draft, policy(), Crowd(), store)
+    assert tail.splitlines()[0] == (
+        "Raised in Slack by Sam, with contributions from Alex here and kim here."
+    )
+    # No names go to GitHub, so the card names nobody.
+    assert await card_line(draft, store, 'issue_links = "none"') is None
+
+
+async def test_a_reply_after_the_draft_is_credited_neither_on_the_card_nor_the_issue() -> None:
+    store, topic_id = await topic_store()
+    late = "1792399000.000100"  # after the draft was made, below
+    await store.link_message(MessageRef(channel_id=CH, ts=late, thread_ts=ROOT), topic_id)
+    crowd = Crowd()
+    crowd._authors[late] = {"U0OUTSIDE"}  # type: ignore[index]
+    draft = on_topic(record(MessageRef(channel_id=CH, ts=ROOT)), topic_id).model_copy(
+        update={"created_at": datetime.fromtimestamp(1792320000, tz=UTC)}
+    )
+    tail = await execution_footer(draft, policy(), crowd, store)
+    assert "Outsider" not in tail
+    from jotflow.orchestrator.card_sync import card_context
+
+    context = await card_context(policy(), store, Names(), draft, attribution=crowd)
+    assert context.credit_line is not None and "Outsider" not in context.credit_line
+
+
+async def test_the_card_says_when_it_could_not_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    import anyio
+
+    from jotflow.orchestrator import card_sync
+
+    class Slow(Crowd):
+        async def authors(self, refs: Any) -> set[str]:
+            await anyio.sleep_forever()
+            raise AssertionError
+
+    monkeypatch.setattr(card_sync, "CREDIT_SECONDS", 0.05)
+    store, _ = await topic_store()
+    context = await card_sync.card_context(
+        policy(), store, Names(), record(*SOURCES), attribution=Slow()
+    )
+    assert context.credit_line == card_sync.CREDIT_UNKNOWN
+
+
+def test_the_credit_line_for_an_update_names_only_who_added() -> None:
+    from jotflow.execution.attribution import Credit
+
+    assert Credit(others=("Kim",)).line(update=True) == "Credited in the update: Kim"
+    assert Credit().line(update=True) is None
+    assert Credit().line(update=False) is None
+    assert Credit(poster="@Sam").line(update=False) == "Credited in the issue: raised by Sam"
