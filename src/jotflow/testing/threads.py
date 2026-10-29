@@ -71,6 +71,16 @@ class User(_Strict):
     external: bool = False
 
 
+class FixtureFile(_Strict):
+    """A file on a fixture message (#333): Slack's facts, and its bytes as text."""
+
+    id: str = Field(pattern=r"^F[A-Z0-9]{2,30}$")
+    name: str = Field(min_length=1, max_length=200)
+    filetype: str
+    mimetype: str
+    text: str = Field(default="", description="The file's content, for a text file")
+
+
 class MessageEvent(_Strict):
     """A Slack ``message`` event, with only the fields JotFlow reads."""
 
@@ -82,6 +92,7 @@ class MessageEvent(_Strict):
     bot_id: str | None = None
     subtype: str | None = None
     text: str = ""
+    files: tuple[FixtureFile, ...] = ()
 
     @property
     def is_reply(self) -> bool:
@@ -138,9 +149,15 @@ class LinkMessageCall(_Strict):
         return self
 
 
+class ScriptedIssue(IssueProposal):
+    """A scripted propose_issue's arguments: a draft, and the files it names (#333)."""
+
+    attachments: list[str] = Field(default_factory=list, max_length=3)
+
+
 class ProposeIssueCall(_Strict):
     tool: Literal["propose_issue"]
-    arguments: IssueProposal
+    arguments: ScriptedIssue
     expect_error: str | None = Field(
         default=None,
         min_length=1,
@@ -292,6 +309,9 @@ class ExpectedProposal(_Strict):
     )
     # Revisions from new messages (#304).
     revisions: int = Field(default=0, ge=0, description="How many times it was revised")
+    attached: tuple[str, ...] = Field(
+        default=(), description="The names of the Slack files the draft includes (#333)"
+    )
     revised_by: tuple[str, ...] = Field(
         default=(), description="Slack user ids the last revision added messages from"
     )

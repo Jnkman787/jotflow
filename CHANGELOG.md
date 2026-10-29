@@ -6,6 +6,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Added
 
+- **Slack files reach drafting, and a small text file can go into the issue (#333).** A message's files now show in the drafting packet by name, type and size, never by URL. A channel that sets `attachments = "text"` also lets JotFlow read small text files, up to 32 KiB, and a proposal can include one. JotFlow copies its text into the issue verbatim, as a code block, and the card shows exactly that text first. A file that looks like it holds a password, key or token is never read or attached. One deleted, unshared or changed in Slack after approval is left out, and the thread is told. `text` needs the bot's new `files:read` scope, which reads every file in the bot's channels: add it and reinstall the app. `attachments = "off"` keeps today's behaviour. Before rolling back, remove `attachments`, because older versions refuse the key.
 - **A quick second post adds to your first (#334).** "Show the new dashboard on the west line screens", then seconds later a new post, "And the east screen." Each was drafted alone. Now the drafting packet says when a top-level post came within two minutes of the same person's previous one, and its run waits until the first is drafted, so the second can revise that card or follow up its issue. A different idea still gets its own card.
 
 - **A weekly summary of each channel's ideas, opt-in (#308).** `[channels.<id>.summary]` with a `day`, `time` and `timezone` posts the past week's ideas once a week. Each shows its title, who suggested and added to it, its status, and buttons for its thread, card and issue. **Not this week** puts an idea off to the next summary. Removed or rejected ideas are never reposted, and paused channels get none. This adds store migrations 18 and 20, so rolling back means restoring the backup from before the upgrade, then removing any `summary` tables from `jotflow.toml`.
@@ -111,8 +112,6 @@ A fix release. Upgrade by re-running setup with this version and replacing both 
   - `JOTFLOW_RUNNER_ALLOW_PUBLIC` and `JOTFLOW_MCP_ALLOW_PUBLIC` opt in to public addresses.
 
 ### Fixed
-
-- **An approved issue is filed with the `[issues]` settings its card showed (#306 follow-up).** A card records the label and title prefix it was drawn with. If `jotflow.toml` changed them since, Approve redraws the card instead of approving. The approval locks them, so a restart with new settings can't change the write. A repo that doesn't have the `[issues]` label now gets the issue without it, and the thread says so, instead of the write failing. JotFlow still never creates labels. This adds store migration 21, so rolling back means restoring the backup from before the upgrade.
 
 - **Setup and `jotflow check` catch a model key the runner never passes (#239).** An agent env file kept from before setup ran could set `ANTHROPIC_API_KEY` without listing it in `JOTFLOW_AGENT_ENV_ALLOW`, so every run failed to sign in, and `check` still passed. Setup now adds the key to that line and says so. `check` fails, naming the file and the line to set. A Claude account login with no key is left alone.
 - **The "Agent model" prompt shows its default,** as `[default]` or the model already set, like setup's other prompts (#239).

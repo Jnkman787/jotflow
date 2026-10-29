@@ -147,8 +147,11 @@ async def card_context(
     return CardContext(
         channel=channel,
         credit_line=await _credit_line(policy, store, attribution, record),
-        # Once approved, what the approval locked; before, what would be filed now.
-        issues=IssuesPolicy.from_snapshot(record.approved_issues, policy.issues),
+        # What approving now would lock while it can be approved or retried; after
+        # that, what the approval locked (#306 follow-up).
+        issues=policy.issues
+        if record.state in (ProposalState.PENDING, ProposalState.FAILED)
+        else IssuesPolicy.from_snapshot(record.approved_issues, policy.issues),
         names=names,
         identities=identities,
         visibility={repo: seen} if seen != "unknown" else {},
