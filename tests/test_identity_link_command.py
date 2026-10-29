@@ -227,3 +227,18 @@ def test_the_card_says_an_admin_made_the_link() -> None:
     text = str(render_card(record, context))
     assert "Assignee: octo-example (linked by an admin)" in text
     assert "(unverified)" not in text
+
+
+def test_a_spreadsheets_byte_order_mark_is_fine(tmp_path: Path) -> None:
+    path = tmp_path / "links.csv"
+    path.write_bytes("slack_member_id,github_login\nU0BOB,octo-example\n".encode("utf-8-sig"))
+    assert read_pairs(args(file=path)) == [("U0BOB", "octo-example")]
+
+
+def test_a_file_that_isnt_utf8_is_refused_not_a_crash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "links.csv"
+    path.write_bytes(b"slack_member_id,github_login\nU0BOB,\xff\xfe\n")
+    assert command.run(args(action="link", file=path)) == command.EXIT_REFUSED
+    assert "can't read the file (UnicodeDecodeError)" in capsys.readouterr().err

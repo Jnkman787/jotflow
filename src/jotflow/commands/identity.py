@@ -103,7 +103,8 @@ def read_pairs(args: argparse.Namespace) -> list[tuple[str, str]]:
     if args.file is not None:
         if args.member_id or args.github_login:
             raise LinkRefused("give either --file or one member ID and login, not both")
-        rows = list(csv.reader(args.file.read_text(encoding="utf-8").splitlines()))
+        # utf-8-sig: a spreadsheet's export often starts with a byte-order mark.
+        rows = list(csv.reader(args.file.read_text(encoding="utf-8-sig").splitlines()))
         if not rows or tuple(cell.strip() for cell in rows[0]) != HEADER:
             raise LinkRefused("the file's first line must be: slack_member_id,github_login")
         raw = [(n, row) for n, row in enumerate(rows[1:], start=2) if any(c.strip() for c in row)]
@@ -213,7 +214,7 @@ def run_link(args: argparse.Namespace) -> int:
     except LinkRefused as exc:
         print(f"jotflow identity link: refusing: {exc}", file=sys.stderr)
         return EXIT_REFUSED
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         print(f"jotflow identity link: can't read the file ({type(exc).__name__})", file=sys.stderr)
         return EXIT_REFUSED
     except SettingsError as exc:
