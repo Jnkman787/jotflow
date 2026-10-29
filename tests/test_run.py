@@ -517,6 +517,7 @@ async def test_serve_registers_the_card_actions(monkeypatch: pytest.MonkeyPatch)
         "jotflow_repo",
         "jotflow_assign",
         "jotflow_unassign",
+        "jotflow_boards",
     }
     assert set(harness.app.views) == {"jotflow_changes"}
 

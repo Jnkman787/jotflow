@@ -124,6 +124,8 @@ def render_policy(policy: Policy) -> str:
             # Docs a drafting run may read (#209).
             if repo.read_paths is not None:
                 lines.append(f"read_paths = {_array(repo.read_paths)}")
+            if repo.owner_hints is not None:
+                lines.append(f"owner_hints = {_array(repo.owner_hints)}")
         for scope in channel.scopes:
             # Pattern scopes (#236): every field, so a rewrite keeps what was written.
             lines += [
@@ -156,6 +158,14 @@ def render_policy(policy: Policy) -> str:
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]
             lines += [f"{key} = {_bool(value)}" for key, value in own_help.items()]
+        if channel.summary is not None:
+            lines += [
+                "",
+                f"[channels.{channel_id}.summary]",
+                f"day = {toml_string(channel.summary.day)}",
+                f"time = {toml_string(channel.summary.time)}",
+                f"timezone = {toml_string(channel.summary.timezone)}",
+            ]
         own_questions = channel.questions.model_dump(exclude_none=True)
         if own_questions:
             lines += ["", f"[channels.{channel_id}.questions]"]

@@ -267,6 +267,21 @@ class RepoBrief(BaseModel):
         default=None,
         description="True when list_repo_docs and read_repo_doc may read this repo's docs (#209)",
     )
+    owner_hints: list[OwnerHint] = Field(
+        default_factory=list,
+        description=(
+            "People the team lists as owning this repo's area (#305). Propose one, with "
+            "why owner_hint, only when the idea plainly falls to this repo and they have a "
+            "github_login"
+        ),
+    )
+
+
+class OwnerHint(BaseModel):
+    """A repo owner hint, from jotflow.toml, and their linked GitHub login if any."""
+
+    user_id: str
+    github_login: str | None = None
 
 
 class BoardBrief(BaseModel):
@@ -586,7 +601,7 @@ def read_tools(
             ),
             run_id=run.id,
             channel_id=grant.channel_id,
-            channel=_brief(grant.channel_id, thread),
+            channel=await _brief(grant.channel_id, thread),
             thread=thread,
             people=await _people(thread),
             topics=index,
@@ -630,8 +645,17 @@ def read_tools(
             updated_at=found.updated_at,
         )
 
-    def _brief(channel_id: str, thread: WorkThread) -> ChannelBrief:
+    async def _hints(users: tuple[str, ...] | None) -> list[OwnerHint]:
+        found: list[OwnerHint] = []
+        for user in users or ():
+            link = await store.get_identity(user)
+            found.append(OwnerHint(user_id=user, github_login=link.github_login if link else None))
+        return found
+
+    async def _brief(channel_id: str, thread: WorkThread) -> ChannelBrief:
         text = " ".join(m.text.text for m in thread.messages)
+        listed = catalog.listed(channel_id, text)
+        hints = {r.repo: await _hints(r.owner_hints) for r, _ in listed}
         return ChannelBrief(
             repos=[
                 RepoBrief(
@@ -648,8 +672,9 @@ def read_tools(
                     topics=list(found.topics),
                     pushed_at=found.pushed_at,
                     has_docs=True if r.read_paths else None,
+                    owner_hints=hints[r.repo],
                 )
-                for r, found in catalog.listed(channel_id, text)
+                for r, found in listed
             ],
             issue_links=policy.issue_links,
             scope_total=catalog.scope_total(channel_id),

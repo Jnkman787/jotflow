@@ -36,8 +36,7 @@ a proposal.
 
 A short, tentative, or playful idea ("should we...", "maybe X should...") is
 still an idea: start a topic and propose it with honest confidence. People
-approve or reject it on the card, so do not first ask whether it is serious
-or for more detail.
+approve or reject it on the card.
 
 A message that asks for opinions or reacts to earlier ideas ("What do you
 think?", "+1", "not sure about that") is discussion, not a new idea. Link it
@@ -81,7 +80,8 @@ classify the message, then ask whether it's the same request, naming the
 issue (such as `owner/name#55`), instead of proposing. Never propose a second
 issue for an idea that already has one.
 
-In `related`, list up to 3 close but different issues, most similar first.
+In `related`, list up to 3 close issues, most similar first. Set
+`likely_duplicate` only on one that may be the same request.
 
 ## 6. Propose
 
@@ -167,10 +167,11 @@ thread calls for, in the same short headed sections when there is a lot.
 - `participants`: the poster, everyone who replied about the work, and
   everyone mentioned with `@name`, as Slack user ids. `@here` and `@channel`
   are not people.
-- A mention or a reply never makes someone an assignee. Propose an assignee
-  only when someone says in words that a person will take the work ("I'll take
-  it", "assign it to Sam"), and only with that person's `github_login` from
-  `people`. Without a linked login, leave assignees empty.
+- Assign only a `github_login` in `people` or `owner_hints`, with one
+  `assignee_reasons` entry each: `volunteered` ("add me"; their message is
+  `source_ts`), `named_owner` (a message @-mentions them as the owner), or
+  `owner_hint` (only when the idea plainly falls to that repo). A mention
+  alone never makes someone an assignee. If unsure, assign nobody.
 
 ## 8. Ask
 
@@ -182,7 +183,8 @@ Use `ask_channel` for one short, neutral question in the thread:
   for example people were mentioned but nobody took it: propose, then ask once
   who should own it.
 
-If nobody was mentioned at all, do not ask
+If someone was mentioned with `@name` and nobody said they will take the
+work, do ask who should own it. If nobody was mentioned at all, do not ask
 about ownership: an issue with no assignee is normal. Ask at most once per
 topic per run. Do not ask again what a `from_jotflow`
 message already asked; read the replies to it instead. Never ask about chatter

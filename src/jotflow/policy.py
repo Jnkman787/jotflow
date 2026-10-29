@@ -205,6 +205,15 @@ class RepoPolicy(_Strict):
             "every repo that token reaches (#209)"
         ),
     )
+    owner_hints: tuple[UserId, ...] | None = Field(
+        default=None,
+        max_length=20,
+        description=(
+            "Optional. Slack member IDs of people who own this repo's area. The agent may "
+            "propose one as an assignee, saying so on the card, when an idea plainly falls "
+            "to this repo (#305). Only someone with a linked GitHub login is ever assigned"
+        ),
+    )
 
     @field_validator("read_paths")
     @classmethod
@@ -449,6 +458,47 @@ class BoardPolicy(_Strict):
         return int(self.board.partition("/")[2])
 
 
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_CLOCK = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
+
+
+class ChannelSummary(_Strict):
+    """A weekly post listing the channel's ideas (#308). All three are needed."""
+
+    day: Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    time: str = Field(description="24-hour HH:MM, in the timezone below")
+    timezone: str = Field(description="An IANA timezone, such as Europe/London")
+
+    @field_validator("time")
+    @classmethod
+    def _clock(cls, value: str) -> str:
+        if not _CLOCK.fullmatch(value):
+            raise ValueError("time must be 24-hour HH:MM, such as 09:30")
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}", value):
+            raise ValueError("timezone must be an IANA name, such as Europe/London")
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"unknown timezone {value!r}; use an IANA name") from None
+        return value
+
+    @property
+    def weekday(self) -> int:
+        return WEEKDAYS.index(self.day)
+
+    @property
+    def hour_minute(self) -> tuple[int, int]:
+        hour, minute = self.time.split(":")
+        return int(hour), int(minute)
+
+
 class ChannelPolicy(_Strict):
     """A Slack channel JotFlow watches and the repos it may feed."""
 
@@ -480,6 +530,9 @@ class ChannelPolicy(_Strict):
     )
     questions: ChannelQuestions = Field(
         default_factory=ChannelQuestions, description="Overrides the top-level [questions]"
+    )
+    summary: ChannelSummary | None = Field(
+        default=None, description="A weekly post of the channel's ideas (#308); off if unset"
     )
 
     @field_validator("triage_guide")

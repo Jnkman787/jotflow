@@ -22,13 +22,21 @@ from datetime import UTC
 from typing import Any, Literal, Protocol
 
 from jotflow.models import (
+    ASSIGNEE_REASON_TEXT,
     IssueProposal,
     ProposalRecord,
     ProposalState,
+    RelatedIssue,
     UpdateProposal,
 )
-from jotflow.policy import ChannelPolicy, IssuesPolicy, RepoPolicy
-from jotflow.store.base import AUTO_APPROVER, IdentityLink, ProposalRevision, Store
+from jotflow.policy import BoardPolicy, ChannelPolicy, IssuesPolicy, RepoPolicy
+from jotflow.store.base import (
+    ADDED_ON_CARD,
+    AUTO_APPROVER,
+    IdentityLink,
+    ProposalRevision,
+    Store,
+)
 from jotflow.store.hashing import content_hash
 
 Block = dict[str, Any]
@@ -52,6 +60,11 @@ ACTION_RETRY = "jotflow_retry"
 ACTION_DISCARD = "jotflow_discard"
 ACTION_SAME_AS = "jotflow_same_as"
 ACTION_NOT_DUPLICATE = "jotflow_not_duplicate"
+ACTION_BOARDS = "jotflow_boards"
+# The board menu's block id is "<this>:<proposal id>": a menu someone emptied
+# sends no option, so the proposal comes from its block (#309).
+BOARDS_BLOCK = "jotflow_boards"
+MAX_CARD_BOARDS = 3  # as propose_issue allows
 
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 _PERMALINK = re.compile(
@@ -82,6 +95,8 @@ class CardContext:
     visibility: Mapping[str, Visibility] = field(default_factory=dict)  # by owner/name, any case
     # The draft's revisions from new messages, oldest first (#304).
     revisions: Sequence[ProposalRevision] = ()
+    # Boards the write token can't update, found at JotFlow's start (#309): never offered.
+    boards_off: frozenset[str] = frozenset()
 
     @property
     def changed(self) -> frozenset[str]:
@@ -224,8 +239,7 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
         blocks.append(
             _context(f"Warning: {repo} is public, so this issue will be visible to anyone.")
         )
-    elif visibility == "unknown":
-        blocks.append(_context("Repo visibility was not checked."))
+    # An unknown visibility is folded into the card's one "Not checked" note (#337).
     return blocks
 
 
@@ -239,11 +253,24 @@ def _labels_line(
     shown last and marked, since it isn't the draft's and can't be taken off here."""
     own = [label for label in labels if not added or label.casefold() != added.casefold()]
     shown = ", ".join(own) if own else ("" if added else "none")
-    checked = entry is not None and entry.restricts_labels
-    line = f"{prefix}: {shown}" + ("" if checked or not own else " (not checked against a list)")
+    line = f"{prefix}: {shown}"
     if added:
         line += (", " if own else "") + f"{added} (added to every issue)"
     return line
+
+
+def _unchecked(
+    context: CardContext, repo: str, labels: Sequence[str], entry: RepoPolicy | None
+) -> str | None:
+    """One quiet note for what JotFlow didn't check, or None (#337): the repo's
+    visibility when nobody said, and labels when the repo has no list to check
+    them against. A public repo's warning is its own line, and stays."""
+    unchecked = []
+    if context.repo_visibility(repo) == "unknown":
+        unchecked.append("repo visibility")
+    if labels and not (entry is not None and entry.restricts_labels):
+        unchecked.append("labels against a list")
+    return "Not checked: " + ", ".join(unchecked) if unchecked else None
 
 
 def _assignee_note(context: CardContext, login: str) -> str:
@@ -253,6 +280,26 @@ def _assignee_note(context: CardContext, login: str) -> str:
     if link is not None and link.linked_by == "admin":
         return " (linked by an admin)"  # #305
     return " (unverified)" if link is not None else " (not linked to anyone in Slack)"
+
+
+def _reasons(record: ProposalRecord) -> dict[str, str]:
+    """Each assignee's reason, by login without case, in JotFlow's own words' keys (#305)."""
+    draft = record.proposal
+    listed = (
+        draft.assignee_reasons
+        if isinstance(draft, IssueProposal)
+        else draft.changes.assignee_reasons
+    )
+    return {reason.login.casefold(): reason.why for reason in listed}
+
+
+def _said(given: Mapping[str, str], login: str, shape: str) -> str:
+    """The reason's own words for ``login``, in ``shape``, or nothing if it has none."""
+    why = given.get(login.casefold())
+    if why is None:
+        return ""
+    words = ASSIGNEE_REASON_TEXT[why]
+    return (" " + shape.format(words)) if shape.startswith("(") else shape.format(words)
 
 
 def _people_blocks(
@@ -266,15 +313,21 @@ def _people_blocks(
         # Too many people for a row each: one line per group, no buttons.
         blocks: list[Block] = []
         if assignees:
-            line = ", ".join(f"{login}{_assignee_note(context, login)}" for login in assignees)
+            given = _reasons(record)
+            line = ", ".join(
+                f"{login}{_assignee_note(context, login)}{_said(given, login, '({})')}"
+                for login in assignees
+            )
             blocks.append(_approved_context(f"Assignees: {line}"))
         if record.participants:
             names = ", ".join(context.names.get(u, u) for u in record.participants)
             blocks.append(_context(f"Involved: {names}"))
         return blocks
     blocks = []
+    given = _reasons(record)
     for login in assignees:
-        block = _section(f"Assignee: {login}{_assignee_note(context, login)}")
+        note = _assignee_note(context, login)
+        block = _section(f"Assignee: {login}{note}{_said(given, login, ', {}')}")
         if pending:
             block["accessory"] = _button("Remove", ACTION_UNASSIGN, f"{record.id}:{login}")
         blocks.append(block)
@@ -299,21 +352,66 @@ def _body(text: str, show: bool) -> list[Block]:
     return [_section(chunk) for chunk in _chunks(text)] if show else [_context(TOO_LONG)]
 
 
-def _boards_blocks(draft: IssueProposal, context: CardContext) -> list[Block]:
+def _board_option(board: BoardPolicy) -> dict[str, Any]:
+    # The value is the nickname alone, unique in the channel; the handler maps it
+    # back through the policy, so nothing else is accepted.
+    return {
+        "text": plain(f"{board.nickname}: {board.board}", MAX_OPTION_TEXT),
+        "value": board.nickname,
+    }
+
+
+def _boards_menu(
+    record: ProposalRecord, draft: IssueProposal, context: CardContext
+) -> Block | None:
+    """A pending card's board menu (#309): the channel's boards the write token can
+    update, with the draft's own selected. None when there are none to offer."""
+    offered = [b for b in context.channel.boards if b.board not in context.boards_off]
+    if not offered:
+        return None
+    chosen = {proposed.board for proposed in draft.boards}
+    menu: dict[str, Any] = {
+        "type": "multi_static_select",
+        "action_id": ACTION_BOARDS,
+        "placeholder": plain("Choose boards", MAX_OPTION_TEXT),
+        "options": [_board_option(b) for b in offered[:MAX_OPTIONS]],
+        "max_selected_items": MAX_CARD_BOARDS,
+    }
+    initial = [_board_option(b) for b in offered if b.board in chosen]
+    if initial:
+        menu["initial_options"] = initial
+    return {
+        "type": "section",
+        "block_id": f"{BOARDS_BLOCK}:{record.id}",
+        "text": plain("Boards"),
+        "accessory": menu,
+    }
+
+
+def _boards_blocks(
+    record: ProposalRecord, draft: IssueProposal, context: CardContext, pending: bool
+) -> list[Block]:
     """The Projects boards the issue will be added to after approval, and why (#309).
 
-    Boards are named by the channel's own nicknames; each reason is the agent's,
-    labelled as such and shown as plain text. Both are in the approved hash.
+    Boards are named by the channel's own nicknames. Each reason is the agent's,
+    labelled as such and shown as plain text, unless a person added the board on
+    the card. Both are in the approved hash. A pending card also gets a menu.
     """
+    blocks: list[Block] = []
+    if pending and (menu := _boards_menu(record, draft, context)) is not None:
+        blocks.append(menu)
     if not draft.boards:
-        return []
+        return blocks
     names = []
     for proposed in draft.boards:
         listed = context.channel.board(proposed.board)
         names.append(f"{listed.nickname} ({listed.board})" if listed else proposed.board)
-    blocks = [_approved_context("Add to boards: " + ", ".join(names))]
+    blocks.append(_approved_context("Add to boards: " + ", ".join(names)))
     for proposed, name in zip(draft.boards, names, strict=True):
-        blocks.append(_approved_context(f"The agent's reason for {name}: {proposed.reason}"))
+        if proposed.reason == ADDED_ON_CARD:
+            blocks.append(_approved_context(f"{name} was added on the card."))
+        else:
+            blocks.append(_approved_context(f"The agent's reason for {name}: {proposed.reason}"))
     return blocks
 
 
@@ -353,8 +451,13 @@ def _draft_blocks(
         details = [f"Confidence: {round(draft.confidence * 100)}%"]
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
+        own = [
+            lbl for lbl in draft.labels if lbl.casefold() != (context.issues.label or "").casefold()
+        ]
+        if (note := _unchecked(context, draft.repo, own, entry)) is not None:
+            details.append(note)
         blocks.append(_approved_context("   ".join(details)))
-        blocks += _boards_blocks(draft, context)
+        blocks += _boards_blocks(record, draft, context, pending)
         blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
         if context.credit_line:
@@ -407,6 +510,8 @@ def _update_blocks(
         blocks.append(_approved_context(_labels_line(changes.add_labels, entry, "Add labels")))
     if changes.remove_labels:
         blocks.append(_approved_context("Remove labels: " + ", ".join(changes.remove_labels)))
+    if (note := _unchecked(context, draft.repo, changes.add_labels, entry)) is not None:
+        blocks.append(_context(note))
     if changes.remove_assignees:
         blocks.append(_approved_context("Unassign: " + ", ".join(changes.remove_assignees)))
     blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
@@ -537,8 +642,22 @@ def _related_block(record: ProposalRecord) -> Block | None:
     related = record.proposal.related
     if not related:
         return None
-    items = " · ".join(f"{_issue_link(r.repo, r.number)} (agent says {r.state})" for r in related)
+    items = " · ".join(
+        f"{_issue_link(r.repo, r.number)} (agent says {r.state}"
+        + (", maybe the same request)" if r.likely_duplicate else ")")
+        for r in related
+    )
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Related: {items}"}]}
+
+
+def _likely_duplicate(record: ProposalRecord) -> tuple[int, RelatedIssue] | None:
+    """The first related issue the agent marked as a likely duplicate, with its index."""
+    if not isinstance(record.proposal, IssueProposal):
+        return None
+    for index, related in enumerate(record.proposal.related):
+        if related.likely_duplicate:
+            return index, related
+    return None
 
 
 def _duplicate_line(record: ProposalRecord) -> Block | None:
@@ -654,14 +773,16 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
                 style="primary",
             )
             actions.insert(0, approve)
-            if isinstance(record.proposal, IssueProposal) and record.proposal.related:
-                # Only the first, the agent's best candidate. The click names its index
-                # and this draft's hash; the store reads the issue from the draft (#36).
-                best = record.proposal.related[0]
+            likely = _likely_duplicate(record)
+            if likely is not None:
+                # Only the agent's best likely duplicate, never a merely related issue
+                # (#337). The click names its index and this draft's hash; the store
+                # reads the issue from the draft (#36).
+                index, best = likely
                 same = _button(
                     f"Same as {best.repo}#{best.number}",
                     ACTION_SAME_AS,
-                    f"{record.id}:{content_hash(record.proposal)}:0",
+                    f"{record.id}:{content_hash(record.proposal)}:{index}",
                 )
                 actions.append(same)
         blocks.append({"type": "actions", "elements": actions})

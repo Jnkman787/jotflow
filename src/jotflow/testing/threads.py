@@ -27,6 +27,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from jotflow.models import (
+    AssigneeReason,
     Classification,
     DiscoveredRepo,
     IssueChanges,
@@ -204,6 +205,7 @@ class RevisedIssueDraft(_Strict):
     body: str
     labels: tuple[str, ...] = ()
     assignees: tuple[str, ...] = ()
+    assignee_reasons: tuple[AssigneeReason, ...] = ()  # one per assignee (#305)
 
 
 class ReviseArguments(_Strict):

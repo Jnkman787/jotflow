@@ -130,6 +130,9 @@ def test_every_table_is_checked(db_path: Path) -> None:
             "identity_unlinks",
             "identity_codes",
             "proposal_revisions",
+            "summaries",
+            "summary_deferrals",
+            "summary_topics",
             "proposal_revision_authors",
         }
         for table in tables:

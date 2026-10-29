@@ -21,6 +21,8 @@ from typing import Any
 from jotflow.models import MessageRef
 
 _WORKSPACE_URL = re.compile(r"https://[a-z0-9-]+\.slack\.com/")
+# A user mention in a Slack message's text: <@U0123ABCD> or <@U0123ABCD|name>.
+_MENTION = re.compile(r"<@([UW][A-Z0-9]{2,})(?:\|[^>]*)?>")
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,22 @@ class SlackPeople:
                 raise LookupError(f"no author for message {ref.ts}")
         return found
 
+    async def mentions(self, ref: MessageRef) -> set[str]:
+        """The people a message @-mentions, from Slack (#305). Raises :class:`LookupError`
+        if the message can't be found, so a mention is never assumed."""
+        parent = ref.thread_ts or ref.ts
+        response = await self._client.conversations_replies(
+            channel=ref.channel_id, ts=parent, oldest=ref.ts, latest=ref.ts, inclusive=True, limit=1
+        )
+        messages = response.get("messages") or []
+        match = next(
+            (m for m in messages if isinstance(m, Mapping) and m.get("ts") == ref.ts), None
+        )
+        if match is None:
+            raise LookupError(f"message {ref.ts} was not found")
+        text = match.get("text")
+        return set(_MENTION.findall(text)) if isinstance(text, str) else set()
+
     async def person(self, user_id: str) -> Person:
         response = await self._client.users_info(user=user_id)
         return classify(user_id, response.get("user") or {}, await self.own_team())
@@ -122,6 +140,9 @@ class SlackAttribution:
 
     async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
         return await self._people.authors(refs)
+
+    async def mentions(self, ref: MessageRef) -> set[str]:
+        return await self._people.mentions(ref)
 
     async def name(self, user_id: str) -> str | None:
         return await self._name(user_id)
