@@ -1,0 +1,211 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "attachment-text",
+  "description": "Carol asks for a ticket documenting the oven naming standard, with the standard attached as a .md file (#333). The channel sets attachments = \"text\", so the packet gives the file's text, and the run proposes an issue that includes it: JotFlow copies the text into the issue as a code block, as the card shows.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ],
+        "attachments": "text"
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792350000.000100",
+      "user": "U0CAROL",
+      "subtype": "file_share",
+      "text": "Make a ticket documenting our new oven naming standard. The work is done, so it just needs documenting.",
+      "files": [
+        {
+          "id": "F0OVEN1",
+          "name": "oven-names.md",
+          "filetype": "markdown",
+          "mimetype": "text/markdown",
+          "text": "# Oven naming standard\n\nEach oven is named after a river, in lowercase: `thames`, `danube`.\nRetired names are never reused.\n"
+        }
+      ]
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792350000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792350000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "oven-names",
+          "title": "Oven naming standard"
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:oven-names",
+            "repo": "acme-co/web",
+            "title": "Document the oven naming standard",
+            "body": "## Problem\nThe oven naming standard is agreed but not written down anywhere people look.\n\n## Proposal\nDocument the standard. The file attached in Slack has it in full.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Add the standard to the docs.\n\n## Acceptance\n- [ ] The naming standard is documented\n",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792350000.000100"
+              }
+            ],
+            "confidence": 0.85,
+            "attachments": [
+              "F0OVEN1"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "One topic, and one create_issue proposal that includes oven-names.md.",
+    "accepted": [
+      "1792350000.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:oven-names",
+        "messages": [
+          "1792350000.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:oven-names",
+        "attached": [
+          "oven-names.md"
+        ]
+      }
+    ]
+  }
+}
