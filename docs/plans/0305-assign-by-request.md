@@ -5,7 +5,7 @@
 - Issue: #305
 - Draft PR: #312, for the plan. Built in #316 (runner checks), #321 and #328 (links), #325 (reasons), and the Add me PR, which brings this plan in and says Fixes #305
 - Status: in review. The lead and security approved the plan on 2026-10-29 with the decisions below
-- Last verified: 2026-10-29, against #325's branch
+- Last verified: 2026-10-29, against main after #325
 - Next safe action: review the Add me PR
 
 ## Objective and done-when
@@ -193,7 +193,7 @@ Three PRs, each closing part of #305, with the last saying Fixes #305:
   - replay fixtures for a volunteer on a draft and on a filed issue, with an injected line that must assign no one (#325)
   - card rendering, the click rules, the modal's errors against a fake GitHub, the caps, the rebuild text pin, and decision 7's test, in `tests/test_add_me.py`
 - [x] architecture.md, usage.md, install.md's Members permission, the threat-model rows for self-add and the org permission, the example config, and the CHANGELOG
-- [ ] CodeRabbit once, `make check`, mark ready
+- [x] CodeRabbit once, `make check`, mark ready
 
 ## Validation
 
