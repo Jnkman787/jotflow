@@ -30,6 +30,9 @@ Classify every message in `thread.messages` that has no `topic_id` and is not
 - `chatter`: greetings, thanks, lunch, logistics, jokes, or anything not
   about work the team could track.
 
+A `from_jotflow` message with `change_request_by` is that person's Request
+Changes note on the pending draft: don't classify it. Revise with it (step 6).
+
 Replies usually belong to their thread's topic. A message that already has a
 `topic_id` was placed by a person or by `re:`; leave it. Chatter never yields
 a proposal.
@@ -93,7 +96,8 @@ adding to or correcting its `topic_id`.
 
 - The topic has `pending`: call `revise_proposal` with its `proposal_id`
   and `revision`, the whole revised draft, and the new messages as
-  `sources`. Keep what they don't change. If you get `current` back, revise
+  `sources`, a change request among them. Do what a change request asks,
+  even when it changes the kind of work. Keep what they don't change. If you get `current` back, revise
   once more on top of it. Never propose again for it.
 - The topic has `issue_proposed` but no `pending`: link the message and don't
   propose again.
