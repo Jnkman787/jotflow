@@ -43,10 +43,10 @@ timezone = "Europe/London"
 
 **Never resurrect removed text** (security). An item is left out when:
 - its newest proposal's draft was cleared (`draft_cleared_at`)
-- it was rejected, other than as Same as, or superseded with no newer proposal
+- it was rejected, Same as included, or superseded with no newer proposal
 - every one of its source messages has been deleted in Slack
 
-Someone who deleted their message, or rejected a card, never sees it reposted at the top of the channel. A Same as item stays, showing only "Same as web#31".
+Someone who deleted their message, or rejected a card, never sees it reposted at the top of the channel.
 
 Each item has:
 
@@ -61,7 +61,6 @@ Each item has:
   | Pending | Waiting for approval |
   | Approved, executing or reconciling | Being filed |
   | Applied | Filed as `web#42`, linked |
-  | Rejected as Same as | Same as `web#31` |
   | Failed | Couldn't be filed |
   | Deferred | Put off to next week, by whom |
 
