@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime
 from importlib import resources
 from typing import Literal, Protocol
@@ -399,6 +399,7 @@ def read_tools(
     attribution: Attribution | None = None,
     repos: RepoCatalog | None = None,
     issues: Callable[[], IssueReader | None] = lambda: None,
+    boards_off: Collection[str] = frozenset(),
 ) -> tuple[ToolSpec, ...]:
     """The read tools, bound to their dependencies. Built once at startup.
 
@@ -593,6 +594,7 @@ def read_tools(
             boards=[
                 BoardBrief(board=b.board, nickname=b.nickname, description=b.description)
                 for b in policy.channel(channel_id).boards
+                if b.board not in boards_off  # the write token can't update it (#309)
             ],
         )
 

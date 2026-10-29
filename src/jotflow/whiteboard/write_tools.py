@@ -445,9 +445,12 @@ class WriteTools:
         new_id: Callable[[], str] = lambda: secrets.token_hex(8),
         repos: RepoCatalog | None = None,
         docs: DocReads | None = None,
+        boards_off: Collection[str] = frozenset(),
     ) -> None:
         self._store = store
         self._policy = policy
+        # Boards the write token can't update, found at JotFlow's start (#309).
+        self._boards_off = boards_off
         # The run's doc reads, for the card's long-passage flag (#209).
         self._docs = docs
         self._poster = poster
@@ -639,9 +642,11 @@ class WriteTools:
             board = listed.board(proposed.board)
             if board is None:
                 raise ToolError(f"{proposed.board} isn't one of this channel's boards")
+            if board.board in self._boards_off:
+                raise ToolError(f"{proposed.board} is off: JotFlow's write token can't update it")
             if any(k.board == board.board for k in kept):
                 continue
-            reason = clean_question(proposed.reason)[:MAX_BOARD_REASON].strip()
+            reason = " ".join(clean_question(proposed.reason).split())[:MAX_BOARD_REASON]
             if not reason:
                 raise ToolError("a board's reason has no words left once cleaned")
             kept.append(ProposedBoard(board=board.board, reason=reason))
@@ -945,9 +950,19 @@ def write_tools(
     new_id: Callable[[], str] = lambda: secrets.token_hex(8),
     repos: RepoCatalog | None = None,
     docs: DocReads | None = None,
+    boards_off: Collection[str] = frozenset(),
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
-    tools = WriteTools(store, policy, poster, clock=clock, new_id=new_id, repos=repos, docs=docs)
+    tools = WriteTools(
+        store,
+        policy,
+        poster,
+        clock=clock,
+        new_id=new_id,
+        repos=repos,
+        docs=docs,
+        boards_off=boards_off,
+    )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
         ("propose_issue", ProposeIssueArgs, DRAFTING),
         ("propose_update", ProposeUpdateArgs, DRAFTING),
