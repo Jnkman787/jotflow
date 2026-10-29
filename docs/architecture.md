@@ -271,8 +271,9 @@ The mode applies uniformly to creation, description edits, comments, assignment,
 - The card records who approved and when.
 - **The card itself** (`src/jotflow/orchestrator/cards.py`, #26). It shows:
   - the full body, split into sections, and a draft too long to show on one card offers no Approve button
-  - the repo, with a dropdown of the channel's repos (D11), and a public-repo warning, or "visibility was not checked" when unknown
-  - labels, marked as not checked when the repo has no label list
+  - the repo, with a dropdown of the channel's repos (D11), and a public-repo warning
+  - labels
+  - one quiet "Not checked" note, with the details, when JotFlow didn't check the repo's visibility or the labels against a list (#337)
   - assignees, with unverified identities marked, and the people involved, with one-click assign and remove
   - size, confidence, links to the source messages, and a state line
   - when the agent overruled the author's `idea:` or `bug:` hint, "Hint overruled:" with the agent's one-line reason (#147)
@@ -396,7 +397,7 @@ In `auto` mode a validated proposal moves from pending to approved without a per
 - **Re-drafts after a lost race** also start when a failed proposal is discarded. A topic whose latest proposal was rejected is marked `rejected` in the packet, so the re-draft doesn't just propose it again.
 - **After filing,** a follow-up is a `propose_update`, a comment by default. Its header says whether it's a comment or a change to the description.
 
-**`rejected` with `duplicate` set means "same as an existing issue", not "people said no" (#36).** A drafting run may list up to three `related` issues, as pointers: repo, number, and the open or closed state its search reported. They must be in the channel's repos. The card shows them, labelling the state as the agent's claim, and offers **Same as** for the first one on a pending new issue. A click under Approve's who-may rules then does three things in one store write. The proposal becomes `rejected`, with `duplicate` recording the issue, who clicked and when. The topic is bound to that issue. The draft is cleared. There's no execution run and no GitHub write. Later messages in the thread become `propose_update` on that issue, which may be closed. **Not a duplicate** takes it back under the same rules: it unbinds the topic, records who undid it, and queues a fresh drafting run. It's refused if the topic now points elsewhere, or if a proposal drafted after the click is still pending, approved, executing, reconciling or applied, because that proposal relies on the binding. The store keeps the four duplicate columns consistent, all set together and only on `rejected`, because SQLite can't add that CHECK to an existing table.
+**`rejected` with `duplicate` set means "same as an existing issue", not "people said no" (#36).** A drafting run may list up to three `related` issues, as pointers: repo, number, and the open or closed state its search reported. They must be in the channel's repos. The card shows them, labelling the state as the agent's claim, and offers **Same as** on a pending new issue only for the first one the agent marked `likely_duplicate`. The store refuses a click on any other (#337). A click under Approve's who-may rules then does three things in one store write. The proposal becomes `rejected`, with `duplicate` recording the issue, who clicked and when. The topic is bound to that issue. The draft is cleared. There's no execution run and no GitHub write. Later messages in the thread become `propose_update` on that issue, which may be closed. **Not a duplicate** takes it back under the same rules: it unbinds the topic, records who undid it, and queues a fresh drafting run. It's refused if the topic now points elsewhere, or if a proposal drafted after the click is still pending, approved, executing, reconciling or applied, because that proposal relies on the binding. The store keeps the four duplicate columns consistent, all set together and only on `rejected`, because SQLite can't add that CHECK to an existing table.
 
 ## Data and privacy
 

@@ -119,6 +119,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "title_pattern",
         "proposal_id",  # pending's, for revise_proposal (#304)
         "github_description",  # packet fields for a scope (#236)
+        "likely_duplicate",  # a related issue's (#337)
         "scope_total",
         "has_docs",
     }
@@ -159,3 +160,9 @@ def test_the_triage_guide_rule_is_in_the_instructions() -> None:
     assert "If `channel.triage_guide` is set, the team wrote it" in text
     assert "choose the repo and boards by it, within those lists and these rules." in text
     assert "by their descriptions and the guide" in text
+
+
+def test_the_likely_duplicate_rule_is_in_the_instructions() -> None:
+    # #337: the card offers Same as only for an issue the agent marks.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "Set `likely_duplicate` only on one that may be the same request." in text

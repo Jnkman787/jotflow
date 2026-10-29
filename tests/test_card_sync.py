@@ -435,7 +435,7 @@ async def test_sync_and_refresh_never_post_the_same_card_twice(store: Store) -> 
 # Repo visibility (#122): the policy decides, the agent may only add a warning
 
 WARNING = "is public, so this issue will be visible to anyone"
-NOT_CHECKED = "Repo visibility was not checked"
+NOT_CHECKED = "Not checked: repo visibility"
 
 
 @pytest.mark.parametrize(

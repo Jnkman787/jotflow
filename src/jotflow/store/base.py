@@ -135,6 +135,7 @@ class DuplicateRefusedError(ConflictError):
 DUPLICATE_NOT_PENDING = "This proposal is no longer waiting, so it can't be marked the same."
 DUPLICATE_NOT_NEW = "Only a proposed new issue can be marked the same as an existing one."
 DUPLICATE_NO_CANDIDATE = "That related issue isn't on this proposal any more."
+DUPLICATE_NOT_LIKELY = "The agent didn't mark that issue as a likely duplicate."
 DUPLICATE_TOPIC_LINKED = (
     "This conversation is already linked to an issue, so it can't be marked the same as another."
 )
@@ -175,6 +176,9 @@ def plan_duplicate(record: ProposalRecord, index: int, expected_hash: str) -> Re
         raise ContentChangedError(f"proposal {record.id} changed since the card was drawn")
     if not 0 <= index < len(draft.related):
         raise DuplicateRefusedError(DUPLICATE_NO_CANDIDATE)
+    # Only an issue the agent itself called a likely duplicate, as the card offers (#337).
+    if not draft.related[index].likely_duplicate:
+        raise DuplicateRefusedError(DUPLICATE_NOT_LIKELY)
     return draft.related[index]
 
 

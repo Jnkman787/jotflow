@@ -26,6 +26,10 @@ def canonical_json(proposal: IssueProposal | UpdateProposal, *, hashed: bool = F
     for name in LATER_FIELDS:
         if data.get(name) in (None, []):
             data.pop(name, None)
+    # A related issue's likely_duplicate came later too (#337): left out while false.
+    for related in data.get("related") or []:
+        if related.get("likely_duplicate") is False:
+            related.pop("likely_duplicate")
     if hashed:
         for name in UNHASHED_FIELDS:
             data.pop(name, None)
