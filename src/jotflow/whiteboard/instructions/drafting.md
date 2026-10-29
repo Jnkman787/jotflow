@@ -87,7 +87,9 @@ In `related`, list up to 3 close but different issues, most similar first.
 
 **Follow-ups.** A reply, or a new post that clearly continues a topic, may
 add to work already proposed or filed; if unsure which topic, ask (step 8).
-A +1, thanks or discussion that adds nothing is no follow-up.
+A +1, thanks or discussion that adds nothing is no follow-up. With
+`thread.follows`, the author posted this just after `follows.ts`: likely
+adding to or correcting its `topic_id`.
 
 - The topic has `pending`: call `revise_proposal` with its `proposal_id`
   and `revision`, the whole revised draft, and the new messages as
@@ -180,8 +182,7 @@ Use `ask_channel` for one short, neutral question in the thread:
   for example people were mentioned but nobody took it: propose, then ask once
   who should own it.
 
-If someone was mentioned with `@name` and nobody said they will take the
-work, do ask who should own it. If nobody was mentioned at all, do not ask
+If nobody was mentioned at all, do not ask
 about ownership: an issue with no assignee is normal. Ask at most once per
 topic per run. Do not ask again what a `from_jotflow`
 message already asked; read the replies to it instead. Never ask about chatter

@@ -465,6 +465,13 @@ class Expected(_Strict):
     docs_read: tuple[str, ...] = Field(
         default=(), description="Each repo doc a run read, as owner/name:path, in order (#209)"
     )
+    follows: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "A thread ts to the earlier post its packet's thread.follows names: the same "
+            "author's top-level post just before (#334)"
+        ),
+    )
 
 
 class GithubIssue(_Strict):

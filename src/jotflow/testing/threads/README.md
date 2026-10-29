@@ -33,6 +33,9 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `follow-up-pending.json` | Carol asks for CSV export, and a first run, seeing only her post, proposes it. While the card is pending, Bob replies that the file needs a totals row. A second run revises the same draft with `revise_proposal`: revised once, by Bob, in its body (#304). |
 | `follow-up-filed-reply.json` | The thread's idea was filed as `acme-co/web#42`. Alice replies with a detail, and the run proposes a comment on the issue. |
 | `follow-up-filed-scope.json` | As above, but Bob widens the request to Excel as well as CSV, so the run proposes a body change, with the acceptance updated. |
+| `quick-addition.json` | Carol posts an idea, then 30 seconds later a new top-level post: "And the east screen." Its packet's `thread.follows` names her first post (#334), and the run revises the pending draft. |
+| `quick-correction.json` | As `quick-addition.json`, but the second post corrects the first. The draft is revised to match. |
+| `quick-unrelated.json` | As `quick-addition.json`, but the second post is a different idea. It gets its own topic and proposal. |
 | `follow-up-unclear.json` | Two export topics are filed. A new post about keeping the column order could continue either, so the run asks which. `existing-topic.json` covers the clear case, where a new post is linked and gets a comment. |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 

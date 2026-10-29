@@ -193,6 +193,14 @@ class ThreadMessage(BaseModel):
     )
 
 
+class FollowsPost(BaseModel):
+    """The author's own previous top-level post, just before this thread's (#334)."""
+
+    ts: str = Field(description="Slack timestamp of that post, a pointer")
+    seconds_before: int = Field(ge=0, description="How long before this thread's post it came")
+    topic_id: str | None = Field(default=None, description="That post's topic, if it has one")
+
+
 class WorkThread(BaseModel):
     """The thread a drafting run works on, fetched live and never stored."""
 
@@ -201,6 +209,13 @@ class WorkThread(BaseModel):
     messages: list[ThreadMessage]
     omitted: int = Field(
         default=0, ge=0, description="Messages left out of a very long thread, from its middle"
+    )
+    follows: FollowsPost | None = Field(
+        default=None,
+        description=(
+            "Set when this thread's first message is a top-level post its author made "
+            "seconds after their previous one: likely an addition or a correction (#334)"
+        ),
     )
 
 
@@ -481,12 +496,16 @@ def read_tools(
                     return summary.model_copy(update={"issue_proposed": True})
         return summary
 
-    async def _with_pending(channel_id: str, thread_ts: str, index: TopicIndex) -> TopicIndex:
+    async def _with_pending(
+        channel_id: str, thread_ts: str, index: TopicIndex, follows: str | None = None
+    ) -> TopicIndex:
         """Each topic this thread feeds gets its pending draft, so the run can revise it
-        (#304). Only those: another thread's draft never enters this run's packet."""
+        (#304). Only those, and the topic of the author's own post just before this
+        one, which ``thread.follows`` names (#334): another thread's draft otherwise
+        never enters this run's packet."""
         marked = []
         for summary in index.topics:
-            if thread_ts not in summary.threads:
+            if thread_ts not in summary.threads and summary.id != follows:
                 marked.append(summary)
                 continue
             found = None
@@ -546,7 +565,8 @@ def read_tools(
                     raise ToolError(f"the thread source returned another thread for run {run.id}")
                 index = await topics(grant, ListTopicsInput())
                 if grant.kind is RunKind.DRAFTING:
-                    index = await _with_pending(grant.channel_id, run.thread_ts, index)
+                    follows = thread.follows.topic_id if thread.follows else None
+                    index = await _with_pending(grant.channel_id, run.thread_ts, index, follows)
                 related = await work_source.related(thread, index)
         except TimeoutError:
             raise ToolError("Slack took too long to answer; try the run again shortly") from None

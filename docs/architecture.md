@@ -419,7 +419,7 @@ Thread text is fetched from Slack when building a packet, passed to the agent, a
 
 How the work packet treats thread text:
 
-- It reads only the run's own thread, with `conversations.replies`, never channel history. A very long thread is paged in full, up to a bound, keeping its first and newest messages.
+- It reads only the run's own thread, with `conversations.replies`. A very long thread is paged in full, up to a bound, keeping its first and newest messages. The one channel-history read is for a top-level post (#334): `conversations.history` over the two minutes before it, at most 20 messages, to find the same author's own previous top-level post. Only that post's ts, the gap in seconds, and its topic id reach the packet, as `thread.follows`, never another message's text. A failed read means no hint. The debouncer, which keeps each person's last top-level post in memory, lets such a post fall due a window after the earlier one, so the earlier post's topic exists to join.
 - Related excerpts are the first message of a few other threads already named in the topic index.
 - Authors and `<@U…>` mentions become display names, with the Slack user id kept alongside. The only cache maps user ids to names: directory data, bounded and short-lived, never message text.
 - `skip:` messages, a whole thread under a `skip:` root, and messages a person marked as chatter never reach the agent. Keyword prefixes are removed from the text and passed as a hint.

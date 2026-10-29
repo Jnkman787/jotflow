@@ -159,3 +159,10 @@ def test_the_triage_guide_rule_is_in_the_instructions() -> None:
     assert "If `channel.triage_guide` is set, the team wrote it" in text
     assert "choose the repo and boards by it, within those lists and these rules." in text
     assert "by their descriptions and the guide" in text
+
+
+def test_the_quick_follow_on_post_rule_is_in_the_instructions() -> None:
+    # #334: a top-level post seconds after the author's previous one likely adds to it.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "With `thread.follows`, the author posted this just after `follows.ts`" in text
+    assert "likely adding to or correcting its `topic_id`" in text
