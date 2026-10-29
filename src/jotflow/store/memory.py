@@ -34,7 +34,9 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    MAX_SUMMARY_ATTEMPTS,
     OPERATOR_REMOVER,
+    SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
     Clock,
@@ -55,6 +57,9 @@ from jotflow.store.base import (
     ReactionKeyword,
     ReactionMark,
     Recovery,
+    SummaryDeferral,
+    SummaryPost,
+    SummaryStatus,
     ToolCallRecord,
     TopicRecord,
     Verified,
@@ -97,6 +102,8 @@ class MemoryStore:
         self._topics: dict[str, TopicRecord] = {}
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
+        self._summaries: dict[tuple[str, datetime], SummaryPost] = {}
+        self._deferrals: dict[tuple[str, datetime], SummaryDeferral] = {}
         self._unlinks: list[IdentityUnlink] = []
         self._codes: dict[str, IdentityCode] = {}
         self._operators: dict[str, OperatorToken] = {}
@@ -651,12 +658,23 @@ class MemoryStore:
                             secrets.token_hex(8), displaced, OPERATOR_REMOVER, self._clock()
                         )
                     )
+            own = self._identities.get(slack_user_id)
+            replaced_own: str | None = None
+            if own is not None and own.github_login.casefold() != github_login.casefold():
+                if not replace:
+                    raise ConflictError(f"{slack_user_id} has another GitHub login linked")
+                replaced_own = own.github_login
+                self._unlinks.append(
+                    IdentityUnlink(
+                        secrets.token_hex(8), slack_user_id, OPERATOR_REMOVER, self._clock()
+                    )
+                )
             self._codes.pop(slack_user_id, None)
             link = IdentityLink(
                 slack_user_id, github_login, False, self._clock(), None, github_id, "admin"
             )
             self._identities[slack_user_id] = link
-            return Verified(link, displaced)
+            return Verified(link, displaced, replaced_own)
 
     # Operator tokens
 
@@ -704,6 +722,59 @@ class MemoryStore:
         """Nothing runs and no card is drawn in a paused channel (#28)."""
         setting = self._modes.get(channel_id)
         return setting is not None and setting.mode is ChannelMode.PAUSED
+
+    # Weekly summaries (#308)
+
+    async def start_summary(self, channel_id: str, slot: datetime) -> bool:
+        check_id(channel_id, "channel id")
+        async with self._lock:
+            now = self._clock()
+            found = self._summaries.get((channel_id, slot))
+            if found is None:
+                self._summaries[(channel_id, slot)] = SummaryPost(
+                    channel_id, slot, "posting", 1, now
+                )
+                return True
+            stale = found.status == "posting" and now - found.updated_at > SUMMARY_POSTING_STALE
+            if (found.status == "failed" or stale) and found.attempts < MAX_SUMMARY_ATTEMPTS:
+                self._summaries[(channel_id, slot)] = replace(
+                    found, status="posting", attempts=found.attempts + 1, updated_at=now
+                )
+                return True
+            return False
+
+    async def finish_summary(
+        self, channel_id: str, slot: datetime, status: SummaryStatus, ts: str | None = None
+    ) -> SummaryPost:
+        async with self._lock:
+            found = self._summaries.get((channel_id, slot))
+            if found is None:
+                raise NotFoundError(f"no summary for {channel_id} at {slot.isoformat()}")
+            done = replace(found, status=status, ts=ts or found.ts, updated_at=self._clock())
+            self._summaries[(channel_id, slot)] = done
+            return done
+
+    async def get_summary(self, channel_id: str, slot: datetime) -> SummaryPost | None:
+        return self._summaries.get((channel_id, slot))
+
+    async def defer_topic(
+        self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str
+    ) -> SummaryDeferral:
+        check_id(by, "Slack user id")
+        async with self._lock:
+            key = (topic_id, until_slot)
+            if key not in self._deferrals:
+                self._deferrals[key] = SummaryDeferral(
+                    topic_id, channel_id, until_slot, by, self._clock()
+                )
+            return self._deferrals[key]
+
+    async def deferred_topics(self, channel_id: str, slot: datetime) -> list[SummaryDeferral]:
+        return [
+            d
+            for (_, until), d in sorted(self._deferrals.items(), key=lambda kv: kv[1].at)
+            if until == slot and d.channel_id == channel_id
+        ]
 
     async def get_channel_mode(self, channel_id: str) -> ChannelModeSetting | None:
         return self._modes.get(channel_id)

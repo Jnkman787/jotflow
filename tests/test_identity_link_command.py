@@ -350,3 +350,33 @@ async def test_changing_a_persons_own_login_needs_replace_and_tells_them() -> No
 def test_the_note_names_both_logins() -> None:
     text = command.changed_note("kim-example", "octo-example")
     assert "from kim-example to octo-example" in text
+
+
+async def test_a_run_that_stops_has_told_everyone_changed_so_far_and_names_the_next() -> None:
+    """Each note goes right after its own change, so a failure later loses none (#305)."""
+    store = MemoryStore()
+    await verified(store, "U0BOB", "kim-example", 9001)  # Bob's own link, changed below
+    real = store.admin_link
+    calls = 0
+
+    async def failing_second(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("disk full")
+        return await real(*args, **kwargs)
+
+    store.admin_link = failing_second  # type: ignore[method-assign]
+    notes = Notes()
+    with pytest.raises(LinkRefused, match="stopped at link 2, member U0KIM") as stopped:
+        await load_links(
+            store,
+            Runner(),  # type: ignore[arg-type]
+            notes,  # type: ignore[arg-type]
+            [("U0BOB", "octo-example"), ("U0KIM", "kim-example")],
+            replace=True,
+        )
+    assert "run it again" in str(stopped.value)
+    assert notes.told == ["U0BOB"]  # told before the failure, not batched after
+    bob = await store.get_identity("U0BOB")
+    assert bob is not None and bob.github_login == "octo-example"

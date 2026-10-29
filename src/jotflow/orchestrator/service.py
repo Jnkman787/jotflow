@@ -81,6 +81,7 @@ from jotflow.orchestrator.questions import (
 )
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
+from jotflow.orchestrator.summary import BoltSummarySlack, WeeklySummaries
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
@@ -514,6 +515,17 @@ class Orchestrator:
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
+        # The weekly summary (#308), for channels that set one, whether or not runs are on.
+        self.summaries: WeeklySummaries | None = None
+        self.summary_slack = BoltSummarySlack(self._client, self._identity.user_id)
+        self.summary_names = people
+        if any(c.summary is not None for c in self._policy.channels.values()):
+            self.summaries = WeeklySummaries(
+                self._store, self._policy, self.summary_slack, attribution
+            )
+            self._tasks.append(
+                asyncio.create_task(self.summaries.run(self._stop), name="jotflow-summaries")
+            )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
         self.operators = OperatorTokens(self._store)
         await self.operators.reload()
@@ -729,8 +741,8 @@ class Orchestrator:
                 self.boards_off.add(board)
                 log.warning(
                     "board %s is off: the write token can't see or update it; give it "
-                    "Projects: Read and write on the organisation, and check the board's "
-                    "owner and number",
+                    "Projects: Read and write on the organisation (a classic token needs the "
+                    "project scope), and check the board's owner and number",
                     board,
                 )
 

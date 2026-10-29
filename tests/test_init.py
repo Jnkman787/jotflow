@@ -1667,6 +1667,8 @@ def test_new_repos_for_a_kept_channel_keep_its_guide_boards_and_scopes() -> None
             "boards": [{"board": "acme/3", "nickname": "roadmap", "description": "Planned"}],
             "debounce_seconds": 30,
             "triage_guide": "Billing goes to api.",
+            "help": {"guide": False},
+            "questions": {"enabled": False},
         }
     )
     repos = (RepoPolicy(repo="acme/api", nickname="api", description="API"),)
@@ -1680,4 +1682,7 @@ def test_new_repos_for_a_kept_channel_keep_its_guide_boards_and_scopes() -> None
     fallback = _with_new_repos(script.console(), previous, clashing)
     assert fallback.repos == clashing and fallback.boards == ()
     assert fallback.debounce_seconds == 30 and fallback.triage_guide == "Billing goes to api."
+    # Only what can clash with repos is dropped (#322 review).
+    assert fallback.help == previous.help and fallback.questions == previous.questions
+    assert fallback.scopes == ()
     assert "don't fit the new repos" in script.text

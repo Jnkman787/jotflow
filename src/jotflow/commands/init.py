@@ -783,7 +783,8 @@ def _with_new_repos(
     such as its scopes, boards and triage guide (#317).
 
     If they no longer fit, such as a board nickname that a new repo now uses,
-    only the debounce window and the triage guide are kept, and setup says so.
+    only the scopes and boards, which can clash with repos, are dropped, and
+    setup says so.
     """
     kept = previous.model_dump()
     kept["repos"] = [repo.model_dump() for repo in repos]
@@ -791,15 +792,10 @@ def _with_new_repos(
         return ChannelPolicy.model_validate(kept)
     except ValidationError:
         console.say(
-            "  This channel's scopes, boards and other settings don't fit the new repos, "
-            "so only its debounce window and triage guide were kept. Add the rest back "
-            "in jotflow.toml."
+            "  This channel's scopes and boards don't fit the new repos, so they were "
+            "dropped; its other settings were kept. Add them back in jotflow.toml."
         )
-        return ChannelPolicy(
-            repos=repos,
-            debounce_seconds=previous.debounce_seconds,
-            triage_guide=previous.triage_guide,
-        )
+        return ChannelPolicy.model_validate({**kept, "scopes": [], "boards": []})
 
 
 def _ask_preset(console: Console, existing: Policy | None, detected: str | None) -> str | None:

@@ -337,7 +337,9 @@ async def test_an_issue_without_the_proposals_marker_is_refused_once_and_named()
 # The start-up check
 
 
-async def test_boards_the_write_token_cant_update_are_turned_off() -> None:
+async def test_boards_the_write_token_cant_update_are_turned_off(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     from jotflow.models import RunKind
     from jotflow.orchestrator.launch import RunnerError
     from jotflow.orchestrator.service import Orchestrator
@@ -359,6 +361,7 @@ async def test_boards_the_write_token_cant_update_are_turned_off() -> None:
     service.kinds = type("K", (), {"on": frozenset({RunKind.EXECUTION})})()  # type: ignore[assignment]
     await service._check_boards()
     assert service.boards_off == {"acme-co/7"}  # a real no
+    assert "a classic token needs the project scope" in caplog.text  # what to fix
     # A check that fails, such as at a rate limit, is no answer: the board stays on (#311).
     service.boards_off = set()
     runner.down = True

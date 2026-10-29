@@ -423,9 +423,38 @@ MIGRATIONS: tuple[Migration, ...] = (
             " /* self: /jotflow link or verify; admin: jotflow identity link */",
         ),
     ),
+    # Weekly summaries (#308): one row per channel and week, and the topics put off
+    # to a later week. Pointers, Slack ids and UTC times only, never text.
+    Migration(
+        18,
+        (
+            """
+CREATE TABLE summaries (
+    channel_id TEXT NOT NULL, -- the channel the summary is for
+    slot TEXT NOT NULL, -- UTC, ISO 8601: when this week's summary was due
+    status TEXT NOT NULL -- this week's post: posting, posted, failed or skipped
+        CHECK (status IN ('posting', 'posted', 'failed', 'skipped')),
+    attempts INTEGER NOT NULL DEFAULT 1, -- tries so far for this slot
+    ts TEXT, -- the posted message's ts, once posted
+    updated_at TEXT NOT NULL, -- UTC, ISO 8601
+    PRIMARY KEY (channel_id, slot)
+)
+""",
+            """
+CREATE TABLE summary_deferrals (
+    topic_id TEXT NOT NULL, -- the topic put off
+    channel_id TEXT NOT NULL, -- its channel
+    until_slot TEXT NOT NULL, -- UTC, ISO 8601: the summary it's put off to
+    deferred_by TEXT NOT NULL, -- Slack user id who clicked Not this week
+    deferred_at TEXT NOT NULL, -- UTC, ISO 8601
+    PRIMARY KEY (topic_id, until_slot)
+)
+""",
+            "CREATE INDEX summary_deferrals_slot ON summary_deferrals (channel_id, until_slot)",
+        ),
+    ),
     # A person may change a card's Projects boards (#309). SQLite can't alter a CHECK,
     # so proposal_edits is rebuilt with 'boards' allowed, keeping every row in order.
-    # 19, not 18: #308 takes 18, as the lead numbered them. This merges after it.
     Migration(
         19,
         (

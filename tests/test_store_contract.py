@@ -1341,3 +1341,18 @@ async def test_filling_an_account_id_changes_nothing_else(store: Store) -> None:
     )
     again = await store.fill_github_id("U0BOB", 7)  # never replaces an id it has
     assert again is not None and again.github_id == 583231
+
+
+async def test_an_admin_link_changes_a_persons_own_login_in_one_step(store: Store) -> None:
+    from jotflow.store import ConflictError
+
+    await store.link_identity("U0BOB", "kim-example")
+    with pytest.raises(ConflictError):
+        await store.admin_link("U0BOB", "octo-example", 583231)
+    still = await store.get_identity("U0BOB")
+    assert still is not None and still.github_login == "kim-example"
+    done = await store.admin_link("U0BOB", "octo-example", 583231, replace=True)
+    assert (done.replaced_own, done.displaced) == ("kim-example", None)
+    assert done.link.github_login == "octo-example" and done.link.linked_by == "admin"
+    [removed] = await store.identity_unlinks()
+    assert (removed.slack_user_id, removed.removed_by) == ("U0BOB", "operator")

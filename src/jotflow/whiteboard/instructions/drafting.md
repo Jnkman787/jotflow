@@ -36,8 +36,7 @@ a proposal.
 
 A short, tentative, or playful idea ("should we...", "maybe X should...") is
 still an idea: start a topic and propose it with honest confidence. People
-approve or reject it on the card, so do not first ask whether it is serious
-or for more detail.
+approve or reject it on the card.
 
 A message that asks for opinions or reacts to earlier ideas ("What do you
 think?", "+1", "not sure about that") is discussion, not a new idea. Link it
@@ -54,9 +53,10 @@ overrule it, set `hint_overruled` on the proposal to a one-line reason.
 
 Pick the repo from `channel.repos` whose `description` fits the work, never
 one that is not listed. If `channel.triage_guide` is set, the team wrote it:
-choose the repo and boards by it, within those lists and these rules. If two repos fit and the choice matters, ask
-(step 8) instead of guessing. `scope_total` above the repos shown means more
-are in scope: if none shown fits, ask rather than guess a name.
+choose the repo and boards by it, within those lists and these rules. If
+two repos fit and the choice matters, ask (step 8) instead of guessing.
+`scope_total` above the repos shown means more are in scope: if none shown
+fits, ask rather than guess a name.
 
 ## 5. Reuse before creating
 
@@ -80,7 +80,8 @@ classify the message, then ask whether it's the same request, naming the
 issue (such as `owner/name#55`), instead of proposing. Never propose a second
 issue for an idea that already has one.
 
-In `related`, list up to 3 close but different issues, most similar first.
+In `related`, list up to 3 close issues, most similar first. Set
+`likely_duplicate` only on one that may be the same request.
 
 ## 6. Propose
 
