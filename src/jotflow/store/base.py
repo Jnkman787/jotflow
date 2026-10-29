@@ -453,6 +453,127 @@ def edited_draft(
     return draft
 
 
+# A drafting run's revision of a pending draft, from new messages (#304). The store
+# keeps which fields changed and whose messages, never the values.
+RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related"]
+REVISED_FIELDS: tuple[RevisedField, ...] = (
+    "title",
+    "body",
+    "comment",
+    "labels",
+    "assignees",
+    "related",
+)
+# At most this many revisions a proposal; past it, the agent asks instead.
+MAX_REVISIONS = 10
+
+
+@dataclass(frozen=True)
+class ProposalRevision:
+    """One revision of a pending draft: which run, which fields, whose messages."""
+
+    proposal_id: str
+    revision: int  # the proposal's revision after it
+    run_id: str
+    changed: tuple[RevisedField, ...]
+    added_by: tuple[str, ...]  # Slack user ids whose messages it added
+    revised_at: datetime
+
+
+class StaleRevisionError(TransitionError):
+    """The proposal moved on after the run read it. ``record`` is how it stands now."""
+
+    def __init__(self, record: ProposalRecord) -> None:
+        super().__init__(record.id, record.state, record.state)
+        self.record = record
+        self.args = (f"proposal {record.id} is at revision {record.revision}, not the one read",)
+
+
+def revision_changes(
+    old: IssueProposal | UpdateProposal, new: IssueProposal | UpdateProposal
+) -> tuple[RevisedField, ...]:
+    """The fields a revision changes, as the card shows them."""
+    if isinstance(old, IssueProposal) and isinstance(new, IssueProposal):
+        pairs: dict[RevisedField, tuple[object, object]] = {
+            "title": (old.title, new.title),
+            "body": (old.body, new.body),
+            "labels": (sorted(old.labels), sorted(new.labels)),
+            "assignees": (sorted(old.assignees), sorted(new.assignees)),
+            "related": (
+                [r.model_dump() for r in old.related],
+                [r.model_dump() for r in new.related],
+            ),
+        }
+    elif isinstance(old, UpdateProposal) and isinstance(new, UpdateProposal):
+        a, b = old.changes, new.changes
+        pairs = {
+            "body": (a.body, b.body),
+            "comment": (a.comment, b.comment),
+            "labels": (
+                (sorted(a.add_labels), sorted(a.remove_labels)),
+                (sorted(b.add_labels), sorted(b.remove_labels)),
+            ),
+            "assignees": (
+                (sorted(a.add_assignees), sorted(a.remove_assignees)),
+                (sorted(b.add_assignees), sorted(b.remove_assignees)),
+            ),
+        }
+    else:
+        raise ValueError("a revision keeps the proposal's kind")
+    return tuple(
+        field for field in REVISED_FIELDS if field in pairs and pairs[field][0] != pairs[field][1]
+    )
+
+
+def revised_draft(
+    record: ProposalRecord, draft: IssueProposal | UpdateProposal
+) -> IssueProposal | UpdateProposal:
+    """``draft`` as a revision stores it: the repo, topic, kind and issue stay the
+    proposal's own, and the sources build on the old ones."""
+    old = record.proposal
+    sources = list(old.sources)
+    for ref in draft.sources:
+        if ref not in sources:
+            sources.append(ref)
+    keep: dict[str, object] = {
+        "repo": old.repo,
+        "topic_id": old.topic_id,
+        "sources": sources,
+    }
+    if isinstance(old, IssueProposal):
+        keep["repo_visibility"] = old.repo_visibility
+    if isinstance(old, UpdateProposal):
+        keep["issue_number"] = old.issue_number
+    return draft.model_copy(update=keep)
+
+
+def check_revision(
+    record: ProposalRecord,
+    draft: IssueProposal | UpdateProposal,
+    *,
+    base_revision: int,
+    added_by: Collection[str],
+    revisions: int,
+) -> tuple[RevisedField, ...]:
+    """Raise unless ``draft`` may revise ``record``; return the fields it changes."""
+    for user in added_by:
+        check_id(user, "Slack user id")
+    if record.state is not ProposalState.PENDING or record.draft_cleared_at is not None:
+        error = TransitionError(record.id, record.state, record.state)
+        error.args = (f"proposal {record.id} is {record.state}, so it can't be revised",)
+        raise error
+    if record.revision != base_revision:
+        raise StaleRevisionError(record)
+    if draft.kind != record.proposal.kind:
+        raise ValueError("a revision keeps the proposal's kind")
+    if revisions >= MAX_REVISIONS:
+        raise ValueError(f"proposal {record.id} was revised {MAX_REVISIONS} times already")
+    changed = revision_changes(record.proposal, revised_draft(record, draft))
+    if not changed:
+        raise ValueError("the revision changes nothing the card shows")
+    return changed
+
+
 def check_notice(channel_id: str, user_id: str, kind: str) -> None:
     check_id(channel_id, "channel id")
     if kind not in ("guide", "tip", "nudge"):
@@ -727,6 +848,39 @@ class Store(Protocol):
 
     async def proposal_edits(self, proposal_id: str) -> list[ProposalEdit]:
         """The edits made to a proposal from its card, oldest first."""
+        ...
+
+    async def revise_proposal(
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        *,
+        run_id: str,
+        base_revision: int,
+        added_by: Collection[str],
+    ) -> ProposalRecord:
+        """Replace a pending draft with a drafting run's revision from new messages (#304).
+
+        Only while the proposal is pending and still at ``base_revision``, so a
+        person's card edit, an approval, or another run's revision that landed
+        after the run read it is never overwritten: :class:`StaleRevisionError`
+        carries the current record. Keeps the repo, topic and issue; merges the
+        sources and adds ``added_by`` to the participants. Raises the revision, so
+        the card is redrawn and an old card's hash no longer approves.
+        """
+        ...
+
+    async def proposal_revisions(self, proposal_id: str) -> list[ProposalRevision]:
+        """A proposal's revisions from new messages, oldest first."""
+        ...
+
+    async def mark_follow_up_due(self, proposal_id: str) -> None:
+        """A revision lost a race to an approval or a rejection: draft the thread
+        again once the proposal is applied or rejected (#304)."""
+        ...
+
+    async def take_follow_up_due(self, proposal_id: str) -> bool:
+        """Whether a follow-up was due, clearing it, so only one caller arms the thread."""
         ...
 
     async def set_card_ts(self, proposal_id: str, ts: str) -> ProposalRecord:
