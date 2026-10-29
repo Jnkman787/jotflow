@@ -167,9 +167,9 @@ thread calls for, in the same short headed sections when there is a lot.
   are not people.
 - Assign only a `github_login` in `people` or `owner_hints`, with one
   `assignee_reasons` entry each: `volunteered` ("add me"; their message is
-  `source_ts`), `named_owner` (a message @-mentions them),
-  or `owner_hint`. A mention alone never makes someone an assignee. If
-  unsure, assign nobody.
+  `source_ts`), `named_owner` (a message @-mentions them as the owner), or
+  `owner_hint` (only when the idea plainly falls to that repo). A mention
+  alone never makes someone an assignee. If unsure, assign nobody.
 
 ## 8. Ask
 
@@ -177,9 +177,8 @@ Use `ask_channel` for one short, neutral question in the thread:
 
 - When you are unsure which topic or repo something belongs to, or whether it
   duplicates an issue: confidence below 0.6. Ask instead of proposing.
-- When the proposal is clear but who should own it is unclear and matters,
-  for example people were mentioned but nobody took it: propose, then ask once
-  who should own it.
+- When the proposal is clear but who should own it is unclear and matters:
+  propose, then ask once who should own it.
 
 If someone was mentioned with `@name` and nobody said they will take the
 work, do ask who should own it. If nobody was mentioned at all, do not ask

@@ -26,6 +26,7 @@ from tests.test_write_tools import (
     Poster,
     issue,
     new_topic,
+    update,
 )
 
 POLICY = parse_policy(
@@ -286,6 +287,34 @@ async def test_someone_nominated_needs_a_verified_link(
     record = await store.get_proposal(result.proposal_id)
     assert record is not None and record.proposal.assignees == []
     assert record.proposal.assignee_reasons == []
+
+
+def owner_update(topic_id: str, **changes: Any) -> Any:
+    reason = {"login": "acme-alice", "why": "named_owner", "source_ts": ROOT}
+    return update(
+        topic_id,
+        changes={"add_assignees": ["acme-alice"], "assignee_reasons": [reason], **changes},
+        sources=[{"channel_id": CH, "ts": ROOT}],
+    )
+
+
+async def test_an_update_left_with_nothing_to_change_is_refused(
+    tools: WriteTools, store: Any
+) -> None:
+    """ "Make Alice the owner" on a filed issue, with Alice's link unverified (#325 review)."""
+    await store.link_identity("U0ALICE", "acme-alice")  # back to self-declared
+    topic_id = await new_topic(tools)
+    await store.set_topic_issue(topic_id, "acme-co/web", 42)
+    with pytest.raises(ToolError, match=r"nothing is left to update: acme-alice can't be assigned"):
+        await tools.propose_update(DRAFT, owner_update(topic_id))
+    assert await store.thread_proposals(CH, ROOT) == []
+    # With another change, the update goes ahead without them.
+    result: Any = await tools.propose_update(
+        DRAFT, owner_update(topic_id, comment="Alice owns it.")
+    )
+    assert result.left_off_assignees == ["acme-alice"]
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.changes.add_assignees == []
 
 
 async def test_a_volunteer_needs_no_verified_link(tools: WriteTools, store: Any) -> None:

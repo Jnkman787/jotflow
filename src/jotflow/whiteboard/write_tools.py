@@ -923,6 +923,12 @@ class WriteTools:
             changes = args.changes.model_copy(
                 update={"add_labels": labels, "add_assignees": added, "assignee_reasons": reasons}
             )
+            if left and _changes_nothing(changes):
+                # Leaving every nominee off left nothing to approve (#325 review).
+                raise ToolError(
+                    f"nothing is left to update: {', '.join(left)} can't be assigned without "
+                    "a verified or admin link. Ask in the thread who should own it instead"
+                )
             related, dropped = self._related(grant, args.related, own=(repo, args.issue_number))
             draft = UpdateProposal.model_validate(
                 {
@@ -1270,6 +1276,17 @@ def _unreasoned(assignees: Sequence[str], reasons: Sequence[AssigneeReason]) -> 
     """A draft's assignees with no reason: those from before reasons existed (#305)."""
     given = {reason.login.casefold() for reason in reasons}
     return [login for login in assignees if login.casefold() not in given]
+
+
+def _changes_nothing(changes: IssueChanges) -> bool:
+    return (
+        changes.body is None
+        and changes.comment is None
+        and not changes.add_labels
+        and not changes.remove_labels
+        and not changes.add_assignees
+        and not changes.remove_assignees
+    )
 
 
 def _without(
