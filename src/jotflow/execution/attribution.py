@@ -55,14 +55,19 @@ async def _authors_of(attribution: Attribution, refs: Sequence[MessageRef]) -> l
     return found
 
 
-def _cutoff(record: ProposalRecord) -> float:
-    """The latest message time a proposal credits: when it was drafted (#307 review).
+async def _cutoff(record: ProposalRecord, store: Store) -> float:
+    """The latest message time a proposal credits: when it was drafted (#307 review),
+    or when it was last revised, so a revision's new authors are credited (#304).
 
     The card computes the credited names the same way, so the names filed are
-    names an approver saw. A message added later reaches the issue through an
-    update, which credits it then.
+    names an approver saw. A message added after that reaches the issue through
+    an update, or a revision, which credits it then.
     """
-    return record.created_at.timestamp()
+    revisions = await store.proposal_revisions(record.id)
+    latest = record.created_at
+    if revisions and revisions[-1].revised_at > latest:
+        latest = revisions[-1].revised_at
+    return latest.timestamp()
 
 
 async def _contributed(record: ProposalRecord, store: Store | None) -> list[MessageRef]:
@@ -83,7 +88,7 @@ async def _contributed(record: ProposalRecord, store: Store | None) -> list[Mess
             if link is not None and link.topic_id is not None:
                 topics.add(link.topic_id)
     seen = {ref.ts for ref in refs}
-    latest = _cutoff(record)
+    latest = await _cutoff(record, store)
     extra: list[MessageRef] = []
     for topic_id in sorted(topics):
         found = await store.get_topic(topic_id)

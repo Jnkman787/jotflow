@@ -52,6 +52,7 @@ TOKEN_TABLE: dict[RunKind, set[str]] = {
         "get_topic",
         "propose_issue",
         "propose_update",
+        "revise_proposal",
         "link_message",
         "ask_channel",
     },

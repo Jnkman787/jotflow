@@ -660,6 +660,7 @@ def test_the_write_tools_register_with_their_kinds(store: MemoryStore) -> None:
     assert kinds == {
         "propose_issue": {RunKind.DRAFTING},
         "propose_update": {RunKind.DRAFTING},
+        "revise_proposal": {RunKind.DRAFTING},
         "link_message": {RunKind.DRAFTING},
         "ask_channel": {RunKind.DRAFTING},
         "answer": {RunKind.QUESTION},
@@ -739,7 +740,13 @@ async def test_over_the_wire_a_refusal_is_a_tool_result_and_kinds_list_their_too
             Authorization=f"Bearer {drafting}",
         )
     names = {tool["name"] for tool in listed.json()["result"]["tools"]}
-    assert names == {"propose_issue", "propose_update", "link_message", "ask_channel"}
+    assert names == {
+        "propose_issue",
+        "propose_update",
+        "revise_proposal",
+        "link_message",
+        "ask_channel",
+    }
     assert [t["name"] for t in exec_listed.json()["result"]["tools"]] == ["record_result"]
     result = refused.json()["result"]
     assert result["isError"] is True

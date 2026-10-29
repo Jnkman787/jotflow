@@ -405,6 +405,8 @@ class Orchestrator:
             CardPublisher(self._store, self._card_poster or SlackCardPoster(self._client)),
             people,
             repos=self.repos,
+            # A revision that lost a race drafts its thread again once settled (#304).
+            arm_thread=self._arm_thread,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode)
@@ -485,12 +487,13 @@ class Orchestrator:
         # Repo docs for drafting (#209): no tools at all unless a repo sets read_paths.
         # The runner client is made below, so the tools look it up when called.
         doc_reads = DocReads(self._store)
+        attribution = SlackAttribution(slack_people, people.name)
         tools = (
             *read_tools(
                 self._store,
                 self._policy,
                 source,
-                attribution=SlackAttribution(slack_people, people.name),
+                attribution=attribution,
                 repos=self.repos,
                 issues=self._issue_reader,
                 boards_off=self.boards_off,
@@ -502,6 +505,8 @@ class Orchestrator:
                 repos=self.repos,
                 docs=doc_reads,
                 boards_off=self.boards_off,
+                # Who wrote a revision's new messages, as approval reads them (#304).
+                authors=attribution.authors,
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )

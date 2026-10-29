@@ -1,0 +1,138 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "follow-up-unclear",
+  "description": "Two export topics are filed: CSV export of the dashboard table, and PDF export of reports. Carol posts that the export should keep the column order, which could continue either. The run asks which one it means instead of proposing.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [
+    {
+      "id": "topic-csv-export",
+      "channel_id": "C0EXAMPLE1",
+      "title": "Export the dashboard table as CSV",
+      "repo": "acme-co/web",
+      "issue_number": 42,
+      "messages": [
+        {
+          "channel_id": "C0EXAMPLE1",
+          "ts": "1792224000.000100"
+        }
+      ]
+    },
+    {
+      "id": "topic-pdf-export",
+      "channel_id": "C0EXAMPLE1",
+      "title": "Export reports as PDF",
+      "repo": "acme-co/web",
+      "issue_number": 57,
+      "messages": [
+        {
+          "channel_id": "C0EXAMPLE1",
+          "ts": "1792224600.000100"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792332000.000100",
+      "user": "U0CAROL",
+      "text": "The export should keep the column order people set."
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792332000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792332000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.4
+          },
+          "topic_key": "export-order",
+          "title": "Keep the column order on export"
+        },
+        {
+          "tool": "ask_channel",
+          "arguments": {
+            "text": "Is this about the CSV export (web#42) or the PDF export (web#57)?"
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "No proposal: the post could continue either filed topic, so the run asks which.",
+    "accepted": [
+      "1792332000.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:export-order",
+        "messages": [
+          "1792332000.000100"
+        ]
+      }
+    ],
+    "asks": [
+      "1792332000.000100"
+    ]
+  }
+}
