@@ -28,7 +28,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Fixed
 
-- **A bot mention is no longer only a question (#329).** "@JotFlow add the date range to the ticket" in a filed issue's thread was answered as a question, and the request was dropped, even with questions off. Now a mention is read by drafting with the rest of the thread, so a request becomes a follow-up card to approve, and the question run still answers what it asks without saying a change is done. With questions off or limited, the private note says the message is still read. `ask:` is unchanged: it's only ever a question.
+- **A bot mention is no longer only a question (#329).** "@JotFlow add the date range to the ticket" in a filed issue's thread was answered as a question, and the request was dropped, even with questions off. Now a mention is read by drafting with the rest of the thread, so a request becomes a follow-up card to approve, and the question run still answers what it asks without saying a change is done. With questions off or limited, the private note says the message is still read. `ask:` is unchanged: it's only ever a question. A question run's answer that says it changed, filed or assigned something is refused, since it can't. Every mention now also starts the thread's drafting wait, so a channel that mostly asks the bot questions sees more drafting runs, at most one per thread per quiet window.
 
 ### Security
 

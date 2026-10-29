@@ -1430,3 +1430,20 @@ async def test_a_runner_group_is_checked_when_only_one_of_its_kinds_is_on() -> N
     assert "starts preset claude-code" in wrong.off[-1]
     right = await check_runners(Client(), only_questions, "claude-code", attempts=1)  # type: ignore[arg-type]
     assert right.on == {RunKind.QUESTION}
+
+
+async def test_a_burst_of_mentions_starts_one_question_run_and_one_drafting_wait() -> None:
+    # #329, security: three quick mentions in one thread can't double the run rate.
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        for i, ts in enumerate(("1760781700.000100", "1760781710.000100", "1760781720.000100")):
+            await _deliver(app, _reply(ts, f"<@U0BOT> and this {i}?"), f"Ev{i}")
+    finally:
+        await rig.orchestrator.stop()
+    runs = await rig.store.thread_runs(CH, THREAD)
+    assert [r.kind for r in runs] == [RunKind.QUESTION]
+    assert [(p.channel_id, p.thread_ts) for p in await rig.store.pending_threads()] == [
+        (CH, THREAD)
+    ]

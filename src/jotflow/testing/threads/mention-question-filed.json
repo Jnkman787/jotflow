@@ -216,7 +216,13 @@
       {
         "thread": "1792331000.000100",
         "text": "Answer from the agent: The CSV export is tracked in acme-co/web#42, which is still open.",
-        "removed": 0
+        "removed": 0,
+        "excludes": [
+          "card",
+          "approve",
+          "filed",
+          "created"
+        ]
       }
     ]
   }

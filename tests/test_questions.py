@@ -440,3 +440,32 @@ async def test_only_an_ask_is_set_aside_from_drafting() -> None:
     assert asked is not None and asked.chatter
     mention = await store.get_message(CH, "1.2")
     assert mention is None or not mention.chatter
+
+
+async def test_an_answer_that_claims_a_change_is_refused_and_doesnt_count(
+    tools: tuple[WriteTools, LiveStore, Poster],
+) -> None:
+    # #329: a question run changes nothing, so a prompt-injected "done" never posts.
+    from jotflow.whiteboard.write_tools import CLAIMS_A_CHANGE
+
+    write, _, poster = tools
+    for claim in ("Done, I've added the date range to acme-co/web#42.", "We filed it."):
+        with pytest.raises(ToolError, match="can't say a change was made"):
+            await write.answer(QUESTION, AnswerArgs(text=claim))
+    assert poster.plain == []
+    # Refused before it counts: the run can still answer the question.
+    await write.answer(QUESTION, AnswerArgs(text="acme-co/web#42 was created last week."))
+    assert len(poster.plain) == 1
+    assert "card" in CLAIMS_A_CHANGE
+
+
+async def test_three_quick_mentions_in_one_thread_start_one_question_run() -> None:
+    # #329, security: a mention now also reaches drafting, so #57's limits must hold.
+    from jotflow.orchestrator.questions import TOO_SOON
+
+    questions, store, slack, _ = handler()
+    for ts in ("1.1", "1.2", "1.3"):
+        await questions.on_message(event(f"<@{BOT}> and this?", ts=ts, thread_ts="1.0"))
+    runs = await store.thread_runs(CH, "1.0")
+    assert [r.kind for r in runs] == [RunKind.QUESTION]
+    assert slack.whispers[0][3].startswith(TOO_SOON)

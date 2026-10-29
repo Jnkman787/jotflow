@@ -169,6 +169,11 @@ class AnswerCall(_Strict):
 
     tool: Literal["answer"]
     arguments: Answer
+    expect_error: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Part of the refusal this answer must get, such as a claimed change (#329)",
+    )
 
 
 class RepoDocArguments(_Strict):
@@ -824,7 +829,9 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
             elif isinstance(call, AskChannelCall):
                 outcome.asks.append(run.thread_ts)
             elif isinstance(call, AnswerCall):
-                outcome.answers.append(run.thread_ts)
+                # A refused answer, such as one claiming a change, posts nothing (#329).
+                if call.expect_error is None:
+                    outcome.answers.append(run.thread_ts)
             elif isinstance(call, ReviseProposalCall):
                 topic = call.arguments.topic_id
                 outcome.revisions[topic] = outcome.revisions.get(topic, 0) + 1
