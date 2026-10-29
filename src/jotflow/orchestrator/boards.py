@@ -7,7 +7,10 @@ only if, at that moment:
 
 - it is still in the channel's ``boards`` in jotflow.toml;
 - it was in the approved draft, so in the hash a person locked;
-- the issue is the one ``record_result`` recorded, in the approved repo.
+- the issue is the one ``record_result`` recorded, in the approved repo;
+- and the runner finds the proposal's marker line in that issue's body, so an
+  execution agent can't record another issue in the repo and get it boarded.
+  A missing marker is a fixed refusal, never retried, and named in the notice.
 
 Each attempt is recorded in the tool-call ledger, so a restart neither adds a
 board twice nor forgets a failure. A board that keeps failing is named in the
@@ -26,6 +29,7 @@ from datetime import datetime
 from typing import Protocol
 
 from jotflow.models import IssueProposal, ProposalRecord, ProposalState
+from jotflow.orchestrator.launch import NotThisProposal
 from jotflow.policy import Policy, UnknownChannelError
 from jotflow.store.base import Store, ToolCallRecord, utc_now
 
@@ -39,7 +43,9 @@ _ISSUE_URL = re.compile(r"https://github\.com/(?P<repo>[^/]+/[^/]+)/issues/(?P<n
 class BoardClient(Protocol):
     """The execution runner's board call. Tests use a fake."""
 
-    async def add_to_board(self, repo: str, issue_number: int, board: str) -> None: ...
+    async def add_to_board(
+        self, repo: str, issue_number: int, board: str, proposal_id: str
+    ) -> None: ...
 
 
 @dataclass
@@ -48,6 +54,7 @@ class BoardResults:
 
     added: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    refused: list[str] = field(default_factory=list)  # the issue isn't the proposal's
     retry: bool = False  # a board may still succeed on a later try
 
     def notice(self) -> str:
@@ -57,6 +64,12 @@ class BoardResults:
             parts.append("Added to " + ", ".join(self.added) + ".")
         if self.failed:
             parts.append("Couldn't add it to " + ", ".join(self.failed) + "; add it by hand.")
+        if self.refused:
+            parts.append(
+                "Didn't add it to "
+                + ", ".join(self.refused)
+                + ": the recorded issue doesn't carry this proposal's marker."
+            )
         return " ".join(parts)
 
 
@@ -99,12 +112,15 @@ class BoardAdder:
                 results.added.append(name)
             elif outcome == "failed":
                 results.failed.append(name)
+            elif outcome == "refused":
+                results.refused.append(name)
             else:
                 results.retry = True
         return results
 
     async def _add(self, record: ProposalRecord, issue: tuple[str, int], board: str) -> str:
-        """``added``, ``failed`` after the last attempt, or ``again`` to retry later."""
+        """``added``, ``failed`` after the last attempt, ``refused`` when the issue
+        isn't the proposal's, or ``again`` to retry later."""
         run_id = f"boards:{record.id}"
         attempts = 0
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -112,14 +128,25 @@ class BoardAdder:
             if found is None:
                 break
             attempts = attempt
-            if json.loads(found).get("added"):
+            recorded = json.loads(found)
+            if recorded.get("added"):
                 return "added"
+            if recorded.get("refused"):
+                return "refused"
         if attempts >= MAX_ATTEMPTS:
             return "failed"
         repo, number = issue
         try:
-            await self._client.add_to_board(repo, number, board)
-            added = True
+            await self._client.add_to_board(repo, number, board, record.id)
+            added, refused = True, False
+        except NotThisProposal:
+            log.warning(
+                "proposal %s: its recorded issue lacks the proposal's marker, so it isn't "
+                "added to board %s",
+                record.id,
+                board,
+            )
+            added, refused = False, True
         except Exception as exc:
             log.warning(
                 "proposal %s: could not add its issue to board %s (%s)",
@@ -127,7 +154,7 @@ class BoardAdder:
                 board,
                 type(exc).__name__,
             )
-            added = False
+            added, refused = False, False
         await self._store.record_tool_call(
             ToolCallRecord(
                 run_id=run_id,
@@ -135,12 +162,14 @@ class BoardAdder:
                 args_hash=f"{board}#{attempts + 1}",
                 channel_id=record.channel_id,
                 thread_ts=record.thread_ts,
-                result_json=json.dumps({"added": added}),
+                result_json=json.dumps({"added": added, "refused": refused}),
                 called_at=self._clock(),
             )
         )
         if added:
             return "added"
+        if refused:
+            return "refused"
         return "failed" if attempts + 1 >= MAX_ATTEMPTS else "again"
 
 

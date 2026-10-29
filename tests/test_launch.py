@@ -850,3 +850,22 @@ async def test_a_refused_execution_is_retried_with_a_delay_then_fails_with_one_n
     gave_up = [p for p in rig.poster.posts if p[2] == GAVE_UP_NOTICE.format(attempts=3)]
     assert gave_up == [(CH, THREAD, GAVE_UP_NOTICE.format(attempts=3))]
     await rig.client.aclose()
+
+
+async def test_a_board_add_names_the_proposal_and_a_marker_refusal_is_its_own() -> None:
+    from jotflow.orchestrator.launch import NotThisProposal
+
+    recorder = Recorder(200, {"item_id": "PVTI_item1"})
+    client = recording_client(recorder)
+    await client.add_to_board("acme-co/web", 42, "acme-co/3", "p1")
+    [sent] = recorder.requests
+    assert sent.url.path == "/boards/add"
+    assert json.loads(sent.content) == {
+        "repo": "acme-co/web",
+        "issue_number": 42,
+        "board": "acme-co/3",
+        "proposal_id": "p1",
+    }
+    refused = recording_client(Recorder(422, {"error": "the issue isn't this proposal's"}))
+    with pytest.raises(NotThisProposal, match="isn't this proposal's"):
+        await refused.add_to_board("acme-co/web", 5, "acme-co/3", "p1")

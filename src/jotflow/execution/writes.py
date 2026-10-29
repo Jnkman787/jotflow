@@ -38,8 +38,10 @@ def marker(proposal_id: str) -> str:
     return f"<!-- {MARKER_PREFIX}{proposal_id} -->"
 
 
+# A proposal id, as a marker may carry it.
+PROPOSAL_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # A whole line that is one of JotFlow's markers, as an issue body carries it.
-_MARKER_LINE = re.compile(r"^<!-- jotflow:proposal:[A-Za-z0-9_-]{1,64} -->$", re.MULTILINE)
+_MARKER_LINE = re.compile(rf"^<!-- jotflow:proposal:{PROPOSAL_ID.pattern} -->$", re.MULTILINE)
 
 
 def with_kept_markers(planned: str, current: str) -> str:
