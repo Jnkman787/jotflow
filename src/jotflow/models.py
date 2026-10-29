@@ -692,11 +692,26 @@ class Account(BaseModel):
     id: int | None = Field(default=None, ge=1, le=2**53)
     login: str | None = Field(default=None, max_length=39)
 
+    @model_validator(mode="after")
+    def _shape(self) -> Account:
+        found = self.id is not None and self.login is not None
+        if self.account == "missing" and (self.id is not None or self.login is not None):
+            raise ValueError("a missing account has no id or login")
+        if self.account != "missing" and not found:
+            raise ValueError("an account has both an id and a login")
+        return self
+
 
 class Assignable(Account):
     """An account, and whether it can be assigned issues in one repo."""
 
     assignable: bool = False
+
+    @model_validator(mode="after")
+    def _only_a_user(self) -> Assignable:
+        if self.assignable and self.account != "user":
+            raise ValueError("only a user can be assigned")
+        return self
 
 
 class Membership(BaseModel):

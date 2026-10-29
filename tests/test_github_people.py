@@ -239,3 +239,28 @@ async def test_bad_names_are_never_sent() -> None:
         with pytest.raises(RunnerError):
             await call
     assert seen == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"account": "missing", "id": 5},
+        {"account": "missing", "login": "octo-example"},
+        {"account": "user", "id": 5},
+        {"account": "organization", "login": "acme-co"},
+    ],
+)
+def test_an_account_has_both_id_and_login_or_neither(body: dict[str, Any]) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Account.model_validate(body)
+
+
+def test_only_a_user_can_be_assignable() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Assignable(account="organization", id=1, login="acme-co", assignable=True)
+    with pytest.raises(ValidationError):
+        Assignable(account="missing", assignable=True)
