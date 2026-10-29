@@ -471,7 +471,6 @@ async def test_three_quick_mentions_in_one_thread_start_one_question_run() -> No
     assert slack.whispers[0][3].startswith(TOO_SOON)
 
 
-
 def test_a_claim_split_by_an_invisible_character_is_still_refused() -> None:
     # #341 review: zero-width or full-width characters can't hide "I've filed it".
     from jotflow.whiteboard.write_tools import claims_a_change
