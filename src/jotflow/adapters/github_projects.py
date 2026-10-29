@@ -8,8 +8,10 @@ to add it to each approved board, and these three constant GraphQL queries do
 it with the write token:
 
 - :data:`ISSUE_ID`: the issue's node id and body, from its repo and number.
-  The body must carry this proposal's marker line, so an execution agent can't
-  report another issue in the approved repo and get that one boarded
+  The body must carry this proposal's marker line, and the issue's author must
+  be the token's own login, read in the same query as ``viewer``, so an
+  execution agent can't report another issue in the approved repo and get that
+  one boarded
 - :data:`BOARD_ID`: an organisation board's node id, and whether the token may
   update it
 - :data:`ADD_ITEM`: ``addProjectV2ItemById``, which returns the item that is
@@ -45,7 +47,9 @@ MAX_ISSUE_BYTES = 512 * 1024
 # Constant queries: only the variables below ever change.
 ISSUE_ID = (
     "query($owner: String!, $name: String!, $number: Int!) {"
-    " repository(owner: $owner, name: $name) { issue(number: $number) { id body } } }"
+    " viewer { login }"
+    " repository(owner: $owner, name: $name) {"
+    " issue(number: $number) { id body author { login } } } }"
 )
 BOARD_ID = (
     "query($owner: String!, $number: Int!) {"
@@ -66,8 +70,13 @@ class _Node(_Strict):
     id: str = Field(min_length=1, max_length=200)
 
 
+class _Login(_Strict):
+    login: str = Field(min_length=1, max_length=100)
+
+
 class _Issue(_Node):
     body: str
+    author: _Login | None  # null for a deleted account: never the write token's
 
 
 class _IssueHolder(_Strict):
@@ -75,6 +84,7 @@ class _IssueHolder(_Strict):
 
 
 class _IssueData(_Strict):
+    viewer: _Login
     repository: _IssueHolder
 
 
@@ -84,6 +94,14 @@ class _Board(_Node):
 
 class _BoardHolder(_Strict):
     projectV2: _Board
+
+
+class _MaybeBoardHolder(_Strict):
+    projectV2: _Board | None
+
+
+class _MaybeBoardData(_Strict):
+    organization: _MaybeBoardHolder | None
 
 
 class _BoardData(_Strict):
@@ -103,12 +121,20 @@ class _AddData(_Strict):
     addProjectV2ItemById: _Added
 
 
+# GraphQL error types that answer the question: the token can't see it.
+_DENIED = frozenset({"NOT_FOUND", "FORBIDDEN"})
+
+
+class Denied(GithubError):
+    """GitHub answered that the token can't see what was asked for: a real no."""
+
+
 class NotThisProposals(GithubError):
     """The issue doesn't carry the proposal's marker line, so it isn't the one
     the approved proposal produced. Fixed: trying again won't change it."""
 
-    def __init__(self) -> None:
-        super().__init__("the issue doesn't carry this proposal's marker")
+    def __init__(self, reason: str = "the issue doesn't carry this proposal's marker") -> None:
+        super().__init__(reason)
 
 
 def carries_marker(body: str, proposal_id: str) -> bool:
@@ -157,7 +183,11 @@ async def _ask(
         raise GithubError("GitHub's answer was not JSON") from None
     if not isinstance(answer, dict):
         raise GithubError("GitHub's answer was not an object")
-    if answer.get("errors"):
+    if errors := answer.get("errors"):
+        if isinstance(errors, list) and all(
+            isinstance(e, dict) and e.get("type") in _DENIED for e in errors
+        ):
+            raise Denied("GitHub answered that the token can't see it")
         raise GithubError("GitHub answered with errors")
     try:
         return model.model_validate(answer.get("data"))
@@ -171,17 +201,20 @@ async def board_access(
     """Whether ``token`` may update the organisation board ``owner``'s ``number``.
 
     Seeing a board isn't enough: the add needs to change it. A board the token
-    can't see comes back as a null node, which is a no.
+    can't see comes back as a null node, or as a not-found or forbidden error,
+    which is a no. Anything else, such as a GitHub outage or an odd answer, is
+    no answer at all: it raises :class:`GithubError`, or :class:`RateLimited`,
+    so a passing failure never reads as a missing permission (#311 review).
     """
     _check_owner(owner)
     _check_number(number)
     try:
-        data: _BoardData = await _ask(
-            http, token, BOARD_ID, {"owner": owner, "number": number}, _BoardData, url=url
+        data: _MaybeBoardData = await _ask(
+            http, token, BOARD_ID, {"owner": owner, "number": number}, _MaybeBoardData, url=url
         )
-    except RateLimited:
-        raise
-    except GithubError:
+    except Denied:
+        return False
+    if data.organization is None or data.organization.projectV2 is None:
         return False
     return data.organization.projectV2.viewerCanUpdate
 
@@ -225,8 +258,15 @@ async def add_issue(
         url=url,
         max_bytes=MAX_ISSUE_BYTES,
     )
-    if not carries_marker(issue.repository.issue.body, proposal_id):
+    found_issue = issue.repository.issue
+    if not carries_marker(found_issue.body, proposal_id):
         raise NotThisProposals
+    # The marker shows the body names this proposal, not who wrote it: anyone who
+    # may edit an issue in the repo could paste it. Only the write token files
+    # JotFlow's issues (#256's rule, #311 review).
+    author = found_issue.author.login if found_issue.author else None
+    if author is None or author.casefold() != issue.viewer.login.casefold():
+        raise NotThisProposals("the issue wasn't filed by the write token")
     found: _BoardData = await _ask(
         http, token, BOARD_ID, {"owner": board_owner, "number": number}, _BoardData, url=url
     )

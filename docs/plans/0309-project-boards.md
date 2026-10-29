@@ -6,7 +6,7 @@
 - Draft PR: #311
 - Status: plan approved by the lead and security (2026-10-29), with security's five conditions below. Code is next, configured boards first
 - Last verified: origin/main b3afbf3, 2026-10-29, with github-mcp-server 2.0.2's projects tools listed offline from the pinned binary
-- Next safe action: review PR 1 (#311). Then PR 1b, the card's board edit with migration 19, once #310 (migration 16) merges. Then PR 2, discovery
+- Next safe action: PR 1 (#311), the marker check (#320) and the plan fix (#319) are merged, and the startup-check fix with the author check is #323. Next is PR 1b, the card's board edit with migration 19, once product's migrations 17 (#305) and 18 (#308) land. Then PR 2, discovery
 
 ## Objective and done-when
 
@@ -95,7 +95,7 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 
 - **Classic tokens** need the `project` scope.
 - **Fine-grained tokens:** the write token needs **Projects: Read and write** on the organisation, an organisation permission that reaches every board of the org. The read token needs **Projects: Read-only** for discovery. Whether fine-grained tokens can reach user-owned boards at all is to be checked (decision 4).
-- **Checking:** `jotflow check` can't reach GitHub, so the execution runner gains `GET /boards/{owner}/{number}/access`, a boolean. It asks whether the write token can **update** the board, from the board's `viewerCanUpdate`, not only whether it can see it, as the lead asked. It's a pre-check: the add's own failure handling is the real check. JotFlow asks it at startup and when the allowlist changes. A board the write token can't reach is reported in the log and by `jotflow check` when it can reach the runners, and that board is turned off.
+- **Checking:** `jotflow check` can't reach GitHub, so the execution runner gains `GET /boards/{owner}/{number}/access`, a boolean. It asks whether the write token can **update** the board, from the board's `viewerCanUpdate`, not only whether it can see it, as the lead asked. It's a pre-check: the add's own failure handling is the real check. JotFlow asks it at startup and when the allowlist changes. A board the write token can't reach is reported in the log and by `jotflow check` when it can reach the runners, and that board is turned off. Only a real no turns it off; a check GitHub couldn't answer leaves it on (the reviewer's #311 nit, 2026-10-29).
 
 ### 6. Threat model
 
