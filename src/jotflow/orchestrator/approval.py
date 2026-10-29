@@ -48,6 +48,7 @@ from jotflow.store.base import (
     ContentChangedError,
     DraftClearedError,
     DuplicateRefusedError,
+    NotLikelyDuplicateError,
     Store,
     TransitionError,
 )
@@ -541,6 +542,9 @@ class ApprovalHandler:
             raise Refused(STALE_SAME_AS) from None
         except DraftClearedError:
             raise Refused(DISCARDED) from None
+        except NotLikelyDuplicateError as refused:
+            await self._show(record)  # an old card's button: redraw it without one
+            raise Refused(str(refused)) from None
         except DuplicateRefusedError as refused:
             raise Refused(str(refused)) from None
         log.info("proposal %s marked a duplicate by user %s", record.id, click.user_id)
