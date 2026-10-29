@@ -250,6 +250,8 @@ def _assignee_note(context: CardContext, login: str) -> str:
     link = context.login_link(login)
     if link is not None and link.verified:
         return ""
+    if link is not None and link.linked_by == "admin":
+        return " (linked by an admin)"  # #305
     return " (unverified)" if link is not None else " (not linked to anyone in Slack)"
 
 

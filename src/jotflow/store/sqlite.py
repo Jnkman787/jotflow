@@ -45,6 +45,7 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    OPERATOR_REMOVER,
     REVISED_FIELDS,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -881,6 +882,7 @@ class SqliteStore:
             from_text(row["linked_at"]),
             from_text(row["verified_at"]) if row["verified_at"] else None,
             row["github_id"],
+            "admin" if row["linked_by"] == "admin" else "self",
         )
 
     async def link_identity(self, slack_user_id: str, github_login: str) -> IdentityLink:
@@ -903,7 +905,8 @@ class SqliteStore:
                     verified = 0,
                     verified_at = NULL,
                     github_id = NULL,
-                    linked_at = excluded.linked_at
+                    linked_at = excluded.linked_at,
+                    linked_by = 'self'
                 """,
                 (slack_user_id, github_login, to_text(self._clock())),
             )
@@ -1050,9 +1053,76 @@ class SqliteStore:
                     verified = 1,
                     linked_at = excluded.linked_at,
                     verified_at = excluded.verified_at,
-                    github_id = excluded.github_id
+                    github_id = excluded.github_id,
+                    linked_by = 'self'
                 """,
                 (slack_user_id, github_login, now, now, github_id),
+            )
+            row = await self._one(
+                "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return Verified(self._identity(_found(row)), displaced)
+
+    async def fill_github_id(self, slack_user_id: str, github_id: int) -> IdentityLink | None:
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        async with self._write():
+            await self._db.execute(
+                "UPDATE identity_links SET github_id = ? WHERE slack_user_id = ?"
+                " AND github_id IS NULL",
+                (github_id, slack_user_id),
+            )
+            row = await self._one(
+                "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
+            )
+        return None if row is None else self._identity(row)
+
+    async def admin_link(
+        self, slack_user_id: str, github_login: str, github_id: int, *, replace: bool = False
+    ) -> Verified:
+        check_id(slack_user_id, "Slack user id")
+        check_github_login(github_login)
+        if type(github_id) is not int or github_id < 1:
+            raise ValueError("a GitHub account id is a positive whole number")
+        now = to_text(self._clock())
+        async with self._write():
+            other = await self._one(
+                "SELECT slack_user_id FROM identity_links WHERE github_login = ?"
+                " AND slack_user_id != ?",
+                (github_login, slack_user_id),
+            )
+            displaced = None if other is None else str(other["slack_user_id"])
+            if displaced is not None:
+                if not replace:
+                    raise ConflictError(f"GitHub login {github_login} is already linked")
+                for table in ("identity_codes", "identity_links"):
+                    await self._db.execute(
+                        f"DELETE FROM {table} WHERE slack_user_id = ?",
+                        (displaced,),
+                    )
+                await self._db.execute(
+                    "INSERT INTO identity_unlinks (id, slack_user_id, removed_by, removed_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (secrets.token_hex(8), displaced, OPERATOR_REMOVER, now),
+                )
+            await self._db.execute(
+                "DELETE FROM identity_codes WHERE slack_user_id = ?", (slack_user_id,)
+            )
+            await self._db.execute(
+                """
+                INSERT INTO identity_links
+                    (slack_user_id, github_login, verified, linked_at, verified_at,
+                     github_id, linked_by)
+                VALUES (?, ?, 0, ?, NULL, ?, 'admin')
+                ON CONFLICT (slack_user_id) DO UPDATE SET
+                    github_login = excluded.github_login,
+                    verified = 0,
+                    linked_at = excluded.linked_at,
+                    verified_at = NULL,
+                    github_id = excluded.github_id,
+                    linked_by = 'admin'
+                """,
+                (slack_user_id, github_login, now, github_id),
             )
             row = await self._one(
                 "SELECT * FROM identity_links WHERE slack_user_id = ?", (slack_user_id,)
