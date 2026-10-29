@@ -318,11 +318,14 @@ def issue_notes(policy: Policy) -> list[str]:
             if repo.title_pattern
         }
     )
-    if prefix and patterned:
-        notes.append(
-            f"title_prefix {prefix!r} goes before titles after title_pattern checks them, so "
-            f"filed titles in {', '.join(patterned)} won't match the pattern themselves."
-        )
+    if prefix:
+        note = f"every new issue's title starts with {prefix + ' '!r}."
+        if patterned:
+            note += (
+                " It goes on after title_pattern checks the title, so filed titles in "
+                f"{', '.join(patterned)} won't match the pattern themselves."
+            )
+        notes.append(note)
     return notes
 
 

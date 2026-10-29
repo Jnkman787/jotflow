@@ -571,7 +571,7 @@ class IssuesPolicy(_Strict):
     def filed_title(self, title: str) -> str:
         """The title as filed: the prefix, a space, then the draft's title, within GitHub's
         limit. A title that already starts with the prefix isn't given it twice."""
-        if not self.title_prefix or title.startswith(self.title_prefix):
+        if not self.title_prefix or title.startswith(self.title_prefix + " "):
             return title
         return f"{self.title_prefix} {title}"[:MAX_ISSUE_TITLE].rstrip()
 

@@ -73,6 +73,8 @@ def test_the_label_and_prefix_are_never_doubled() -> None:
     issues = policy(ON).issues
     assert issues.filed_labels(["From-Slack"]) == ["From-Slack"]
     assert issues.filed_title("[Slack] Already there") == "[Slack] Already there"
+    # Only the prefix and a space count as already there.
+    assert issues.filed_title("[Slack]ish idea") == "[Slack] [Slack]ish idea"
 
 
 def test_the_filed_title_stays_within_githubs_limit() -> None:
@@ -147,5 +149,7 @@ def test_check_says_what_the_settings_need() -> None:
     assert issue_notes(policy()) == []
     [label] = issue_notes(policy('[issues]\nlabel = "from-slack"\n'))
     assert "'from-slack'" in label and "exists in each repo" in label
+    [_, prefix] = issue_notes(policy(ON))
+    assert "'[Slack] '" in prefix and "title_pattern" not in prefix
     notes = issue_notes(policy(ON, pattern='title_pattern = "^[A-Z].*"'))
     assert len(notes) == 2 and "acme-co/web" in notes[1] and "won't match" in notes[1]
