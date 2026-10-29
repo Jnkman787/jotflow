@@ -673,7 +673,15 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
             *read_tools(
                 active, thread.policy, source, clock=clock, attribution=attribution, repos=repos
             ),
-            *write_tools(active, thread.policy, poster, clock=clock, repos=repos, docs=docs),
+            *write_tools(
+                active,
+                thread.policy,
+                poster,
+                clock=clock,
+                repos=repos,
+                docs=docs,
+                authors=attribution.authors,
+            ),
             *doc_tools(active, thread.policy, lambda: fixture_docs, docs, clock=clock),
         )
     }

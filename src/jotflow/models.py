@@ -637,6 +637,53 @@ class UntrustedText(BaseModel):
     text: str = Field(description=UNTRUSTED)
 
 
+class PendingDraft(BaseModel):
+    """A proposal on this topic waiting for approval, for ``revise_proposal`` (#304).
+
+    The agent's own earlier draft, built from Slack text, so its text is untrusted.
+    """
+
+    proposal_id: str
+    revision: int = Field(description="Pass as base_revision; a stale one isn't applied")
+    kind: Literal["create_issue", "update_issue"]
+    title: UntrustedText | None = None
+    body: UntrustedText | None = None
+    comment: UntrustedText | None = None
+    labels: list[str] = Field(default_factory=list)
+    assignees: list[str] = Field(default_factory=list)
+    issue_number: int | None = None
+
+    @classmethod
+    def of(cls, record: ProposalRecord) -> PendingDraft:
+        """A pending proposal as the drafting packet gives it, its text marked untrusted."""
+        draft = record.proposal
+
+        def text(value: str | None) -> UntrustedText | None:
+            return None if value is None else UntrustedText(text=value)
+
+        if isinstance(draft, IssueProposal):
+            return cls(
+                proposal_id=record.id,
+                revision=record.revision,
+                kind="create_issue",
+                title=text(draft.title),
+                body=text(draft.body),
+                labels=list(draft.labels),
+                assignees=list(draft.assignees),
+            )
+        changes = draft.changes
+        return cls(
+            proposal_id=record.id,
+            revision=record.revision,
+            kind="update_issue",
+            body=text(changes.body),
+            comment=text(changes.comment),
+            labels=list(changes.add_labels),
+            assignees=list(changes.add_assignees),
+            issue_number=draft.issue_number,
+        )
+
+
 class TopicSummary(BaseModel):
     """One active topic, as the agent sees it in the index."""
 
@@ -655,6 +702,13 @@ class TopicSummary(BaseModel):
         description=(
             "True when a proposal for a new issue on this topic is waiting for approval or "
             "being written. Do not propose another; link messages to the topic instead"
+        ),
+    )
+    pending: PendingDraft | None = Field(
+        default=None,
+        description=(
+            "This topic's draft waiting for approval, when this thread feeds the topic: "
+            "revise it with revise_proposal to fold in new messages (#304)"
         ),
     )
 

@@ -51,6 +51,7 @@ JOTFLOW_TOOLS: Mapping[RunKind, tuple[str, ...]] = {
         "get_topic",
         "propose_issue",
         "propose_update",
+        "revise_proposal",
         "link_message",
         "ask_channel",
         "list_repo_docs",

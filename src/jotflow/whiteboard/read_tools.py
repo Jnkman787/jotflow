@@ -46,6 +46,7 @@ from jotflow.models import (
     RUN_KINDS,
     IssueDetails,
     MessageRef,
+    PendingDraft,
     Proposal,
     ProposalState,
     RunKind,
@@ -93,6 +94,7 @@ EXECUTION_INSTRUCTIONS = (
 )
 # A thread's people, authors first, then the people they mention.
 MAX_PEOPLE = 50
+
 
 # A proposal still on its way to GitHub: waiting for a person, or being written.
 LIVE_PROPOSAL_STATES = frozenset(
@@ -449,6 +451,26 @@ def read_tools(
                     return summary.model_copy(update={"issue_proposed": True})
         return summary
 
+    async def _with_pending(channel_id: str, thread_ts: str, index: TopicIndex) -> TopicIndex:
+        """Each topic this thread feeds gets its pending draft, so the run can revise it
+        (#304). Only those: another thread's draft never enters this run's packet."""
+        marked = []
+        for summary in index.topics:
+            if thread_ts not in summary.threads:
+                marked.append(summary)
+                continue
+            found = None
+            for thread in summary.threads:
+                for record in await store.thread_proposals(channel_id, thread):
+                    if (
+                        record.state is ProposalState.PENDING
+                        and record.proposal.topic_id == summary.id
+                        and record.draft_cleared_at is None
+                    ):
+                        found = PendingDraft.of(record)
+            marked.append(summary.model_copy(update={"pending": found}) if found else summary)
+        return index.model_copy(update={"topics": marked})
+
     async def topic(grant: Grant, arguments: GetTopicInput) -> TopicDetail:
         record = await store.get_topic(arguments.topic_id)
         readable = grant.channels if grant.kind is RunKind.OPERATOR else {grant.channel_id}
@@ -491,6 +513,8 @@ def read_tools(
                     # A source bug must not let this run see, or link, another thread.
                     raise ToolError(f"the thread source returned another thread for run {run.id}")
                 index = await topics(grant, ListTopicsInput())
+                if grant.kind is RunKind.DRAFTING:
+                    index = await _with_pending(grant.channel_id, run.thread_ts, index)
                 related = await work_source.related(thread, index)
         except TimeoutError:
             raise ToolError("Slack took too long to answer; try the run again shortly") from None

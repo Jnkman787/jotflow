@@ -477,16 +477,25 @@ class Orchestrator:
         # Repo docs for drafting (#209): no tools at all unless a repo sets read_paths.
         # The runner client is made below, so the tools look it up when called.
         doc_reads = DocReads(self._store)
+        attribution = SlackAttribution(slack_people, people.name)
         tools = (
             *read_tools(
                 self._store,
                 self._policy,
                 source,
-                attribution=SlackAttribution(slack_people, people.name),
+                attribution=attribution,
                 repos=self.repos,
                 issues=self._issue_reader,
             ),
-            *write_tools(self._store, self._policy, poster, repos=self.repos, docs=doc_reads),
+            *write_tools(
+                self._store,
+                self._policy,
+                poster,
+                repos=self.repos,
+                docs=doc_reads,
+                # Who wrote a revision's new messages, as approval reads them (#304).
+                authors=attribution.authors,
+            ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
