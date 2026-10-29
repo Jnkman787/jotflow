@@ -280,8 +280,12 @@ async def test_someone_nominated_needs_a_verified_link(
     await store.link_identity("U0OWNER", "acme-owner")
     login = "acme-alice" if why == "named_owner" else "acme-owner"
     topic_id = await new_topic(tools)
-    with pytest.raises(ToolError, match=r"isn't verified.*ask who should own it"):
-        await tools.propose_issue(DRAFT, asked(topic_id, login, why, ts=ts))
+    result: Any = await tools.propose_issue(DRAFT, asked(topic_id, login, why, ts=ts))
+    # The proposal goes ahead without them, and the agent is told to ask instead.
+    assert result.left_off_assignees == [login]
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.assignees == []
+    assert record.proposal.assignee_reasons == []
 
 
 async def test_a_volunteer_needs_no_verified_link(tools: WriteTools, store: Any) -> None:
@@ -320,3 +324,34 @@ async def test_an_assignee_from_before_reasons_stands_in_a_revision(
     )
     result: Any = await tools.revise_proposal(DRAFT, revised)
     assert result.revised
+
+
+async def test_a_revision_leaves_an_unverified_nomination_off_too(
+    tools: WriteTools, store: Any
+) -> None:
+    from jotflow.whiteboard.write_tools import RevisedIssue, ReviseProposalArgs
+
+    await store.link_identity("U0ALICE", "acme-alice")  # self-declared
+    topic_id = await new_topic(tools)
+    first: Any = await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "volunteered"))
+    current = await store.get_proposal(first.proposal_id)
+    assert current is not None and isinstance(current.proposal, IssueProposal)
+    bob = current.proposal.assignee_reasons[0]
+    alice = AssigneeReason(login="acme-alice", why="named_owner", source_ts=ROOT)
+    revised = ReviseProposalArgs(
+        proposal_id=current.id,
+        base_revision=current.revision,
+        issue=RevisedIssue(
+            title="Export the dashboard table as CSV",
+            body="People want a CSV export, monthly.",
+            labels=["enhancement"],
+            assignees=["acme-bob", "acme-alice"],
+            assignee_reasons=[bob, alice],
+        ),
+        sources=[MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT)],
+        confidence=0.9,
+    )
+    result: Any = await tools.revise_proposal(DRAFT, revised)
+    assert result.revised and result.left_off_assignees == ["acme-alice"]
+    after = await store.get_proposal(current.id)
+    assert after is not None and after.proposal.assignees == ["acme-bob"]

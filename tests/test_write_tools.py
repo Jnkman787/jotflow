@@ -978,15 +978,11 @@ async def test_linking_through_the_command_is_what_makes_someone_assignable(
     named = issue(
         topic_id, participants=["U0BOB"], assignees=["Acme-Bob"], assignee_reasons=[NAMED_BOB]
     )
-    with pytest.raises(ToolError, match="isn't verified"):  # self-declared isn't enough here
-        await tools.propose_issue(DRAFT, named)
+    left: Any = await tools.propose_issue(DRAFT, named)  # self-declared isn't enough here
+    assert left.left_off_assignees == ["Acme-Bob"]
     await store.finish_verification("U0BOB", github_login="acme-bob", github_id=42)
-    result: Any = await tools.propose_issue(
-        DRAFT,
-        issue(
-            topic_id, participants=["U0BOB"], assignees=["Acme-Bob"], assignee_reasons=[NAMED_BOB]
-        ),
-    )
+    again = named.model_copy(update={"confidence": 0.81})  # a new call, not the cached one
+    result: Any = await tools.propose_issue(DRAFT, again)
     record = await store.get_proposal(result.proposal_id)
     assert record is not None and record.proposal.assignees == ["Acme-Bob"]  # as proposed
 
