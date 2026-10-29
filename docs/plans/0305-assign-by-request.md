@@ -4,7 +4,7 @@
 
 - Issue: #305
 - Draft PR: #312
-- Status: planning. Security and the lead review this plan before any code
+- Status: implementing. The lead and security approved the plan on 2026-10-29 with the decisions below
 - Last verified: 2026-10-29, against main
 - Next safe action: review
 
@@ -118,7 +118,7 @@ The file is CSV with a `slack_member_id,github_login` header. Every line is chec
 - no Slack ID or login twice in the file
 - no login already linked to a different person, unless `--replace` is passed. Then that person is told privately, as `identity unlink` does, and the removal is recorded as by `operator`.
 
-**Stored with `linked_by = "admin"`**, in migration 16, which adds `linked_by` to `identity_links`. Existing rows read as `"self"`. `/jotflow verify` still sets `verified` and `verified_at`.
+**Stored with `linked_by = "admin"`**, in migration 18, which adds `linked_by` to `identity_links`. Existing rows read as `"self"`. `/jotflow verify` still sets `verified` and `verified_at`.
 
 **On the card,** an admin link shows "(linked by an admin)" rather than "(unverified)". It counts like a verified link for open question 1.
 
@@ -132,29 +132,55 @@ The command prints counts only, never logins: linked, unchanged, replaced, refus
   - It never follows redirects, as #273's call doesn't.
 - **Client:** `RunnerClient.assignable(owner, name, login)` reads it strictly. A 503 or 502 becomes "couldn't check", as `GithubBusy` does for #273.
 
+## Decisions
+
+The lead and security decided on 2026-10-29:
+
+1. **Both checks.** "Can be assigned in this repo", through `GET /repos/{o}/{r}/assignees/{login}`, is always required. When `[identity] github_org` is set, org membership through `GET /orgs/{org}/members/{login}` is required too. If the read token can't see private memberships, the check fails closed, with a reason telling the admin to grant **Members: Read-only**.
+2. **Migration 18.** #304 has 16 and #309 has 17.
+3. **A self-add on a filed issue files at once only when all of these hold:**
+   - a workspace member, not a guest or external, in an unpaused channel
+   - adding exactly their own login and nothing else
+   - in open mode, or the clicker is an approver
+   - their link is verified (#195) or admin-linked, and its stored GitHub account id equals the id the runner's assignable check returns just now
+   - within a per-person cap of 5 self-adds an hour
+   - through the normal execution path, as exactly one planned write adding that login. It's hash-locked, `approved_by` is the clicker, and paused is re-checked when the run starts
+4. **Otherwise the self-add goes on a card,** as a suggested assignee for an approver or the next revision to confirm. That includes every unverified, modal-entered link, a mismatched account id, and approvers mode with a non-approver. The card names whose claim it is: "Alex says this is their GitHub account (unverified)". The modal offers `/jotflow verify` as the way to make future adds instant.
+5. **Admin links** store the GitHub account id at link time, looked up through the runner, and are matched the same way. They're shown as "(linked by an admin)".
+6. **The assignable check is rate-limited** per Slack user, 10 in 10 minutes, and the modal takes one login per submit, since "exists but can't be assigned" tells a member whether a login can reach the repo.
+7. **Pinned by a test:** Alex opens the modal with Chris's login and clicks Add me on a filed issue. A card is posted, and no execution run starts.
+
+## Delivery
+
+Three PRs, each closing part of #305, with the last saying Fixes #305:
+
+1. **Links:** migration 18 (`linked_by`), `jotflow identity link` with the account id stored, and "(linked by an admin)" on cards.
+2. **Reasons:** `AssigneeReason`, `owner_hints`, the write tools' checks, drafting.md, and the card's reasons, with the "add me" replay fixture.
+3. **Add me:** the buttons, the modal, the runner's assignable and org calls and the client, self-add per decisions 3 and 4, and the caps.
+
 ## Risks and open questions
 
-1. **For security: may self-add on a filed issue skip approval?** My proposal: yes, only when all of these hold:
+1. **Decided above (3, 4).** The original proposal was: My proposal: yes, only when all of these hold:
    - the clicker is a workspace member, not a guest or external, in an unpaused channel
    - the change adds exactly the clicker's own login and nothing else
    - their link is verified (#195) or admin-linked
    - the runner confirms just now that the login is assignable in that repo
 
    Then JotFlow files the update at once, recorded as approved by the clicker. Otherwise, including every unverified, self-declared link, it posts a normal approval card. The thread gets a short note either way: "Alex added themselves as an assignee" or "Alex asked to be added. An approver can approve it." Assigning yourself gives you no new access on GitHub, since an assignee must already have access, and the verified-link condition stops anyone adding someone else's account. The alternative, every self-add carded, is safer but slower.
-2. **For the lead: "assignable" or "org member"?** Recommended: assignable, for the reasons in section 3. A membership check could be added later behind an `[identity] github_org` setting that needs **Members: Read-only**.
+2. **Decided above (1): both.** The original question was Recommended: assignable, for the reasons in section 3. A membership check could be added later behind an `[identity] github_org` setting that needs **Members: Read-only**.
 3. **Owner hints assign someone who isn't in the thread.** They're still only ever a proposal, they need a linked login, and a person approves. The card names the reason.
 4. **Admin links** are trusted like verified ones. The bulk file is run by whoever runs JotFlow, who already holds every secret. But a wrong line assigns the wrong person, so `--check` and the private note on `--replace` matter.
 5. **The thread reply gains a button.** Its text is unchanged for `jotflow rebuild`, and a test pins that.
 
 ## Progress checklist
 
-- [ ] Security and the lead decide open questions 1 and 2
-- [ ] Commit this plan and open the draft PR
+- [x] Security and the lead decide open questions 1 and 2
+- [x] Commit this plan and open the draft PR
 - [ ] Models: `AssigneeReason`, reasons on both proposal kinds, and `owner_hints`
 - [ ] The write tools' reason checks, and drafting.md
 - [ ] The card's reasons and Add me, plus the filed-reply blocks and their button
 - [ ] The modal, the runner's assignable call, and the client
-- [ ] Migration 16 and `jotflow identity link`
+- [ ] Migration 18 and `jotflow identity link`
 - [ ] Self-add on a filed issue, per open question 1
 - [ ] Tests:
   - replay fixtures for a volunteer on a draft and on a filed issue, with an injected line that must assign no one
