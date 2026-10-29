@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from jotflow.policy import Policy, QuestionsPolicy, parse_policy
+from jotflow.policy import IssuesPolicy, Policy, QuestionsPolicy, parse_policy
 
 HEADER = (
     "# jotflow.toml: admin policy for JotFlow, written by `jotflow init`.\n"
@@ -88,6 +88,13 @@ def render_policy(policy: Policy) -> str:
             f"per_hour = {policy.questions.per_hour}",
             f"per_person_seconds = {policy.questions.per_person_seconds}",
         ]
+    # What every new issue gets (#306): written only when set, like [questions].
+    if policy.issues != IssuesPolicy():
+        lines += ["", "[issues]"]
+        if policy.issues.label is not None:
+            lines.append(f"label = {toml_string(policy.issues.label)}")
+        if policy.issues.title_prefix is not None:
+            lines.append(f"title_prefix = {toml_string(policy.issues.title_prefix)}")
     for channel_id, channel in policy.channels.items():
         # Channel ids are validated to [CG][A-Z0-9]+, so they are bare keys.
         lines += ["", f"[channels.{channel_id}]"]

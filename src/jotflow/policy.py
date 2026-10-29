@@ -594,6 +594,63 @@ class IdentityPolicy(_Strict):
         return self
 
 
+# GitHub's longest issue title.
+MAX_ISSUE_TITLE = 256
+MAX_TITLE_PREFIX = 32
+
+
+class IssuesPolicy(_Strict):
+    """What JotFlow adds to every new issue it files (#306). Both off by default.
+
+    They're added when the issue is written, after the draft's ``title_pattern``
+    check, so a person can't take them off on the card, and the card shows them.
+    """
+
+    label: Label | None = Field(
+        default=None,
+        description="A label added to every new issue; it must already exist in each repo",
+    )
+    title_prefix: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_TITLE_PREFIX,
+        description="Text put before every new issue's title, such as '[Slack]'",
+    )
+
+    @field_validator("title_prefix")
+    @classmethod
+    def _plain_prefix(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value != value.strip():
+            raise ValueError("title_prefix must not start or end with a space")
+        if problem := unsafe_text_problem(value):
+            raise ValueError(f"title_prefix {problem}")
+        if any(mark in value for mark in ("<", ">", "@", "`")):
+            raise ValueError("title_prefix must be plain text, with no markup or mentions")
+        return value
+
+    def filed_title(self, title: str) -> str:
+        """The title as filed: the prefix, a space, then the draft's title, within GitHub's
+        limit. A title that already starts with the prefix isn't given it twice."""
+        if not self.title_prefix or title.startswith(self.title_prefix + " "):
+            return title
+        return f"{self.title_prefix} {title}"[:MAX_ISSUE_TITLE].rstrip()
+
+    def filed_labels(self, labels: Iterable[str]) -> list[str]:
+        """The labels as filed: the draft's, then the JotFlow label if it isn't there."""
+        kept = list(labels)
+        if self.label and self.label.casefold() not in {label.casefold() for label in kept}:
+            kept.append(self.label)
+        return kept
+
+    def bare_title(self, title: str) -> str:
+        """A filed title without the prefix, as ``jotflow rebuild`` restores a topic's."""
+        if self.title_prefix and title.startswith(self.title_prefix + " "):
+            return title[len(self.title_prefix) + 1 :]
+        return title
+
+
 class Policy(_Strict):
     """The whole of ``jotflow.toml``."""
 
@@ -622,6 +679,7 @@ class Policy(_Strict):
     help: HelpPolicy = Field(default_factory=HelpPolicy)
     questions: QuestionsPolicy = Field(default_factory=QuestionsPolicy)
     identity: IdentityPolicy = Field(default_factory=IdentityPolicy)
+    issues: IssuesPolicy = Field(default_factory=IssuesPolicy)
     channels: dict[ChannelId, ChannelPolicy] = Field(min_length=1)
 
     def may_unlink_others(self, user_id: str) -> bool:
