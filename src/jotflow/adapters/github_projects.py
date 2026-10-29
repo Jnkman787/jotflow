@@ -7,14 +7,17 @@ So after JotFlow records the issue an execution run wrote, it asks the runner
 to add it to each approved board, and these three constant GraphQL queries do
 it with the write token:
 
-- :data:`ISSUE_ID`: the issue's node id, from its repo and number
+- :data:`ISSUE_ID`: the issue's node id and body, from its repo and number.
+  The body must carry this proposal's marker line, so an execution agent can't
+  report another issue in the approved repo and get that one boarded
 - :data:`BOARD_ID`: an organisation board's node id, and whether the token may
   update it
 - :data:`ADD_ITEM`: ``addProjectV2ItemById``, which returns the item that is
   already there when the issue is on the board, so a retry is harmless
 
 Only typed variables come from outside: an owner checked by ``is_owner_name``,
-a repo name by ``is_bare_repo_name``, and numbers from 1 to 10^9. An answer
+a repo name by ``is_bare_repo_name``, numbers from 1 to 10^9, and a proposal
+id by the marker's own pattern. An answer
 with any ``errors``, a null node, or another shape is a failure, and the add
 must return an item whose content is the issue looked up (security's
 conditions). Reading is capped, redirects are never followed, and no proxy is
@@ -30,16 +33,19 @@ import httpx2
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jotflow.adapters.github_repos import GithubError, RateLimited, _headers, _rate_limited
+from jotflow.execution.writes import PROPOSAL_ID, marker
 from jotflow.models import is_bare_repo_name, is_owner_name
 
 GRAPHQL = "https://api.github.com/graphql"
 MAX_NUMBER = 10**9
 MAX_BYTES = 64 * 1024
+# The issue's answer carries its body: up to 65,536 characters, JSON-escaped.
+MAX_ISSUE_BYTES = 512 * 1024
 
 # Constant queries: only the variables below ever change.
 ISSUE_ID = (
     "query($owner: String!, $name: String!, $number: Int!) {"
-    " repository(owner: $owner, name: $name) { issue(number: $number) { id } } }"
+    " repository(owner: $owner, name: $name) { issue(number: $number) { id body } } }"
 )
 BOARD_ID = (
     "query($owner: String!, $number: Int!) {"
@@ -60,8 +66,12 @@ class _Node(_Strict):
     id: str = Field(min_length=1, max_length=200)
 
 
+class _Issue(_Node):
+    body: str
+
+
 class _IssueHolder(_Strict):
-    issue: _Node
+    issue: _Issue
 
 
 class _IssueData(_Strict):
@@ -93,6 +103,20 @@ class _AddData(_Strict):
     addProjectV2ItemById: _Added
 
 
+class NotThisProposals(GithubError):
+    """The issue doesn't carry the proposal's marker line, so it isn't the one
+    the approved proposal produced. Fixed: trying again won't change it."""
+
+    def __init__(self) -> None:
+        super().__init__("the issue doesn't carry this proposal's marker")
+
+
+def carries_marker(body: str, proposal_id: str) -> bool:
+    """Whether ``body`` has ``proposal_id``'s marker as a whole line of its own."""
+    wanted = marker(proposal_id)
+    return any(line.rstrip("\r") == wanted for line in body.split("\n"))
+
+
 def _check_owner(owner: str) -> None:
     if not is_owner_name(owner):
         raise GithubError("not a GitHub owner")
@@ -111,6 +135,7 @@ async def _ask(
     model: type[_Strict],
     *,
     url: str,
+    max_bytes: int = MAX_BYTES,
 ) -> Any:
     """One GraphQL call, read with a cap, and its ``data`` validated by ``model``."""
     body = json.dumps({"query": query, "variables": variables}).encode()
@@ -121,7 +146,7 @@ async def _ask(
         raw = b""
         async for chunk in response.aiter_bytes():
             raw += chunk
-            if len(raw) > MAX_BYTES:
+            if len(raw) > max_bytes:
                 raise GithubError("GitHub's answer was too large")
         status = response.status_code
     if status != 200:
@@ -165,15 +190,21 @@ async def add_issue(
     repo: str,
     issue_number: int,
     board: str,
+    proposal_id: str,
     token: str,
     *,
     http: httpx2.AsyncClient,
     url: str = GRAPHQL,
 ) -> str:
-    """Add issue ``repo#issue_number`` to the organisation board ``owner/number``.
+    """Add issue ``repo#issue_number`` to the organisation board ``owner/number``,
+    if the issue is the one proposal ``proposal_id`` produced.
 
-    Returns the board item's id. Raises :class:`GithubError` on anything else.
+    Returns the board item's id. Raises :class:`NotThisProposals` when the issue's
+    body lacks the proposal's marker line, before the board is even looked up, and
+    :class:`GithubError` on anything else.
     """
+    if not PROPOSAL_ID.fullmatch(proposal_id):
+        raise GithubError("not a proposal id")
     owner, _, name = repo.partition("/")
     _check_owner(owner)
     if not is_bare_repo_name(name):
@@ -192,7 +223,10 @@ async def add_issue(
         {"owner": owner, "name": name, "number": issue_number},
         _IssueData,
         url=url,
+        max_bytes=MAX_ISSUE_BYTES,
     )
+    if not carries_marker(issue.repository.issue.body, proposal_id):
+        raise NotThisProposals
     found: _BoardData = await _ask(
         http, token, BOARD_ID, {"owner": board_owner, "number": number}, _BoardData, url=url
     )

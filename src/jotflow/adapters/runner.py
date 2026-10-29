@@ -162,6 +162,8 @@ class BoardAddRequest(BaseModel):
     repo: str = Field(min_length=3, max_length=140)
     issue_number: int = Field(ge=1, le=10**9)
     board: str = Field(min_length=3, max_length=60)
+    # The issue's body must carry this proposal's marker line, or it isn't added.
+    proposal_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class LaunchRequest(BaseModel):
@@ -968,19 +970,26 @@ def build_runner_app(
             asked = BoardAddRequest.model_validate_json(body)
         except ValidationError:
             return JSONResponse(
-                {"error": "expected exactly repo, issue_number and board"}, status_code=400
+                {"error": "expected exactly repo, issue_number, board and proposal_id"},
+                status_code=400,
             )
         try:
             item = await github_projects.add_issue(
                 asked.repo,
                 asked.issue_number,
                 asked.board,
+                asked.proposal_id,
                 config.write_token,
                 http=http,
                 url=graphql,
             )
         except github_repos.RateLimited:
             return JSONResponse({"error": "GitHub's rate limit"}, status_code=429)
+        except github_projects.NotThisProposals:
+            log.warning(
+                "not adding an issue to board %s: it lacks its proposal's marker", asked.board
+            )
+            return JSONResponse({"error": "the issue isn't this proposal's"}, status_code=422)
         except (github_repos.GithubError, httpx2.HTTPError) as exc:
             log.warning("adding an issue to board %s failed: %s", asked.board, type(exc).__name__)
             return JSONResponse({"error": "GitHub did not add it"}, status_code=502)
