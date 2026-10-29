@@ -131,6 +131,11 @@ class DuplicateRefusedError(ConflictError):
     """A "same as" or its undo can't apply; ``str()`` is the fixed reason (#36)."""
 
 
+class NotLikelyDuplicateError(DuplicateRefusedError):
+    """A Same as on an issue the agent didn't mark a likely duplicate: mostly a card
+    drawn before #337, which offered it for any related issue (#342 review)."""
+
+
 # The fixed reasons a person sees. None quotes the draft, the issue, or the person.
 DUPLICATE_NOT_PENDING = "This proposal is no longer waiting, so it can't be marked the same."
 DUPLICATE_NOT_NEW = "Only a proposed new issue can be marked the same as an existing one."
@@ -183,7 +188,7 @@ def plan_duplicate(record: ProposalRecord, index: int, expected_hash: str) -> Re
         raise DuplicateRefusedError(DUPLICATE_NO_CANDIDATE)
     # Only an issue the agent itself called a likely duplicate, as the card offers (#337).
     if not draft.related[index].likely_duplicate:
-        raise DuplicateRefusedError(DUPLICATE_NOT_LIKELY)
+        raise NotLikelyDuplicateError(DUPLICATE_NOT_LIKELY)
     return draft.related[index]
 
 
