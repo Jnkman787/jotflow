@@ -4,7 +4,7 @@
 
 - Issue: #308
 - Draft PR: #315
-- Status: planning. The lead reviews this plan before any code, and security looks at what it posts
+- Status: approved by the lead and security on 2026-10-29, with the decisions below. Code waits behind #305
 - Last verified: 2026-10-29, against main
 - Next safe action: review
 
@@ -20,7 +20,7 @@ Done when, from #308's boxes:
 - [ ] Paused channels get no summary
 - [ ] `make check` passes
 
-**Out of scope, as a follow-up issue:** the issue's "replies in the summary's thread that name an item are routed to it". It isn't in the done-when list, and routing someone's reply into another thread's draft needs its own design. JotFlow can't move a Slack message, and treating a reply in one thread as input to another thread's drafting run widens what a run reads, which #269 kept to the run's own thread. I'd open it as its own issue.
+**Out of scope, moved to #318 by the lead's decision on 2026-10-29:** the issue's "replies in the summary's thread that name an item are routed to it". It isn't in the done-when list, and routing someone's reply into another thread's draft needs its own design. JotFlow can't move a Slack message, and treating a reply in one thread as input to another thread's drafting run widens what a run reads, which #269 kept to the run's own thread. It's #318.
 
 ## Design
 
@@ -39,7 +39,14 @@ timezone = "Europe/London"
 
 ### Which ideas, and what each shows
 
-**The window** is the seven days up to the post time. An idea is a thread's newest proposal to create an issue, created in the window, which is the thread's draft as it stands. Updates to filed issues aren't ideas. A proposal deferred from last week is listed again, marked "from last week".
+**The window** is the seven days up to the post time. **An idea is a topic**, by the lead's decision, since one thread can hold several ideas. A topic counts when a proposal to create its issue was made in the window. Its item shows that topic's newest create proposal, which is its draft as it stands. Updates to filed issues aren't ideas. A topic deferred from last week is listed again, marked "from last week".
+
+**Never resurrect removed text** (security). An item is left out when:
+- its newest proposal's draft was cleared (`draft_cleared_at`)
+- it was rejected, other than as Same as, or superseded with no newer proposal
+- every one of its source messages has been deleted in Slack
+
+Someone who deleted their message, or rejected a card, never sees it reposted at the top of the channel. A Same as item stays, showing only "Same as web#31".
 
 Each item has:
 
@@ -54,7 +61,7 @@ Each item has:
   | Pending | Waiting for approval |
   | Approved, executing or reconciling | Being filed |
   | Applied | Filed as `web#42`, linked |
-  | Rejected, as Discard or Same as | Discarded, or Same as `web#31` |
+  | Rejected as Same as | Same as `web#31` |
   | Failed | Couldn't be filed |
   | Deferred | Put off to next week, by whom |
 
@@ -66,7 +73,7 @@ Each item has:
 - **Each waiting item gets two buttons:**
   - **Open card,** a link button to the card's permalink, from `chat.getPermalink` on `card_ts`. It needs no new scope. A link button needs no handler beyond Slack's acknowledgement.
   - **Not this week.**
-- **Slack's limits:** a message holds at most 50 blocks, and each item takes two. So a summary shows at most 20 items: waiting ones first, then the rest, newest first. Beyond that, a closing line says "and 7 more: see the channel". Each section stays under 3,000 characters.
+- **Slack's limits, and a cap** (security): a message holds at most 50 blocks, and each item takes two. So a summary shows at most 20 items: waiting ones first, then the rest, newest first. Beyond that, a closing line says "and 7 more: see the channel". Each title is cut to the card's own title limit, and each section stays under 3,000 characters.
 - **Where:** a top-level message in the channel, with link unfurls off. The summary's own `ts` is stored.
 
 ### Not this week
@@ -79,7 +86,7 @@ Each item has:
 ### Once a week, across restarts
 
 - **A new `summaries` table** holds a row per channel and week, with its slot time, the post's `ts` and when it was posted. Its primary key is the channel and the slot, so a second post for the same slot can't be stored.
-- **A `summary_deferrals` table** holds a proposal id, until which slot, who and when. Both are pointers, Slack ids and times, never text. Both come in one migration, numbered after whatever has merged by then. #305 also plans one.
+- **A `summary_deferrals` table** holds a proposal id, until which slot, who and when. Both are pointers, Slack ids and times, never text. Both come in migration 19, by the lead's numbering: #304 has 16, #309 has 17 and #305 has 18.
 - **The loop** runs once a minute. For each channel with a summary that isn't paused, it works out this week's slot in the channel's timezone, and posts if the slot has passed and no row exists for it.
   - The row is written before posting, then given the `ts`.
   - If Slack fails, the row is marked failed and retried with backoff, as thread notices are (#32).
@@ -93,18 +100,18 @@ Each item has:
 
 ### Paused channels
 
-A paused channel gets no summary. Its slot is skipped, not saved for later, and logged. `Not this week` is refused in a paused channel, as every card action is.
+A paused channel gets no summary. Its slot is skipped, not saved for later, and logged. Paused is checked again at posting time, not only when the slot comes due. `Not this week` is refused in a paused channel, as every card action is. If the bot is no longer in the channel, the week is skipped and logged. Nothing is posted elsewhere to complain about it (security).
 
 ## Risks and open questions
 
-1. **For security:** the summary puts draft titles and display names in a channel post. They already appear on the cards in the same channel, and are posted as `plain_text`. Is that enough?
-2. **For the lead:** discussion routing goes to a follow-up, per the out-of-scope note above.
-3. **For the lead:** is "the newest create proposal per thread, created in the window" the right definition of "the week's ideas"? The alternative is per topic, which joins threads on the same topic into one item.
+1. **Decided by security:** `plain_text`, the same channel, and the three additions above are enough.
+2. **Decided by the lead:** discussion routing is #318.
+3. **Decided by the lead:** one item per topic.
 
 ## Progress checklist
 
-- [ ] The lead approves the plan, and security answers question 1
-- [ ] Commit this plan and open the draft PR
+- [x] The lead approves the plan, and security answers question 1
+- [x] Commit this plan and open the draft PR
 - [ ] Settings, validation, the setup round trip and `jotflow check`
 - [ ] The store's tables and migration
 - [ ] Choosing the items, the statuses and the blocks, within the limits
@@ -117,7 +124,7 @@ A paused channel gets no summary. Its slot is skipped, not saved for later, and 
   - 25 items against the block limit
   - injected titles and names staying plain text
   - who may click Not this week
-- [ ] usage.md, architecture.md, the example config, the CHANGELOG, and the follow-up issue for discussion routing
+- [ ] usage.md, architecture.md, the example config, the CHANGELOG (the follow-up for discussion routing is #318)
 - [ ] CodeRabbit once, `make check`, mark ready
 
 ## Validation
