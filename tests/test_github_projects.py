@@ -185,3 +185,66 @@ def test_the_queries_are_constant_strings() -> None:
     for query in (ISSUE_ID, BOARD_ID, ADD_ITEM):
         assert "{" in query and "$" in query and "%" not in query
     assert github_projects.MAX_NUMBER == 10**9
+
+
+# A real no, against a check that failed (#311 review)
+
+NOT_FOUND = {
+    "data": {"organization": {"projectV2": None}},
+    "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a ProjectV2"}],
+}
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        NOT_FOUND,
+        {"data": {"organization": None}, "errors": [{"type": "FORBIDDEN", "message": "no"}]},
+        {"data": {"organization": {"projectV2": None}}},
+        {"data": {"organization": None}},
+        {"data": {"organization": {"projectV2": {"id": BOARD_NODE, "viewerCanUpdate": False}}}},
+    ],
+)
+async def test_a_board_the_token_cant_see_or_update_is_a_no(answer: Any) -> None:
+    fake = FakeGraphql()
+    fake.answers[BOARD_ID] = answer
+    assert await board_access("example-org", 3, WRITE, http=fake.client()) is False
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx2.Response(502, text="bad gateway"),
+        httpx2.Response(200, text="not json"),
+        {"errors": [{"type": "INTERNAL", "message": "Something went wrong"}], "data": None},
+        {"errors": [{"type": "NOT_FOUND"}, {"type": "INTERNAL"}], "data": None},
+        {"data": {"organization": {"projectV2": {"id": BOARD_NODE}}}},
+    ],
+)
+async def test_a_check_that_fails_is_no_answer_not_a_no(answer: Any) -> None:
+    fake = FakeGraphql()
+    fake.answers[BOARD_ID] = answer
+    with pytest.raises(GithubError) as raised:
+        await board_access("example-org", 3, WRITE, http=fake.client())
+    assert not isinstance(raised.value, github_projects.Denied)
+
+
+async def test_a_rate_limited_check_is_its_own_answer(tmp_path: Path) -> None:
+    graphql = FakeGraphql()
+    graphql.answers[BOARD_ID] = httpx2.Response(403, headers={"x-ratelimit-remaining": "0"})
+    with pytest.raises(RateLimited):
+        await board_access("example-org", 3, WRITE, http=graphql.client())
+    async with runner_http(tmp_path, FakeGithub({"/graphql": graphql}), execution=True) as http:
+        assert (await http.get("/boards/example-org/3/access")).status_code == 429
+        graphql.answers[BOARD_ID] = httpx2.Response(502, text="bad gateway")
+        assert (await http.get("/boards/example-org/3/access")).status_code == 502
+        graphql.answers[BOARD_ID] = NOT_FOUND
+        answer = await http.get("/boards/example-org/3/access")
+        assert answer.status_code == 200 and answer.json() == {"can_update": False}
+
+
+async def test_an_add_to_a_board_the_token_cant_see_still_fails() -> None:
+    fake = FakeGraphql()
+    fake.answers[BOARD_ID] = NOT_FOUND
+    with pytest.raises(GithubError):
+        await add_issue("example-org/web", 42, "example-org/3", WRITE, http=fake.client())

@@ -318,18 +318,27 @@ async def test_boards_the_write_token_cant_update_are_turned_off() -> None:
     from jotflow.orchestrator.service import Orchestrator
 
     class Runner:
+        def __init__(self) -> None:
+            self.down = False
+
         async def board_access(self, owner: str, number: int) -> bool:
-            if number == 7:
-                raise RunnerError("down")
+            if self.down:
+                raise RunnerError("GitHub's rate limit", retry="rate_limited")
             return number == 3
 
+    runner = Runner()
     service = Orchestrator.__new__(Orchestrator)
     service._policy = POLICY
     service.boards_off = set()
-    service._runner = Runner()  # type: ignore[assignment]
+    service._runner = runner  # type: ignore[assignment]
     service.kinds = type("K", (), {"on": frozenset({RunKind.EXECUTION})})()  # type: ignore[assignment]
     await service._check_boards()
-    assert service.boards_off == {"acme-co/7"}
+    assert service.boards_off == {"acme-co/7"}  # a real no
+    # A check that fails, such as at a rate limit, is no answer: the board stays on (#311).
+    service.boards_off = set()
+    runner.down = True
+    await service._check_boards()
+    assert service.boards_off == set()
     service.boards_off = set()
     service.kinds = type("K", (), {"on": frozenset()})()  # type: ignore[assignment]
     await service._check_boards()

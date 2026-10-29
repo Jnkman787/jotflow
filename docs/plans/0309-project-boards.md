@@ -95,7 +95,7 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 
 - **Classic tokens** need the `project` scope.
 - **Fine-grained tokens:** the write token needs **Projects: Read and write** on the organisation, an organisation permission that reaches every board of the org. The read token needs **Projects: Read-only** for discovery. Whether fine-grained tokens can reach user-owned boards at all is to be checked (decision 4).
-- **Checking:** `jotflow check` can't reach GitHub, so the execution runner gains `GET /boards/{owner}/{number}/access`, a boolean. It asks whether the write token can **update** the board, from the board's `viewerCanUpdate`, not only whether it can see it, as the lead asked. It's a pre-check: the add's own failure handling is the real check. JotFlow asks it at startup and when the allowlist changes. A board the write token can't reach is reported in the log and by `jotflow check` when it can reach the runners, and that board is turned off.
+- **Checking:** `jotflow check` can't reach GitHub, so the execution runner gains `GET /boards/{owner}/{number}/access`, a boolean. It asks whether the write token can **update** the board, from the board's `viewerCanUpdate`, not only whether it can see it, as the lead asked. It's a pre-check: the add's own failure handling is the real check. JotFlow asks it at startup and when the allowlist changes. A board the write token can't reach is reported in the log and by `jotflow check` when it can reach the runners, and that board is turned off. Only a real no turns it off; a check GitHub couldn't answer leaves it on (the reviewer's #311 nit, 2026-10-29).
 
 ### 6. Threat model
 

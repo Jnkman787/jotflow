@@ -76,6 +76,14 @@ class _BoardHolder(_Strict):
     projectV2: _Board
 
 
+class _MaybeBoardHolder(_Strict):
+    projectV2: _Board | None
+
+
+class _MaybeBoardData(_Strict):
+    organization: _MaybeBoardHolder | None
+
+
 class _BoardData(_Strict):
     organization: _BoardHolder
 
@@ -91,6 +99,14 @@ class _Added(_Strict):
 
 class _AddData(_Strict):
     addProjectV2ItemById: _Added
+
+
+# GraphQL error types that answer the question: the token can't see it.
+_DENIED = frozenset({"NOT_FOUND", "FORBIDDEN"})
+
+
+class Denied(GithubError):
+    """GitHub answered that the token can't see what was asked for: a real no."""
 
 
 def _check_owner(owner: str) -> None:
@@ -132,7 +148,11 @@ async def _ask(
         raise GithubError("GitHub's answer was not JSON") from None
     if not isinstance(answer, dict):
         raise GithubError("GitHub's answer was not an object")
-    if answer.get("errors"):
+    if errors := answer.get("errors"):
+        if isinstance(errors, list) and all(
+            isinstance(e, dict) and e.get("type") in _DENIED for e in errors
+        ):
+            raise Denied("GitHub answered that the token can't see it")
         raise GithubError("GitHub answered with errors")
     try:
         return model.model_validate(answer.get("data"))
@@ -146,17 +166,20 @@ async def board_access(
     """Whether ``token`` may update the organisation board ``owner``'s ``number``.
 
     Seeing a board isn't enough: the add needs to change it. A board the token
-    can't see comes back as a null node, which is a no.
+    can't see comes back as a null node, or as a not-found or forbidden error,
+    which is a no. Anything else, such as a GitHub outage or an odd answer, is
+    no answer at all: it raises :class:`GithubError`, or :class:`RateLimited`,
+    so a passing failure never reads as a missing permission (#311 review).
     """
     _check_owner(owner)
     _check_number(number)
     try:
-        data: _BoardData = await _ask(
-            http, token, BOARD_ID, {"owner": owner, "number": number}, _BoardData, url=url
+        data: _MaybeBoardData = await _ask(
+            http, token, BOARD_ID, {"owner": owner, "number": number}, _MaybeBoardData, url=url
         )
-    except RateLimited:
-        raise
-    except GithubError:
+    except Denied:
+        return False
+    if data.organization is None or data.organization.projectV2 is None:
         return False
     return data.organization.projectV2.viewerCanUpdate
 

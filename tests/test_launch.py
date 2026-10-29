@@ -850,3 +850,12 @@ async def test_a_refused_execution_is_retried_with_a_delay_then_fails_with_one_n
     gave_up = [p for p in rig.poster.posts if p[2] == GAVE_UP_NOTICE.format(attempts=3)]
     assert gave_up == [(CH, THREAD, GAVE_UP_NOTICE.format(attempts=3))]
     await rig.client.aclose()
+
+
+@pytest.mark.parametrize(("status", "retry"), [(429, "rate_limited"), (502, "github")])
+async def test_a_board_check_github_couldnt_answer_says_so(status: int, retry: str) -> None:
+    # #311 review: no answer from GitHub is not a missing permission.
+    client = recording_client(Recorder(status, {"error": "x"}))
+    with pytest.raises(RunnerError) as caught:
+        await client.board_access("acme-co", 3)
+    assert caught.value.retry == retry

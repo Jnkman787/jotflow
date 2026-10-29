@@ -521,6 +521,10 @@ class RunnerClient:
         if not is_owner_name(owner) or not 1 <= number <= 10**9:
             raise RunnerError("not a board")
         response = await self._call("GET", RunKind.EXECUTION, f"/boards/{owner}/{number}/access")
+        if response.status_code == 429:
+            raise RunnerError("GitHub's rate limit", retry="rate_limited")
+        if response.status_code == 502:
+            raise RunnerError("GitHub could not be asked", retry="github")
         if response.status_code != 200:
             raise _refused(response.status_code)
         try:

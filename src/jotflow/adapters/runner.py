@@ -949,6 +949,8 @@ def build_runner_app(
             ok = await github_projects.board_access(
                 owner, int(number), config.write_token, http=http, url=graphql
             )
+        except github_repos.RateLimited:
+            return JSONResponse({"error": "GitHub's rate limit"}, status_code=429)
         except (github_repos.GithubError, httpx2.HTTPError) as exc:
             log.warning(
                 "board access check for %s/%s failed: %s", owner, number, type(exc).__name__
