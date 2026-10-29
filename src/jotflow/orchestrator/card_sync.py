@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
@@ -114,6 +114,7 @@ async def card_context(
     record: ProposalRecord,
     repos: RepoCatalog | None = None,
     attribution: Attribution | None = None,
+    boards_off: Collection[str] = frozenset(),
 ) -> CardContext:
     """Everything the card shows besides the proposal: names, identities, the channel."""
     users = list(dict.fromkeys(record.participants))
@@ -154,6 +155,7 @@ async def card_context(
         docs_read=tuple(docs_read),
         docs_copied=tuple(docs_copied),
         revisions=tuple(await store.proposal_revisions(record.id)),
+        boards_off=frozenset(boards_off),
     )
 
 
@@ -177,10 +179,13 @@ class CardSync:
         clock: Callable[[], datetime] = utc_now,
         repos: RepoCatalog | None = None,
         arm_thread: Callable[[str, str], Awaitable[None]] | None = None,
+        boards_off: Collection[str] = frozenset(),
     ) -> None:
         self._store = store
         self._policy = policy
         self._repos = repos
+        # Read at each draw: JotFlow's start-up check fills it in place (#309).
+        self._boards_off = boards_off
         self._arm = arm_thread
         self._publisher = publisher
         self._people = people
@@ -242,7 +247,12 @@ class CardSync:
             if record.card_ts is None and record.approved_by == AUTO and record.state in _WRITING:
                 return False  # stays due: posted once the write is applied or failed
             context = await card_context(
-                self._policy, self._store, self._people, record, self._repos
+                self._policy,
+                self._store,
+                self._people,
+                record,
+                self._repos,
+                boards_off=self._boards_off,
             )
             await self._publisher.show(record, context)
             await self._store.mark_card_shown(record.id, record.revision)

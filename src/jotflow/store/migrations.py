@@ -209,6 +209,17 @@ CREATE TABLE proposal_edits (
 )
 """
 
+# proposal_edits as #309 has it: a person may also edit the card's boards.
+_PROPOSAL_EDITS_WITH_BOARDS = """
+CREATE TABLE proposal_edits_new (
+    proposal_id TEXT NOT NULL REFERENCES proposals (id) ON DELETE CASCADE, -- the proposal
+    edited_by TEXT NOT NULL, -- Slack user id of who changed it from the card
+    field TEXT NOT NULL
+        CHECK (field IN ('repo', 'assign', 'unassign', 'boards')), -- what, never the value
+    edited_at TEXT NOT NULL -- UTC, ISO 8601
+)
+"""
+
 # A drafting run's revision of a pending draft, from new messages (#304): which
 # fields, and whose messages, one row per person. Never a value.
 _PROPOSAL_REVISIONS = """
@@ -440,6 +451,19 @@ CREATE TABLE summary_deferrals (
 )
 """,
             "CREATE INDEX summary_deferrals_slot ON summary_deferrals (channel_id, until_slot)",
+        ),
+    ),
+    # A person may change a card's Projects boards (#309). SQLite can't alter a CHECK,
+    # so proposal_edits is rebuilt with 'boards' allowed, keeping every row in order.
+    Migration(
+        19,
+        (
+            _PROPOSAL_EDITS_WITH_BOARDS,
+            "INSERT INTO proposal_edits_new (proposal_id, edited_by, field, edited_at)"
+            " SELECT proposal_id, edited_by, field, edited_at FROM proposal_edits ORDER BY rowid",
+            "DROP TABLE proposal_edits",
+            "ALTER TABLE proposal_edits_new RENAME TO proposal_edits",
+            "CREATE INDEX proposal_edits_proposal ON proposal_edits (proposal_id)",
         ),
     ),
 )

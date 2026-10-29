@@ -388,6 +388,8 @@ class ChannelModeSetting:
 
 
 CLEARED_REASON = "(cleared)"
+# A board's reason when a person added it on the card, not the agent (#309).
+ADDED_ON_CARD = "(added on the card)"
 
 
 def cleared_draft(
@@ -462,8 +464,8 @@ def check_mark(channel_id: str, ts: str, user_id: str, keyword: str) -> None:
 
 
 # What a person changed from the card (#160). The value itself is never stored.
-EditField = Literal["repo", "assign", "unassign"]
-EDIT_FIELDS: tuple[EditField, ...] = ("repo", "assign", "unassign")
+EditField = Literal["repo", "assign", "unassign", "boards"]
+EDIT_FIELDS: tuple[EditField, ...] = ("repo", "assign", "unassign", "boards")
 # A person edits only what is still waiting for approval, or a failed write to retry.
 EDITABLE_STATES = frozenset({ProposalState.PENDING, ProposalState.FAILED})
 
