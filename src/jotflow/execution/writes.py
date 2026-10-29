@@ -18,6 +18,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from jotflow.models import IssueProposal, ProposalRecord, UpdateProposal
+from jotflow.policy import IssuesPolicy
 from jotflow.text import without_unsafe_chars
 
 MARKER_PREFIX = "jotflow:proposal:"
@@ -173,24 +174,32 @@ def _owner_repo(repo: str) -> tuple[str, str]:
     return owner, name
 
 
-def plan(record: ProposalRecord, tail: str) -> tuple[PlannedChecks, list[PlannedWrite]]:
-    """The checks and writes for ``record``, with ``tail`` from :func:`footer`."""
+def plan(
+    record: ProposalRecord, tail: str, issues: IssuesPolicy | None = None
+) -> tuple[PlannedChecks, list[PlannedWrite]]:
+    """The checks and writes for ``record``, with ``tail`` from :func:`footer`.
+
+    A new issue gets ``issues``' title prefix and label (#306), which the card showed.
+    The label is checked like the draft's own, so a missing one stops the write.
+    """
     draft = record.proposal
     owner, name = _owner_repo(draft.repo)
     mark = marker(record.id)
     if isinstance(draft, IssueProposal):
+        added = issues if issues is not None else IssuesPolicy()
+        labels = added.filed_labels(draft.labels)
         arguments: dict[str, Any] = {
             "method": "create",
             "owner": owner,
             "repo": name,
-            "title": draft.title,
+            "title": added.filed_title(draft.title),
             "body": _with_footer(draft.body, tail),
         }
-        if draft.labels:
-            arguments["labels"] = list(draft.labels)
+        if labels:
+            arguments["labels"] = labels
         if draft.assignees:
             arguments["assignees"] = list(draft.assignees)
-        checks = PlannedChecks(marker=mark, marker_in="recent_issues", labels=list(draft.labels))
+        checks = PlannedChecks(marker=mark, marker_in="recent_issues", labels=labels)
         return checks, [PlannedWrite(tool="issue_write", arguments=arguments)]
     return _plan_update(record.id, draft, owner, name, tail)
 

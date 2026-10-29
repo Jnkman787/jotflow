@@ -299,7 +299,9 @@ class ApprovalHandler:
             context = (
                 await self._context_for(record)
                 if self._context_for is not None
-                else CardContext(channel=self._policy.channel(record.channel_id))
+                else CardContext(
+                    channel=self._policy.channel(record.channel_id), issues=self._policy.issues
+                )
             )
             if not approvable(record, context):
                 raise Refused(TOO_LONG_TO_REACT)

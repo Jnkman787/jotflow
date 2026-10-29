@@ -27,7 +27,7 @@ from jotflow.models import (
     ProposalState,
     UpdateProposal,
 )
-from jotflow.policy import ChannelPolicy, RepoPolicy
+from jotflow.policy import ChannelPolicy, IssuesPolicy, RepoPolicy
 from jotflow.store.base import AUTO_APPROVER, IdentityLink, Store
 from jotflow.store.hashing import content_hash
 
@@ -73,6 +73,8 @@ class CardContext:
 
     channel: ChannelPolicy
     names: Mapping[str, str] = field(default_factory=dict)  # Slack user id -> display name
+    # What JotFlow adds to every new issue, shown so the card is what's filed (#306).
+    issues: IssuesPolicy = field(default_factory=IssuesPolicy)
     identities: Mapping[str, IdentityLink] = field(default_factory=dict)  # by Slack user id
     visibility: Mapping[str, Visibility] = field(default_factory=dict)  # by owner/name, any case
     # Every repo the channel may feed now, listed and found by a scope (#236).
@@ -216,10 +218,21 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
     return blocks
 
 
-def _labels_line(labels: Sequence[str], entry: RepoPolicy | None, prefix: str = "Labels") -> str:
-    shown = ", ".join(labels) if labels else "none"
+def _labels_line(
+    labels: Sequence[str],
+    entry: RepoPolicy | None,
+    prefix: str = "Labels",
+    added: str | None = None,
+) -> str:
+    """The labels line. ``added`` is the label JotFlow puts on every new issue (#306),
+    shown last and marked, since it isn't the draft's and can't be taken off here."""
+    own = [label for label in labels if not added or label.casefold() != added.casefold()]
+    shown = ", ".join(own) if own else ("" if added else "none")
     checked = entry is not None and entry.restricts_labels
-    return f"{prefix}: {shown}" + ("" if checked or not labels else " (not checked against a list)")
+    line = f"{prefix}: {shown}" + ("" if checked or not own else " (not checked against a list)")
+    if added:
+        line += (", " if own else "") + f"{added} (added to every issue)"
+    return line
 
 
 def _assignee_note(context: CardContext, login: str) -> str:
@@ -297,9 +310,10 @@ def _draft_blocks(
         header = "Proposed issue"
         blocks: list[Block] = []
         if record.draft_cleared_at is None:
-            blocks.append(_section(draft.title))
+            blocks.append(_section(context.issues.filed_title(draft.title)))
             blocks += _body(draft.body, show_body)
-        blocks.append(_approved_context(_labels_line(draft.labels, entry)))
+        labels = _labels_line(draft.labels, entry, added=context.issues.label)
+        blocks.append(_approved_context(labels))
         details = [f"Confidence: {round(draft.confidence * 100)}%"]
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
