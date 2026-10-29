@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #304
-- Draft PR: to be opened with this plan
+- Draft PR: #310
 - Status: planning. The store changes, so the plan comes first, as the lead asked
 - Last verified: origin/main b3afbf3, 2026-10-29
 - Next safe action: the lead and the reviewer review this plan, and product confirms the migration number
@@ -116,7 +116,7 @@ The instructions cap is 9,500 bytes, and the file is 9,208. I'll make room by ti
 ## Progress checklist
 
 - [x] Confirm the issue is ready
-- [ ] Commit this plan and open the draft PR
+- [x] Commit this plan and open the draft PR
 - [ ] The lead and the reviewer review this plan, and product confirms the migration number
 - [ ] Store: migration 16, `revise_proposal`, `proposal_revisions`, both stores
 - [ ] The `revise_proposal` tool and the packet's `pending`
