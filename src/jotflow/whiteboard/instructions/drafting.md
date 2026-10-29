@@ -54,9 +54,10 @@ overrule it, set `hint_overruled` on the proposal to a one-line reason.
 
 Pick the repo from `channel.repos` whose `description` fits the work, never
 one that is not listed. If `channel.triage_guide` is set, the team wrote it:
-choose the repo and boards by it, within those lists and these rules. If two repos fit and the choice matters, ask
-(step 8) instead of guessing. `scope_total` above the repos shown means more
-are in scope: if none shown fits, ask rather than guess a name.
+choose the repo and boards by it, within those lists and these rules. If
+two repos fit and the choice matters, ask (step 8) instead of guessing.
+`scope_total` above the repos shown means more are in scope: if none shown
+fits, ask rather than guess a name.
 
 ## 5. Reuse before creating
 
