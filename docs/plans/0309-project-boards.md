@@ -6,7 +6,7 @@
 - Draft PR: #311
 - Status: plan approved by the lead and security (2026-10-29), with security's five conditions below. Code is next, configured boards first
 - Last verified: origin/main b3afbf3, 2026-10-29, with github-mcp-server 2.0.2's projects tools listed offline from the pinned binary
-- Next safe action: review PR 1 (#311). Then PR 1b, the card's board edit with migration 17, once #310 (migration 16) merges. Then PR 2, discovery
+- Next safe action: review PR 1 (#311). Then PR 1b, the card's board edit with migration 19, once #310 (migration 16) merges. Then PR 2, discovery
 
 ## Objective and done-when
 
@@ -42,11 +42,11 @@ The pinned github-mcp-server 2.0.2's `projects` toolset has three tools, which I
 
 ### 1. The add is a fixed call in the execution runner, not an agent tool
 
-The agent writes the issue as today and reports it with `record_result`. JotFlow then asks the execution runner to add it to each approved board, with `POST /boards/add` and a strict JSON body: `{"repo": "owner/name", "issue_number": N, "board": "owner/N"}`. The runner refuses a query string, as RunnerGate does, and a body that isn't exactly that.
+The agent writes the issue as today and reports it with `record_result`. JotFlow then asks the execution runner to add it to each approved board, with `POST /boards/add` and a strict JSON body: `{"repo": "owner/name", "issue_number": N, "board": "owner/N", "proposal_id": "<id>"}`. Security's addendum after PR 1 (2026-10-29): the runner adds the issue only if its body carries the proposal's marker line, read in the same issue lookup, and otherwise refuses for good. The runner refuses a query string, as RunnerGate does, and a body that isn't exactly that.
 
 The runner makes three fixed GraphQL calls with the write token, each validated:
 
-- the issue's node id, from `repository(owner, name).issue(number)`;
+- the issue's node id and body, from `repository(owner, name).issue(number)`;
 - the board's node id, from `organization(login).projectV2(number)`;
 - `addProjectV2ItemById`.
 
@@ -84,7 +84,7 @@ description = "Each team's own board"
 
 - **`propose_issue`** gains `boards`, a list of `{board, reason}`, at most 3. Each board must be in the allowlist, or the call is refused with a fixed reason. `reason` is at most 200 characters, cleaned like a question.
 - **The card** shows a "Boards" line, with each board's nickname and title, and the agent's reason under it as the agent's words. A pending card gets a multi-select of the channel's boards, using Slack's `multi_static_select`, up to 100 options. Approvers and participants may edit it, as the repo dropdown allows.
-- **The edit is a card edit.** `proposal_edits.field` gains `boards`. Its CHECK constraint means a table rebuild in a migration, the one after #304's, so 17 if #304 takes 16.
+- **The edit is a card edit.** `proposal_edits.field` gains `boards`. Its CHECK constraint means a table rebuild in a migration, which the lead numbered 19.
 - **Approval** locks `boards` with the rest of the draft, in its hash, so a person approves exactly the boards the card shows.
 
 ### 4. Drafting
@@ -127,7 +127,7 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 
 ## Risks and open questions
 
-- **Migrations:** #304 takes 16 and this one 17, for the `boards` card edit, as the lead set. Product moves to 18.
+- **Migrations:** #304 takes 16, #305 takes 17 and #308 takes 18, so this one takes 19 for the `boards` card edit, as the lead set on 2026-10-29.
 - **A channel-wide triage guide:** `conventions` is per repo and capped at 2,000 characters. A team's guide to which board a request belongs on may outgrow that, so I opened #317 for a per-channel guide text, policy-trusted like `conventions`, capped at 8,000. Drafting reads it for boards and repos alike.
 - **GraphQL in the runner** is new: #236's calls are REST. The calls are fixed strings with variables, never built from input, and the response is read with a strict model, so the risk is in parsing. Size caps and strict models apply.
 - **Rate limits:** one add a board, at most 3 a proposal. JotFlow retries a failed or rate-limited add a few times with backoff, never re-running the agent, since the issue already exists. One that still fails is named in the thread notice, for a person to add by hand.
@@ -138,7 +138,7 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 - [x] Commit this plan and open the draft PR
 - [x] The lead and security decide 1 to 4
 - [x] PR 1: configured org boards, propose, card display, the fixed add, the access check at start, docs
-- [ ] PR 1b: the card's board edit, a multi-select, with migration 17 rebuilding `proposal_edits`' CHECK, after #310
+- [ ] PR 1b: the card's board edit, a multi-select, with migration 19 rebuilding `proposal_edits`' CHECK, after #310
 - [ ] PR 2: discovery, under security's condition 3
 
 ## Validation
