@@ -22,7 +22,7 @@ from typing import Protocol
 
 import anyio
 
-from jotflow.execution.writes import clean_name, footer, permalink
+from jotflow.execution.writes import _credited, _joined, clean_name, footer, permalink
 from jotflow.models import MessageRef, ProposalRecord
 from jotflow.policy import Policy
 from jotflow.store.base import Store
@@ -110,16 +110,21 @@ class Credit:
     others: tuple[str, ...] = ()
 
     def line(self, update: bool) -> str | None:
-        """The card's line naming them (#307 review), or None if nobody would be named."""
-        names = [n for n in (clean_name(o) for o in self.others) if n]
+        """The card's line naming them (#307 review), or None if nobody would be named.
+
+        It uses the footer's own rules, so the card shows exactly what's filed: each
+        name once without case, the poster not repeated, and ten names at most.
+        """
         if update:
-            return f"Credited in the update: {', '.join(names)}" if names else None
+            added = _credited(self.others)
+            return f"Credited in the update: {_joined(added)}" if added else None
         poster = clean_name(self.poster) if self.poster else ""
-        if not poster and not names:
+        helped = _credited(self.others, skip=poster)
+        if not poster and not helped:
             return None
         parts = [f"raised by {poster}"] if poster else []
-        if names:
-            parts.append("with contributions from " + ", ".join(n for n in names if n != poster))
+        if helped:
+            parts.append(f"with contributions from {_joined(helped)}")
         return "Credited in the issue: " + ", ".join(parts)
 
 

@@ -303,7 +303,7 @@ async def test_the_card_shows_the_names_the_footer_will_carry() -> None:
     store, topic_id = await topic_store()
     draft = on_topic(record(MessageRef(channel_id=CH, ts=ROOT)), topic_id)
     assert await card_line(draft, store) == (
-        "Credited in the issue: raised by Sam, with contributions from Alex here, kim here"
+        "Credited in the issue: raised by Sam, with contributions from Alex here and kim here"
     )
     tail = await execution_footer(draft, policy(), Crowd(), store)
     assert tail.splitlines()[0] == (
@@ -355,3 +355,16 @@ def test_the_credit_line_for_an_update_names_only_who_added() -> None:
     assert Credit().line(update=True) is None
     assert Credit().line(update=False) is None
     assert Credit(poster="@Sam").line(update=False) == "Credited in the issue: raised by Sam"
+
+
+def test_the_card_line_uses_the_footers_own_rules() -> None:
+    from jotflow.execution.attribution import Credit
+    from jotflow.execution.writes import footer
+
+    crowd = Credit(poster="Sam", others=("sam", "Kim", "kim", *(f"N{i}" for i in range(12))))
+    line = crowd.line(update=False)
+    filed = footer("p1", poster=crowd.poster, others=list(crowd.others)).splitlines()[0]
+    # The same names, once each, the poster not repeated, and the same cap.
+    assert line is not None and line.endswith("N7 and 4 others")
+    assert filed.endswith("N7 and 4 others.")
+    assert line.count("Kim") + line.count("kim") == 1 and "sam" not in line

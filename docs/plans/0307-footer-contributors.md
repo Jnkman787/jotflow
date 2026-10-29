@@ -53,4 +53,5 @@ Security and the lead asked for two things before merge, and the reviewer for a 
 
 ## Handoff notes
 
-None.
+- **After #304 merges:** revisions add contributors after `created_at`, so the cutoff should become the time of the card's latest revision, which is what the approver saw. Otherwise contributors to a revision are never credited. That change goes with the rebase after #304, or a small follow-up.
+- **A follow-up after #305:** the reviewer and security asked that #306's prefix and label be snapshotted into the approval, or the write refused if they changed since.

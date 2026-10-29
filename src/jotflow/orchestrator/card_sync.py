@@ -146,6 +146,7 @@ async def card_context(
     return CardContext(
         channel=channel,
         credit_line=await _credit_line(policy, store, attribution, record),
+        issues=policy.issues,
         names=names,
         identities=identities,
         visibility={repo: seen} if seen != "unknown" else {},
