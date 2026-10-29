@@ -25,7 +25,9 @@ Rules (security, #315):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -59,6 +61,9 @@ _STATUS = {
     ProposalState.FAILED: "Couldn't be filed",
 }
 WAITING = frozenset({ProposalState.PENDING})
+_ISSUE = re.compile(
+    r"https://github\.com/(?P<repo>[A-Za-z0-9-]+/[A-Za-z0-9._-]+)/issues/(?P<number>[0-9]+)"
+)
 
 
 def latest_slot(now: datetime, setting: ChannelSummary) -> datetime:
@@ -122,6 +127,7 @@ async def collect(
     slot: datetime,
     setting: ChannelSummary,
     attribution: Attribution,
+    nicknames_for: Mapping[str, str] | None = None,
 ) -> list[Item]:
     """The week's ideas for ``channel_id``, newest first, never one that was removed."""
     since = slot - WINDOW
@@ -133,6 +139,7 @@ async def collect(
         if found is not None and found.topic.channel_id == channel_id:
             topics[topic_id] = found
     workspace = await _workspace(attribution)
+    nicknames = dict(nicknames_for or {})
     items: list[tuple[datetime, Item]] = []
     for topic_id, found in topics.items():
         record = await _newest_create(store, channel_id, topic_id, found.topic.messages)
@@ -146,6 +153,8 @@ async def collect(
         draft = record.proposal
         assert isinstance(draft, IssueProposal)
         try:
+            if record.draft_cleared_at is not None:  # filed: the draft text is gone
+                raise ValueError("no draft")
             title = clean_title(draft.title, MAX_TITLE_LENGTH)
         except ValueError:
             title = clean_title(found.topic.title, MAX_TITLE_LENGTH)
@@ -156,6 +165,11 @@ async def collect(
             who = None
         status = _STATUS.get(record.state, "Waiting for approval")
         issue_url = record.result.issue_url if record.result else None
+        if record.state is ProposalState.APPLIED and issue_url:
+            filed = _ISSUE.fullmatch(issue_url)
+            if filed is not None:
+                repo = nicknames.get(filed["repo"].casefold(), filed["repo"])
+                status = f"Filed as {repo}#{filed['number']}"
         items.append(
             (
                 record.created_at,
@@ -208,7 +222,9 @@ async def _newest_create(
 
 async def _shown(record: ProposalRecord, attribution: Attribution) -> bool:
     """Whether the idea may be posted again: not removed by anyone (security, #315)."""
-    if record.draft_cleared_at is not None:
+    # Filing clears a draft's text by design; a filed idea still shows, by its topic's
+    # title and its issue. Any other cleared draft was removed on purpose.
+    if record.draft_cleared_at is not None and record.state is not ProposalState.APPLIED:
         return False
     if record.state in (ProposalState.REJECTED, ProposalState.SUPERSEDED):
         return False
@@ -255,9 +271,8 @@ def blocks_for(
             lines.append("Added to by " + ", ".join(item.added_by))
         if item.from_last_week:
             lines.append("Put off from last week")
-        blocks.append(
-            {"type": "section", "block_id": f"item:{item.topic_id}", "text": _plain("\n".join(lines))}
-        )
+        text = _plain("\n".join(lines))
+        blocks.append({"type": "section", "block_id": f"item:{item.topic_id}", "text": text})
         buttons: list[dict[str, Any]] = []
         if item.thread_url:
             buttons.append(_link("Thread", item.thread_url))
@@ -343,7 +358,14 @@ class WeeklySummaries:
             await self._store.finish_summary(channel_id, slot, "skipped")
             return False
         try:
-            items = await collect(self._store, channel_id, slot, setting, self._attribution)
+            nicknames = {
+                r.repo.casefold(): r.nickname
+                for r in self._policy.channels[channel_id].repos
+                if r.nickname
+            }
+            items = await collect(
+                self._store, channel_id, slot, setting, self._attribution, nicknames
+            )
             links: dict[str, str] = {}
             for item in items[:MAX_ITEMS]:
                 if item.waiting and item.card_ts:
@@ -379,10 +401,8 @@ class WeeklySummaries:
                 await self.tick()
             except Exception:
                 log.exception("the weekly summary loop failed; trying again in a minute")
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), TICK_SECONDS)
-            except TimeoutError:
-                pass
 
     async def defer(self, user_id: str, channel_id: str, message_ts: str, value: str) -> str:
         """Put a topic off to the next summary, after the gate checked who clicked.
@@ -440,3 +460,80 @@ def slack_error(exc: Exception) -> str | None:
     if isinstance(data, Mapping) and isinstance(data.get("error"), str):
         return str(data["error"])
     return None
+
+
+class BoltSummarySlack:
+    """The summary's Slack calls: post and edit in the channel, and a card's link."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    async def post(self, channel_id: str, text: str, blocks: list[dict[str, Any]]) -> str:
+        response = await self._client.chat_postMessage(
+            channel=channel_id, text=text, blocks=blocks, unfurl_links=False, unfurl_media=False
+        )
+        return str(response["ts"])
+
+    async def update(
+        self, channel_id: str, ts: str, text: str, blocks: list[dict[str, Any]]
+    ) -> None:
+        await self._client.chat_update(channel=channel_id, ts=ts, text=text, blocks=blocks)
+
+    async def permalink(self, channel_id: str, ts: str) -> str | None:
+        try:
+            response = await self._client.chat_getPermalink(channel=channel_id, message_ts=ts)
+        except Exception:
+            return None
+        link = response.get("permalink")
+        return link if isinstance(link, str) and link.startswith("https://") else None
+
+
+class Names(Protocol):
+    async def name(self, user_id: str) -> str | None: ...
+
+
+def register_summary(
+    app: Any, summaries: WeeklySummaries, gate: Any, slack: SummarySlack, names: Names
+) -> None:
+    """Answer the summary's buttons. Each acks first, within Slack's three seconds.
+
+    A link button needs nothing but the ack. Not this week goes through the
+    approval gate's ``checked_click``: Approve's rules for who may click.
+    """
+
+    async def link(ack: Any) -> None:
+        await ack()
+
+    async def not_this_week(ack: Any, body: dict[str, Any]) -> None:
+        await ack()
+
+        async def act(click: Any) -> str:
+            reply = await summaries.defer(
+                click.user_id, click.channel_id, click.message_ts, click.value
+            )
+            if reply == DEFERRED:
+                topic_id = click.value.partition("|")[0]
+                raw = body.get("message")
+                message: dict[str, Any] = raw if isinstance(raw, dict) else {}
+                listed = message.get("blocks")
+                old: list[Mapping[str, Any]] = (
+                    [b for b in listed if isinstance(b, dict)] if isinstance(listed, list) else []
+                )
+                who = await names.name(click.user_id) or "someone"
+                blocks = deferred_blocks(old, topic_id, _one_name(who) or "someone")
+                try:
+                    await slack.update(
+                        click.channel_id, click.message_ts, str(message.get("text", "")), blocks
+                    )
+                except Exception as exc:
+                    log.warning("summary edit failed (%s)", type(exc).__name__)
+            await gate.tell(click.user_id, reply, channel=click.channel_id)
+            return "deferred" if reply == DEFERRED else "refused"
+
+        try:
+            await gate.checked_click(body, act)
+        except Exception:
+            log.exception("Not this week failed")
+
+    app.action(ACTION_LINK)(link)
+    app.action(ACTION_NOT_THIS_WEEK)(not_this_week)

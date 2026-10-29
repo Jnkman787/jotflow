@@ -422,7 +422,8 @@ MIGRATIONS: tuple[Migration, ...] = (
 CREATE TABLE summaries (
     channel_id TEXT NOT NULL, -- the channel the summary is for
     slot TEXT NOT NULL, -- UTC, ISO 8601: when this week's summary was due
-    status TEXT NOT NULL CHECK (status IN ('posting', 'posted', 'failed', 'skipped')),
+    status TEXT NOT NULL -- this week's post: posting, posted, failed or skipped
+        CHECK (status IN ('posting', 'posted', 'failed', 'skipped')),
     attempts INTEGER NOT NULL DEFAULT 1, -- tries so far for this slot
     ts TEXT, -- the posted message's ts, once posted
     updated_at TEXT NOT NULL, -- UTC, ISO 8601

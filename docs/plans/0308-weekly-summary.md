@@ -4,7 +4,7 @@
 
 - Issue: #308
 - Draft PR: #315
-- Status: approved by the lead and security on 2026-10-29, with the decisions below. Code waits behind #305
+- Status: built, stacked on #310, #313 and #305's link PR for migrations 16 and 17 and the shared `credit()`. Its migration is numbered 18 locally, and becomes 19 when #309's 18 lands
 - Last verified: 2026-10-29, against main
 - Next safe action: review
 
@@ -90,7 +90,7 @@ Each item has:
   - The row is written before posting, then given the `ts`.
   - If Slack fails, the row is marked failed and retried with backoff, as thread notices are (#32).
 - **Daylight saving:**
-  - A time that doesn't exist that day, in a spring-forward gap, posts at the first minute after the gap.
+  - A time that doesn't exist that day, in a spring-forward gap, posts an hour later, which is how Python's `zoneinfo` reads it. A test pins it.
   - A time that happens twice, in an autumn fall-back, posts once, at the first.
   - `zoneinfo` gives both, and tests pin them.
 - **Downtime:**
@@ -131,5 +131,7 @@ A paused channel gets no summary. Its slot is skipped, not saved for later, and 
 To come.
 
 ## Handoff notes
+
+- **Filed ideas:** filing clears a draft's text, by design. So a filed idea is shown by its topic's title and its issue link, and is the one cleared draft that stays. Every other cleared draft is left out, as security asked.
 
 All examples are fictional: `C0123ABCD`, `acme-co/web`, Alex.

@@ -584,6 +584,10 @@ class ApprovalHandler:
         if self._refresh is not None:
             await self._refresh(record.id)
 
+    async def tell(self, user_id: str, text: str, *, channel: str | None) -> None:
+        """A private reply in ``channel``, as the gate's own replies are sent."""
+        await self._tell(user_id, text, channel=channel)
+
     async def _tell(self, user_id: str, text: str, *, channel: str | None) -> None:
         where = channel
         if not where or not _SLACK_ID.fullmatch(user_id):
