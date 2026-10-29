@@ -250,3 +250,24 @@ async def test_no_names_at_all_with_issue_links_none() -> None:
     store, _ = await topic_store()
     tail = await execution_footer(record(), policy('issue_links = "none"'), Crowd(), store)
     assert tail == marker("p1")
+
+
+async def test_a_draft_for_one_topic_never_credits_another_topics_people() -> None:
+    store, topic_a = await topic_store()
+    topic_b = (await store.create_topic(CH, "Dark mode")).topic.id
+    cited, other = "1792310900.000100", "1792310950.000100"
+    for ts in (cited, other):
+        await store.link_message(MessageRef(channel_id=CH, ts=ts, thread_ts=ROOT), topic_b)
+    crowd = Crowd()
+    crowd._authors[cited] = {"U0SAM"}  # type: ignore[index]
+    crowd._authors[other] = {"U0OUTSIDE"}  # type: ignore[index]
+    # Topic A's draft cites one of topic B's messages: B's other people stay out.
+    draft = record(
+        MessageRef(channel_id=CH, ts=ROOT), MessageRef(channel_id=CH, ts=cited, thread_ts=ROOT)
+    )
+    draft = draft.model_copy(
+        update={"proposal": draft.proposal.model_copy(update={"topic_id": topic_a})}
+    )
+    tail = await execution_footer(draft, policy(), crowd, store)
+    assert "Outsider" not in tail
+    assert "contributions from Alex here and kim here." in tail.splitlines()[0]

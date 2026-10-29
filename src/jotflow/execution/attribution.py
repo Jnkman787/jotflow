@@ -60,14 +60,19 @@ async def _contributed(record: ProposalRecord, store: Store | None) -> list[Mess
     refs = list(record.proposal.sources)
     if store is None:
         return refs
-    topics = {record.proposal.topic_id} if record.proposal.topic_id else set()
-    for source in record.proposal.sources:
-        link = await store.get_message(source.channel_id, source.ts)
-        if link is not None and link.topic_id is not None:
-            topics.add(link.topic_id)
+    # The draft's own topic when it names one, so another topic in the thread never
+    # lends it contributors. Only a draft for a new topic looks at its sources' links.
+    topics: set[str] = set()
+    if record.proposal.topic_id:
+        topics.add(record.proposal.topic_id)
+    else:
+        for source in record.proposal.sources:
+            link = await store.get_message(source.channel_id, source.ts)
+            if link is not None and link.topic_id is not None:
+                topics.add(link.topic_id)
     seen = {ref.ts for ref in refs}
     extra: list[MessageRef] = []
-    for topic_id in sorted(t for t in topics if t):
+    for topic_id in sorted(topics):
         found = await store.get_topic(topic_id)
         if found is None or found.topic.channel_id != record.channel_id:
             continue
