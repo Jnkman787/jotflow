@@ -473,7 +473,7 @@ Assignment requires a Slack user to GitHub handle mapping. A self-service slash 
 - **What's listed:** one item per topic with a create proposal made in the window, using that topic's newest. A topic put off with Not this week is listed again.
 - **What's left out:** a rejected or superseded idea, a draft cleared other than by filing, and an idea whose source messages Slack says are all gone.
 - **How it's shown:** titles are cut to the card's limit, and titles and names are `plain_text`, with every link a button JotFlow built. At most 20 items appear, waiting ones first, then "and N more".
-- **Not this week:** it goes through the approval gate's `checked_click`, under Approve's rules, and must come from that week's own posted summary. It records a deferral in `summary_deferrals` until the next slot. The tables hold pointers, Slack ids and times only.
+- **Not this week:** it goes through the approval gate's `checked_click`, under Approve's rules. It must come from the channel's latest summary, by the posted message's stored ts, and name a topic that summary offered it for. Those topics are recorded in `summary_topics` before posting, migration 20, and a retry replaces them. It records a deferral in `summary_deferrals` until the next slot. The tables hold pointers, Slack ids and times only.
 
 ## Security posture
 

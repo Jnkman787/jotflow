@@ -501,6 +501,46 @@ async def test_not_this_week_puts_the_topic_off_to_the_next_summary() -> None:
     assert "Put off from last week" in texts(slack.posts[-1][2])
 
 
+async def test_not_this_week_only_puts_off_a_topic_its_summary_listed() -> None:
+    """A crafted value naming another of the channel's topics is refused (#315 review)."""
+    store = MemoryStore()
+    listed, _ = await idea(store, 1, title="Listed")
+    unlisted = (await store.create_topic(CH, "Never in a summary")).topic.id
+    run = summaries(store, Slack(), SLOT)
+    await run.tick()
+    assert await store.summary_topics(CH, SLOT) == {listed}
+    ts = "1793000000.000001"
+    assert await run.defer("U0ALEX", CH, ts, f"{unlisted}|{SLOT.isoformat()}") == (NOT_THIS_SUMMARY)
+    assert await store.deferred_topics(CH, next_slot(SLOT, LONDON)) == []
+    assert await run.defer("U0ALEX", CH, ts, f"{listed}|{SLOT.isoformat()}") == DEFERRED
+
+
+async def test_an_earlier_summary_has_passed_once_a_later_one_is_due() -> None:
+    store = MemoryStore()
+    topic, _ = await idea(store, 1)
+    slack = Slack()
+    await summaries(store, slack, SLOT).tick()
+    upcoming = next_slot(SLOT, LONDON)
+    # A week on, last week's post still matches its ts, but it has passed.
+    later = summaries(store, slack, upcoming + timedelta(minutes=1))
+    value = f"{topic}|{SLOT.isoformat()}"
+    assert await later.defer("U0ALEX", CH, "1793000000.000001", value) == NOT_THIS_SUMMARY
+    # Just before the next slot, it still works.
+    before = summaries(store, slack, upcoming - timedelta(minutes=1))
+    assert await before.defer("U0ALEX", CH, "1793000000.000001", value) == DEFERRED
+
+
+async def test_a_retry_replaces_the_listed_topics(tmp_path: Path) -> None:
+    for store in (MemoryStore(), await SqliteStore.open(tmp_path / "j.db")):
+        await store.set_summary_topics(CH, SLOT, ["a", "b"])
+        await store.set_summary_topics(CH, SLOT, ["b", "c", "c"])
+        assert await store.summary_topics(CH, SLOT) == {"b", "c"}
+        assert await store.summary_topics(CH, SLOT + timedelta(days=7)) == frozenset()
+        await store.set_summary_topics(CH, SLOT, [])
+        assert await store.summary_topics(CH, SLOT) == frozenset()
+        await store.close()
+
+
 def test_the_summary_shows_who_put_an_item_off() -> None:
     blocks = [
         {"type": "section", "block_id": "item:t1", "text": {"type": "plain_text", "text": "x"}},

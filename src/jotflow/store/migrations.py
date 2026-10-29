@@ -466,6 +466,21 @@ CREATE TABLE summary_deferrals (
             "CREATE INDEX proposal_edits_proposal ON proposal_edits (proposal_id)",
         ),
     ),
+    # The topics each summary offered Not this week for (#315 review), recorded before
+    # posting, so a click can only put off a topic its own summary listed.
+    Migration(
+        20,
+        (
+            """
+CREATE TABLE summary_topics (
+    channel_id TEXT NOT NULL, -- the summary's channel
+    slot TEXT NOT NULL, -- UTC, ISO 8601: the summary's slot
+    topic_id TEXT NOT NULL, -- a topic it listed with Not this week
+    PRIMARY KEY (channel_id, slot, topic_id)
+)
+""",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version
