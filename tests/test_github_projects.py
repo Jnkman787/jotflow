@@ -232,6 +232,8 @@ NOT_FOUND = {
     [
         NOT_FOUND,
         {"data": {"organization": None}, "errors": [{"type": "FORBIDDEN", "message": "no"}]},
+        # A classic token without the project scope: a real no, not a failed check.
+        {"data": None, "errors": [{"type": "INSUFFICIENT_SCOPES", "message": "needs project"}]},
         {"data": {"organization": {"projectV2": None}}},
         {"data": {"organization": None}},
         {"data": {"organization": {"projectV2": {"id": BOARD_NODE, "viewerCanUpdate": False}}}},

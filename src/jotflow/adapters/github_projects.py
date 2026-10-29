@@ -121,8 +121,9 @@ class _AddData(_Strict):
     addProjectV2ItemById: _Added
 
 
-# GraphQL error types that answer the question: the token can't see it.
-_DENIED = frozenset({"NOT_FOUND", "FORBIDDEN"})
+# GraphQL error types that answer the question: the token can't see it, or a
+# classic token lacks the project scope (#323 review).
+_DENIED = frozenset({"NOT_FOUND", "FORBIDDEN", "INSUFFICIENT_SCOPES"})
 
 
 class Denied(GithubError):
