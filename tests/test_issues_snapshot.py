@@ -451,3 +451,32 @@ async def test_an_approved_card_shows_what_the_approval_locked() -> None:
     assert found is not None
     context = await card_context(policy(OLD), store, FakePeople(), found)
     assert context.issues == SLACK
+
+
+async def test_a_failed_card_shows_todays_settings_so_retry_can_approve() -> None:
+    """A Retry locks today's settings, so the failed card must show them (CodeRabbit)."""
+    from jotflow.orchestrator.card_sync import card_context
+    from tests.test_card_sync import FakePeople
+
+    store = MemoryStore()
+    added = await store.add_proposal(record())
+    locked = content_hash(added.proposal)
+    await store.transition(
+        PID, ProposalState.APPROVED, approved_by=ALICE, expected_hash=locked, issues=OLD.snapshot()
+    )
+    await store.transition(PID, ProposalState.EXECUTING)
+    failed = await store.transition(PID, ProposalState.FAILED, result=ExecutionResult(error="no"))
+    context = await card_context(policy(SLACK), store, FakePeople(), failed)
+    assert context.issues == SLACK
+    # The redrawn failed card records today's settings, and Retry then approves.
+    gate = Gate(SLACK)
+    gate.store = store
+    gate.handler = ApprovalHandler(store, policy(SLACK), gate.slack, redraw=gate._redraw)
+    await store.set_card_ts(PID, CARD_TS)
+    await store.mark_card_shown(PID, failed.revision, context.issues.snapshot())
+    from jotflow.orchestrator.cards import ACTION_RETRY
+
+    body = click(f"{PID}:{locked}")
+    body["actions"][0]["action_id"] = ACTION_RETRY
+    assert await gate.handler.on_approve(body) == "approved"
+    assert (await gate.state()).approved_issues == SLACK.snapshot()
