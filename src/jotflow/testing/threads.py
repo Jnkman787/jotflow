@@ -431,9 +431,9 @@ class ExpectedWhisper(_Strict):
 def _question_replies() -> frozenset[str]:
     from jotflow.orchestrator import questions
 
-    return frozenset(
-        {questions.MEMBERS_ONLY, questions.TOO_MANY, questions.TOO_SOON, questions.OFF}
-    )
+    fixed = {questions.MEMBERS_ONLY, questions.TOO_MANY, questions.TOO_SOON, questions.OFF}
+    # A mention's reply adds that drafting still reads it (#329).
+    return frozenset(fixed | {text + questions.STILL_READ for text in fixed})
 
 
 class Expected(_Strict):
@@ -872,9 +872,15 @@ def _expected_problems(thread: SavedThread) -> list[str]:
         placed[ts] = placed.get(ts, 0) + 1
     for ts in skipped(thread):
         placed[ts] = placed.get(ts, 0) + 1
-    # A question is neither an idea nor the agent's chatter call: JotFlow sets it aside (#57).
+    # An ask: is neither an idea nor the agent's chatter call: JotFlow sets it aside (#57).
+    # A bot mention is a question and a message to the thread: drafting may place it in a
+    # topic or chatter, or leave it, when no drafting run is scripted (#329).
+    from jotflow.orchestrator.questions import is_ask
+
+    mentions = {ts for ts in expected.questions if not is_ask(messages[ts].text or "")}
     for ts in expected.questions:
-        placed[ts] = placed.get(ts, 0) + 1
+        if ts not in mentions or placed.get(ts, 0) == 0:
+            placed[ts] = placed.get(ts, 0) + 1
     for ts in accepted_messages:
         count = placed.get(ts, 0)
         if count != 1:

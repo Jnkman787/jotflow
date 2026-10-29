@@ -1361,22 +1361,40 @@ async def test_with_runs_off_a_scope_finds_nothing_and_says_why(
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
-async def test_a_question_queues_a_question_run_and_never_a_draft() -> None:
+async def test_an_ask_queues_a_question_run_and_never_a_draft() -> None:
     rig = Rig()
     await rig.orchestrator.start()
     try:
         app = await _bolt_app(rig)
         await _deliver(app, _reply(REPLY, "ask: is dark mode already tracked?"), "Ev1")
-        await _deliver(app, _reply("1760781720.000100", "<@U0BOT> and icons?"), "Ev2")
     finally:
         await rig.orchestrator.stop()
     runs = await rig.store.thread_runs(CH, THREAD)
-    assert [r.kind for r in runs] == [RunKind.QUESTION]  # one per thread, never a draft
-    assert await rig.store.pending_threads() == []
+    assert [r.kind for r in runs] == [RunKind.QUESTION]
+    assert await rig.store.pending_threads() == []  # never a draft
     asked = await rig.store.get_message(CH, REPLY)
     assert asked is not None and asked.chatter and asked.linked_by == "agent"
     # Neither the keyword handler nor the help offered anything for a question.
     assert rig.slack.reactions == [] and rig.help.whispers == []
+
+
+async def test_a_mention_is_a_question_and_also_read_by_drafting() -> None:
+    # #329: "@Bot add the recipe file to the ticket" may be a follow-up, so drafting
+    # reads it with the thread, beside the question run, and it isn't marked chatter.
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        app = await _bolt_app(rig)
+        await _deliver(app, _reply(REPLY, "<@U0BOT> add the recipe file to the ticket"), "Ev1")
+    finally:
+        await rig.orchestrator.stop()
+    runs = await rig.store.thread_runs(CH, THREAD)
+    assert [r.kind for r in runs] == [RunKind.QUESTION]
+    assert [(p.channel_id, p.thread_ts) for p in await rig.store.pending_threads()] == [
+        (CH, THREAD)
+    ]
+    mention = await rig.store.get_message(CH, REPLY)
+    assert mention is None or not mention.chatter
 
 
 def test_codex_with_read_paths_keeps_every_kind_on() -> None:

@@ -77,7 +77,7 @@ from jotflow.orchestrator.questions import (
     BoltQuestionSlack,
     QuestionHandler,
     QuestionSlack,
-    is_question,
+    is_ask,
 )
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
@@ -621,13 +621,13 @@ class Orchestrator:
             and self._questions is not None
         ):
             try:
-                question = (await self._questions.on_message(event)).outcome != "not_a_question"
+                await self._questions.on_message(event)
             except Exception:
                 log.exception("could not take a question")
-                # Fail closed: a question that failed is still not an idea to draft.
-                question = is_question(str(event.get("text") or ""), self._identity.user_id)
-            if question:
-                # A question is not an idea: no keyword handling, no help, no drafting run.
+            if is_ask(str(event.get("text") or "")):
+                # ask: is only a question: no keyword handling, no help, no drafting run,
+                # whatever became of it, and even if taking it failed (fail closed).
+                # A bot mention goes on to drafting too, which only proposes (#329).
                 return
         if isinstance(decision, Accepted) and event is not None and self._keywords is not None:
             try:

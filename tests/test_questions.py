@@ -420,3 +420,23 @@ def test_no_kept_file_extension_is_a_delegated_tld() -> None:
     tlds = {line.strip().lower() for line in lines if line and not line.startswith("#")}
     assert len(tlds) > 1000
     assert not FILE_EXTENSIONS & tlds
+
+
+async def test_a_mention_with_questions_off_says_it_is_still_read() -> None:
+    # #329: a mention isn't only a question, so a "not now" mustn't sound like a drop.
+    from jotflow.orchestrator.questions import STILL_READ
+
+    questions, store, slack, _ = handler(enabled=False)
+    assert (await questions.on_message(event(f"<@{BOT}> add the recipe file"))).outcome == "off"
+    assert slack.whispers[-1][3] == OFF + STILL_READ
+    assert await store.get_message(CH, "1.1") is None  # never marked chatter
+
+
+async def test_only_an_ask_is_set_aside_from_drafting() -> None:
+    questions, store, _, _ = handler()
+    await questions.on_message(event("ask: is it tracked?"))
+    await questions.on_message(event(f"<@{BOT}> add the recipe file", ts="1.2"))
+    asked = await store.get_message(CH, "1.1")
+    assert asked is not None and asked.chatter
+    mention = await store.get_message(CH, "1.2")
+    assert mention is None or not mention.chatter

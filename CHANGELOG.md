@@ -26,6 +26,10 @@ What changed in each JotFlow release, for the people who run it. The format foll
 - **`jotflow replay --agent <preset> --model <model>` sets the model for question runs too (#59),** not only drafting runs, so a preset with no default model can replay a fixture's question runs.
 - **`jotflow rebuild` restores a thread's links as the agent's decision, not a person's (#279).** The original links were mostly the agent's, so a later drafting run can still move a rebuilt one, and a person's later choice wins. A `skip:` stays a person's. A message a person attached before the loss, for example with `re:`, comes back as the agent's too, so attach it again with `re:` to keep it fixed.
 
+### Fixed
+
+- **A bot mention is no longer only a question (#329).** "@JotFlow add the date range to the ticket" in a filed issue's thread was answered as a question, and the request was dropped, even with questions off. Now a mention is read by drafting with the rest of the thread, so a request becomes a follow-up card to approve, and the question run still answers what it asks without saying a change is done. With questions off or limited, the private note says the message is still read. `ask:` is unchanged: it's only ever a question.
+
 ### Security
 
 - **The codex preset no longer fetches OpenAI's model catalog (#284).** With an API key, Codex fetched it on every run, and that catalog sets each model's tools. A change on OpenAI's side could have switched `gpt-5.5` into Codex's code mode, which adds a JavaScript `exec` tool, and JotFlow's model check wouldn't have caught it. Codex now uses the catalog bundled with the pinned release. Only teams on the `codex` preset are affected. Upgrade the agent image, which builds the config.
