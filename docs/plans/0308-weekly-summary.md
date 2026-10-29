@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #308
-- Draft PR: to be opened
+- Draft PR: #315
 - Status: planning. The lead reviews this plan before any code, and security looks at what it posts
 - Last verified: 2026-10-29, against main
 - Next safe action: review
