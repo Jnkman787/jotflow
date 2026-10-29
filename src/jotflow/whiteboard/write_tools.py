@@ -1278,10 +1278,13 @@ class WriteTools:
 
         async def act() -> PointResult:
             await self._packet_ref(grant, args.ts)
-            if await self._store.count_thread_calls(
-                grant.channel_id, thread, "point_to_help", since=_EVER
-            ):
-                return PointResult()
+            for already in ("point_to_help", "answer"):
+                # One pointer a thread, and none where JotFlow already answered a
+                # question, so it can't talk over its own answer (#336 review).
+                if await self._store.count_thread_calls(
+                    grant.channel_id, thread, already, since=_EVER
+                ):
+                    return PointResult()
             try:
                 posted = await self._poster.post(grant.channel_id, thread, POINT_TO_HELP)
             except PostError as refused:
@@ -1386,7 +1389,8 @@ _DESCRIPTIONS = {
     "point_to_help": (
         "For a message about JotFlow itself, such as feedback on it or how to use it: "
         "JotFlow replies in the thread, once, with its own fixed pointer to ask: and "
-        "/jotflow help. You write nothing. Mark the message chatter too."
+        "/jotflow help, unless it already answered a question there. You write nothing. "
+        "Mark the message chatter too."
     ),
     "answer": (
         "Answer the question in this run's own Slack thread, once, in at most 3 short "

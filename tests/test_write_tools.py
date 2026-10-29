@@ -552,6 +552,27 @@ async def test_a_pointer_is_jotflows_own_text_once_a_thread(
     assert again.posted_ts is None and len(poster.posts) == 1
 
 
+async def test_no_pointer_where_jotflow_already_answered(
+    tools: WriteTools, poster: Poster, store: MemoryStore, clock: Clock
+) -> None:
+    from jotflow.store.base import ToolCallRecord
+    from jotflow.whiteboard.write_tools import PointToHelpArgs
+
+    await store.record_tool_call(
+        ToolCallRecord(
+            run_id="question-run",
+            tool="answer",
+            args_hash="sha256:aa",
+            channel_id=CH,
+            thread_ts=ROOT,
+            result_json="{}",
+            called_at=clock(),
+        )
+    )
+    result: Any = await tools.point_to_help(DRAFT, PointToHelpArgs(ts=ROOT))
+    assert result.posted_ts is None and poster.posts == []
+
+
 async def test_a_pointer_needs_a_message_from_the_packet(tools: WriteTools) -> None:
     from jotflow.whiteboard.write_tools import PointToHelpArgs
 
