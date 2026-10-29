@@ -70,14 +70,17 @@ description = "Planned work for the next two quarters"
 
 [[channels.C0EXAMPLE1.board_scopes]]
 owner = "acme-co"
-match = ["Team *"]             # globs on the board's title, ignoring case
-exclude = ["* (archive)"]
+numbers = [12, 14]             # recommended: these boards, by number
+marker = "jotflow:triage"      # or a word in the board's short description...
+creators = ["acme-lead"]       # ...counted only on boards these accounts created
+exclude = ["* (archive)"]      # title globs that only leave boards out
 description = "Each team's own board"
+aliases = { design = 12 }
 ```
 
 - **Validation:** `board` is checked like a repo's owner plus a number from 1 to 10^9. Nicknames are unique across a channel's repos, boards and aliases. There are at most 10 boards and 3 board scopes a channel.
 - **Descriptions:** a configured board's `description` is the source of truth. The deploying team's weekly review writes them through a reviewed PR, because GitHub's own descriptions go stale. When discovery comes, a configured description overrides a discovered one for the same board. A discovered board's GitHub description is untrusted text, cleaned and capped, as #236's repo descriptions are.
-- **Discovery, in PR 2:** discovered boards come from the drafting runner, with `GET /boards/{owner}`, a fixed paged GraphQL call with the read token. It returns number, title, short description, closed and template only. Closed and template boards are left out. The catalog, caching, 24-hour staleness and refresh on a miss are as #236's repo catalog, which gains a board half.
+- **Discovery, in PR 2:** the plan on #309, decided 2026-10-29, is the reference. The drafting runner answers `POST /boards/find` with a strict body: the scope, with creators as account ids. It pages one constant GraphQL query with the read token, over at most 500 boards. It reads number, title, short description, closed, template and creator, and returns only boards in scope. A board is in scope by number, or by the marker on a board a listed creator made. Closed and template boards are left out, and so is any title matching `exclude`. A separate board catalog keeps the listings, with #236's timings: refresh every 15 minutes, unused after 24 hours. It caps found boards at 20 a channel and checks each one's write access once, and only a real no excludes one. The add still checks everything live.
 - **Untrusted text:** a discovered board's title and short description are GitHub text, cleaned and marked untrusted, as repo descriptions are.
 
 ### 3. Propose, card, edit
@@ -139,7 +142,7 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 - [x] The lead and security decide 1 to 4
 - [x] PR 1: configured org boards, propose, card display, the fixed add, the access check at start, docs
 - [ ] PR 1b: the card's board edit, a multi-select, with migration 19 rebuilding `proposal_edits`' CHECK: #327, after #308's migration 18 landed in #315
-- [ ] PR 2: discovery, under security's condition 3
+- [ ] PR 2: discovery, under security's condition 3 and the decisions on #309. Built on PR 1b's branch, it opens once #327 merges
 
 ## Validation
 

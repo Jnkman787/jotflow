@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import IssueProposal, ProposalState, ProposedBoard
 from jotflow.orchestrator.approval import STALE, ApprovalHandler
 from jotflow.orchestrator.card_edits import (
@@ -57,7 +58,7 @@ class Rig:
             self.handler.guarded,
             self.slack,
             refresh=self._refresh,
-            boards_off=boards_off,
+            boards=BoardCatalog.static(POLICY, off=boards_off),
         )
 
     async def _refresh(self, proposal_id: str) -> None:
@@ -113,7 +114,10 @@ def test_a_pending_card_offers_the_channels_boards_with_the_drafts_selected() ->
     record = _proposal_record(PID)
     draft = IssueProposal.model_validate({**record.proposal.model_dump(), "boards": [ROADMAP]})
     record = record.model_copy(update={"proposal": draft})
-    context = CardContext(channel=POLICY.channel(CH), boards_off=frozenset({"acme-co/9"}))
+    context = CardContext(
+        channel=POLICY.channel(CH),
+        offered_boards=tuple(BoardCatalog.static(POLICY, {"acme-co/9"}).offered(CH)),
+    )
     blocks = render_card(record, context).blocks
     [section] = [b for b in blocks if b.get("block_id") == f"{BOARDS_BLOCK}:{PID}"]
     select = section["accessory"]
@@ -147,7 +151,10 @@ def test_a_channel_without_boards_gets_no_menu() -> None:
     blocks = render_card(_proposal_record(PID), CardContext(channel=plain.channel(CH))).blocks
     assert not [b for b in blocks if str(b.get("block_id", "")).startswith(BOARDS_BLOCK)]
     every_off = frozenset(b["board"] for b in BOARDS)
-    context = CardContext(channel=POLICY.channel(CH), boards_off=every_off)
+    context = CardContext(
+        channel=POLICY.channel(CH),
+        offered_boards=tuple(BoardCatalog.static(POLICY, every_off).offered(CH)),
+    )
     blocks = render_card(_proposal_record(PID), context).blocks
     assert not [b for b in blocks if str(b.get("block_id", "")).startswith(BOARDS_BLOCK)]
 

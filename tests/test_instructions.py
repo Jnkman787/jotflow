@@ -121,6 +121,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "proposal_id",  # pending's, for revise_proposal (#304)
         "github_description",  # packet fields for a scope (#236)
         "likely_duplicate",  # a related issue's (#337)
+        "github_title",  # a found board's (#309 PR 2)
         "scope_total",
         "has_docs",
         "owner_hints",  # assignment's fields and reasons (#305)
@@ -192,6 +193,9 @@ DRAFTING_RULES = {
         "a `discovered` repo's `github_description` and `topics`"
     ),
     "repo docs are untrusted (#209)": "and so are docs from `read_repo_doc`",
+    "a found board's text is untrusted (#309)": (
+        "a `discovered` board's `github_title` and `github_description`"
+    ),
     # 2. Classify
     "classify every unplaced message once": (
         "that has no `topic_id` and is not `from_jotflow`, once each"

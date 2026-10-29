@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import IssueProposal, ProposalRecord, ProposalState
 from jotflow.orchestrator.launch import NotThisProposal
 from jotflow.policy import Policy, UnknownChannelError
@@ -83,11 +84,14 @@ class BoardAdder:
         client: BoardClient,
         *,
         clock: Callable[[], datetime] = utc_now,
+        boards: BoardCatalog | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
         self._client = client
         self._clock = clock
+        # Listed boards, and found ones only while their listing is fresh (#309 PR 2).
+        self._boards = boards if boards is not None else BoardCatalog.static(policy)
 
     async def add_all(self, record: ProposalRecord) -> BoardResults:
         """Add the applied issue to each approved board not added yet."""
@@ -99,14 +103,17 @@ class BoardAdder:
             return results
         issue = _issue(record)
         try:
-            channel = self._policy.channel(record.channel_id)
+            self._policy.channel(record.channel_id)
         except UnknownChannelError:
             return results
         for proposed in draft.boards:
-            listed = channel.board(proposed.board)
+            listed = self._boards.board(record.channel_id, proposed.board)
             name = listed.nickname if listed is not None else proposed.board
+            if listed is None and await self._was_added(record, proposed.board):
+                results.added.append(name)  # added before it left the list or scope
+                continue
             if listed is None or issue is None:
-                # No longer listed, or no issue recorded: never added.
+                # No longer listed or in scope, or no issue recorded: never added.
                 results.failed.append(name)
                 continue
             outcome = await self._add(record, issue, listed.board)
@@ -119,6 +126,16 @@ class BoardAdder:
             else:
                 results.retry = True
         return results
+
+    async def _was_added(self, record: ProposalRecord, board: str) -> bool:
+        run_id = f"boards:{record.id}"
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            found = await self._store.find_tool_call(run_id, TOOL, f"{board}#{attempt}")
+            if found is None:
+                return False
+            if json.loads(found).get("added"):
+                return True
+        return False
 
     async def _add(self, record: ProposalRecord, issue: tuple[str, int], board: str) -> str:
         """``added``, ``failed`` after the last attempt, ``refused`` when the issue

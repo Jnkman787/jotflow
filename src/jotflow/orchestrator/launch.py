@@ -32,7 +32,7 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
@@ -47,6 +47,7 @@ from jotflow.models import (
     Account,
     Assignable,
     DiscoveredRepo,
+    FoundBoard,
     IssueDetails,
     MarkedIssues,
     Membership,
@@ -225,6 +226,12 @@ MAX_DISCOVERED = 1000
 MAX_DISCOVERY_BYTES = 2_000_000
 
 
+class BoardsFoundWire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    boards: list[FoundBoard] = Field(max_length=500)
+
+
 class DiscoveryWire(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -390,6 +397,54 @@ class RunnerClient:
         except ValidationError:
             raise RunnerError("the runner's reply was not a repo list") from None
         return [r for r in raw.repos[:MAX_DISCOVERED] if under_owner(r.full_name, owner)]
+
+    async def find_boards(
+        self,
+        owner: str,
+        *,
+        numbers: Sequence[int],
+        marker: str | None,
+        creator_ids: Sequence[int],
+        exclude: Sequence[str],
+    ) -> list[FoundBoard]:
+        """``owner``'s boards in a channel's scope, from the drafting runner (#309 PR 2).
+
+        The runner applies the scope. Checked again here: at most 500 boards, each
+        number once.
+        """
+        if not is_owner_name(owner):
+            raise RunnerError("not a GitHub owner")
+        response = await self._call(
+            "POST",
+            RunKind.DRAFTING,
+            "/boards/find",
+            json={
+                "owner": owner,
+                "numbers": list(numbers),
+                "marker": marker,
+                "creator_ids": list(creator_ids),
+                "exclude": list(exclude),
+            },
+        )
+        if response.status_code == 429:
+            raise RunnerError("GitHub's rate limit", retry="rate_limited")
+        if response.status_code == 403:
+            raise RunnerError("the read token can't list boards")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_DISCOVERY_BYTES:
+            raise RunnerError("the runner's board list was too large")
+        try:
+            raw = BoardsFoundWire.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a board list") from None
+        seen: set[int] = set()
+        boards = []
+        for board in raw.boards:
+            if board.number not in seen:
+                seen.add(board.number)
+                boards.append(board)
+        return boards
 
     async def marked_issues(
         self, owner: str, name: str, *, since: date | None = None

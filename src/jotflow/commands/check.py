@@ -303,13 +303,23 @@ def board_notes(policy: Policy) -> list[str]:
     start that the write token may update each board, and turns off any it can't.
     """
     boards = sorted({b.board for c in policy.channels.values() for b in c.boards})
-    if not boards:
-        return []
-    return [
-        f"{', '.join(boards)}: the write token needs Projects: Read and write on the "
-        "organisation, which reaches every board it owns. Only organisation boards work. "
-        "JotFlow checks it can update each board when it starts, and turns off any it can't."
-    ]
+    owners = sorted({s.owner for c in policy.channels.values() for s in c.board_scopes})
+    notes = []
+    if boards:
+        notes.append(
+            f"{', '.join(boards)}: the write token needs Projects: Read and write on the "
+            "organisation, which reaches every board it owns. Only organisation boards work. "
+            "JotFlow checks it can update each board when it starts, and turns off any it can't."
+        )
+    if owners:
+        # Board scopes (#309 PR 2): finding needs the read token too.
+        notes.append(
+            f"board scopes for {', '.join(owners)}: the read token needs Projects: Read-only "
+            "on each organisation (read:project on a classic token) to find boards, and the "
+            "write token Projects: Read and write to add to them. Without the read "
+            "permission no board is found, and listed boards still work."
+        )
+    return notes
 
 
 def triage_notes(policy: Policy) -> list[str]:
