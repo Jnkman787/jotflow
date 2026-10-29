@@ -14,9 +14,8 @@ def test_the_instructions_are_plain_bounded_ascii() -> None:
     assert DRAFTING_INSTRUCTIONS.isascii()
     # Room for the repo-style rules (#249), team conventions (#216), scopes (#236)
     # and repo docs (#209), still small next to a thread.
-    # 10,000 since #304's follow-up rules, with the lead's approval; 10,500 for #305's
-    # assignee reasons, pending the lead's approval.
-    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 10_500
+    # 10,000 since #304's follow-up rules, with the lead's approval.
+    assert 1_000 < len(DRAFTING_INSTRUCTIONS.encode()) <= 10_000
     assert "\r" not in DRAFTING_INSTRUCTIONS
     # No template fields: nothing from Slack or the policy is ever put into this text.
     assert not re.search(r"\{[a-z_]+\}", DRAFTING_INSTRUCTIONS)

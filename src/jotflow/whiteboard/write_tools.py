@@ -93,6 +93,8 @@ MAX_BOARD_REASON = 200
 MAX_REVISIONS_PER_RUN = 3
 # Who wrote some Slack messages, as the approval gate reads them.
 Authors = Callable[[Sequence[MessageRef]], Awaitable[set[str]]]
+# The people a message @-mentions, from Slack (#305).
+Mentions = Callable[[MessageRef], Awaitable[set[str]]]
 # A result lands while the write is in progress: executing, or reconciling when a
 # retry after an interrupted run finds the marker it left (or gives up).
 RESULT_STATES = frozenset({ProposalState.EXECUTING, ProposalState.RECONCILING})
@@ -508,12 +510,14 @@ class WriteTools:
         repos: RepoCatalog | None = None,
         docs: DocReads | None = None,
         authors: Authors | None = None,
+        mentions: Mentions | None = None,
         boards_off: Collection[str] = frozenset(),
     ) -> None:
         self._store = store
         self._policy = policy
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
+        self._mentions_of = mentions
         # Boards the write token can't update, found at JotFlow's start (#309).
         self._boards_off = boards_off
         # The run's doc reads, for the card's long-passage flag (#209).
@@ -692,9 +696,10 @@ class WriteTools:
                         f"{login} didn't write message {reason.source_ts}: a volunteer's "
                         "reason is their own message"
                     )
-            elif link.slack_user_id not in participants:
+            elif link.slack_user_id not in await self._mentioned(ref):
                 raise ToolError(
-                    f"{login} isn't someone in this thread: a named owner must be a participant"
+                    f"message {reason.source_ts} doesn't @-mention {login}: a named owner's "
+                    "reason is a message naming them"
                 )
 
     async def _check_mentions(self, participants: list[str], *texts: str | None) -> None:
@@ -966,6 +971,15 @@ class WriteTools:
             f"proposal {record.id} isn't on a topic this thread feeds; link a message first"
         )
 
+    async def _mentioned(self, ref: MessageRef) -> set[str]:
+        """Who a message @-mentions, from Slack, never from the agent (#305)."""
+        if self._mentions_of is None:
+            raise ToolError("a named owner can't be checked here; leave them unassigned")
+        try:
+            return set(await self._mentions_of(ref))
+        except Exception:
+            raise ToolError("Slack couldn't say who that message names; try again") from None
+
     async def _authors(self, sources: list[MessageRef]) -> set[str]:
         """Who wrote the new messages, from Slack, never from the agent."""
         if self._authors_of is None:
@@ -1216,6 +1230,7 @@ def write_tools(
     repos: RepoCatalog | None = None,
     docs: DocReads | None = None,
     authors: Authors | None = None,
+    mentions: Mentions | None = None,
     boards_off: Collection[str] = frozenset(),
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
@@ -1228,6 +1243,7 @@ def write_tools(
         repos=repos,
         docs=docs,
         authors=authors,
+        mentions=mentions,
         boards_off=boards_off,
     )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (

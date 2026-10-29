@@ -165,13 +165,11 @@ thread calls for, in the same short headed sections when there is a lot.
 - `participants`: the poster, everyone who replied about the work, and
   everyone mentioned with `@name`, as Slack user ids. `@here` and `@channel`
   are not people.
-- Assign zero, one or several people, only by a `github_login` from `people`
-  or a repo's `owner_hints`, each with one `assignee_reasons` entry:
-  `volunteered` when they say they'll take or help ("add me"), with their
-  message as `source_ts`; `named_owner` when the thread names them the owner,
-  with that message; `owner_hint` only when the idea plainly falls to that
-  repo. A mention alone never makes someone an assignee. When unsure, assign
-  nobody. To add a volunteer to a pending proposal, revise it.
+- Assign only by a `github_login` from `people` or `owner_hints`, each with
+  one `assignee_reasons` entry: `volunteered` ("add me", their own message
+  as `source_ts`), `named_owner` (a message @-mentioning them as owner), or
+  `owner_hint` (the idea plainly falls to that repo). A mention alone never
+  makes someone an assignee. When unsure, assign nobody.
 
 ## 8. Ask
 

@@ -164,7 +164,12 @@ async def tools(store: MemoryStore, poster: Poster, clock: Clock) -> WriteTools:
     ]
     await store.record_packet("run-1", packet)
     await store.record_packet("run-2", packet)
-    return WriteTools(store, POLICY, poster, clock=clock, new_id=Ids())
+    return WriteTools(store, POLICY, poster, clock=clock, new_id=Ids(), mentions=reply_names_bob)
+
+
+async def reply_names_bob(ref: MessageRef) -> set[str]:
+    """Slack's word on who a message @-mentions: the reply names Bob (#305)."""
+    return {"U0BOB"} if ref.ts == REPLY else set()
 
 
 def link(ts: str = ROOT, **fields: Any) -> LinkMessageArgs:

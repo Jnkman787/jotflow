@@ -69,7 +69,16 @@ async def tools(store: Any, clock: Any) -> WriteTools:
     await store.link_identity("U0BOB", "acme-bob")
     await store.link_identity("U0ALICE", "acme-alice")
     await store.link_identity("U0OWNER", "acme-owner")
-    return WriteTools(store, POLICY, Poster(), clock=clock, new_id=Ids(), authors=Authors())
+    return WriteTools(
+        store, POLICY, Poster(), clock=clock, new_id=Ids(), authors=Authors(), mentions=Mentions()
+    )
+
+
+class Mentions:
+    """Slack's word on who each message @-mentions: the root names Alice."""
+
+    async def __call__(self, ref: MessageRef) -> set[str]:
+        return {"U0ALICE"} if ref.ts == ROOT else set()
 
 
 def asked(topic_id: str, login: str, why: str, ts: str | None = REPLY, **kw: Any) -> Any:
@@ -104,14 +113,26 @@ async def test_a_reasons_message_must_be_in_the_runs_packet(tools: WriteTools) -
         )
 
 
-async def test_a_named_owner_must_be_in_the_thread(tools: WriteTools) -> None:
+async def test_a_named_owner_is_whoever_the_message_mentions(tools: WriteTools) -> None:
+    """Slack's mentions decide, never the agent's participants list."""
     topic_id = await new_topic(tools)
-    with pytest.raises(ToolError, match="must be a participant"):
-        await tools.propose_issue(DRAFT, asked(topic_id, "acme-alice", "named_owner"))
+    with pytest.raises(ToolError, match="doesn't @-mention acme-alice"):
+        await tools.propose_issue(
+            DRAFT, asked(topic_id, "acme-alice", "named_owner", participants=["U0ALICE"])
+        )
     result: Any = await tools.propose_issue(
-        DRAFT, asked(topic_id, "acme-alice", "named_owner", participants=["U0ALICE"])
+        DRAFT, asked(topic_id, "acme-alice", "named_owner", ts=ROOT)
     )
     assert result.proposal_id
+
+
+async def test_without_slack_a_named_owner_is_refused(store: Any, clock: Any) -> None:
+    await store.record_packet("run-1", [MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT)])
+    await store.link_identity("U0ALICE", "acme-alice")
+    blind = WriteTools(store, POLICY, Poster(), clock=clock, new_id=Ids())
+    topic_id = await new_topic(blind)
+    with pytest.raises(ToolError, match="can't be checked here"):
+        await blind.propose_issue(DRAFT, asked(topic_id, "acme-alice", "named_owner", ts=ROOT))
 
 
 async def test_an_owner_hint_must_be_the_repos_own(tools: WriteTools) -> None:
