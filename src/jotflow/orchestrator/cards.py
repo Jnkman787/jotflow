@@ -27,8 +27,14 @@ from jotflow.models import (
     ProposalState,
     UpdateProposal,
 )
-from jotflow.policy import ChannelPolicy, IssuesPolicy, RepoPolicy
-from jotflow.store.base import AUTO_APPROVER, IdentityLink, ProposalRevision, Store
+from jotflow.policy import BoardPolicy, ChannelPolicy, IssuesPolicy, RepoPolicy
+from jotflow.store.base import (
+    ADDED_ON_CARD,
+    AUTO_APPROVER,
+    IdentityLink,
+    ProposalRevision,
+    Store,
+)
 from jotflow.store.hashing import content_hash
 
 Block = dict[str, Any]
@@ -52,6 +58,11 @@ ACTION_RETRY = "jotflow_retry"
 ACTION_DISCARD = "jotflow_discard"
 ACTION_SAME_AS = "jotflow_same_as"
 ACTION_NOT_DUPLICATE = "jotflow_not_duplicate"
+ACTION_BOARDS = "jotflow_boards"
+# The board menu's block id is "<this>:<proposal id>": a menu someone emptied
+# sends no option, so the proposal comes from its block (#309).
+BOARDS_BLOCK = "jotflow_boards"
+MAX_CARD_BOARDS = 3  # as propose_issue allows
 
 _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 _PERMALINK = re.compile(
@@ -82,6 +93,8 @@ class CardContext:
     visibility: Mapping[str, Visibility] = field(default_factory=dict)  # by owner/name, any case
     # The draft's revisions from new messages, oldest first (#304).
     revisions: Sequence[ProposalRevision] = ()
+    # Boards the write token can't update, found at JotFlow's start (#309): never offered.
+    boards_off: frozenset[str] = frozenset()
 
     @property
     def changed(self) -> frozenset[str]:
@@ -299,21 +312,66 @@ def _body(text: str, show: bool) -> list[Block]:
     return [_section(chunk) for chunk in _chunks(text)] if show else [_context(TOO_LONG)]
 
 
-def _boards_blocks(draft: IssueProposal, context: CardContext) -> list[Block]:
+def _board_option(board: BoardPolicy) -> dict[str, Any]:
+    # The value is the nickname alone, unique in the channel; the handler maps it
+    # back through the policy, so nothing else is accepted.
+    return {
+        "text": plain(f"{board.nickname}: {board.board}", MAX_OPTION_TEXT),
+        "value": board.nickname,
+    }
+
+
+def _boards_menu(
+    record: ProposalRecord, draft: IssueProposal, context: CardContext
+) -> Block | None:
+    """A pending card's board menu (#309): the channel's boards the write token can
+    update, with the draft's own selected. None when there are none to offer."""
+    offered = [b for b in context.channel.boards if b.board not in context.boards_off]
+    if not offered:
+        return None
+    chosen = {proposed.board for proposed in draft.boards}
+    menu: dict[str, Any] = {
+        "type": "multi_static_select",
+        "action_id": ACTION_BOARDS,
+        "placeholder": plain("Choose boards", MAX_OPTION_TEXT),
+        "options": [_board_option(b) for b in offered[:MAX_OPTIONS]],
+        "max_selected_items": MAX_CARD_BOARDS,
+    }
+    initial = [_board_option(b) for b in offered if b.board in chosen]
+    if initial:
+        menu["initial_options"] = initial
+    return {
+        "type": "section",
+        "block_id": f"{BOARDS_BLOCK}:{record.id}",
+        "text": plain("Boards"),
+        "accessory": menu,
+    }
+
+
+def _boards_blocks(
+    record: ProposalRecord, draft: IssueProposal, context: CardContext, pending: bool
+) -> list[Block]:
     """The Projects boards the issue will be added to after approval, and why (#309).
 
-    Boards are named by the channel's own nicknames; each reason is the agent's,
-    labelled as such and shown as plain text. Both are in the approved hash.
+    Boards are named by the channel's own nicknames. Each reason is the agent's,
+    labelled as such and shown as plain text, unless a person added the board on
+    the card. Both are in the approved hash. A pending card also gets a menu.
     """
+    blocks: list[Block] = []
+    if pending and (menu := _boards_menu(record, draft, context)) is not None:
+        blocks.append(menu)
     if not draft.boards:
-        return []
+        return blocks
     names = []
     for proposed in draft.boards:
         listed = context.channel.board(proposed.board)
         names.append(f"{listed.nickname} ({listed.board})" if listed else proposed.board)
-    blocks = [_approved_context("Add to boards: " + ", ".join(names))]
+    blocks.append(_approved_context("Add to boards: " + ", ".join(names)))
     for proposed, name in zip(draft.boards, names, strict=True):
-        blocks.append(_approved_context(f"The agent's reason for {name}: {proposed.reason}"))
+        if proposed.reason == ADDED_ON_CARD:
+            blocks.append(_approved_context(f"{name} was added on the card."))
+        else:
+            blocks.append(_approved_context(f"The agent's reason for {name}: {proposed.reason}"))
     return blocks
 
 
@@ -354,7 +412,7 @@ def _draft_blocks(
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
         blocks.append(_approved_context("   ".join(details)))
-        blocks += _boards_blocks(draft, context)
+        blocks += _boards_blocks(record, draft, context, pending)
         blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
         if context.credit_line:

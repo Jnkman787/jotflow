@@ -407,6 +407,7 @@ class Orchestrator:
             repos=self.repos,
             # A revision that lost a race drafts its thread again once settled (#304).
             arm_thread=self._arm_thread,
+            boards_off=self.boards_off,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode)
@@ -447,7 +448,9 @@ class Orchestrator:
 
         async def drawn_with(record: ProposalRecord) -> CardContext:
             # The context the card loop draws with, so length rules agree (#34).
-            return await card_context(policy, store, people, record, repos, credits)
+            return await card_context(
+                policy, store, people, record, repos, credits, boards_off=self.boards_off
+            )
 
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;
@@ -472,6 +475,7 @@ class Orchestrator:
             approval_slack,
             refresh=self.cards.refresh,
             repos=self.repos,
+            boards_off=self.boards_off,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
