@@ -650,7 +650,7 @@ def read_tools(
             # D7: the execution run gets exactly what was approved, or nothing.
             raise ToolError(f"proposal {record.id} no longer matches what was approved")
         # JotFlow decides exactly what is written; the agent checks, then copies.
-        tail = await execution_footer(record, policy, attribution)
+        tail = await execution_footer(record, policy, attribution, store)
         checks, writes = plan_writes(record, tail, policy.issues)
         return ExecutionWork(
             run_id=grant.run_id,

@@ -437,9 +437,12 @@ class Orchestrator:
         )
         store, policy, repos = self._store, self._policy, self.repos
 
+        # Who the issue will credit, looked up the way the footer does (#307 review).
+        credits = SlackAttribution(slack_people, people.name)
+
         async def drawn_with(record: ProposalRecord) -> CardContext:
             # The context the card loop draws with, so length rules agree (#34).
-            return await card_context(policy, store, people, record, repos)
+            return await card_context(policy, store, people, record, repos, credits)
 
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
         # The approval gate answers the card's buttons whether or not runs are on;

@@ -58,17 +58,18 @@ def test_the_footer_names_people_and_links_then_marks() -> None:
         permalinks=[LINK, "https://evil.example/x"],
     )
     assert tail.splitlines() == [
-        "Raised in Slack by Sam, with Alex and Bob looped in.",
+        "Raised in Slack by Sam, with contributions from Alex and Bob.",
         f"Slack: {LINK}",
         "<!-- jotflow:proposal:p1 -->",
     ]
     assert footer("p1", poster=None, others=["Alex"]).splitlines()[0] == (
-        "Raised in Slack, with Alex looped in."
+        "Raised in Slack, with contributions from Alex."
     )
     assert footer("p1", poster="Sam").splitlines()[0] == "Raised in Slack by Sam."
     assert footer("p1", poster=None).splitlines()[0] == "Raised in Slack."
     many = footer("p1", poster="P", others=[f"N{i}" for i in range(15)])
-    assert "N9 looped in" in many and "N10" not in many
+    # Ten names at most: nine, then the rest counted, never named.
+    assert "N8 and 6 others." in many and "N9" not in many
 
 
 def test_issue_links_none_leaves_only_the_marker() -> None:

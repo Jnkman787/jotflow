@@ -36,7 +36,7 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
@@ -44,9 +44,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, f
 from jotflow.config import Settings
 from jotflow.doc_paths import MAX_FILE_BYTES
 from jotflow.models import (
+    Account,
+    Assignable,
     DiscoveredRepo,
     IssueDetails,
     MarkedIssues,
+    Membership,
     Run,
     RunKind,
     RunStatus,
@@ -231,6 +234,9 @@ class AccessWire(BaseModel):
 
 # The largest marked-issue list JotFlow reads from a runner (#256).
 MAX_MARKED_BYTES = 8_000_000
+# The largest answer about one person (#305).
+MAX_PERSON_BYTES = 4 * 1024
+_Person = TypeVar("_Person", Account, Assignable, Membership)
 # The largest single issue's details (#273).
 MAX_ISSUE_BYTES = 64 * 1024
 # The drafting runner's reply when GitHub has no such issue (#273).
@@ -398,6 +404,48 @@ class RunnerClient:
             except ValueError:
                 cleaned.append(issue.model_copy(update={"title": f"#{issue.number}"}))
         return found.model_copy(update={"issues": tuple(cleaned)})
+
+    async def account(self, login: str) -> Account:
+        """What GitHub says about ``login``, from the drafting runner (#305).
+
+        Raises :class:`GithubBusy` for a rate limit or GitHub failing, never "missing".
+        """
+        if not is_github_login(login) or login.endswith("[bot]"):
+            raise RunnerError("not a GitHub account")
+        return await self._person(f"/accounts/{login}", Account, login)
+
+    async def assignable(self, owner: str, name: str, login: str) -> Assignable:
+        """Whether ``login`` can be assigned issues in ``owner/name``, and its account (#305)."""
+        if not is_owner_name(owner) or not is_bare_repo_name(name):
+            raise RunnerError("not a GitHub repo")
+        if not is_github_login(login) or login.endswith("[bot]"):
+            raise RunnerError("not a GitHub account")
+        return await self._person(f"/repos/{owner}/{name}/assignable/{login}", Assignable, login)
+
+    async def membership(self, org: str, login: str) -> Membership:
+        """Whether ``login`` is a member of ``org``, as far as the read token sees (#305)."""
+        if not is_owner_name(org):
+            raise RunnerError("not a GitHub org")
+        if not is_github_login(login) or login.endswith("[bot]"):
+            raise RunnerError("not a GitHub account")
+        return await self._person(f"/orgs/{org}/members/{login}", Membership, None)
+
+    async def _person(self, path: str, model: type[_Person], login: str | None) -> _Person:
+        response = await self._call("GET", RunKind.DRAFTING, path)
+        if response.status_code in (502, 503):
+            raise GithubBusy("GitHub couldn't be asked right now")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        if len(response.content) > MAX_PERSON_BYTES:
+            raise RunnerError("the runner's answer was too large")
+        try:
+            found = model.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not about a GitHub account") from None
+        named = getattr(found, "login", None)
+        if login is not None and named is not None and named.casefold() != login.casefold():
+            raise RunnerError("the runner's reply was about another account")
+        return found
 
     async def issue(self, owner: str, name: str, number: int) -> IssueDetails | None:
         """One issue's details from the drafting runner, or None if there's no such issue.
