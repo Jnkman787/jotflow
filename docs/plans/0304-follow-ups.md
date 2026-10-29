@@ -4,9 +4,9 @@
 
 - Issue: #304
 - Draft PR: #310
-- Status: planning. The store changes, so the plan comes first, as the lead asked
+- Status: approved by the lead, with the review conditions below. One choice is open with the lead: how reactions treat a revised card
 - Last verified: origin/main b3afbf3, 2026-10-29
-- Next safe action: the lead and the reviewer review this plan, and product confirms the migration number
+- Next safe action: build. Migration 16 is this PR's, as the lead confirmed
 
 ## Objective and done-when
 
@@ -43,10 +43,18 @@ CREATE TABLE proposal_revisions (
     revision INTEGER NOT NULL, -- the proposal's revision this one made
     run_id TEXT NOT NULL, -- the drafting run that revised it
     changed TEXT NOT NULL, -- which fields, from a fixed set, comma-separated
-    added_by TEXT NOT NULL, -- Slack user ids whose messages it adds, space-separated
     revised_at TEXT NOT NULL -- UTC, ISO 8601
 )
+CREATE TABLE proposal_revision_authors (
+    proposal_id TEXT NOT NULL REFERENCES proposals (id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    user_id TEXT NOT NULL -- Slack user id whose message the revision added
+)
+ALTER TABLE proposals ADD COLUMN follow_up_due_at TEXT
+    /* UTC: a revision lost a race to an approval; draft the thread again once filed */
 ```
+
+Authors are one row per user, as `proposal_participants` are, so any path that finds or removes a Slack user's rows finds these too (the reviewer's nit). Today no path erases a Slack user's proposal rows. Draft clearing removes text only, and these hold no text, so the rows go with the proposal, by the cascade, and the threat model's data table lists them.
 
 **`Store.revise_proposal(proposal_id, draft, *, run_id, base_revision, added_by)`** works like this:
 
@@ -62,7 +70,11 @@ CREATE TABLE proposal_revisions (
 - **Arguments:** `proposal_id`, `base_revision`, the whole revised draft (`title`, `body`, `labels` and `assignees` for a new issue, or `changes` for an update), the new `sources`, and `confidence`.
 - **Checks:** the same as `propose_issue` and `propose_update`, by the same code. That covers labels from the repo's list, `title_pattern`, @-mentions, links, the issue-links setting, and assignees from linked participants. Every new source must be in this run's packet.
 - **Proposals:** only one in this channel, pending, whose topic is one the run's thread feeds.
-- **Caps:** it counts toward the run's proposal cap of 3. There are at most 10 revisions a proposal; past that, the agent is told to ask instead.
+- **Caps:** revisions have their own cap, 3 a run, separate from the proposal cap of 3, so a busy run that revises one topic can still propose for others (the reviewer's nit). There are at most 10 revisions a proposal; past that, the agent is told to ask instead.
+- **Doc passages (#209):** the revised text runs the same long-passage check as `propose_*`. A flag from an earlier revision stays (security's condition 2).
+- **Losing a race (the reviewer's must-address 2):**
+  - **The proposal is still pending, but `base_revision` is stale,** because a person edited it or another run revised it. The tool doesn't fail. It answers `{"revised": false, "revision": N, "draft": …}`, the current revision and draft. The agent retries once, in the same run, on top of them. The draft is the one the card already shows in this channel.
+  - **The proposal was approved, rejected or applied first.** The store sets `follow_up_due_at` on it. When it's applied, the thread notice arms the thread, so the next quiet window drafts the follow-up as a `propose_update`. When it's rejected, the thread is armed at once. So the follow-up is never left only to a later message.
 - **`added_by`** is the authors of the new sources, read through the same Slack lookup the approval gate uses for source authors, so the agent can't name them.
 
 ### The packet
@@ -85,6 +97,7 @@ The instructions cap is 9,500 bytes, and the file is 9,208. I'll make room by ti
 ### The card
 
 - **A revised card** gets a context line under its header: "Revised with new messages from Alice and Bob: body, labels." The names are display names, escaped. The field list is JotFlow's, never the agent's.
+- **Each changed field is marked on the card** "(changed in revision N)". A changed title also shows the previous title, so a quiet edit is hard to miss (the reviewer's nit). The marks come from `proposal_revisions`, not the draft, so they sit outside the hash. They only point at what to reread.
 - **An update card's header** says what it is: "Proposed comment on web#42", or "Proposed change to web#42's body" when the body changes.
 
 ### Replay
@@ -99,12 +112,32 @@ The instructions cap is 9,500 bytes, and the file is 9,208. I'll make room by ti
   - `follow-up-top-level`: a new post about a filed issue is linked and yields an update.
   - `follow-up-unclear`: a new post that could continue either of two topics gets a question.
 
+### Reactions on a revised card (open with the lead)
+
+A reaction names only the card's message, not what it showed. Suppose someone reacts while reading revision N, and a revision redraws the card in place. Their reaction could then approve N+1, and #304 lets anyone in the thread cause a revision. Three fixes were raised:
+
+- **A. Fresh card per revision** (security, the reviewer). Each revision posts a new card message, which becomes `card_ts`. The old card loses its buttons and says "Revised: see the card below". A reaction approves only on the current `card_ts`, so one on the old message approves nothing.
+- **B. Compare `event_ts` with the revision's time** (the lead). This refuses a reaction older than the revision, or one whose `event_ts` is missing. Security objects that it compares Slack's clock with ours.
+- **C. No reaction approval on a revised card** (security's fallback). Once a proposal has a revision, only the hash-carrying button approves it. A reaction gets a fixed reply: "This proposal was revised, so approve it with the button."
+
+I recommend C. It keeps the thread quiet, as the lead wants, and needs no clock comparison, as security asks. Buttons already lock the hash. The lead decides, and the build waits on this part only.
+
 ### Approval: what's tested
 
 - A Approve click carrying the pre-revision hash is refused and the card redrawn.
 - A reaction while the card is behind is refused.
 - Approving the redrawn card locks the revised draft's hash.
-- A revision built on a stale `base_revision` changes nothing.
+- A revision built on a stale `base_revision` changes nothing, and answers with the current draft.
+- Under `require_second_approver`, someone whose message a revision added can't approve it. Source authors are re-read at approval, so this needs no stored state, and nothing is stored as a partial approval today (security's condition 1).
+- The reaction rule the lead chooses, including a reaction that arrives after the card was revised.
+
+## Threat model (security's condition 3)
+
+A new row: anyone posting in a thread can change a pending draft. It's bounded by:
+- the card naming who changed it, and what;
+- the reaction rule above, and the hash-carrying button;
+- `base_revision` refusing a stale revision;
+- the caps.
 
 ## Risks and open questions
 
