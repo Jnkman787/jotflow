@@ -138,7 +138,7 @@ drafting.md gains a short rule. Propose boards only from `channel.boards`, by th
 - [x] Commit this plan and open the draft PR
 - [x] The lead and security decide 1 to 4
 - [x] PR 1: configured org boards, propose, card display, the fixed add, the access check at start, docs
-- [ ] PR 1b: the card's board edit, a multi-select, with migration 19 rebuilding `proposal_edits`' CHECK. Draft PR open; it waits on product's migration 18 (#308)
+- [ ] PR 1b: the card's board edit, a multi-select, with migration 19 rebuilding `proposal_edits`' CHECK: #327, after #308's migration 18 landed in #315
 - [ ] PR 2: discovery, under security's condition 3
 
 ## Validation
