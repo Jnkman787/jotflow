@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from jotflow.models import ProposalState, RunKind
+from jotflow.models import IssueProposal, ProposalState, RunKind
 from jotflow.orchestrator import approval as approval_module
 from jotflow.orchestrator.approval import (
     AUTHORS_UNKNOWN,
@@ -1197,3 +1197,50 @@ async def test_a_failed_access_check_or_a_repo_gone_from_scope_approves_nothing(
     assert await rig.handler.on_approve(click(good)) == "refused"
     assert "is archived" in rig.slack.ephemerals[-1][2]
     assert await rig.state(pid) is ProposalState.PENDING and await rig.executions() == 0
+
+
+# A draft revised from new messages (#304)
+
+
+async def _revise(rig: Rig, pid: str, *, by: str, ts: str) -> None:
+    from jotflow.models import MessageRef
+
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and isinstance(record.proposal, IssueProposal)
+    rig.slack.written_by[ts] = by
+    revised = record.proposal.model_copy(
+        update={
+            "body": record.proposal.body + " With totals.",
+            "sources": [MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD)],
+        }
+    )
+    await rig.store.revise_proposal(
+        pid, revised, run_id="run-2", base_revision=record.revision, added_by=[by]
+    )
+
+
+async def test_a_click_on_the_card_from_before_a_revision_approves_nothing() -> None:
+    rig = Rig()
+    pid = await rig.proposal()
+    before = f"{pid}:{await rig.hash(pid)}"
+    await _revise(rig, pid, by=CAROL, ts="1760781650.000100")
+    assert await rig.handler.on_approve(click(before)) == "refused"
+    assert rig.slack.ephemerals[-1][2] == STALE
+    assert await rig.state(pid) is ProposalState.PENDING
+    # The redrawn card's button locks the revised draft.
+    assert await rig.handler.on_approve(click(f"{pid}:{await rig.hash(pid)}")) == "approved"
+    record = await rig.store.get_proposal(pid)
+    assert record is not None and record.content_hash == content_hash(record.proposal)
+    assert record.proposal.body.endswith("With totals.")  # type: ignore[union-attr]
+
+
+async def test_someone_whose_message_a_revision_added_cannot_approve_it() -> None:
+    # require_second_approver bars every source author, re-read at approval, so a
+    # revision's author is barred with no stored state (security's condition 1).
+    rig = Rig(approvers=[ALICE, CAROL, DAVE], second=True)
+    pid = await rig.proposal(participants=[ALICE])
+    await _revise(rig, pid, by=CAROL, ts="1760781650.000100")
+    good = f"{pid}:{await rig.hash(pid)}"
+    assert await rig.handler.on_approve(click(good, user=CAROL)) == "refused"
+    assert rig.slack.ephemerals[-1][2] == OWN_PROPOSAL
+    assert await rig.handler.on_approve(click(good, user=DAVE)) == "approved"
