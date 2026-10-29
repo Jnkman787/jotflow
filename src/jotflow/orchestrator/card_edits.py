@@ -1,4 +1,5 @@
-"""The card's repo dropdown and its Make assignee and Remove buttons (#160).
+"""The card's repo dropdown, its board menu (#309), and its Make assignee and Remove
+buttons (#160).
 
 Who may click is Approve's rule (D7, #151), checked by the approval gate's
 own ``guarded`` entry point: a member of this workspace, not a guest or an
@@ -15,15 +16,29 @@ can be edited. Every reply is fixed text JotFlow builds, never the draft.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+import re
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from typing import Any, Protocol
 
-from jotflow.models import IssueProposal, ProposalRecord, UpdateProposal
+from jotflow.models import IssueProposal, ProposalRecord, ProposedBoard, UpdateProposal
 from jotflow.orchestrator.approval import Click, Refused
-from jotflow.orchestrator.cards import ACTION_ASSIGN, ACTION_REPO, ACTION_UNASSIGN
-from jotflow.policy import Policy, PolicyViolation, RepoPolicy
+from jotflow.orchestrator.cards import (
+    ACTION_ASSIGN,
+    ACTION_BOARDS,
+    ACTION_REPO,
+    ACTION_UNASSIGN,
+    BOARDS_BLOCK,
+    MAX_CARD_BOARDS,
+)
+from jotflow.policy import _NICKNAME, BoardPolicy, Policy, PolicyViolation, RepoPolicy
 from jotflow.repo_catalog import RepoCatalog
-from jotflow.store.base import EDITABLE_STATES, EditField, Store, TransitionError
+from jotflow.store.base import (
+    ADDED_ON_CARD,
+    EDITABLE_STATES,
+    EditField,
+    Store,
+    TransitionError,
+)
 
 log = logging.getLogger("jotflow.edits")
 
@@ -40,6 +55,14 @@ NOT_LINKED = (
     "That person hasn't linked their GitHub account, so they can't be made an assignee yet."
 )
 UNCHANGED = "Nothing changed."
+NOT_A_CHANNEL_BOARD = "That board is not one this channel lists."
+BOARD_OFF = "JotFlow's write token can't update that board, so it can't be chosen."
+TOO_MANY_BOARDS = f"Choose at most {MAX_CARD_BOARDS} boards."
+UPDATE_HAS_NO_BOARDS = "An update to an existing issue doesn't change its boards."
+
+# The menu's block id, "jotflow_boards:<proposal id>", and a chosen option's value,
+# a board nickname. Anything else is a malformed payload.
+_BOARDS_BLOCK = re.compile(rf"{BOARDS_BLOCK}:(?P<id>[0-9a-f]{{16}})")
 
 
 class Tell(Protocol):
@@ -53,12 +76,45 @@ def _assignees(draft: IssueProposal | UpdateProposal) -> list[str]:
 
 
 def _with_assignees(
-    draft: IssueProposal | UpdateProposal, logins: list[str]
+    draft: IssueProposal | UpdateProposal, logins: list[str], added: str | None = None
 ) -> IssueProposal | UpdateProposal:
+    """The draft with ``logins`` as its assignees. Each keeps its reason, a removed one's
+    goes, and ``added``, a person's add from the card, says so (#305)."""
+    old = (
+        draft.assignee_reasons
+        if isinstance(draft, IssueProposal)
+        else draft.changes.assignee_reasons
+    )
+    wanted = {login.casefold() for login in logins}
+    reasons = [r.model_dump() for r in old if r.login.casefold() in wanted]
+    if added is not None and added.casefold() not in {r["login"].casefold() for r in reasons}:
+        reasons.append({"login": added, "why": "added_on_card"})
     if isinstance(draft, IssueProposal):
-        return IssueProposal.model_validate({**draft.model_dump(), "assignees": logins})
-    changes = draft.changes.model_dump() | {"add_assignees": logins}
+        return IssueProposal.model_validate(
+            {**draft.model_dump(), "assignees": logins, "assignee_reasons": reasons}
+        )
+    changes = draft.changes.model_dump() | {"add_assignees": logins, "assignee_reasons": reasons}
     return UpdateProposal.model_validate({**draft.model_dump(), "changes": changes})
+
+
+def _boards_click(body: Mapping[str, Any]) -> Mapping[str, Any]:
+    """``body`` with its board menu action as the gate reads one: a value of
+    "<proposal id>:<nicknames>". A malformed menu gets no value, so the gate
+    ignores it."""
+    actions = body.get("actions")
+    action = actions[0] if isinstance(actions, list) and actions else None
+    if not isinstance(action, Mapping):
+        return body
+    block = action.get("block_id")
+    found = _BOARDS_BLOCK.fullmatch(block) if isinstance(block, str) else None
+    options = action.get("selected_options")
+    if found is None or not isinstance(options, list) or len(options) > MAX_CARD_BOARDS:
+        return {**body, "actions": [{}]}
+    nicknames = [o.get("value") if isinstance(o, Mapping) else None for o in options]
+    if not all(isinstance(n, str) and _NICKNAME.fullmatch(n) for n in nicknames):
+        return {**body, "actions": [{}]}
+    value = f"{found['id']}:{','.join(str(n) for n in nicknames)}"
+    return {**body, "actions": [{"value": value}]}
 
 
 class CardEdits:
@@ -71,9 +127,12 @@ class CardEdits:
         *,
         refresh: Refresh | None = None,
         repos: RepoCatalog | None = None,
+        boards_off: Collection[str] = frozenset(),
     ) -> None:
         self._store = store
         self._policy = policy
+        # Boards the write token can't update, found at JotFlow's start (#309).
+        self._boards_off = boards_off
         self._repos = repos if repos is not None else RepoCatalog.static(policy)
         self._guarded = guarded
         self._tell = tell
@@ -87,6 +146,14 @@ class CardEdits:
 
     async def on_unassign(self, body: Mapping[str, Any]) -> str:
         return await self._guarded(body, self._unassign)
+
+    async def on_boards(self, body: Mapping[str, Any]) -> str:
+        """The board menu: its block names the proposal, and its options the boards.
+
+        The gate reads one value, "<proposal id>:<payload>", so the menu's choice is
+        put in that form: the nicknames, comma-separated, possibly none.
+        """
+        return await self._guarded(_boards_click(body), self._boards)
 
     # The edits
 
@@ -130,7 +197,9 @@ class CardEdits:
         logins = _assignees(record.proposal)
         if link.github_login.casefold() in {login.casefold() for login in logins}:
             return await self._done(click, UNCHANGED, changed=False)
-        edited = _with_assignees(record.proposal, [*logins, link.github_login])
+        edited = _with_assignees(
+            record.proposal, [*logins, link.github_login], added=link.github_login
+        )
         await self._save(click, record, edited, "assign")
         return await self._done(click, f"Added {link.github_login} as an assignee.")
 
@@ -144,7 +213,47 @@ class CardEdits:
         await self._save(click, record, edited, "unassign")
         return await self._done(click, "Removed that assignee.")
 
+    async def _boards(self, click: Click, record: ProposalRecord) -> str:
+        payload = self._check_may_edit(click, record)
+        draft = record.proposal
+        if not isinstance(draft, IssueProposal):
+            raise Refused(UPDATE_HAS_NO_BOARDS)
+        wanted = [nickname for nickname in payload.split(",") if nickname]
+        chosen: list[BoardPolicy] = []
+        for nickname in wanted:
+            board = self._channel_board(record.channel_id, nickname)
+            if board not in chosen:
+                chosen.append(board)
+        if len(chosen) > MAX_CARD_BOARDS:
+            raise Refused(TOO_MANY_BOARDS)
+        # A board the agent proposed keeps its reason; one a person added says so.
+        reasons = {proposed.board: proposed.reason for proposed in draft.boards}
+        boards = [
+            ProposedBoard(board=b.board, reason=reasons.get(b.board, ADDED_ON_CARD)) for b in chosen
+        ]
+        # The order means nothing on the card or to the add, so only the set counts.
+        if {b.board for b in boards} == {b.board for b in draft.boards}:
+            return await self._done(click, UNCHANGED, changed=False)
+        edited = draft.model_copy(update={"boards": boards})
+        await self._save(click, record, edited, "boards")
+        named = ", ".join(b.nickname for b in chosen)
+        return await self._done(click, f"Boards: {named}." if named else "No boards.")
+
     # Helpers
+
+    def _channel_board(self, channel_id: str, nickname: str) -> BoardPolicy:
+        """The menu sends a nickname. Only one of the channel's listed boards, by its
+        nickname, is accepted, and only one the write token can update."""
+        try:
+            boards = self._policy.channel(channel_id).boards
+        except PolicyViolation:
+            raise Refused(NOT_A_CHANNEL_BOARD) from None
+        for board in boards:
+            if board.nickname == nickname:
+                if board.board in self._boards_off:
+                    raise Refused(BOARD_OFF)
+                return board
+        raise Refused(NOT_A_CHANNEL_BOARD)
 
     def _channel_repo(self, channel_id: str, nickname: str) -> RepoPolicy:
         """The dropdown carries a nickname, unique in the channel. Nothing else is accepted:
@@ -207,6 +316,11 @@ def register_edits(app: Any, edits: CardEdits) -> None:
         await ack()
         await run("unassign", edits.on_unassign(body))
 
+    async def boards(ack: Any, body: dict[str, Any]) -> None:
+        await ack()
+        await run("boards", edits.on_boards(body))
+
     app.action(ACTION_REPO)(repo)
     app.action(ACTION_ASSIGN)(assign)
     app.action(ACTION_UNASSIGN)(unassign)
+    app.action(ACTION_BOARDS)(boards)

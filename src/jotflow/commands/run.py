@@ -49,6 +49,7 @@ from jotflow.orchestrator.slack import (
     register_handlers,
     report_missing,
 )
+from jotflow.orchestrator.summary import register_summary
 from jotflow.policy import Policy, PolicyError, load_policy
 from jotflow.store import StoreError
 from jotflow.store.lock import StoreBusyError
@@ -244,6 +245,14 @@ async def serve(settings: Settings, policy: Policy) -> int:
             register_actions(app, orchestrator.approval)
         if orchestrator.edits is not None:
             register_edits(app, orchestrator.edits)
+        if orchestrator.summaries is not None and orchestrator.approval is not None:
+            register_summary(
+                app,
+                orchestrator.summaries,
+                orchestrator.approval,
+                orchestrator.summary_slack,
+                orchestrator.summary_names,
+            )
         await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
     except BaseException:
         # Started is stopped, whatever fails after it.

@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from jotflow.models import (
     MAX_RELATED,
+    AssigneeReason,
     ChannelMode,
     ExecutionResult,
     IssueChanges,
@@ -50,6 +51,7 @@ from jotflow.models import (
     RunKind,
     RunStatus,
     UpdateProposal,
+    check_reasons,
 )
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.repo_catalog import RepoCatalog
@@ -108,6 +110,8 @@ MAX_BOARD_REASON = 200
 MAX_REVISIONS_PER_RUN = 3
 # Who wrote some Slack messages, as the approval gate reads them.
 Authors = Callable[[Sequence[MessageRef]], Awaitable[set[str]]]
+# The people a message @-mentions, from Slack (#305).
+Mentions = Callable[[MessageRef], Awaitable[set[str]]]
 # A result lands while the write is in progress: executing, or reconciling when a
 # retry after an interrupted run finds the marker it left (or gives up).
 RESULT_STATES = frozenset({ProposalState.EXECUTING, ProposalState.RECONCILING})
@@ -184,6 +188,9 @@ class RevisedIssue(BaseModel):
     body: str
     labels: list[str] = Field(default_factory=list)
     assignees: list[str] = Field(default_factory=list, description="GitHub logins")
+    assignee_reasons: list[AssigneeReason] = Field(
+        default_factory=list, max_length=10, description="One reason for each assignee"
+    )
     related: list[RelatedIssue] = Field(default_factory=list, max_length=MAX_RELATED)
 
 
@@ -224,6 +231,13 @@ class ReviseResult(BaseModel):
         default=False,
         description="The proposal was settled first; JotFlow drafts these messages again once "
         "it's filed or rejected. Nothing more to do",
+    )
+    left_off_assignees: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Nominated as a named owner or owner hint, but their GitHub link isn't verified, "
+            "so they were left off. Ask in the thread who should own it instead (#305)"
+        ),
     )
 
 
@@ -270,6 +284,13 @@ class ProposeResult(BaseModel):
         default=0,
         description="Related issues left off the card: not in this channel's repos, repeated, "
         "or the issue an update is for",
+    )
+    left_off_assignees: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Nominated as a named owner or owner hint, but their GitHub link isn't verified, "
+            "so they were left off. Ask in the thread who should own it instead (#305)"
+        ),
     )
 
 
@@ -520,12 +541,14 @@ class WriteTools:
         repos: RepoCatalog | None = None,
         docs: DocReads | None = None,
         authors: Authors | None = None,
+        mentions: Mentions | None = None,
         boards_off: Collection[str] = frozenset(),
     ) -> None:
         self._store = store
         self._policy = policy
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
+        self._mentions_of = mentions
         # Boards the write token can't update, found at JotFlow's start (#309).
         self._boards_off = boards_off
         # The run's doc reads, for the card's long-passage flag (#209).
@@ -653,16 +676,72 @@ class WriteTools:
                 logins.add(link.github_login.casefold())
         return logins
 
-    async def _check_assignees(self, assignees: list[str], participants: list[str]) -> None:
+    async def _check_assignees(
+        self,
+        grant: Grant,
+        repo: str,
+        assignees: list[str],
+        reasons: list[AssigneeReason],
+        participants: list[str],
+        kept: Sequence[AssigneeReason] = (),
+        legacy: Sequence[str] = (),
+    ) -> list[str]:
+        """Every assignee is a linked login with one reason JotFlow can check (#305).
+
+        ``kept`` holds the reasons already on a draft being revised: those stand as they
+        are, a person's card add included, so a revision needn't prove them again.
+        """
+        try:
+            check_reasons(assignees, reasons)  # revisions are copied, not validated again
+        except ValueError as refused:
+            raise ToolError(str(refused)) from None
+        left_off: list[str] = []
         if not assignees:
-            return
-        logins = await self._linked_logins(participants)
+            return left_off
+        by_login = {reason.login.casefold(): reason for reason in reasons}
+        standing = {(r.login.casefold(), r.why, r.source_ts) for r in kept}
+        old = {login.casefold() for login in legacy}
         for login in assignees:
-            if login.casefold() not in logins:
+            reason = by_login.get(login.casefold())
+            if reason is None and login.casefold() in old:
+                continue  # on the draft from before reasons existed: it stands as approved
+            if reason is None:
                 raise ToolError(
-                    f"assignee {login} is not the linked GitHub login of a participant; "
-                    "assign only someone who said they will take it"
+                    f"give assignee {login} a reason: volunteered, named_owner or owner_hint"
                 )
+            if (login.casefold(), reason.why, reason.source_ts) in standing:
+                continue
+            link = await self._store.identity_for_login(login)
+            if link is None:
+                raise ToolError(
+                    f"assignee {login} hasn't linked a GitHub login in Slack; assign only "
+                    "people listed with a github_login"
+                )
+            if reason.why == "added_on_card":
+                raise ToolError("added_on_card is a person's reason, from the card; don't use it")
+            if reason.why == "owner_hint":
+                hints = self._repos.repo(grant.channel_id, repo).owner_hints or ()
+                if link.slack_user_id not in hints:
+                    raise ToolError(f"{login} isn't one of {repo}'s owner hints")
+                if not _trusted(link):
+                    left_off.append(login)
+                continue
+            assert reason.source_ts is not None  # the model requires it for these two
+            ref = await self._packet_ref(grant, reason.source_ts)
+            if reason.why == "volunteered":
+                if link.slack_user_id not in await self._authors([ref]):
+                    raise ToolError(
+                        f"{login} didn't write message {reason.source_ts}: a volunteer's "
+                        "reason is their own message"
+                    )
+            elif link.slack_user_id not in await self._mentioned(ref):
+                raise ToolError(
+                    f"message {reason.source_ts} doesn't @-mention {login}: a named owner's "
+                    "reason is a message naming them"
+                )
+            elif not _trusted(link):
+                left_off.append(login)
+        return left_off
 
     async def _check_mentions(self, participants: list[str], *texts: str | None) -> None:
         """Only a linked participant may be @-mentioned in what goes to GitHub (#250)."""
@@ -808,11 +887,16 @@ class WriteTools:
             await self._check_title(grant, repo, args.title)
             self._check_no_slack_links(args.title, args.body)
             await self._check_mentions(args.participants, args.title, args.body)
-            await self._check_assignees(args.assignees, args.participants)
+            left = await self._check_assignees(
+                grant, repo, args.assignees, args.assignee_reasons, args.participants
+            )
             related, dropped = self._related(grant, args.related)
+            assignees, reasons = _without(args.assignees, args.assignee_reasons, left)
             draft = IssueProposal.model_validate(
                 {
                     **args.model_dump(exclude={"participants"}),
+                    "assignees": assignees,
+                    "assignee_reasons": [r.model_dump() for r in reasons],
                     "repo": repo,
                     "labels": labels,
                     "sources": await self._sources(grant, args.sources),
@@ -821,7 +905,8 @@ class WriteTools:
                 }
             )
             result = await self._add(grant, draft, args.participants)
-            return result.model_copy(update={"dropped_related": dropped})
+            report = {"dropped_related": dropped, "left_off_assignees": left}
+            return result.model_copy(update=report)
 
         return await self._once(grant, "propose_issue", args, ProposeResult, act)
 
@@ -841,9 +926,26 @@ class WriteTools:
                     f"topic {args.topic_id} is not linked to {repo}#{args.issue_number}"
                 )
             await self._check_mentions(args.participants, args.changes.body, args.changes.comment)
-            await self._check_assignees(args.changes.add_assignees, args.participants)
+            left = await self._check_assignees(
+                grant,
+                repo,
+                args.changes.add_assignees,
+                args.changes.assignee_reasons,
+                args.participants,
+            )
             _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
-            changes = args.changes.model_copy(update={"add_labels": labels})
+            added, reasons = _without(
+                args.changes.add_assignees, args.changes.assignee_reasons, left
+            )
+            changes = args.changes.model_copy(
+                update={"add_labels": labels, "add_assignees": added, "assignee_reasons": reasons}
+            )
+            if left and _changes_nothing(changes):
+                # Leaving every nominee off left nothing to approve (#325 review).
+                raise ToolError(
+                    f"nothing is left to update: {', '.join(left)} can't be assigned without "
+                    "a verified or admin link. Ask in the thread who should own it instead"
+                )
             related, dropped = self._related(grant, args.related, own=(repo, args.issue_number))
             draft = UpdateProposal.model_validate(
                 {
@@ -855,7 +957,8 @@ class WriteTools:
                 }
             )
             result = await self._add(grant, draft, args.participants)
-            return result.model_copy(update={"dropped_related": dropped})
+            report = {"dropped_related": dropped, "left_off_assignees": left}
+            return result.model_copy(update=report)
 
         return await self._once(grant, "propose_update", args, ProposeResult, act)
 
@@ -873,7 +976,8 @@ class WriteTools:
             added_by = sorted(await self._authors(sources))
             participants = sorted({*record.participants, *added_by})
             draft = self._revised(grant, record, args, sources)
-            await self._check_revised(grant, draft, participants)
+            left = await self._check_revised(grant, draft, participants, record.proposal)
+            draft = _leave_off(draft, left)
             try:
                 updated = await self._store.revise_proposal(
                     record.id,
@@ -905,6 +1009,7 @@ class WriteTools:
                 revised=True,
                 revision=updated.revision,
                 changed=list(last.changed),
+                left_off_assignees=left,
             )
 
         return await self._once(grant, "revise_proposal", args, ReviseResult, act)
@@ -924,6 +1029,15 @@ class WriteTools:
         raise ToolError(
             f"proposal {record.id} isn't on a topic this thread feeds; link a message first"
         )
+
+    async def _mentioned(self, ref: MessageRef) -> set[str]:
+        """Who a message @-mentions, from Slack, never from the agent (#305)."""
+        if self._mentions_of is None:
+            raise ToolError("a named owner can't be checked here; leave them unassigned")
+        try:
+            return set(await self._mentions_of(ref))
+        except Exception:
+            raise ToolError("Slack couldn't say who that message names; try again") from None
 
     async def _authors(self, sources: list[MessageRef]) -> set[str]:
         """Who wrote the new messages, from Slack, never from the agent."""
@@ -953,6 +1067,7 @@ class WriteTools:
                     "body": args.issue.body,
                     "labels": labels,
                     "assignees": args.issue.assignees,
+                    "assignee_reasons": args.issue.assignee_reasons,
                     "related": related,
                     "sources": sources,
                     "confidence": args.confidence,
@@ -968,19 +1083,45 @@ class WriteTools:
         )
 
     async def _check_revised(
-        self, grant: Grant, draft: IssueProposal | UpdateProposal, participants: list[str]
-    ) -> None:
-        """The same rules a new proposal keeps, by the same code."""
+        self,
+        grant: Grant,
+        draft: IssueProposal | UpdateProposal,
+        participants: list[str],
+        old: IssueProposal | UpdateProposal,
+    ) -> list[str]:
+        """The same rules a new proposal keeps, by the same code. Reasons already on
+        the draft stand, a person's card add included (#305). Returns who's left off."""
         if isinstance(draft, IssueProposal):
             await self._check_title(grant, draft.repo, draft.title)
             self._check_no_slack_links(draft.title, draft.body)
             await self._check_mentions(participants, draft.title, draft.body)
-            await self._check_assignees(draft.assignees, participants)
-        else:
-            changes = draft.changes
-            self._check_no_slack_links(changes.body, changes.comment)
-            await self._check_mentions(participants, changes.body, changes.comment)
-            await self._check_assignees(changes.add_assignees, participants)
+            kept = old.assignee_reasons if isinstance(old, IssueProposal) else []
+            legacy = _unreasoned(old.assignees, kept) if isinstance(old, IssueProposal) else []
+            return await self._check_assignees(
+                grant,
+                draft.repo,
+                draft.assignees,
+                draft.assignee_reasons,
+                participants,
+                kept,
+                legacy,
+            )
+        changes = draft.changes
+        self._check_no_slack_links(changes.body, changes.comment)
+        await self._check_mentions(participants, changes.body, changes.comment)
+        kept = old.changes.assignee_reasons if isinstance(old, UpdateProposal) else []
+        legacy = (
+            _unreasoned(old.changes.add_assignees, kept) if isinstance(old, UpdateProposal) else []
+        )
+        return await self._check_assignees(
+            grant,
+            draft.repo,
+            changes.add_assignees,
+            changes.assignee_reasons,
+            participants,
+            kept,
+            legacy,
+        )
 
     async def link_message(self, grant: Grant, arguments: Any) -> BaseModel:
         args: LinkMessageArgs = arguments
@@ -1151,6 +1292,53 @@ _DESCRIPTIONS = {
 }
 
 
+def _unreasoned(assignees: Sequence[str], reasons: Sequence[AssigneeReason]) -> list[str]:
+    """A draft's assignees with no reason: those from before reasons existed (#305)."""
+    given = {reason.login.casefold() for reason in reasons}
+    return [login for login in assignees if login.casefold() not in given]
+
+
+def _changes_nothing(changes: IssueChanges) -> bool:
+    return (
+        changes.body is None
+        and changes.comment is None
+        and not changes.add_labels
+        and not changes.remove_labels
+        and not changes.add_assignees
+        and not changes.remove_assignees
+    )
+
+
+def _without(
+    assignees: Sequence[str], reasons: Sequence[AssigneeReason], left: Sequence[str]
+) -> tuple[list[str], list[AssigneeReason]]:
+    """The assignees and their reasons, without those left off."""
+    gone = {login.casefold() for login in left}
+    return (
+        [login for login in assignees if login.casefold() not in gone],
+        [reason for reason in reasons if reason.login.casefold() not in gone],
+    )
+
+
+def _leave_off(
+    draft: IssueProposal | UpdateProposal, left: Sequence[str]
+) -> IssueProposal | UpdateProposal:
+    if not left:
+        return draft
+    if isinstance(draft, IssueProposal):
+        assignees, reasons = _without(draft.assignees, draft.assignee_reasons, left)
+        return draft.model_copy(update={"assignees": assignees, "assignee_reasons": reasons})
+    added, reasons = _without(draft.changes.add_assignees, draft.changes.assignee_reasons, left)
+    changes = draft.changes.model_copy(update={"add_assignees": added, "assignee_reasons": reasons})
+    return draft.model_copy(update={"changes": changes})
+
+
+def _trusted(link: Any) -> bool:
+    """A link someone proved, or an admin made, with GitHub's account id kept (#305)."""
+    made_by_admin = getattr(link, "linked_by", "self") == "admin"
+    return bool(link.verified or made_by_admin) and link.github_id is not None
+
+
 def write_tools(
     store: Store,
     policy: Policy,
@@ -1161,6 +1349,7 @@ def write_tools(
     repos: RepoCatalog | None = None,
     docs: DocReads | None = None,
     authors: Authors | None = None,
+    mentions: Mentions | None = None,
     boards_off: Collection[str] = frozenset(),
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
@@ -1173,6 +1362,7 @@ def write_tools(
         repos=repos,
         docs=docs,
         authors=authors,
+        mentions=mentions,
         boards_off=boards_off,
     )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
