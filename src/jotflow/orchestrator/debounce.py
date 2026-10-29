@@ -104,6 +104,10 @@ class Debouncer:
             return due
         key = (ref.channel_id, author)
         previous = self._last_post.get(key)
+        # Only posts inside the window matter, so older entries go (#339 review).
+        self._last_post = {
+            k: v for k, v in self._last_post.items() if posted - v[0] <= FOLLOWS_WITHIN
+        }
         self._last_post[key] = (posted, thread)
         if previous is None or not 0 < posted - previous[0] <= FOLLOWS_WITHIN:
             return due

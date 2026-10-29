@@ -136,3 +136,25 @@ async def test_another_author_or_a_slow_second_post_waits_as_usual() -> None:
     late = f"{float(FIRST) + FOLLOWS_WITHIN + 5:.6f}"
     await debouncer.note(top(late), "U0SAM")
     assert debouncer.pending()[Thread(CH, late)] == clock.now + timedelta(seconds=60)
+
+
+async def test_the_bots_or_jotflows_own_posts_never_count_as_the_previous_post() -> None:
+    # Security on #339: only a person's own post, never a bot's or JotFlow's.
+    from jotflow.orchestrator.ingest import BotIdentity
+
+    as_bot = History([post(FIRST, "x", bot_id="B0OTHER"), post(SECOND, "y")])
+    assert await follows(as_bot) is None
+    jotflow = History([post(FIRST, "x", user="U0JOT"), post(SECOND, "y", user="U0JOT")])
+    work = await SlackWorkSource(jotflow, MemoryStore(), bot=BotIdentity("U0JOT", "B0JOT")).thread(
+        CH, SECOND
+    )
+    assert work.follows is None
+
+
+async def test_the_per_author_map_drops_posts_past_the_window() -> None:
+    clock = Clock()
+    debouncer = Debouncer(MemoryStore(), POLICY, clock=clock)
+    await debouncer.note(top(FIRST), "U0SAM")
+    late = f"{float(FIRST) + FOLLOWS_WITHIN + 5:.6f}"
+    await debouncer.note(top(late), "U0ALEX")
+    assert list(debouncer._last_post) == [(CH, "U0ALEX")]
