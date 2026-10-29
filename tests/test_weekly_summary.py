@@ -399,3 +399,12 @@ async def test_not_this_week_follows_approves_rules() -> None:
     await store.set_channel_mode(GATE_CH, ChannelMode.PAUSED, changed_by="U0ADMIN")
     assert await open_gate.checked_click(body(BOB), act) == "refused"
     assert seen == [BOB]
+
+
+async def test_a_filed_idea_whose_messages_were_all_deleted_is_left_out_too() -> None:
+    store = MemoryStore()
+    filed, _ = await idea(store, 1, state=ProposalState.APPLIED)
+    await store.rename_topic(filed, "Filed and deleted")
+    slack = Slack()
+    await summaries(store, slack, SLOT, People(deleted={"1790000001.000100"})).tick()
+    assert "Filed and deleted" not in texts(slack.posts[0][2])

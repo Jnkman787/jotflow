@@ -4,7 +4,7 @@
 
 - Issue: #308
 - Draft PR: #315
-- Status: built, stacked on #310, #313 and #305's link PR for migrations 16 and 17 and the shared `credit()`. Its migration is numbered 18 locally, and becomes 19 when #309's 18 lands
+- Status: built, stacked on #310 and #305's link PR for migrations 16 and 17, and on #313's shared `credit()`. Its migration is 18, by the lead's renumbering on 2026-10-29
 - Last verified: 2026-10-29, against main
 - Next safe action: review
 
@@ -85,7 +85,7 @@ Each item has:
 ### Once a week, across restarts
 
 - **A new `summaries` table** holds a row per channel and week, with its slot time, the post's `ts` and when it was posted. Its primary key is the channel and the slot, so a second post for the same slot can't be stored.
-- **A `summary_deferrals` table** holds a proposal id, until which slot, who and when. Both are pointers, Slack ids and times, never text. Both come in migration 19, by the lead's numbering: #304 has 16, #309 has 17 and #305 has 18.
+- **A `summary_deferrals` table** holds a proposal id, until which slot, who and when. Both are pointers, Slack ids and times, never text. Both come in migration 18, by the lead's numbering: #304 has 16, #305 has 17 and #309 has 19.
 - **The loop** runs once a minute. For each channel with a summary that isn't paused, it works out this week's slot in the channel's timezone, and posts if the slot has passed and no row exists for it.
   - The row is written before posting, then given the `ts`.
   - If Slack fails, the row is marked failed and retried with backoff, as thread notices are (#32).
@@ -132,6 +132,6 @@ To come.
 
 ## Handoff notes
 
-- **Filed ideas:** filing clears a draft's text, by design. So a filed idea is shown by its topic's title and its issue link, and is the one cleared draft that stays. Every other cleared draft is left out, as security asked.
+- **Filed ideas:** filing clears a draft's text, by design. So a filed idea is shown by its topic's title and its issue link, and is the one cleared draft that stays. Security agreed on 2026-10-29. A filed idea whose source messages were all deleted is still left out. Every other cleared draft is left out, as security asked.
 
 All examples are fictional: `C0123ABCD`, `acme-co/web`, Alex.

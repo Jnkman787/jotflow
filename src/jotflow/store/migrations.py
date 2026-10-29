@@ -414,7 +414,6 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),
     # Weekly summaries (#308): one row per channel and week, and the topics put off
     # to a later week. Pointers, Slack ids and UTC times only, never text.
-    # Numbered 18 while #309's 18 is unwritten; renumbered 19 before merging.
     Migration(
         18,
         (
