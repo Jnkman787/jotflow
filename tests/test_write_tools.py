@@ -164,7 +164,12 @@ async def tools(store: MemoryStore, poster: Poster, clock: Clock) -> WriteTools:
     ]
     await store.record_packet("run-1", packet)
     await store.record_packet("run-2", packet)
-    return WriteTools(store, POLICY, poster, clock=clock, new_id=Ids())
+    return WriteTools(store, POLICY, poster, clock=clock, new_id=Ids(), mentions=reply_names_bob)
+
+
+async def reply_names_bob(ref: MessageRef) -> set[str]:
+    """Slack's word on who a message @-mentions: the reply names Bob (#305)."""
+    return {"U0BOB"} if ref.ts == REPLY else set()
 
 
 def link(ts: str = ROOT, **fields: Any) -> LinkMessageArgs:
@@ -176,6 +181,10 @@ def link(ts: str = ROOT, **fields: Any) -> LinkMessageArgs:
 async def new_topic(tools: WriteTools, grant: Grant = DRAFT) -> str:
     result: Any = await tools.link_message(grant, link())
     return str(result.topic_id)
+
+
+# Bob, named as the owner in the thread's reply.
+NAMED_BOB = {"login": "acme-bob", "why": "named_owner", "source_ts": REPLY}
 
 
 def issue(topic_id: str, **fields: Any) -> ProposeIssueArgs:
@@ -355,7 +364,7 @@ async def test_a_newer_proposal_supersedes_the_thread_s_pending_one(tools: Write
         ({"repo": "acme-co/secret"}, "is not one of channel"),
         ({"labels": ["wontfix"]}, "label list"),
         ({"sources": [{"channel_id": CH, "ts": "9.000100"}]}, "not in this run's packet"),
-        ({"assignees": ["acme-bob"]}, "is not the linked GitHub login of a participant"),
+        ({"assignees": ["acme-bob"]}, "give assignee acme-bob a reason"),
     ],
 )
 async def test_propose_issue_refusals(
@@ -373,8 +382,16 @@ async def test_an_assignee_must_be_a_linked_participant(
 ) -> None:
     topic_id = await new_topic(tools)
     await store.link_identity("U0BOB", "acme-bob")
+    # Named by someone else, so the link must be one Bob proved (#305 review).
+    await store.finish_verification("U0BOB", github_login="acme-bob", github_id=42)
     result: Any = await tools.propose_issue(
-        DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["Acme-Bob"])
+        DRAFT,
+        issue(
+            topic_id,
+            participants=["U0BOB"],
+            assignees=["Acme-Bob"],
+            assignee_reasons=[NAMED_BOB],
+        ),
     )
     assert result.state is ProposalState.PENDING
 
@@ -473,8 +490,11 @@ async def test_propose_update_assignees_follow_the_same_rule(
 ) -> None:
     topic_id = await new_topic(tools)
     await store.set_topic_issue(topic_id, "acme-co/web", 42)
-    args = update(topic_id, changes={"comment": "x", "add_assignees": ["acme-bob"]})
-    with pytest.raises(ToolError, match="not the linked GitHub login"):
+    args = update(
+        topic_id,
+        changes={"comment": "x", "add_assignees": ["acme-bob"], "assignee_reasons": [NAMED_BOB]},
+    )
+    with pytest.raises(ToolError, match="hasn't linked a GitHub login"):
         await tools.propose_update(DRAFT, args)
 
 
@@ -944,14 +964,25 @@ async def test_linking_through_the_command_is_what_makes_someone_assignable(
             return Person(user_id)
 
     topic_id = await new_topic(tools)
-    with pytest.raises(ToolError, match="not the linked GitHub login of a participant"):
+    with pytest.raises(ToolError, match="hasn't linked a GitHub login"):
         await tools.propose_issue(
-            DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["acme-bob"])
+            DRAFT,
+            issue(
+                topic_id,
+                participants=["U0BOB"],
+                assignees=["acme-bob"],
+                assignee_reasons=[NAMED_BOB],
+            ),
         )
     await LinkCommand(store, People()).handle("U0BOB", "link", "acme-bob")
-    result: Any = await tools.propose_issue(
-        DRAFT, issue(topic_id, participants=["U0BOB"], assignees=["Acme-Bob"])
+    named = issue(
+        topic_id, participants=["U0BOB"], assignees=["Acme-Bob"], assignee_reasons=[NAMED_BOB]
     )
+    left: Any = await tools.propose_issue(DRAFT, named)  # self-declared isn't enough here
+    assert left.left_off_assignees == ["Acme-Bob"]
+    await store.finish_verification("U0BOB", github_login="acme-bob", github_id=42)
+    again = named.model_copy(update={"confidence": 0.81})  # a new call, not the cached one
+    result: Any = await tools.propose_issue(DRAFT, again)
     record = await store.get_proposal(result.proposal_id)
     assert record is not None and record.proposal.assignees == ["Acme-Bob"]  # as proposed
 
