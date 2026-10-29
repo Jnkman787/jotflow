@@ -43,10 +43,12 @@ from typing import Any, Protocol
 
 from slack_sdk.web.async_client import AsyncWebClient
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.config import Settings
 from jotflow.models import (
     ChannelMode,
     DiscoveredRepo,
+    FoundBoard,
     IssueDetails,
     ProposalRecord,
     RunKind,
@@ -337,13 +339,45 @@ class Orchestrator:
         self._tasks: list[asyncio.Task[None]] = []
         # Listed repos, and those a channel's scopes find through the runners (#236).
         self.repos = RepoCatalog(policy, lister=self._list_repos, access=self._write_reachable)
-        # Boards the exec runner's write token can't update, found at start (#309).
-        self.boards_off: set[str] = set()
+        # Listed boards, and those a channel's board scopes find (#309). Its ``off``
+        # holds listed boards the exec runner's write token can't update.
+        self.boards = BoardCatalog(
+            policy,
+            finder=self._find_boards,
+            resolve=self._person_id,
+            access=self._board_writable,
+        )
 
     async def _list_repos(self, owner: str) -> list[DiscoveredRepo]:
         if self._runner is None:
             raise RunnerError("no runner to ask")
         return await self._runner.repos(owner)
+
+    async def _find_boards(
+        self,
+        owner: str,
+        numbers: Sequence[int],
+        marker: str | None,
+        creator_ids: Sequence[int],
+        exclude: Sequence[str],
+    ) -> list[FoundBoard]:
+        if self._runner is None or RunKind.EXECUTION not in self.kinds.on:
+            raise RunnerError("no runner to ask")  # nothing could add to a found board
+        return await self._runner.find_boards(
+            owner, numbers=numbers, marker=marker, creator_ids=creator_ids, exclude=exclude
+        )
+
+    async def _person_id(self, login: str) -> int | None:
+        # A board creator's account id, by #316's account lookup (#309 PR 2).
+        if self._runner is None:
+            raise RunnerError("no runner to ask")
+        account = await self._runner.account(login)
+        return account.id if account.account == "user" else None
+
+    async def _board_writable(self, owner: str, number: int) -> bool:
+        if self._runner is None:
+            raise RunnerError("no runner to ask")
+        return await self._runner.board_access(owner, number)
 
     async def _write_reachable(self, owner: str, name: str) -> bool:
         if self._runner is None:
@@ -416,7 +450,7 @@ class Orchestrator:
             repos=self.repos,
             # A revision that lost a race drafts its thread again once settled (#304).
             arm_thread=self._arm_thread,
-            boards_off=self.boards_off,
+            boards=self.boards,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(self._store, self.channel_mode, self._policy.issues)
@@ -427,7 +461,7 @@ class Orchestrator:
             self._thread_slack or BoltThreadSlack(self._client),
             repos=self.repos,
             # Approved boards are added by the exec runner's fixed call (#309).
-            boards=BoardAdder(self._store, self._policy, _RunnerBoards(self)),
+            boards=BoardAdder(self._store, self._policy, _RunnerBoards(self), boards=self.boards),
         )
         # Each person links only their own GitHub login (#35); approvers and
         # identity admins can remove someone else's (#173).
@@ -458,7 +492,7 @@ class Orchestrator:
         async def drawn_with(record: ProposalRecord) -> CardContext:
             # The context the card loop draws with, so length rules agree (#34).
             return await card_context(
-                policy, store, people, record, repos, credits, boards_off=self.boards_off
+                policy, store, people, record, repos, credits, boards=self.boards
             )
 
         self._tasks.append(asyncio.create_task(self._card_loop(self.cards), name="jotflow-cards"))
@@ -485,7 +519,7 @@ class Orchestrator:
             approval_slack,
             refresh=self.cards.refresh,
             repos=self.repos,
-            boards_off=self.boards_off,
+            boards=self.boards,
         )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
@@ -518,8 +552,8 @@ class Orchestrator:
                 attribution=attribution,
                 repos=self.repos,
                 issues=self._issue_reader,
+                boards=self.boards,
                 labels=self._label_checker,
-                boards_off=self.boards_off,
                 files=files,
             ),
             *write_tools(
@@ -528,7 +562,7 @@ class Orchestrator:
                 poster,
                 repos=self.repos,
                 docs=doc_reads,
-                boards_off=self.boards_off,
+                boards=self.boards,
                 # Who wrote a revision's new messages, as approval reads them (#304).
                 authors=attribution.authors,
                 files=files,
@@ -584,6 +618,16 @@ class Orchestrator:
             else:
                 self._tasks.append(
                     asyncio.create_task(self.repos.run(self._stop), name="jotflow-repos")
+                )
+        if self.boards.scoped:
+            if self._runner is None:
+                log.warning(
+                    "jotflow.toml has board scopes, but agent runs are off, so no board is "
+                    "found for them; listed boards still work (#309)"
+                )
+            else:
+                self._tasks.append(
+                    asyncio.create_task(self.boards.run(self._stop), name="jotflow-boards")
                 )
         if self._runner is not None and RunKind.DRAFTING in self.kinds.on:
             await probe_docs(self._runner, self._policy)
@@ -744,7 +788,7 @@ class Orchestrator:
         if not boards:
             return
         if self._runner is None or RunKind.EXECUTION not in self.kinds.on:
-            self.boards_off.update(boards)
+            self.boards.off.update(boards)
             log.warning("boards are off: execution runs are off, so nothing could add to them")
             return
         for board in sorted(boards):
@@ -760,7 +804,7 @@ class Orchestrator:
                 )
                 continue
             if not ok:
-                self.boards_off.add(board)
+                self.boards.off.add(board)
                 log.warning(
                     "board %s is off: the write token can't see or update it; give it "
                     "Projects: Read and write on the organisation (a classic token needs the "

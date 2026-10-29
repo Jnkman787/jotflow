@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 import anyio
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.execution.attribution import Attribution, credit
 from jotflow.models import ProposalRecord, ProposalState, RepoVisibility
 from jotflow.orchestrator.cards import CardContext, CardPublisher, Visibility
@@ -114,7 +115,7 @@ async def card_context(
     record: ProposalRecord,
     repos: RepoCatalog | None = None,
     attribution: Attribution | None = None,
-    boards_off: Collection[str] = frozenset(),
+    boards: BoardCatalog | None = None,
 ) -> CardContext:
     """Everything the card shows besides the proposal: names, identities, the channel."""
     users = list(dict.fromkeys(record.participants))
@@ -128,6 +129,7 @@ async def card_context(
         if (link := await store.get_identity(user)) is not None:
             identities[user] = link
     channel = policy.channel(record.channel_id)
+    board_catalog = boards if boards is not None else BoardCatalog.static(policy)
     catalog = repos if repos is not None else RepoCatalog.static(policy)
     channel_repos = catalog.repos(record.channel_id)
     repo = record.proposal.repo
@@ -159,7 +161,8 @@ async def card_context(
         docs_read=tuple(docs_read),
         docs_copied=tuple(docs_copied),
         revisions=tuple(await store.proposal_revisions(record.id)),
-        boards_off=frozenset(boards_off),
+        boards=tuple(board_catalog.boards(record.channel_id)),
+        offered_boards=tuple(board_catalog.offered(record.channel_id)),
     )
 
 
@@ -183,13 +186,13 @@ class CardSync:
         clock: Callable[[], datetime] = utc_now,
         repos: RepoCatalog | None = None,
         arm_thread: Callable[[str, str], Awaitable[None]] | None = None,
-        boards_off: Collection[str] = frozenset(),
+        boards: BoardCatalog | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
         self._repos = repos
-        # Read at each draw: JotFlow's start-up check fills it in place (#309).
-        self._boards_off = boards_off
+        # Read at each draw: the start-up check and the board scopes change it (#309).
+        self._boards = boards
         self._arm = arm_thread
         self._publisher = publisher
         self._people = people
@@ -265,7 +268,7 @@ class CardSync:
                 self._people,
                 record,
                 self._repos,
-                boards_off=self._boards_off,
+                boards=self._boards,
             )
             await self._publisher.show(record, context)
             # What [issues] the card showed, so an approval can check it (#306 follow-up).

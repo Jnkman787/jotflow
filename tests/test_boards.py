@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import (
     ExecutionResult,
     IssueProposal,
@@ -107,7 +108,14 @@ async def tools_for(store: LiveStore, clock: Clock, off: set[str] | None = None)
     from jotflow.models import MessageRef
 
     await store.record_packet("run-1", [MessageRef(channel_id=CH, ts=THREAD, thread_ts=THREAD)])
-    return WriteTools(store, POLICY, Poster(), clock=clock, new_id=Ids(), boards_off=off or set())
+    return WriteTools(
+        store,
+        POLICY,
+        Poster(),
+        clock=clock,
+        new_id=Ids(),
+        boards=BoardCatalog.static(POLICY, off=off or ()),
+    )
 
 
 async def test_propose_keeps_only_the_channels_boards_with_cleaned_reasons(
@@ -163,7 +171,13 @@ async def test_the_packet_lists_boards_that_are_on() -> None:
     policy = parse_policy(TOML.replace(CH, READ_CH))
     specs = {
         s.name: s
-        for s in read_tools(store, policy, FakeSource(), clock=clock, boards_off={"acme-co/7"})
+        for s in read_tools(
+            store,
+            policy,
+            FakeSource(),
+            clock=clock,
+            boards=BoardCatalog.static(policy, {"acme-co/7"}),
+        )
     }
     work: Any = await call(specs["get_work"], grant)
     boards = work.conversation.channel.boards
@@ -356,21 +370,21 @@ async def test_boards_the_write_token_cant_update_are_turned_off(
     runner = Runner()
     service = Orchestrator.__new__(Orchestrator)
     service._policy = POLICY
-    service.boards_off = set()
+    service.boards = BoardCatalog.static(POLICY)
     service._runner = runner  # type: ignore[assignment]
     service.kinds = type("K", (), {"on": frozenset({RunKind.EXECUTION})})()  # type: ignore[assignment]
     await service._check_boards()
-    assert service.boards_off == {"acme-co/7"}  # a real no
+    assert service.boards.off == {"acme-co/7"}  # a real no
     assert "a classic token needs the project scope" in caplog.text  # what to fix
     # A check that fails, such as at a rate limit, is no answer: the board stays on (#311).
-    service.boards_off = set()
+    service.boards = BoardCatalog.static(POLICY)
     runner.down = True
     await service._check_boards()
-    assert service.boards_off == set()
-    service.boards_off = set()
+    assert service.boards.off == set()
+    service.boards = BoardCatalog.static(POLICY)
     service.kinds = type("K", (), {"on": frozenset()})()  # type: ignore[assignment]
     await service._check_boards()
-    assert service.boards_off == {"acme-co/3", "acme-co/7"}  # nothing could add to them
+    assert service.boards.off == {"acme-co/3", "acme-co/7"}  # nothing could add to them
 
 
 def test_policy_without_boards_is_unchanged() -> None:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import ChannelMode
 from jotflow.orchestrator.help import (
     CLOSING,
@@ -173,10 +174,31 @@ def _row_bullet(row: RepoRow) -> str:
     return f"{head}: {escaped(row.description)}" if row.description else head
 
 
+def _board_lines(boards: BoardCatalog, channel_id: str) -> list[str]:
+    """The channel's boards (#309): listed ones with the team's words, then those its
+    board scopes find, marked, with GitHub's title escaped, since it's GitHub's text.
+    Only boards in the channel's list or scope: an excluded board never reaches here."""
+    lines = []
+    for board in boards.boards(channel_id):
+        head = _bullet(board.nickname, board.board)
+        if board.found:
+            title = f": {escaped(board.title)}" if board.title else ""
+            lines.append(f"{head}, found by scope{title}")
+        else:
+            lines.append(f"{head}: {escaped(board.description)}")
+    return lines
+
+
 def repos_reply(
-    policy: Policy, channel_id: str, argument: str, repos: RepoCatalog | None = None
+    policy: Policy,
+    channel_id: str,
+    argument: str,
+    repos: RepoCatalog | None = None,
+    *,
+    boards: BoardCatalog | None = None,
 ) -> tuple[str, Blocks]:
-    """``/jotflow repos``: every repo as a bullet, within Slack's limits."""
+    """``/jotflow repos``: every repo as a bullet, within Slack's limits, then the
+    channel's boards when it has any and no word narrows the list."""
     view = repos_view(policy, channel_id, argument, repos)
     if isinstance(view, str):
         return view, plain_sections(view)
@@ -187,13 +209,20 @@ def repos_reply(
     plain = [plain_row(row) for row in rows]
     scopes_text = [as_text(s) for s in view.scopes]
     scopes_blocks = [escaped(s) for s in view.scopes]
+    catalog = boards if boards is not None else BoardCatalog.static(policy)
+    board_lines = [] if view.word else _board_lines(catalog, channel_id)
+    board_text = [as_text(line) for line in board_lines]
 
     def build(shown: int) -> tuple[str, Blocks]:
         cut = shown < len(rows)
         more = [REPOS_MORE.format(n=len(rows) - shown)] if cut else []
         lines = [*bullets[:shown], *more, *scopes_blocks]
         text_lines = [*plain[:shown], *("  " + m for m in more), *scopes_text]
-        return "\n".join([as_text(view.heading), *text_lines]), _pack(heading, lines)
+        blocks = _pack(heading, lines)
+        if board_lines:
+            blocks += _pack("*:clipboard: Boards*", board_lines)
+            text_lines += ["Boards:", *board_text]
+        return "\n".join([as_text(view.heading), *text_lines]), blocks
 
     def fits(reply: tuple[str, Blocks]) -> bool:
         return len(reply[1]) <= MAX_BLOCKS and len(reply[0]) <= REPOS_LIMIT

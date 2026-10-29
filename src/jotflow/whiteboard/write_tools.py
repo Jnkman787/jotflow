@@ -35,6 +35,7 @@ from urllib.parse import unquote
 import anyio
 from pydantic import BaseModel, Field, model_validator
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import (
     MAX_ATTACHED,
     MAX_RELATED,
@@ -581,7 +582,7 @@ class WriteTools:
         docs: DocReads | None = None,
         authors: Authors | None = None,
         mentions: Mentions | None = None,
-        boards_off: Collection[str] = frozenset(),
+        boards: BoardCatalog | None = None,
         files: FileSlack | None = None,
     ) -> None:
         self._store = store
@@ -591,8 +592,8 @@ class WriteTools:
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
         self._mentions_of = mentions
-        # Boards the write token can't update, found at JotFlow's start (#309).
-        self._boards_off = boards_off
+        # The channel's boards, listed and found, and which the write token can update (#309).
+        self._board_catalog = boards if boards is not None else BoardCatalog.static(policy)
         # The run's doc reads, for the card's long-passage flag (#209).
         self._docs = docs
         self._poster = poster
@@ -876,13 +877,13 @@ class WriteTools:
         The reason is the agent's, so it is cleaned like a question and shown as
         plain text. Boards are in the draft, so approval locks them.
         """
-        listed = self._policy.channel(grant.channel_id)
         kept: list[ProposedBoard] = []
         for proposed in boards:
-            board = listed.board(proposed.board)
+            # Listed, or found by a board scope in a fresh listing (#309 PR 2).
+            board = self._board_catalog.board(grant.channel_id, proposed.board)
             if board is None:
                 raise ToolError(f"{proposed.board} isn't one of this channel's boards")
-            if board.board in self._boards_off:
+            if not self._board_catalog.usable(board):
                 raise ToolError(f"{proposed.board} is off: JotFlow's write token can't update it")
             if any(k.board == board.board for k in kept):
                 continue
@@ -1436,7 +1437,7 @@ def write_tools(
     docs: DocReads | None = None,
     authors: Authors | None = None,
     mentions: Mentions | None = None,
-    boards_off: Collection[str] = frozenset(),
+    boards: BoardCatalog | None = None,
     files: FileSlack | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
@@ -1450,7 +1451,7 @@ def write_tools(
         docs=docs,
         authors=authors,
         mentions=mentions,
-        boards_off=boards_off,
+        boards=boards,
         files=files,
     )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
