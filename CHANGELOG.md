@@ -20,6 +20,8 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ### Changed
 
+- **Quieter cards (#337).** **Same as** is offered only for a related issue the agent marks as maybe the same request, not for every related issue. The card says "maybe the same request" beside it. The separate "Repo visibility was not checked" and "(not checked against a list)" notes are now one quiet "Not checked" line with the card's details. The public-repo warning is unchanged.
+
 - **The agent runner refuses code-loading Node options (#294).** `NODE_OPTIONS` reaches every agent run, so the runner now allows only a short list of harmless options, such as `--max-old-space-size=N`, `--no-warnings` and `--use-openssl-ca`, and refuses to start on anything else, such as `--require` or `--inspect`. The copilot preset also checks `COPILOT_PROVIDER_BASE_URL` more strictly: an https address with a host and no login.
 - **The codex preset checks each model's tools at startup, instead of accepting only `gpt-5.5` (#220).** The runner runs Codex once per configured model against a local fake API and refuses to start if Codex would offer a code-execution tool or a sub-agent namespace, naming them. `gpt-5.5` stays the default and passes. Another model now works if it passes, so set `JOTFLOW_AGENT_MODEL` by hand to try one. Each check takes about a second and calls no real model.
 - **`read_paths` works with the codex preset (#274).** Codex's MCP resource tools can't be turned off, but the GitHub server it starts serves no repository content behind them. The runner checks that at every start and won't start otherwise. `jotflow check` no longer fails the pair, and drafting stays on.

@@ -25,6 +25,7 @@ from jotflow.models import (
     IssueProposal,
     ProposalRecord,
     ProposalState,
+    RelatedIssue,
     UpdateProposal,
 )
 from jotflow.policy import ChannelPolicy, IssuesPolicy, RepoPolicy
@@ -224,8 +225,7 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
         blocks.append(
             _context(f"Warning: {repo} is public, so this issue will be visible to anyone.")
         )
-    elif visibility == "unknown":
-        blocks.append(_context("Repo visibility was not checked."))
+    # An unknown visibility is folded into the card's one "Not checked" note (#337).
     return blocks
 
 
@@ -239,11 +239,24 @@ def _labels_line(
     shown last and marked, since it isn't the draft's and can't be taken off here."""
     own = [label for label in labels if not added or label.casefold() != added.casefold()]
     shown = ", ".join(own) if own else ("" if added else "none")
-    checked = entry is not None and entry.restricts_labels
-    line = f"{prefix}: {shown}" + ("" if checked or not own else " (not checked against a list)")
+    line = f"{prefix}: {shown}"
     if added:
         line += (", " if own else "") + f"{added} (added to every issue)"
     return line
+
+
+def _unchecked(
+    context: CardContext, repo: str, labels: Sequence[str], entry: RepoPolicy | None
+) -> str | None:
+    """One quiet note for what JotFlow didn't check, or None (#337): the repo's
+    visibility when nobody said, and labels when the repo has no list to check
+    them against. A public repo's warning is its own line, and stays."""
+    unchecked = []
+    if context.repo_visibility(repo) == "unknown":
+        unchecked.append("repo visibility")
+    if labels and not (entry is not None and entry.restricts_labels):
+        unchecked.append("labels against a list")
+    return "Not checked: " + ", ".join(unchecked) if unchecked else None
 
 
 def _assignee_note(context: CardContext, login: str) -> str:
@@ -353,6 +366,11 @@ def _draft_blocks(
         details = [f"Confidence: {round(draft.confidence * 100)}%"]
         if draft.size:
             details.insert(0, f"Size: {draft.size}")
+        own = [
+            lbl for lbl in draft.labels if lbl.casefold() != (context.issues.label or "").casefold()
+        ]
+        if (note := _unchecked(context, draft.repo, own, entry)) is not None:
+            details.append(note)
         blocks.append(_approved_context("   ".join(details)))
         blocks += _boards_blocks(draft, context)
         blocks += _hint_blocks(draft)
@@ -407,6 +425,8 @@ def _update_blocks(
         blocks.append(_approved_context(_labels_line(changes.add_labels, entry, "Add labels")))
     if changes.remove_labels:
         blocks.append(_approved_context("Remove labels: " + ", ".join(changes.remove_labels)))
+    if (note := _unchecked(context, draft.repo, changes.add_labels, entry)) is not None:
+        blocks.append(_context(note))
     if changes.remove_assignees:
         blocks.append(_approved_context("Unassign: " + ", ".join(changes.remove_assignees)))
     blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
@@ -537,8 +557,22 @@ def _related_block(record: ProposalRecord) -> Block | None:
     related = record.proposal.related
     if not related:
         return None
-    items = " · ".join(f"{_issue_link(r.repo, r.number)} (agent says {r.state})" for r in related)
+    items = " · ".join(
+        f"{_issue_link(r.repo, r.number)} (agent says {r.state}"
+        + (", maybe the same request)" if r.likely_duplicate else ")")
+        for r in related
+    )
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Related: {items}"}]}
+
+
+def _likely_duplicate(record: ProposalRecord) -> tuple[int, RelatedIssue] | None:
+    """The first related issue the agent marked as a likely duplicate, with its index."""
+    if not isinstance(record.proposal, IssueProposal):
+        return None
+    for index, related in enumerate(record.proposal.related):
+        if related.likely_duplicate:
+            return index, related
+    return None
 
 
 def _duplicate_line(record: ProposalRecord) -> Block | None:
@@ -654,14 +688,16 @@ def render_card(record: ProposalRecord, context: CardContext) -> Card:
                 style="primary",
             )
             actions.insert(0, approve)
-            if isinstance(record.proposal, IssueProposal) and record.proposal.related:
-                # Only the first, the agent's best candidate. The click names its index
-                # and this draft's hash; the store reads the issue from the draft (#36).
-                best = record.proposal.related[0]
+            likely = _likely_duplicate(record)
+            if likely is not None:
+                # Only the agent's best likely duplicate, never a merely related issue
+                # (#337). The click names its index and this draft's hash; the store
+                # reads the issue from the draft (#36).
+                index, best = likely
                 same = _button(
                     f"Same as {best.repo}#{best.number}",
                     ACTION_SAME_AS,
-                    f"{record.id}:{content_hash(record.proposal)}:0",
+                    f"{record.id}:{content_hash(record.proposal)}:{index}",
                 )
                 actions.append(same)
         blocks.append({"type": "actions", "elements": actions})

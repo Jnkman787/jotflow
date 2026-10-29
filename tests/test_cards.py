@@ -218,12 +218,13 @@ def test_one_repo_needs_no_dropdown() -> None:
     ("visibility", "line"),
     [
         ("public", "Warning: acme-co/web is public, so this issue will be visible to anyone."),
-        ("unknown", "Repo visibility was not checked."),
+        # One quiet note, with the card's details (#337).
+        ("unknown", "Not checked: repo visibility"),
     ],
 )
 def test_repo_visibility(visibility: str, line: str) -> None:
     card = render_card(record(), context(visibility={"ACME-CO/web": visibility}))
-    assert line in texts(card, "plain_text")
+    assert any(line in text for text in texts(card, "plain_text"))
 
 
 def test_a_private_repo_shows_no_warning() -> None:
@@ -233,7 +234,9 @@ def test_a_private_repo_shows_no_warning() -> None:
 
 def test_labels_without_a_list_are_marked_not_checked() -> None:
     card = render_card(record(issue(repo="acme-co/api", labels=["perf"])), context())
-    assert "Labels: perf (not checked against a list)" in texts(card, "plain_text")
+    plain = texts(card, "plain_text")
+    assert "Labels: perf" in plain  # the note is folded into one line (#337)
+    assert any("Not checked:" in t and "labels against a list" in t for t in plain)
     card = render_card(record(issue(repo="acme-co/api", labels=[])), context())
     assert "Labels: none" in texts(card, "plain_text")
 
@@ -488,7 +491,8 @@ def test_a_repo_the_channel_does_not_list_is_shown_plainly() -> None:
     assert "Proposed update to acme-co/other#3" in plain
     assert "Repo: acme-co/other" in plain
     assert ACTION_REPO not in actions(card)
-    assert "Add labels: x (not checked against a list)" in plain
+    assert "Add labels: x" in plain
+    assert "Not checked: repo visibility, labels against a list" in plain
 
 
 def test_no_size_means_only_confidence() -> None:
