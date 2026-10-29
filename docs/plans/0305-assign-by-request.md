@@ -184,7 +184,7 @@ Three PRs, each closing part of #305, with the last saying Fixes #305:
 - [ ] Self-add on a filed issue, per open question 1
 - [ ] Tests:
   - replay fixtures for a volunteer on a draft and on a filed issue, with an injected line that must assign no one
-  - card rendering, the click rules, the modal's errors against a fake GitHub, bulk-link validation, the rebuild text pin, and migration 16
+  - card rendering, the click rules, the modal's errors against a fake GitHub, bulk-link validation, the rebuild text pin, and migration 18
 - [ ] architecture.md, usage.md, the threat-model rows for identity squatting and self-add, presets.md if the tool schema changes, and the CHANGELOG
 - [ ] CodeRabbit once, `make check`, mark ready
 
