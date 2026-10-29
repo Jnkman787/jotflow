@@ -75,7 +75,9 @@ async def test_a_mismatch_is_reported() -> None:
     report = await replay(thread)
     assert not report.ok
     failed = {c.name for c in report.checks if c.ok is False}
-    assert {"ingest accepted", "script"} <= failed
+    # The bot's own reply is in the packet, as Slack's replies include it (#330), but
+    # ingest drops it, so the file's expected ingest no longer holds.
+    assert {"ingest accepted"} <= failed
     assert "Does not match the expected outcome." in report.render()
 
 

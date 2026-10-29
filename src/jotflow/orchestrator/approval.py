@@ -28,6 +28,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from jotflow.change_requests import change_request_metadata
 from jotflow.models import ChannelMode, MessageRef, ProposalRecord, ProposalState, RunKind
 from jotflow.orchestrator.cards import (
     ACTION_APPROVE,
@@ -129,6 +130,10 @@ class ApprovalSlack(Protocol):
     async def open_modal(self, trigger_id: str, view: Mapping[str, Any]) -> None: ...
 
     async def reply(self, channel_id: str, thread_ts: str, text: str) -> None: ...
+
+    async def change_request(self, channel_id: str, thread_ts: str, text: str, by: str) -> None:
+        """Post ``by``'s change request in the thread, with metadata naming them (#330)."""
+        ...
 
     async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
         """The people who wrote these messages, from Slack. A bot's post adds no one.
@@ -252,10 +257,11 @@ class ApprovalHandler:
 
     async def post_changes(self, request: ChangeRequest) -> None:
         """Post a checked change request in its thread, attributed, and arm the thread."""
-        await self._slack.reply(
+        await self._slack.change_request(
             request.channel_id,
             request.thread_ts,
             f"Change request from <@{request.user_id}>:\n{request.text}",
+            request.user_id,
         )
         if self._arm_thread is not None:
             # JotFlow's own message never reaches the debouncer through ingest.
@@ -714,6 +720,17 @@ class BoltApprovalSlack:
             channel=channel_id,
             thread_ts=thread_ts,
             text=text,
+            link_names=False,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+
+    async def change_request(self, channel_id: str, thread_ts: str, text: str, by: str) -> None:
+        await self._client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text=text,
+            metadata=change_request_metadata(by),
             link_names=False,
             unfurl_links=False,
             unfurl_media=False,

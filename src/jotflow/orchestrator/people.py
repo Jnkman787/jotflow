@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from jotflow.change_requests import change_request_by
 from jotflow.models import MessageRef
 
 _WORKSPACE_URL = re.compile(r"https://[a-z0-9-]+\.slack\.com/")
@@ -41,6 +42,7 @@ class SlackPeople:
         self._client = client
         self._team_id = team_id
         self._url: str | None = None
+        self._bot: str | None = None
         self._asked = False
 
     async def _auth(self) -> None:
@@ -48,6 +50,8 @@ class SlackPeople:
             return
         response = await self._client.auth_test()
         self._asked = True
+        bot = response.get("user_id")
+        self._bot = bot if isinstance(bot, str) else None
         team = response.get("team_id")
         if self._team_id is None:
             self._team_id = team if isinstance(team, str) else None
@@ -66,12 +70,15 @@ class SlackPeople:
         return self._url
 
     async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
-        """The people who wrote these messages, from Slack. A bot's post adds no one.
+        """The people who wrote these messages, from Slack. A bot's post adds no one,
+        but JotFlow's post of a person's change request is that person's (#330).
 
         Raises :class:`LookupError` if a message cannot be found, so its author is
         never assumed.
         """
         found: set[str] = set()
+        if refs:
+            await self._auth()
         for ref in refs:
             parent = ref.thread_ts or ref.ts
             response = await self._client.conversations_replies(
@@ -81,6 +88,7 @@ class SlackPeople:
                 latest=ref.ts,
                 inclusive=True,
                 limit=1,
+                include_all_metadata=True,
             )
             messages = response.get("messages") or []
             match = next(
@@ -89,6 +97,11 @@ class SlackPeople:
             if match is None:
                 # Deleted, or never there: who wrote it cannot be confirmed.
                 raise LookupError(f"message {ref.ts} was not found")
+            if (requester := change_request_by(match, self._bot)) is not None:
+                found.add(requester)
+                continue
+            if self._bot is not None and match.get("user") == self._bot:
+                continue  # JotFlow's own post has no person behind it
             user = match.get("user")
             if isinstance(user, str):
                 found.add(user)

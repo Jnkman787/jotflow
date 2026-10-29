@@ -1,0 +1,262 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "change-request-scope",
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        },
+        {
+          "number": 42,
+          "title": "Export the dashboard table as CSV",
+          "state": "open",
+          "body": "Finance needs a monthly CSV of the dashboard table.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "description": "Carol asks for CSV export of report tables, and a first run proposes it. Alice presses Request Changes on the card and asks for the weekly summary report too. JotFlow posts her note in the thread, tagged as her change request. A second run revises the pending draft from it: revised once, by Alice, in its body (#330).",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792330000.000100",
+      "user": "U0CAROL",
+      "text": "Could we export report tables as CSV files?"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792330300.000100",
+      "thread_ts": "1792330000.000100",
+      "user": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "text": "Change request from <@U0ALICE>:\nPlease cover the weekly summary report as well.",
+      "metadata": {
+        "event_type": "jotflow_change_request",
+        "event_payload": {
+          "by": "U0ALICE"
+        }
+      }
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792330000.000100",
+      "sees_until": "1792330000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792330000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "csv-export",
+          "title": "CSV export of report tables"
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:csv-export",
+            "repo": "acme-co/web",
+            "title": "Export report tables as CSV",
+            "body": "## Problem\nPeople copy report tables by hand when they need them elsewhere.\n\n## Proposal\nExport any report table as a CSV file.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Add an Export CSV action to each report table.\n2. Write the visible columns and rows to the file.\n\n## Acceptance\n- [ ] Every report table can be exported as a CSV file\n",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792330000.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792330000.000100",
+      "calls": [
+        {
+          "tool": "revise_proposal",
+          "arguments": {
+            "topic_id": "key:csv-export",
+            "issue": {
+              "title": "Export report tables as CSV",
+              "body": "## Problem\nPeople copy report tables by hand when they need them elsewhere.\n\n## Proposal\nExport any report table as a CSV file.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Add an Export CSV action to each report table.\n2. Write the visible columns and rows to the file.\n3. Offer the same export on the weekly summary report.\n\n## Acceptance\n- [ ] Every report table can be exported as a CSV file\n- [ ] The weekly summary report can be exported too\n",
+              "labels": [
+                "enhancement"
+              ],
+              "assignees": []
+            },
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792330300.000100",
+                "thread_ts": "1792330000.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One topic and one create_issue proposal, revised once from Alice's change request: its body changed, and Alice revised it.",
+    "accepted": [
+      "1792330000.000100"
+    ],
+    "ignored": {
+      "1792330300.000100": "own message"
+    },
+    "topics": [
+      {
+        "topic": "key:csv-export",
+        "messages": [
+          "1792330000.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:csv-export",
+        "revisions": 1,
+        "revised_by": [
+          "U0ALICE"
+        ],
+        "changed": [
+          "body"
+        ],
+        "body_sections": [
+          "## Problem",
+          "## Proposal",
+          "## Suggested approach",
+          "## Acceptance"
+        ]
+      }
+    ]
+  }
+}
