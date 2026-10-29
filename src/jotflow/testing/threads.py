@@ -71,6 +71,16 @@ class User(_Strict):
     external: bool = False
 
 
+class FixtureFile(_Strict):
+    """A file on a fixture message (#333): Slack's facts, and its bytes as text."""
+
+    id: str = Field(pattern=r"^F[A-Z0-9]{2,30}$")
+    name: str = Field(min_length=1, max_length=200)
+    filetype: str
+    mimetype: str
+    text: str = Field(default="", description="The file's content, for a text file")
+
+
 class MessageEvent(_Strict):
     """A Slack ``message`` event, with only the fields JotFlow reads."""
 
@@ -82,6 +92,7 @@ class MessageEvent(_Strict):
     bot_id: str | None = None
     subtype: str | None = None
     text: str = ""
+    files: tuple[FixtureFile, ...] = ()
 
     @property
     def is_reply(self) -> bool:
@@ -138,9 +149,15 @@ class LinkMessageCall(_Strict):
         return self
 
 
+class ScriptedIssue(IssueProposal):
+    """A scripted propose_issue's arguments: a draft, and the files it names (#333)."""
+
+    attachments: list[str] = Field(default_factory=list, max_length=3)
+
+
 class ProposeIssueCall(_Strict):
     tool: Literal["propose_issue"]
-    arguments: IssueProposal
+    arguments: ScriptedIssue
     expect_error: str | None = Field(
         default=None,
         min_length=1,
@@ -170,6 +187,11 @@ class AnswerCall(_Strict):
 
     tool: Literal["answer"]
     arguments: Answer
+    expect_error: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Part of the refusal this answer must get, such as a claimed change (#329)",
+    )
 
 
 class RepoDocArguments(_Strict):
@@ -287,6 +309,9 @@ class ExpectedProposal(_Strict):
     )
     # Revisions from new messages (#304).
     revisions: int = Field(default=0, ge=0, description="How many times it was revised")
+    attached: tuple[str, ...] = Field(
+        default=(), description="The names of the Slack files the draft includes (#333)"
+    )
     revised_by: tuple[str, ...] = Field(
         default=(), description="Slack user ids the last revision added messages from"
     )
@@ -433,9 +458,9 @@ class ExpectedWhisper(_Strict):
 def _question_replies() -> frozenset[str]:
     from jotflow.orchestrator import questions
 
-    return frozenset(
-        {questions.MEMBERS_ONLY, questions.TOO_MANY, questions.TOO_SOON, questions.OFF}
-    )
+    fixed = {questions.MEMBERS_ONLY, questions.TOO_MANY, questions.TOO_SOON, questions.OFF}
+    # A mention's reply adds that drafting still reads it (#329).
+    return frozenset(fixed | {text + questions.STILL_READ for text in fixed})
 
 
 class Expected(_Strict):
@@ -833,7 +858,9 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
             elif isinstance(call, AskChannelCall):
                 outcome.asks.append(run.thread_ts)
             elif isinstance(call, AnswerCall):
-                outcome.answers.append(run.thread_ts)
+                # A refused answer, such as one claiming a change, posts nothing (#329).
+                if call.expect_error is None:
+                    outcome.answers.append(run.thread_ts)
             elif isinstance(call, ReviseProposalCall):
                 topic = call.arguments.topic_id
                 outcome.revisions[topic] = outcome.revisions.get(topic, 0) + 1
@@ -881,9 +908,15 @@ def _expected_problems(thread: SavedThread) -> list[str]:
         placed[ts] = placed.get(ts, 0) + 1
     for ts in skipped(thread):
         placed[ts] = placed.get(ts, 0) + 1
-    # A question is neither an idea nor the agent's chatter call: JotFlow sets it aside (#57).
+    # An ask: is neither an idea nor the agent's chatter call: JotFlow sets it aside (#57).
+    # A bot mention is a question and a message to the thread: drafting may place it in a
+    # topic or chatter, or leave it, when no drafting run is scripted (#329).
+    from jotflow.orchestrator.questions import is_ask
+
+    mentions = {ts for ts in expected.questions if not is_ask(messages[ts].text or "")}
     for ts in expected.questions:
-        placed[ts] = placed.get(ts, 0) + 1
+        if ts not in mentions or placed.get(ts, 0) == 0:
+            placed[ts] = placed.get(ts, 0) + 1
     for ts in accepted_messages:
         count = placed.get(ts, 0)
         if count != 1:

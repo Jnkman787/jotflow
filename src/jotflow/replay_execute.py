@@ -44,7 +44,8 @@ from jotflow.adapters.runner import EXECUTION_KINDS, LaunchRequest, Runner, Runn
 from jotflow.execution.attribution import execution_footer
 from jotflow.execution.writes import PlannedWrite, with_kept_markers
 from jotflow.execution.writes import plan as plan_writes
-from jotflow.models import ProposalRecord, ProposalState, RunKind, RunStatus
+from jotflow.models import IssueProposal, ProposalRecord, ProposalState, RunKind, RunStatus
+from jotflow.orchestrator.slack_files import attachments_section
 from jotflow.policy import IssuesPolicy
 from jotflow.replay import Check, Prepared, ReplayError, ReplayReport, prepare, run_script
 from jotflow.replay_agent import (
@@ -268,9 +269,15 @@ async def _execute_one(
     if repo not in repos:
         return [f"{record.id}: the fixture has no github block for {repo}"]
     tail = await execution_footer(record, state.thread.policy, state.attribution, state.store)
+    # A fixture's files never change, so every approved one is still as approved (#333).
+    draft = record.proposal
+    files = [(a.name, a.text) for a in draft.attached] if isinstance(draft, IssueProposal) else []
     policy = state.thread.policy
     checks, writes = plan_writes(
-        record, tail, IssuesPolicy.from_snapshot(record.approved_issues, policy.issues)
+        record,
+        tail,
+        IssuesPolicy.from_snapshot(record.approved_issues, policy.issues),
+        attachments_section(files),
     )
     missing = sorted(set(checks.labels) - set(repos[repo].labels))
     expected = [(w.tool, _expected(w, repos, repo)) for w in writes]

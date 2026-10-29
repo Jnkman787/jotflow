@@ -240,8 +240,11 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
         blocks.append(_section(f"Repo: {repo}"))
     visibility = context.repo_visibility(repo)
     if visibility == "public":
+        # An attached file goes public too, so the warning says so (#333).
+        files = isinstance(record.proposal, IssueProposal) and bool(record.proposal.attached)
+        also = " So will the attached files' text." if files else ""
         blocks.append(
-            _context(f"Warning: {repo} is public, so this issue will be visible to anyone.")
+            _context(f"Warning: {repo} is public, so this issue will be visible to anyone.{also}")
         )
     # An unknown visibility is folded into the card's one "Not checked" note (#337).
     return blocks
@@ -352,6 +355,28 @@ TOO_LONG = (
 )
 
 
+def _size(size: int) -> str:
+    return f"{size} bytes" if size < 1024 else f"{size / 1024:.1f} KB"
+
+
+def _attached_blocks(draft: IssueProposal, show: bool) -> list[Block]:
+    """Each Slack file the issue will include, and its full text, as filed (#333).
+
+    The text is shown in full, so the card's length rule covers it like the body:
+    a draft too long to show can't be approved.
+    """
+    blocks: list[Block] = []
+    for attached in draft.attached:
+        blocks.append(
+            _approved_context(
+                f"Includes {attached.name}, {_size(attached.size)}, from Slack, as a code "
+                "block in the issue:"
+            )
+        )
+        blocks += _body(attached.text, show)
+    return blocks
+
+
 def _body(text: str, show: bool) -> list[Block]:
     return [_section(chunk) for chunk in _chunks(text)] if show else [_context(TOO_LONG)]
 
@@ -450,6 +475,7 @@ def _draft_blocks(
             if "body" in changed:
                 blocks.append(_context(CHANGED.format(what="Description")))
             blocks += _body(draft.body, show_body)
+            blocks += _attached_blocks(draft, show_body)
         labels = _labels_line(draft.labels, entry, added=context.issues.label)
         blocks.append(_approved_context(f"{labels} (changed)" if "labels" in changed else labels))
         details = [f"Confidence: {round(draft.confidence * 100)}%"]

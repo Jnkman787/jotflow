@@ -179,6 +179,11 @@ description = "The public REST API and its background jobs"
 triage_guide = """
 Process changes and onboarding go to handbook, even when they mention a service.
 A request for planned work goes on the roadmap board."""
+# Slack files on a message (#333): "names" (the default) shows drafting each file's
+# name, type and size. "text" also reads a small text file, up to 32 KiB, so a
+# proposal can copy it into the issue as the card shows. That needs the bot's
+# files:read scope, which reaches every file in every channel the bot is in.
+attachments = "names"
 
 [[channels.G0EXAMPLE2.repos]]
 repo = "example-org/handbook"

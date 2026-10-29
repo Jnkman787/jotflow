@@ -102,6 +102,9 @@ def render_policy(policy: Policy) -> str:
         lines += ["", f"[channels.{channel_id}]"]
         if channel.debounce_seconds is not None:
             lines.append(f"debounce_seconds = {channel.debounce_seconds}")
+        if channel.attachments != "names":
+            # Slack files (#333): off, or text, which copies file text toward GitHub.
+            lines.append(f"attachments = {toml_string(channel.attachments)}")
         if channel.triage_guide is not None:
             # The team's guide to choosing a repo and boards (#317), as written.
             lines.append(f"triage_guide = {toml_string(channel.triage_guide)}")

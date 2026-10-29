@@ -18,15 +18,18 @@ The reply is sent as blocks: the same text, and an Add me button (#305). Its
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
+from jotflow.execution.writes import clean_name
 from jotflow.models import ProposalRecord
 from jotflow.orchestrator.boards import BoardAdder
 from jotflow.orchestrator.cards import ACTION_ADD_ME_FILED
+from jotflow.orchestrator.slack_files import LEFT_OUT
 from jotflow.policy import Policy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import Store, utc_now
@@ -143,6 +146,22 @@ class ThreadNotice:
         self._boards = boards
         self._waiting: dict[str, tuple[datetime, timedelta]] = {}
 
+    async def _left_out(self, record: ProposalRecord) -> str:
+        """Approved files execution left out, deleted or changed in Slack (#333)."""
+        names: list[str] = []
+        for raw in await self._store.tool_call_results(f"attachments:{record.id}", (LEFT_OUT,)):
+            name = json.loads(raw).get("name")
+            # No <, @ or markup: a file name must not ping or link in Slack either.
+            cleaned = clean_name(name) if isinstance(name, str) else ""
+            if cleaned and cleaned not in names:
+                names.append(cleaned)
+        if not names:
+            return ""
+        return (
+            f"Left out {', '.join(names)}: deleted, unshared or changed in Slack after the "
+            "card was approved."
+        )
+
     async def tell(self) -> int:
         """Tell every due thread that is not waiting to retry. Returns how many were told."""
         told = 0
@@ -171,6 +190,8 @@ class ThreadNotice:
                 return False
             if line := boards.notice():
                 text = f"{text} {line}"
+        if line := await self._left_out(record):
+            text = f"{text} {line}"
         if (skipped := skipped_line(record)) is not None:
             text = f"{text} {skipped}"
         try:

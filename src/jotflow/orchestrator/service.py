@@ -78,10 +78,11 @@ from jotflow.orchestrator.questions import (
     BoltQuestionSlack,
     QuestionHandler,
     QuestionSlack,
-    is_question,
+    is_ask,
 )
 from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
+from jotflow.orchestrator.slack_files import BoltFileSlack
 from jotflow.orchestrator.summary import BoltSummarySlack, WeeklySummaries
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.orchestrator.verify import Verifier, VerifyCommand
@@ -516,7 +517,15 @@ class Orchestrator:
         self._help = HelpHandler(
             self._store, self._policy, self._help_slack or BoltHelpSlack(self._client)
         )
-        source = SlackWorkSource(BoltSlackReader(self._client), self._store, bot=self._identity)
+        # Slack files (#333): JotFlow's own reader, used only where a channel allows it.
+        files = BoltFileSlack(self._client)
+        source = SlackWorkSource(
+            BoltSlackReader(self._client),
+            self._store,
+            bot=self._identity,
+            files=files,
+            attachments_for=self._policy.attachments_for,
+        )
         # Repo docs for drafting (#209): no tools at all unless a repo sets read_paths.
         # The runner client is made below, so the tools look it up when called.
         doc_reads = DocReads(self._store)
@@ -531,6 +540,7 @@ class Orchestrator:
                 issues=self._issue_reader,
                 labels=self._label_checker,
                 boards_off=self.boards_off,
+                files=files,
             ),
             *write_tools(
                 self._store,
@@ -541,6 +551,7 @@ class Orchestrator:
                 boards_off=self.boards_off,
                 # Who wrote a revision's new messages, as approval reads them (#304).
                 authors=attribution.authors,
+                files=files,
                 mentions=attribution.mentions,
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
@@ -667,13 +678,13 @@ class Orchestrator:
             and self._questions is not None
         ):
             try:
-                question = (await self._questions.on_message(event)).outcome != "not_a_question"
+                await self._questions.on_message(event)
             except Exception:
                 log.exception("could not take a question")
-                # Fail closed: a question that failed is still not an idea to draft.
-                question = is_question(str(event.get("text") or ""), self._identity.user_id)
-            if question:
-                # A question is not an idea: no keyword handling, no help, no drafting run.
+            if is_ask(str(event.get("text") or "")):
+                # ask: is only a question: no keyword handling, no help, no drafting run,
+                # whatever became of it, and even if taking it failed (fail closed).
+                # A bot mention goes on to drafting too, which only proposes (#329).
                 return
         if isinstance(decision, Accepted) and event is not None and self._keywords is not None:
             try:
