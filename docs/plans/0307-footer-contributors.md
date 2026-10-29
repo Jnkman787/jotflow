@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #307
-- PR: to be opened
+- PR: #313
 - Status: ready for review
 - Last verified: 2026-10-29, `make check` on the branch
 - Next safe action: review
