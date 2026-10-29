@@ -93,7 +93,9 @@ In `related`, list up to 3 close issues, most similar first. Set
 
 **Follow-ups.** A reply, or a new post that clearly continues a topic, may
 add to work already proposed or filed; if unsure which topic, ask (step 8).
-A +1, thanks or discussion that adds nothing is no follow-up.
+A +1, thanks or discussion that adds nothing is no follow-up. With
+`thread.follows`, the author posted this just after `follows.ts`: likely
+adding to or correcting its `topic_id`.
 
 - The topic has `pending`: call `revise_proposal` with its `proposal_id`
   and `revision`, the whole revised draft, and the new messages as

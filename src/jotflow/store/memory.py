@@ -104,6 +104,7 @@ class MemoryStore:
         self._identities: dict[str, IdentityLink] = {}
         self._summaries: dict[tuple[str, datetime], SummaryPost] = {}
         self._deferrals: dict[tuple[str, datetime], SummaryDeferral] = {}
+        self._summary_topics: dict[tuple[str, datetime], frozenset[str]] = {}
         self._unlinks: list[IdentityUnlink] = []
         self._codes: dict[str, IdentityCode] = {}
         self._operators: dict[str, OperatorToken] = {}
@@ -756,6 +757,17 @@ class MemoryStore:
 
     async def get_summary(self, channel_id: str, slot: datetime) -> SummaryPost | None:
         return self._summaries.get((channel_id, slot))
+
+    async def set_summary_topics(
+        self, channel_id: str, slot: datetime, topic_ids: Collection[str]
+    ) -> None:
+        async with self._lock:
+            for key in [k for k in self._summary_topics if k[0] == channel_id and k[1] < slot]:
+                del self._summary_topics[key]
+            self._summary_topics[(channel_id, slot)] = frozenset(topic_ids)
+
+    async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]:
+        return self._summary_topics.get((channel_id, slot), frozenset())
 
     async def defer_topic(
         self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str

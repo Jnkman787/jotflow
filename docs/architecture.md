@@ -421,7 +421,7 @@ Thread text is fetched from Slack when building a packet, passed to the agent, a
 
 How the work packet treats thread text:
 
-- It reads only the run's own thread, with `conversations.replies`, never channel history. A very long thread is paged in full, up to a bound, keeping its first and newest messages.
+- It reads only the run's own thread, with `conversations.replies`. A very long thread is paged in full, up to a bound, keeping its first and newest messages. The one channel-history read is for a top-level post (#334): `conversations.history` over the two minutes before it, at most 20 messages, to find the same author's own previous top-level post. Only that post's ts, the gap in seconds, and its topic id reach the packet, as `thread.follows`, never another message's text. A failed read means no hint. The debouncer, which keeps each person's last top-level post in memory, lets such a post fall due a window after the earlier one, so the earlier post's topic exists to join.
 - Related excerpts are the first message of a few other threads already named in the topic index.
 - Authors and `<@U…>` mentions become display names, with the Slack user id kept alongside. The only cache maps user ids to names: directory data, bounded and short-lived, never message text.
 - `skip:` messages, a whole thread under a `skip:` root, and messages a person marked as chatter never reach the agent. Keyword prefixes are removed from the text and passed as a hint.
@@ -473,7 +473,7 @@ Assignment requires a Slack user to GitHub handle mapping. A self-service slash 
 - **What's listed:** one item per topic with a create proposal made in the window, using that topic's newest. A topic put off with Not this week is listed again.
 - **What's left out:** a rejected or superseded idea, a draft cleared other than by filing, and an idea whose source messages Slack says are all gone.
 - **How it's shown:** titles are cut to the card's limit, and titles and names are `plain_text`, with every link a button JotFlow built. At most 20 items appear, waiting ones first, then "and N more".
-- **Not this week:** it goes through the approval gate's `checked_click`, under Approve's rules, and must come from that week's own posted summary. It records a deferral in `summary_deferrals` until the next slot. The tables hold pointers, Slack ids and times only.
+- **Not this week:** it goes through the approval gate's `checked_click`, under Approve's rules. It must come from the channel's latest summary, by the posted message's stored ts, and name a topic that summary offered it for. Those topics are recorded in `summary_topics` before posting, migration 20. A retry replaces them, and a new summary drops older ones, never the latest. It records a deferral in `summary_deferrals` until the next slot. The tables hold pointers, Slack ids and times only.
 
 ## Security posture
 

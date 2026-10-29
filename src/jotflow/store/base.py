@@ -131,11 +131,21 @@ class DuplicateRefusedError(ConflictError):
     """A "same as" or its undo can't apply; ``str()`` is the fixed reason (#36)."""
 
 
+class NotLikelyDuplicateError(DuplicateRefusedError):
+    """A Same as on an issue the agent didn't mark a likely duplicate: mostly a card
+    drawn before #337, which offered it for any related issue (#342 review)."""
+
+
 # The fixed reasons a person sees. None quotes the draft, the issue, or the person.
 DUPLICATE_NOT_PENDING = "This proposal is no longer waiting, so it can't be marked the same."
 DUPLICATE_NOT_NEW = "Only a proposed new issue can be marked the same as an existing one."
 DUPLICATE_NO_CANDIDATE = "That related issue isn't on this proposal any more."
-DUPLICATE_NOT_LIKELY = "The agent didn't mark that issue as a likely duplicate."
+# Mostly a card drawn before #337, whose Same as was for any related issue (#338 review).
+DUPLICATE_NOT_LIKELY = (
+    "This Same as button is from before an upgrade: the agent didn't mark that issue as "
+    "maybe the same request, so the card is redrawn without it. If it is the same request, "
+    "say so with Request Changes, or Discard the card."
+)
 DUPLICATE_TOPIC_LINKED = (
     "This conversation is already linked to an issue, so it can't be marked the same as another."
 )
@@ -178,7 +188,7 @@ def plan_duplicate(record: ProposalRecord, index: int, expected_hash: str) -> Re
         raise DuplicateRefusedError(DUPLICATE_NO_CANDIDATE)
     # Only an issue the agent itself called a likely duplicate, as the card offers (#337).
     if not draft.related[index].likely_duplicate:
-        raise DuplicateRefusedError(DUPLICATE_NOT_LIKELY)
+        raise NotLikelyDuplicateError(DUPLICATE_NOT_LIKELY)
     return draft.related[index]
 
 
@@ -1118,6 +1128,16 @@ class Store(Protocol):
     ) -> SummaryPost: ...
 
     async def get_summary(self, channel_id: str, slot: datetime) -> SummaryPost | None: ...
+
+    async def set_summary_topics(
+        self, channel_id: str, slot: datetime, topic_ids: Collection[str]
+    ) -> None:
+        """Record the topics a summary offers Not this week for, replacing any earlier
+        try's, before it's posted (#315 review). The channel's rows for older slots
+        are dropped: Not this week only works on the latest summary."""
+        ...
+
+    async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]: ...
 
     async def defer_topic(
         self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str

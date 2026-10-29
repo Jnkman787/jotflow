@@ -446,3 +446,31 @@ def test_a_draft_without_the_new_flag_hashes_as_before() -> None:
         }
     )
     assert content_hash(marked) != content_hash(old)
+
+
+async def test_an_old_cards_same_as_click_says_why_and_redraws_the_card() -> None:
+    # #338 review: a card drawn before likely_duplicate offered Same as for any related
+    # issue. Its click must say why in plain words, and the card loses the button.
+    from jotflow.store.base import DUPLICATE_NOT_LIKELY
+
+    rig = Rig()
+    pid = await rigged(rig)
+    shown = len(rig.cards.updates)
+    assert await rig.handler.on_same_as(same_as(f"{pid}:{await rig.hash(pid)}:1")) == "refused"
+    assert await rig.state(pid) is ProposalState.PENDING
+    assert rig.slack.ephemerals[-1][2] == DUPLICATE_NOT_LIKELY
+    assert "Request Changes" in DUPLICATE_NOT_LIKELY
+    assert len(rig.cards.updates) == shown + 1  # redrawn
+    assert "Same as acme-co/web#57" not in str(rig.cards.updates[-1][2].blocks)
+
+
+async def test_an_unmarked_issue_is_refused_with_its_own_error_type() -> None:
+    # #342 review: the redraw keys on the type, so rewording the reason can't break it.
+    from jotflow.store.base import NotLikelyDuplicateError
+
+    store = MemoryStore()
+    record = await pending(store)
+    with pytest.raises(NotLikelyDuplicateError):
+        await store.mark_duplicate(
+            PID, index=1, expected_hash=content_hash(record.proposal), by=BOB
+        )
