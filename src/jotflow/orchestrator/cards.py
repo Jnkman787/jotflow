@@ -73,6 +73,9 @@ class CardContext:
 
     channel: ChannelPolicy
     names: Mapping[str, str] = field(default_factory=dict)  # Slack user id -> display name
+    # Who the issue's footer will name, computed as the write computes it, so approval
+    # covers every name sent to GitHub (#307 review). None: names aren't sent.
+    credit_line: str | None = None
     # What JotFlow adds to every new issue, shown so the card is what's filed (#306).
     issues: IssuesPolicy = field(default_factory=IssuesPolicy)
     identities: Mapping[str, IdentityLink] = field(default_factory=dict)  # by Slack user id
@@ -320,6 +323,8 @@ def _draft_blocks(
         blocks.append(_approved_context("   ".join(details)))
         blocks += _hint_blocks(draft)
         blocks += _people_blocks(record, context, draft.assignees, pending, compact)
+        if context.credit_line:
+            blocks.append(_approved_context(context.credit_line))
         return blocks, header
     header = f"Proposed update to {_nickname(context, draft.repo)}#{draft.issue_number}"
     return _update_blocks(record, draft, context, entry, pending, show_body, compact), header
@@ -352,6 +357,8 @@ def _update_blocks(
     blocks.append(_context(f"Confidence: {round(draft.confidence * 100)}%"))
     blocks += _hint_blocks(draft)
     blocks += _people_blocks(record, context, changes.add_assignees, pending, compact)
+    if context.credit_line:
+        blocks.append(_approved_context(context.credit_line))
     return blocks
 
 
