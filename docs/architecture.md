@@ -180,7 +180,7 @@ Both services run as uid 10002 with a read-only root, `/tmp` in memory, all capa
 
 | Run kind | JotFlow tools | GitHub tools |
 |---|---|---|
-| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `link_message`, `ask_channel`, `list_repo_docs`, `read_repo_doc` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
+| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `revise_proposal`, `link_message`, `ask_channel`, `list_repo_docs`, `read_repo_doc` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
 | Question | `get_work`, `list_topics`, `get_topic`, `ask_channel` | the same read-only tools |
 | Execution | `get_work`, `record_result` | `issue_read` and `list_issues` for the marker check, `get_label` for the label check, then `issue_write` for the one create or edit, or `add_issue_comment` for an update's comment |
 
@@ -379,6 +379,18 @@ stateDiagram-v2
 ```
 
 In `auto` mode a validated proposal moves from pending to approved without a person, and the card records "approved by auto mode".
+
+**Follow-ups revise a pending draft (#304).**
+- **The packet:** a drafting run's packet gives each topic its thread feeds that topic's live draft, as `pending`, with its revision and its text marked untrusted.
+- **The tool:** `revise_proposal` replaces that draft with a whole revised one, plus the new messages as sources. It runs `propose_issue`'s and `propose_update`'s own checks, and #209's doc-passage check, and reads who wrote the new messages from Slack.
+- **The store** applies it only while the proposal is pending and still at the revision the run read. The repo, topic and issue number stay the proposal's own, and the sources and participants merge with the old ones.
+  - A revision that changes nothing shown is refused.
+  - A proposal takes at most 10 revisions, and a run at most 3, apart from its proposal cap.
+  - `proposal_revisions` and `proposal_revision_authors` keep which fields changed and whose messages, one row per person, never the text.
+- **A stale revision,** after a person's card edit or another run's revision, returns the current draft for one retry in the same run.
+- **A revision that lost a race** to an approval, a rejection or a write sets `follow_up_due_at`. The card loop then drafts the thread again once the proposal is applied, rejected or superseded, so a quiet thread doesn't keep a lost addition.
+- **The card** says who revised it and what changed, and marks each changed field. The marks sit outside the hash, so the Approve button still locks exactly the draft shown.
+- **After filing,** a follow-up is a `propose_update`, a comment by default. Its header says whether it's a comment or a change to the description.
 
 **`rejected` with `duplicate` set means "same as an existing issue", not "people said no" (#36).** A drafting run may list up to three `related` issues, as pointers: repo, number, and the open or closed state its search reported. They must be in the channel's repos. The card shows them, labelling the state as the agent's claim, and offers **Same as** for the first one on a pending new issue. A click under Approve's who-may rules then does three things in one store write. The proposal becomes `rejected`, with `duplicate` recording the issue, who clicked and when. The topic is bound to that issue. The draft is cleared. There's no execution run and no GitHub write. Later messages in the thread become `propose_update` on that issue, which may be closed. **Not a duplicate** takes it back under the same rules: it unbinds the topic, records who undid it, and queues a fresh drafting run. It's refused if the topic now points elsewhere, or if a proposal drafted after the click is still pending, approved, executing, reconciling or applied, because that proposal relies on the binding. The store keeps the four duplicate columns consistent, all set together and only on `rejected`, because SQLite can't add that CHECK to an existing table.
 
