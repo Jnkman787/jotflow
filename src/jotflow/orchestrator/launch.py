@@ -232,6 +232,18 @@ class AccessWire(BaseModel):
     reachable: bool
 
 
+class BoardAccessWire(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    can_update: bool
+
+
+class BoardAddedWire(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    item_id: str = Field(min_length=1, max_length=200)
+
+
 # The largest marked-issue list JotFlow reads from a runner (#256).
 MAX_MARKED_BYTES = 8_000_000
 # The largest answer about one person (#305).
@@ -503,6 +515,35 @@ class RunnerClient:
             return AccessWire.model_validate_json(response.content).reachable
         except ValidationError:
             raise RunnerError("the runner's reply was not an access answer") from None
+
+    async def board_access(self, owner: str, number: int) -> bool:
+        """Whether the execution runner's write token may update an org board (#309)."""
+        if not is_owner_name(owner) or not 1 <= number <= 10**9:
+            raise RunnerError("not a board")
+        response = await self._call("GET", RunKind.EXECUTION, f"/boards/{owner}/{number}/access")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        try:
+            return BoardAccessWire.model_validate_json(response.content).can_update
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a board access answer") from None
+
+    async def add_to_board(self, repo: str, issue_number: int, board: str) -> None:
+        """Ask the execution runner to add issue ``repo#issue_number`` to ``board`` (#309)."""
+        response = await self._call(
+            "POST",
+            RunKind.EXECUTION,
+            "/boards/add",
+            json={"repo": repo, "issue_number": issue_number, "board": board},
+        )
+        if response.status_code == 429:
+            raise RunnerError("GitHub's rate limit", retry="rate_limited")
+        if response.status_code != 200:
+            raise _refused(response.status_code)
+        try:
+            BoardAddedWire.model_validate_json(response.content)
+        except ValidationError:
+            raise RunnerError("the runner's reply was not a board item") from None
 
     async def verify(self, login: str, code_digest: str) -> VerifyAnswer:
         """Ask the drafting runner whether ``login``'s GitHub account carries the code (#195).

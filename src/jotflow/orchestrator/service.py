@@ -53,6 +53,7 @@ from jotflow.models import (
     expected_runner_preset,
 )
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
+from jotflow.orchestrator.boards import BoardAdder
 from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
     SYNC_SECONDS,
@@ -334,6 +335,8 @@ class Orchestrator:
         self._tasks: list[asyncio.Task[None]] = []
         # Listed repos, and those a channel's scopes find through the runners (#236).
         self.repos = RepoCatalog(policy, lister=self._list_repos, access=self._write_reachable)
+        # Boards the exec runner's write token can't update, found at start (#309).
+        self.boards_off: set[str] = set()
 
     async def _list_repos(self, owner: str) -> list[DiscoveredRepo]:
         if self._runner is None:
@@ -411,6 +414,8 @@ class Orchestrator:
             self._policy,
             self._thread_slack or BoltThreadSlack(self._client),
             repos=self.repos,
+            # Approved boards are added by the exec runner's fixed call (#309).
+            boards=BoardAdder(self._store, self._policy, _RunnerBoards(self)),
         )
         # Each person links only their own GitHub login (#35); approvers and
         # identity admins can remove someone else's (#173).
@@ -488,8 +493,16 @@ class Orchestrator:
                 attribution=SlackAttribution(slack_people, people.name),
                 repos=self.repos,
                 issues=self._issue_reader,
+                boards_off=self.boards_off,
             ),
-            *write_tools(self._store, self._policy, poster, repos=self.repos, docs=doc_reads),
+            *write_tools(
+                self._store,
+                self._policy,
+                poster,
+                repos=self.repos,
+                docs=doc_reads,
+                boards_off=self.boards_off,
+            ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
         # Admin-issued, read-only operator tokens (#58), whether or not runs are on.
@@ -519,6 +532,7 @@ class Orchestrator:
             )
         for reason in self.kinds.off:
             log.warning("%s", reason)
+        await self._check_boards()
         if self.repos.owners:
             if self._runner is None:
                 log.warning(
@@ -677,6 +691,33 @@ class Orchestrator:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=self._card_seconds)
 
+    async def _check_boards(self) -> None:
+        """Ask the exec runner whether its write token may update each configured
+        board (#309). One it can't, or that can't be checked, is turned off: drafting
+        doesn't see it, and propose_issue refuses it. A pre-check: the add's own
+        failure is the real one."""
+        boards = {b.board for c in self._policy.channels.values() for b in c.boards}
+        if not boards:
+            return
+        if self._runner is None or RunKind.EXECUTION not in self.kinds.on:
+            self.boards_off.update(boards)
+            log.warning("boards are off: execution runs are off, so nothing could add to them")
+            return
+        for board in sorted(boards):
+            owner, _, number = board.partition("/")
+            try:
+                ok = await self._runner.board_access(owner, int(number))
+            except RunnerError as exc:
+                log.warning("board %s is off: its access couldn't be checked (%s)", board, exc)
+                ok = False
+            if not ok:
+                self.boards_off.add(board)
+                log.warning(
+                    "board %s is off: the write token can't update it; give it Projects: "
+                    "Read and write on the organisation",
+                    board,
+                )
+
     async def _arm_thread(self, channel_id: str, thread_ts: str) -> None:
         """Start a thread's quiet window for a message JotFlow posted for a person."""
         if self._debouncer is not None:
@@ -715,3 +756,16 @@ class Orchestrator:
         if self._store is not None:
             store, self._store = self._store, None
             await store.close()
+
+
+class _RunnerBoards:
+    """The board call, through whichever runner client the service has by then."""
+
+    def __init__(self, service: Orchestrator) -> None:
+        self._service = service
+
+    async def add_to_board(self, repo: str, issue_number: int, board: str) -> None:
+        runner = self._service._runner
+        if runner is None:
+            raise RunnerError("no runner to ask")
+        await runner.add_to_board(repo, issue_number, board)

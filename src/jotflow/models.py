@@ -338,6 +338,16 @@ class RelatedIssue(BaseModel):
     )
 
 
+MAX_PROPOSED_BOARDS = 3
+
+
+class ProposedBoard(BaseModel):
+    """A Projects board the agent proposes the new issue for, and why (#309)."""
+
+    board: str = Field(description="A channel board's nickname or owner/number")
+    reason: str = Field(min_length=1, max_length=200, description="One line: why it belongs there")
+
+
 class IssueProposal(BaseModel):
     """A request to create a new GitHub issue."""
 
@@ -372,6 +382,11 @@ class IssueProposal(BaseModel):
         default_factory=list,
         max_length=MAX_RELATED,
         description=RELATED_DESCRIPTION,
+    )
+    boards: list[ProposedBoard] = Field(
+        default_factory=list,
+        max_length=MAX_PROPOSED_BOARDS,
+        description="Optional. Up to 3 of channel.boards to add the issue to after approval",
     )
 
 

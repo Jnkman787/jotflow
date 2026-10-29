@@ -296,6 +296,22 @@ def doc_notes(policy: Policy) -> list[str]:
     return notes
 
 
+def board_notes(policy: Policy) -> list[str]:
+    """What listing Projects boards needs from the write token (#309), as one line.
+
+    `jotflow check` can't reach the agent runners, so JotFlow itself checks at
+    start that the write token may update each board, and turns off any it can't.
+    """
+    boards = sorted({b.board for c in policy.channels.values() for b in c.boards})
+    if not boards:
+        return []
+    return [
+        f"{', '.join(boards)}: the write token needs Projects: Read and write on the "
+        "organisation, which reaches every board it owns. Only organisation boards work. "
+        "JotFlow checks it can update each board when it starts, and turns off any it can't."
+    ]
+
+
 def issue_notes(policy: Policy) -> list[str]:
     """What ``[issues]`` adds to every new issue, and what to make sure of (#306).
 
@@ -359,6 +375,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"warn  policy: {warning}")
     for note in doc_notes(policy):
         print(f"note  docs: {note}")
+    for note in board_notes(policy):
+        print(f"note  boards: {note}")
     for note in issue_notes(policy):
         print(f"note  issues: {note}")
     failures: list[str] = []

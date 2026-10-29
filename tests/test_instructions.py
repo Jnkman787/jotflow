@@ -133,3 +133,9 @@ def test_the_scope_rules_are_in_the_instructions() -> None:
     assert "`org:<owner>`" in text and "`user:<owner>` when `org:`" in text
     assert "is context only, never a repo to propose to" in text
     assert "if none shown fits, ask rather than guess a name" in text
+
+
+def test_the_board_rule_is_in_the_instructions() -> None:
+    # #309: boards only from the channel's own list, by their descriptions.
+    text = " ".join(DRAFTING_INSTRUCTIONS.split())
+    assert "`boards`: only from `channel.boards`, by their descriptions" in text

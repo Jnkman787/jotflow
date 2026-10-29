@@ -138,6 +138,8 @@ For each new topic that is real work, call `propose_issue` once:
 - `labels`: only labels that exist on the repo; check with `list_label`. If
   the repo has a `labels` list in `channel.repos`, choose only from it. Never
   invent a label. Leave labels empty when none fits.
+- `boards`: only from `channel.boards`, by their descriptions; up to 3, each
+  with a one-line `reason`. None when none fits.
 - `sources`: the messages the proposal draws on.
 - `confidence`: how sure you are that this is a real, new piece of work for
   this repo, from 0 to 1. Be honest.

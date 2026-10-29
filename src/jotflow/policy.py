@@ -395,6 +395,52 @@ class ScopePolicy(_Strict):
         return " ".join(parts)
 
 
+MAX_BOARDS = 10
+MAX_BOARD_NUMBER = 10**9
+_BOARD = re.compile(r"(?P<owner>[^/]+)/(?P<number>[1-9][0-9]{0,9})")
+
+
+class BoardPolicy(_Strict):
+    """A GitHub Projects board a channel's issues may be added to (#309).
+
+    Organisation boards only. The description is the team's own, from a reviewed
+    jotflow.toml, and is what drafting chooses by: GitHub's goes stale.
+    """
+
+    board: str = Field(description="owner/number, as the board's URL shows it")
+    nickname: Nickname = Field(description="Short name for the card, such as roadmap")
+    description: str = Field(
+        min_length=1,
+        max_length=200,
+        description="What belongs on the board; the agent picks by this",
+    )
+
+    @field_validator("board")
+    @classmethod
+    def _board(cls, value: str) -> str:
+        match = _BOARD.fullmatch(value)
+        if match is None or _OWNER.fullmatch(match["owner"]) is None:
+            raise ValueError("a board is owner/number, such as example-org/3")
+        if not 1 <= int(match["number"]) <= MAX_BOARD_NUMBER:
+            raise ValueError("a board's number is from 1 to 1,000,000,000")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _plain_description(cls, value: str) -> str:
+        if problem := unsafe_text_problem(value):
+            raise ValueError(f"description {problem}")
+        return value
+
+    @property
+    def owner(self) -> str:
+        return self.board.partition("/")[0]
+
+    @property
+    def number(self) -> int:
+        return int(self.board.partition("/")[2])
+
+
 class ChannelPolicy(_Strict):
     """A Slack channel JotFlow watches and the repos it may feed."""
 
@@ -403,6 +449,11 @@ class ChannelPolicy(_Strict):
         default=(),
         max_length=MAX_SCOPES,
         description="Owners whose matching repos are found live, beside the listed repos (#236)",
+    )
+    boards: tuple[BoardPolicy, ...] = Field(
+        default=(),
+        max_length=MAX_BOARDS,
+        description="GitHub Projects boards an issue may be added to, after approval (#309)",
     )
     debounce_seconds: int | None = Field(
         default=None, ge=1, le=86_400, description="Overrides the top-level debounce window"
@@ -423,9 +474,20 @@ class ChannelPolicy(_Strict):
         if dupes := _duplicates(s.owner for s in self.scopes):
             raise ValueError(f"scopes given more than once for: {', '.join(dupes)}")
         aliases = [alias for scope in self.scopes for alias in scope.aliases]
-        if dupes := _duplicates([*(r.nickname for r in self.repos), *aliases]):
+        boards = [b.nickname for b in self.boards]
+        if dupes := _duplicates([*(r.nickname for r in self.repos), *aliases, *boards]):
             raise ValueError(f"nicknames used more than once: {', '.join(dupes)}")
+        if dupes := _duplicates(b.board for b in self.boards):
+            raise ValueError(f"boards listed more than once: {', '.join(dupes)}")
         return self
+
+    def board(self, ref: str) -> BoardPolicy | None:
+        """A listed board by nickname or ``owner/number``, ignoring the owner's case."""
+        wanted = ref.casefold()
+        for board in self.boards:
+            if wanted in (board.board.casefold(), board.nickname):
+                return board
+        return None
 
     def repo(self, ref: str, *, channel_id: str = "") -> RepoPolicy:
         """Find a repo by ``owner/name`` or nickname, ignoring case.

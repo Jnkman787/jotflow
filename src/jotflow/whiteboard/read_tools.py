@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime
 from importlib import resources
 from typing import Literal, Protocol
@@ -252,6 +252,14 @@ class RepoBrief(BaseModel):
     )
 
 
+class BoardBrief(BaseModel):
+    """A Projects board an issue may be added to (#309). Policy, from jotflow.toml."""
+
+    board: str = Field(description="owner/number")
+    nickname: str
+    description: str = Field(description="What belongs on it; propose boards by this")
+
+
 class ChannelBrief(BaseModel):
     """What the team configured for this channel. Policy, not Slack text."""
 
@@ -265,6 +273,10 @@ class ChannelBrief(BaseModel):
     )
     scopes: list[str] = Field(
         default_factory=list, description="What each of the channel's scopes reaches, in words"
+    )
+    boards: list[BoardBrief] = Field(
+        default_factory=list,
+        description="Boards a new issue may be added to after approval; propose only these",
     )
 
 
@@ -387,6 +399,7 @@ def read_tools(
     attribution: Attribution | None = None,
     repos: RepoCatalog | None = None,
     issues: Callable[[], IssueReader | None] = lambda: None,
+    boards_off: Collection[str] = frozenset(),
 ) -> tuple[ToolSpec, ...]:
     """The read tools, bound to their dependencies. Built once at startup.
 
@@ -578,6 +591,11 @@ def read_tools(
             issue_links=policy.issue_links,
             scope_total=catalog.scope_total(channel_id),
             scopes=catalog.summaries(channel_id),
+            boards=[
+                BoardBrief(board=b.board, nickname=b.nickname, description=b.description)
+                for b in policy.channel(channel_id).boards
+                if b.board not in boards_off  # the write token can't update it (#309)
+            ],
         )
 
     async def _people(thread: WorkThread) -> list[Person]:
