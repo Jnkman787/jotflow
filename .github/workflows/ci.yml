@@ -475,6 +475,10 @@ jobs:
     # eMudhra/emSign root, and every CLI uses only the cleaned system CA store. Each
     # CLI must reach api.github.com, then fail once Sectigo's roots are distrusted in
     # that store alone, so a CLI still trusting its own compiled-in roots fails here.
+    # Claude Code and Copilot must report a certificate error to count as refused.
+    # Codex reports a refused certificate and a lost network the same way, so it
+    # relies on a positive control: the network is checked just before, and it must
+    # reach GitHub again once the root is trusted. Anything unclear fails the job.
     name: CA trust in the agent image
     runs-on: ubuntu-latest
     steps:
