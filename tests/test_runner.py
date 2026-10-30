@@ -763,6 +763,8 @@ def test_harmless_node_options_are_allowed(value: str | None) -> None:
         ("--env-file=/run/secrets", "--env-file"),
         ("--tls-keylog=/tmp/keys", "--tls-keylog"),
         ("--report-on-signal", "--report-on-signal"),
+        # Node's own bundle still trusts the compromised eMudhra/emSign roots (#360).
+        ("--use-bundled-ca", "--use-bundled-ca"),
         ("--max-old-space-size=4096 --require=x", "--require"),
         ("--max-old-space-size 4096", "--max-old-space-size"),
         ("4096", "a bare value"),
@@ -796,3 +798,37 @@ def test_the_runner_refuses_to_start_with_a_code_loading_node_option(
         runner_command.build_config(runner_command.RunnerSettings())  # type: ignore[call-arg]
     monkeypatch.setenv("NODE_OPTIONS", "--max-old-space-size=2048")
     runner_command.build_config(runner_command.RunnerSettings())  # type: ignore[call-arg]
+
+
+# Node trusts only the cleaned system CA store in every run (#360)
+
+
+@pytest.mark.parametrize(
+    ("given", "passed"),
+    [
+        (None, "--use-openssl-ca"),
+        ("", "--use-openssl-ca"),
+        ("--max-old-space-size=2048", "--max-old-space-size=2048 --use-openssl-ca"),
+        ("--use-openssl-ca --no-warnings", "--use-openssl-ca --no-warnings"),
+    ],
+)
+def test_every_run_gets_the_system_ca_option(given: str | None, passed: str) -> None:
+    from jotflow.adapters.runner import with_system_ca
+
+    assert with_system_ca(given) == passed
+
+
+def test_child_env_always_passes_the_system_ca_option(tmp_path: Path) -> None:
+    from jotflow.adapters.runner import child_env
+
+    cfg = config(tmp_path)
+    plain = child_env(cfg, RunKind.DRAFTING, "run-1", tmp_path, {"PATH": "/usr/bin"})
+    assert plain["NODE_OPTIONS"] == "--use-openssl-ca"
+    kept = child_env(
+        cfg,
+        RunKind.DRAFTING,
+        "run-1",
+        tmp_path,
+        {"PATH": "/usr/bin", "NODE_OPTIONS": "--max-old-space-size=4096"},
+    )
+    assert kept["NODE_OPTIONS"] == "--max-old-space-size=4096 --use-openssl-ca"

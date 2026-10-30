@@ -485,3 +485,31 @@ async def test_the_card_shows_what_the_rule_says(
     text = text_of(card)
     for line in (WARNING, NOT_CHECKED):
         assert (line in text) is (line == shown)
+
+
+async def test_a_split_card_lists_its_own_repos_doc_reads() -> None:
+    """#374: a run drafting for web and api lists each read on its own repo's card, and a
+    read from a repo no draft is for stays on every card, so no read goes unshown."""
+    from datetime import UTC, datetime
+
+    from jotflow.models import IssueProposal, ProposalRecord
+    from jotflow.orchestrator.card_sync import _own_reads
+    from jotflow.store import MemoryStore
+
+    store = MemoryStore()
+    records = []
+    for proposal_id, repo in (("pW", "acme-co/web"), ("pA", "acme-co/api")):
+        record = ProposalRecord(
+            id=proposal_id,
+            channel_id="C0EXAMPLE1",
+            thread_ts="1792360000.000100",
+            run_id="run-1",
+            proposal=IssueProposal(repo=repo, title="T", body="B", confidence=0.9),
+            created_at=datetime(2026, 10, 30, tzinfo=UTC),
+        )
+        records.append(await store.add_proposal(record))
+    read = [("acme-co/web", "docs/ovens.md"), ("acme-co/api", "docs/sensors.md")]
+    read.append(("acme-co/docs", "STYLE.md"))
+    web, api = records
+    assert await _own_reads(store, web, read) == [read[0], read[2]]
+    assert await _own_reads(store, api, read) == [read[1], read[2]]

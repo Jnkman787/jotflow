@@ -85,6 +85,12 @@ RUN apt-get update \
     && ! test -e /usr/share/nodejs/http-cache-semantics \
     && ! test -e /usr/share/nodejs/word-wrap
 
+# Distrust the compromised eMudhra/emSign roots, and fail the build if any is
+# still trusted (#360). It runs after the apt step above, so nothing reinstalls
+# them: see docker/distrust-ca.sh.
+RUN --mount=type=bind,source=docker/distrust-ca.sh,target=/tmp/distrust-ca.sh \
+    sh /tmp/distrust-ca.sh
+
 RUN --mount=type=bind,from=github-mcp,source=/github-mcp-server.tar.gz,target=/tmp/github-mcp-server.tar.gz \
     tar -xzf /tmp/github-mcp-server.tar.gz -C /usr/local/bin github-mcp-server \
     && chown root:root /usr/local/bin/github-mcp-server \

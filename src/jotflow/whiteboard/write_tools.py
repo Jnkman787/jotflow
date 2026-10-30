@@ -207,6 +207,12 @@ ATTACH_NOT_SERVED = "isn't a file this run was given the text of"
 ATTACH_GONE = "is no longer shared in this channel"
 ATTACH_CHANGED = "changed since this run read it; draft from the thread again"
 ATTACH_SLACK_LINK = "holds a Slack link, and this channel sends none to GitHub"
+ATTACH_NOT_SOURCE = "isn't on a message among this proposal's sources"
+ATTACH_OTHER_TOPIC = "is on a message that isn't on this proposal's topic"
+ATTACH_SPLIT = (
+    "is already attached to another topic's proposal from the same message; "
+    "quote this topic's own part in the body instead"
+)
 ATTACH_TOO_LONG = "the body with its attachments would pass GitHub's length limit; attach fewer"
 # GitHub's issue body limit is 65,536 characters; JotFlow's footer needs the rest.
 MAX_BODY_WITH_FILES = 60_000
@@ -906,12 +912,23 @@ class WriteTools:
             if text and _SLACK_LINK.search(_for_link_check(text)):
                 raise ToolError(NO_SLACK_LINKS)
 
-    async def _attach(self, grant: Grant, file_ids: list[str], body: str) -> list[AttachedFile]:
+    async def _attach(
+        self,
+        grant: Grant,
+        file_ids: list[str],
+        body: str,
+        *,
+        topic_id: str,
+        sources: list[MessageRef],
+    ) -> list[AttachedFile]:
         """Each named file's text, read again by JotFlow and snapshotted (#333).
 
-        Only a file this run's packet gave text for, still shared in this channel,
+        Only a file this run's packet gave text for, on a message among the
+        proposal's sources and on its topic (#374), still shared in this channel,
         unchanged since, with no credential's shape, and, under issue_links none, no
-        Slack link. The issue stays inside GitHub's body limit, or it's refused.
+        Slack link. A file a split message's other topic already attached is refused,
+        so each topic quotes only its own part. The issue stays inside GitHub's body
+        limit, or it's refused.
         """
         if not file_ids:
             return []
@@ -922,6 +939,7 @@ class WriteTools:
             served = await self._store.find_tool_call(grant.run_id, SERVED_FILE, file_id)
             if served is None:
                 raise ToolError(f"{file_id} {ATTACH_NOT_SERVED}")
+            await self._check_attach_place(grant, file_id, served, topic_id, sources)
             file = await current_file(file_id, self._files)
             if file is None or grant.channel_id not in file.channels:
                 raise ToolError(f"{file_id} {ATTACH_GONE}")
@@ -945,6 +963,33 @@ class WriteTools:
             )
         _check_body_with_files(body, out)
         return out
+
+    async def _check_attach_place(
+        self,
+        grant: Grant,
+        file_id: str,
+        served: str,
+        topic_id: str,
+        sources: list[MessageRef],
+    ) -> None:
+        """The file's message is a source, on this topic, and not another split topic's."""
+        ts = json.loads(served).get("ts")
+        if not isinstance(ts, str) or ts not in {source.ts for source in sources}:
+            raise ToolError(f"{file_id} {ATTACH_NOT_SOURCE}")
+        link = await self._store.get_message(grant.channel_id, ts)
+        if link is None or topic_id not in (link.topic_id, *link.also_topics):
+            raise ToolError(f"{file_id} {ATTACH_OTHER_TOPIC}")
+        others = {link.topic_id, *link.also_topics} - {topic_id, None}
+        if not others or grant.thread_ts is None:
+            return
+        for record in await self._store.thread_proposals(grant.channel_id, grant.thread_ts):
+            if (
+                record.proposal.topic_id in others
+                and record.state not in (ProposalState.REJECTED, ProposalState.SUPERSEDED)
+                and isinstance(record.proposal, IssueProposal)
+                and any(a.file_id == file_id for a in record.proposal.attached)
+            ):
+                raise ToolError(f"{file_id} {ATTACH_SPLIT}")
 
     def _related(
         self, grant: Grant, related: list[RelatedIssue], *, own: tuple[str, int] | None = None
@@ -1077,7 +1122,10 @@ class WriteTools:
                 grant, repo, args.assignees, args.assignee_reasons, args.participants, found=matched
             )
             related, dropped = self._related(grant, args.related)
-            attached = await self._attach(grant, args.attachments, args.body)
+            sources = await self._sources(grant, args.sources)
+            attached = await self._attach(
+                grant, args.attachments, args.body, topic_id=args.topic_id, sources=sources
+            )
             assignees, reasons = _without(args.assignees, args.assignee_reasons, left)
             reasons = _with_matched(reasons, matched)
             draft = IssueProposal.model_validate(
@@ -1087,7 +1135,7 @@ class WriteTools:
                     "assignee_reasons": [r.model_dump() for r in reasons],
                     "repo": repo,
                     "labels": labels,
-                    "sources": await self._sources(grant, args.sources),
+                    "sources": sources,
                     "related": [r.model_dump() for r in related],
                     "boards": [b.model_dump() for b in self._boards(grant, args.boards)],
                     "attached": [a.model_dump() for a in attached],
