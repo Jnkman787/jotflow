@@ -41,11 +41,15 @@ from jotflow.models import (
 )
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
+    ALSO_NOT_LINKED,
+    ALSO_PERSON,
+    ALSO_TOO_MANY,
     DEFAULT_RUN_TIMEOUTS,
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
     MAX_SUMMARY_ATTEMPTS,
+    MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
     REVISED_FIELDS,
     SUMMARY_POSTING_STALE,
@@ -143,6 +147,9 @@ class SqliteStore:
         self._lock = asyncio.Lock()
         self._wal = False
         self._file_lock: StoreLock | None = None
+        # Whether the schema has message_topics (#335): a store opened at an older
+        # migration, as upgrade tests do, has none, and so no message has extra topics.
+        self._split = True
 
     @classmethod
     async def open(
@@ -193,6 +200,10 @@ class SqliteStore:
                 file_lock.release()
             raise
         store = cls(db, clock)
+        found = await (
+            await db.execute("SELECT 1 FROM sqlite_master WHERE name = 'message_topics'")
+        ).fetchone()
+        store._split = found is not None
         store._wal = not in_memory
         store._file_lock = file_lock
         return store
@@ -238,7 +249,7 @@ class SqliteStore:
     # Slack message pointers
 
     @staticmethod
-    def _link(row: aiosqlite.Row) -> MessageLink:
+    def _link(row: aiosqlite.Row, also: Sequence[str] = ()) -> MessageLink:
         ref = MessageRef(
             channel_id=row["channel_id"],
             ts=row["ts"],
@@ -251,7 +262,21 @@ class SqliteStore:
             bool(row["chatter"]),
             row["linked_by"],
             from_text(row["linked_at"]),
+            tuple(also),
         )
+
+    async def _also_of(self, channel_id: str, ts: str) -> list[str]:
+        if not self._split:
+            return []
+        rows = await self._all(
+            "SELECT topic_id FROM message_topics WHERE channel_id = ? AND ts = ?"
+            " ORDER BY added_at, rowid",
+            (channel_id, ts),
+        )
+        return [r["topic_id"] for r in rows]
+
+    async def _linked(self, row: aiosqlite.Row) -> MessageLink:
+        return self._link(row, await self._also_of(row["channel_id"], row["ts"]))
 
     async def _decide(self, ref: MessageRef, topic_id: str | None, by: LinkSource) -> MessageLink:
         check_id(ref.channel_id, "channel id")
@@ -260,7 +285,7 @@ class SqliteStore:
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
         if existing is not None and existing["linked_by"] == "person" and by == "agent":
-            return self._link(existing)
+            return await self._linked(existing)
         now = to_text(self._clock())
         await self._db.execute(
             """
@@ -290,10 +315,24 @@ class SqliteStore:
             await self._db.execute(
                 "UPDATE topics SET last_activity_at = ? WHERE id = ?", (now, topic_id)
             )
+        # A person's decision, or chatter, wins over the agent's split (#335); and the
+        # first topic is never also an extra one.
+        if not self._split:
+            pass
+        elif by == "person" or topic_id is None:
+            await self._db.execute(
+                "DELETE FROM message_topics WHERE channel_id = ? AND ts = ?",
+                (ref.channel_id, ref.ts),
+            )
+        else:
+            await self._db.execute(
+                "DELETE FROM message_topics WHERE channel_id = ? AND ts = ? AND topic_id = ?",
+                (ref.channel_id, ref.ts, topic_id),
+            )
         row = await self._one(
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
-        return self._link(_found(row))
+        return await self._linked(_found(row))
 
     async def link_message(
         self, ref: MessageRef, topic_id: str, *, by: LinkSource = "agent"
@@ -315,14 +354,54 @@ class SqliteStore:
             row = await self._one(
                 "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (channel_id, ts)
             )
-        return None if row is None else self._link(row)
+            return None if row is None else await self._linked(row)
+
+    async def also_link(self, ref: MessageRef, topic_id: str) -> MessageLink:
+        async with self._write():
+            topic = await self._one("SELECT channel_id FROM topics WHERE id = ?", (topic_id,))
+            if topic is None:
+                raise NotFoundError(f"no topic {topic_id}")
+            if topic["channel_id"] != ref.channel_id:
+                raise ConflictError("a message can only join a topic in its own channel")
+            row = await self._one(
+                "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?",
+                (ref.channel_id, ref.ts),
+            )
+            if row is None or row["topic_id"] is None:
+                raise ConflictError(ALSO_NOT_LINKED)
+            if row["linked_by"] == "person":
+                raise ConflictError(ALSO_PERSON)
+            also = await self._also_of(ref.channel_id, ref.ts)
+            if topic_id == row["topic_id"] or topic_id in also:
+                return self._link(row, also)
+            if 1 + len(also) >= MAX_TOPICS_PER_MESSAGE:
+                raise ConflictError(ALSO_TOO_MANY)
+            now = to_text(self._clock())
+            await self._db.execute(
+                "INSERT INTO message_topics (channel_id, ts, topic_id, added_at)"
+                " VALUES (?, ?, ?, ?)",
+                (ref.channel_id, ref.ts, topic_id, now),
+            )
+            await self._db.execute(
+                "UPDATE topics SET last_activity_at = ? WHERE id = ?", (now, topic_id)
+            )
+            return self._link(row, [*also, topic_id])
 
     # Topics
 
     async def _topic(self, row: aiosqlite.Row) -> TopicRecord:
-        messages = await self._all(
-            "SELECT * FROM message_refs WHERE topic_id = ? ORDER BY ts", (row["id"],)
-        )
+        if self._split:
+            messages = await self._all(
+                "SELECT * FROM message_refs WHERE topic_id = ?"
+                " UNION SELECT r.* FROM message_refs r JOIN message_topics m"
+                " ON m.channel_id = r.channel_id AND m.ts = r.ts WHERE m.topic_id = ?"
+                " ORDER BY ts",
+                (row["id"], row["id"]),
+            )
+        else:
+            messages = await self._all(
+                "SELECT * FROM message_refs WHERE topic_id = ? ORDER BY ts", (row["id"],)
+            )
         topic = Topic(
             id=row["id"],
             channel_id=row["channel_id"],

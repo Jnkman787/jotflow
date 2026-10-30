@@ -120,6 +120,8 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
         "title_pattern",
         "proposal_id",  # pending's, for revise_proposal (#304)
         "github_description",  # packet fields for a scope (#236)
+        "also_topic",  # link_message's decision for a message's other actions (#335)
+        "also_topics",  # a message's other topics (#335)
         "asks_jotflow",  # a message that asked JotFlow (#329)
         "file_id",  # a message's file, for attachments (#333)
         "likely_duplicate",  # a related issue's (#337)
@@ -207,6 +209,16 @@ DRAFTING_RULES = {
     ),
     "leave a person's placement": "was placed by a person or by `re:`; leave it",
     "chatter never yields a proposal": "Chatter never yields a proposal",
+    "separate actions get their own topics (#335)": (
+        "then call `link_message` with `also_topic` for each other one, up to 3 topics in all"
+    ),
+    "each proposal quotes only its part (#335)": "and propose each, quoting only its own part",
+    "past 3, one checklist issue and ask (#335)": (
+        "propose one issue with a checklist and ask in the thread whether to split it"
+    ),
+    "a reply under a split message (#335)": (
+        "A reply under a message with `also_topics` belongs to the topic it's about"
+    ),
     "a tentative idea is still an idea": "is still an idea: start a topic and propose it",
     "discussion is not a new idea": "is discussion, not a new idea",
     "discussion needs no proposal": "Discussion never needs a proposal or a question",

@@ -745,7 +745,7 @@ class Classification(BaseModel):
     """The agent's decision about where a Slack message belongs."""
 
     message: MessageRef
-    decision: Literal["new_topic", "existing_topic", "chatter"]
+    decision: Literal["new_topic", "existing_topic", "chatter", "also_topic"]
     topic_id: str | None = Field(
         default=None, description="Required when decision is existing_topic"
     )

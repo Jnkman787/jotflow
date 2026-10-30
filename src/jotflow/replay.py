@@ -596,7 +596,10 @@ async def _make_call(replay: _Replay, grant: Grant, call: Any, participants: lis
         if got != list(call.expect_paths):
             raise ReplayError(f"list_repo_docs returned {got}, expected {list(call.expect_paths)}")
     if isinstance(call, LinkMessageCall) and call.topic_key:
-        replay.topics[TOPIC_KEY_PREFIX + call.topic_key] = result.model_dump()["topic_id"]
+        made = result.model_dump()
+        # An also_topic link's new topic is the last of the message's other topics (#335).
+        started = made["also_topics"][-1] if call.arguments.decision == "also_topic" else None
+        replay.topics[TOPIC_KEY_PREFIX + call.topic_key] = started or made["topic_id"]
 
 
 async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]) -> list[Check]:

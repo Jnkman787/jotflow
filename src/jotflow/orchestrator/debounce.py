@@ -146,6 +146,10 @@ class Debouncer:
         parent = await self._store.get_message(reply.channel_id, reply.thread_ts or "")
         if parent is None or parent.topic_id is None:
             return
+        if parent.also_topics:
+            # The parent holds several actions (#335): which one a reply is about is the
+            # agent's to decide, so it isn't put on the first topic beforehand.
+            return
         if await self._store.get_message(reply.channel_id, reply.ts) is not None:
             return  # already placed, by the agent or a person: leave that decision
 

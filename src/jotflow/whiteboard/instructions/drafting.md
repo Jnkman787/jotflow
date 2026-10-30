@@ -36,6 +36,15 @@ Replies usually belong to their thread's topic. A message that already has a
 `topic_id` was placed by a person or by `re:`; leave it. Chatter never yields
 a proposal.
 
+One message may hold several separate actions, such as a pasted email about
+different machines, owners or repos. Give the first its topic, then call
+`link_message` with `also_topic` for each other one, up to 3 topics in all,
+and propose each, quoting only its own part. Actions that belong together are
+one issue with a `- [ ]` item each. With more than 3 separate actions, or when
+unsure whether to split, propose one issue with a checklist and ask in the
+thread whether to split it. A reply under a message with `also_topics` belongs
+to the topic it's about; ask if that isn't clear.
+
 A short, tentative, or playful idea ("should we...", "maybe X should...") is
 still an idea: start a topic and propose it with honest confidence. People
 approve or reject it on the card.

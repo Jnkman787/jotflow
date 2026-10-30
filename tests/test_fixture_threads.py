@@ -314,12 +314,12 @@ def test_topic_key_rules() -> None:
     calls = data["agent"][0]["calls"]
     del calls[0]["topic_key"]
     problem = _problem(data)
-    assert "a new_topic link needs a topic_key" in problem
+    assert "a link that starts a topic needs a topic_key" in problem
     assert "topic key:csv-export is neither existing nor declared" in problem
 
     data = _base()
     data["agent"][0]["calls"][1]["topic_key"] = "extra"
-    assert "only a new_topic link may set topic_key" in _problem(data)
+    assert "only a link that starts a topic may set topic_key" in _problem(data)
 
 
 def test_link_to_an_unknown_message() -> None:

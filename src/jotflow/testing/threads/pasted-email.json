@@ -1,0 +1,238 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "pasted-email",
+  "description": "Carol pastes an email with three sections, each with what we need to do (#335). The mixer and sensor actions are separate work in acme-co/web and acme-co/api, so the run gives the paste a second topic with also_topic and proposes each, quoting only its part. The labels action belongs with the mixer, so it's a checklist item on that issue.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792360000.000100",
+      "user": "U0CAROL",
+      "text": "Notes from the vendor email:\nMixer: the cleaning cycle runs twice. OURS: we need to show one cycle in the dashboard.\nLabels: the cycle label is unclear. OURS: we need to rename it to Cleaning.\nSensor timing: readings arrive late. OURS: we need the API to send them every second."
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792360000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792360000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.85
+          },
+          "topic_key": "mixer",
+          "title": "Mixer cleaning cycle"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792360000.000100"
+            },
+            "decision": "also_topic",
+            "confidence": 0.85
+          },
+          "topic_key": "sensor",
+          "title": "Sensor reading timing"
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:mixer",
+            "repo": "acme-co/web",
+            "title": "Show one mixer cleaning cycle in the dashboard",
+            "body": "## Problem\nThe dashboard shows the mixer's cleaning cycle twice.\n\n## Proposal\nShow one cycle, and rename its label to Cleaning.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Show the cleaning cycle once.\n2. Rename the cycle label.\n\n## Acceptance\n- [ ] The dashboard shows one cleaning cycle\n- [ ] The cycle label reads Cleaning\n",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792360000.000100"
+              }
+            ],
+            "confidence": 0.8
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:sensor",
+            "repo": "acme-co/api",
+            "title": "Send sensor readings every second",
+            "body": "## Problem\nSensor readings arrive late.\n\n## Proposal\nHave the API send readings every second.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Send each reading as it arrives, at least once a second.\n\n## Acceptance\n- [ ] Readings arrive every second\n",
+            "labels": [
+              "enhancement"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792360000.000100"
+              }
+            ],
+            "confidence": 0.8
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "One pasted message feeds two topics, with one create_issue proposal each, in acme-co/web and acme-co/api.",
+    "accepted": [
+      "1792360000.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:mixer",
+        "messages": [
+          "1792360000.000100"
+        ]
+      },
+      {
+        "topic": "key:sensor",
+        "messages": [
+          "1792360000.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:mixer"
+      },
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/api",
+        "topic": "key:sensor"
+      }
+    ]
+  }
+}

@@ -101,7 +101,10 @@ async def play(thread: SavedThread, index: int, config_path: Path) -> int:
                         return EXIT_REFUSED
                 if isinstance(call, LinkMessageCall) and call.topic_key:
                     content = result.structured_content or {}
-                    topics[TOPIC_KEY_PREFIX + call.topic_key] = content.get("topic_id")
+                    # An also_topic link's new topic is the last of its others (#335).
+                    others = content.get("also_topics") or []
+                    started = others[-1] if call.arguments.decision == "also_topic" else None
+                    topics[TOPIC_KEY_PREFIX + call.topic_key] = started or content.get("topic_id")
     return 0
 
 

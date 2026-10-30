@@ -28,6 +28,9 @@ from jotflow.models import (
 )
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
+    ALSO_NOT_LINKED,
+    ALSO_PERSON,
+    ALSO_TOO_MANY,
     AUTO_APPROVER,
     BOUND_STATES,
     DEFAULT_RUN_TIMEOUTS,
@@ -35,6 +38,7 @@ from jotflow.store.base import (
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
     MAX_SUMMARY_ATTEMPTS,
+    MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
@@ -99,6 +103,8 @@ class MemoryStore:
         self._source = clock
         self._lock = asyncio.Lock()
         self._messages: dict[tuple[str, str], MessageLink] = {}
+        # A message's extra topics, beyond its first (#335).
+        self._also: dict[tuple[str, str], list[str]] = {}
         self._topics: dict[str, TopicRecord] = {}
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
@@ -130,8 +136,13 @@ class MemoryStore:
     # Slack message pointers
 
     def _with_messages(self, record: TopicRecord) -> TopicRecord:
+        topic_id = record.topic.id
         messages = sorted(
-            (link.ref for link in self._messages.values() if link.topic_id == record.topic.id),
+            (
+                link.ref
+                for key, link in self._messages.items()
+                if link.topic_id == topic_id or topic_id in self._also.get(key, ())
+            ),
             key=lambda ref: ref.ts,
         )
         return replace(record, topic=record.topic.model_copy(update={"messages": messages}))
@@ -144,7 +155,16 @@ class MemoryStore:
         if existing is not None and existing.linked_by == "person" and by == "agent":
             return existing
         now = self._clock()
-        link = MessageLink(ref, topic_id, topic_id is None, by, now)
+        # A person's decision, or chatter, wins over the agent's split (#335).
+        also = self._also.get(key, [])
+        if by == "person" or topic_id is None:
+            also = []
+        also = [t for t in also if t != topic_id]
+        if also:
+            self._also[key] = also
+        else:
+            self._also.pop(key, None)
+        link = MessageLink(ref, topic_id, topic_id is None, by, now, tuple(also))
         self._messages[key] = link
         if topic_id is not None:
             self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
@@ -167,6 +187,32 @@ class MemoryStore:
 
     async def get_message(self, channel_id: str, ts: str) -> MessageLink | None:
         return self._messages.get((channel_id, ts))
+
+    async def also_link(self, ref: MessageRef, topic_id: str) -> MessageLink:
+        async with self._lock:
+            topic = self._topics.get(topic_id)
+            if topic is None:
+                raise NotFoundError(f"no topic {topic_id}")
+            if topic.topic.channel_id != ref.channel_id:
+                raise ConflictError("a message can only join a topic in its own channel")
+            key = (ref.channel_id, ref.ts)
+            existing = self._messages.get(key)
+            if existing is None or existing.topic_id is None:
+                raise ConflictError(ALSO_NOT_LINKED)
+            if existing.linked_by == "person":
+                raise ConflictError(ALSO_PERSON)
+            also = list(self._also.get(key, []))
+            if topic_id == existing.topic_id or topic_id in also:
+                return existing
+            if 1 + len(also) >= MAX_TOPICS_PER_MESSAGE:
+                raise ConflictError(ALSO_TOO_MANY)
+            also.append(topic_id)
+            self._also[key] = also
+            now = self._clock()
+            self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
+            link = replace(existing, also_topics=tuple(also))
+            self._messages[key] = link
+            return link
 
     # Topics
 

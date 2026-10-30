@@ -142,9 +142,14 @@ class LinkMessageCall(_Strict):
 
     @model_validator(mode="after")
     def _title_for_new_topics(self) -> LinkMessageCall:
-        if self.arguments.decision == "new_topic" and self.title is None:
+        decision = self.arguments
+        # also_topic starts a topic too when it names none to join (#335).
+        starts = decision.decision == "new_topic" or (
+            decision.decision == "also_topic" and decision.topic_id is None
+        )
+        if starts and self.title is None:
             raise ValueError("a link_message that starts a topic needs a title")
-        if self.arguments.decision != "new_topic" and self.title is not None:
+        if not starts and self.title is not None:
             raise ValueError("only a link_message that starts a topic takes a title")
         return self
 
@@ -740,11 +745,17 @@ def _link_problems(
     decision = call.arguments
     if decision.message.ts not in messages:
         problems.append(f"{where}: message {decision.message.ts} is not in events")
-    if decision.decision == "new_topic" and call.topic_key is None:
-        problems.append(f"{where}: a new_topic link needs a topic_key")
-    if decision.decision != "new_topic" and call.topic_key is not None:
-        problems.append(f"{where}: only a new_topic link may set topic_key")
-    if decision.decision == "existing_topic" and decision.topic_id not in topics:
+    starts = decision.decision == "new_topic" or (
+        decision.decision == "also_topic" and decision.topic_id is None
+    )
+    if starts and call.topic_key is None:
+        problems.append(f"{where}: a link that starts a topic needs a topic_key")
+    if not starts and call.topic_key is not None:
+        problems.append(f"{where}: only a link that starts a topic may set topic_key")
+    joins = decision.decision == "existing_topic" or (
+        decision.decision == "also_topic" and decision.topic_id is not None
+    )
+    if joins and decision.topic_id not in topics:
         problems.append(f"{where}: topic {decision.topic_id} is neither existing nor declared")
     return problems
 
@@ -841,9 +852,10 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
                     continue
                 topic = (
                     TOPIC_KEY_PREFIX + (call.topic_key or "")
-                    if decision.decision == "new_topic"
+                    if call.topic_key is not None
                     else decision.topic_id or ""
                 )
+                # An also_topic link adds a topic; the message keeps its first (#335).
                 outcome.topics.setdefault(topic, []).append(ts)
             elif isinstance(call, ProposeIssueCall) and call.expect_error is None:
                 create = call.arguments
@@ -917,8 +929,17 @@ def _expected_problems(thread: SavedThread) -> list[str]:
     for ts in expected.questions:
         if ts not in mentions or placed.get(ts, 0) == 0:
             placed[ts] = placed.get(ts, 0) + 1
+    # A message the script splits with also_topic is in each of its topics (#335).
+    split = {
+        call.arguments.message.ts
+        for run in thread.agent
+        for call in run.calls
+        if isinstance(call, LinkMessageCall) and call.arguments.decision == "also_topic"
+    }
     for ts in accepted_messages:
         count = placed.get(ts, 0)
+        if ts in split and count >= 1:
+            continue
         if count != 1:
             problems.append(
                 f"expected: accepted message {ts} must be in exactly one topic, chatter, "

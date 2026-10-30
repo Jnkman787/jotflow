@@ -259,6 +259,8 @@ class MessageLink:
     chatter: bool
     linked_by: LinkSource
     linked_at: datetime
+    # The other topics it also feeds, as the agent split it (#335). topic_id is its first.
+    also_topics: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -478,6 +480,13 @@ def check_mark(channel_id: str, ts: str, user_id: str, keyword: str) -> None:
     check_id(user_id, "Slack user id")
     if keyword not in REACTION_KEYWORDS:
         raise ValueError(f"no reaction stands for {keyword!r}")
+
+
+# One message, several topics (#335): its first, and at most two more.
+MAX_TOPICS_PER_MESSAGE = 3
+ALSO_NOT_LINKED = "link the message to its first topic before adding another"
+ALSO_PERSON = "a person placed this message, so it stays where they put it"
+ALSO_TOO_MANY = "a message feeds at most 3 topics"
 
 
 # What a person changed from the card (#160). The value itself is never stored.
@@ -870,6 +879,15 @@ class Store(Protocol):
 
     async def mark_chatter(self, ref: MessageRef, *, by: LinkSource = "agent") -> MessageLink:
         """Record that a message is not an idea, with the same override rule."""
+        ...
+
+    async def also_link(self, ref: MessageRef, topic_id: str) -> MessageLink:
+        """The agent's: a message already in one topic also feeds ``topic_id`` (#335).
+
+        Only over the agent's own placement, never a person's, and at most
+        :data:`MAX_TOPICS_PER_MESSAGE` topics a message. A person's later decision
+        on the message, or the agent marking it chatter, clears the extra topics.
+        """
         ...
 
     async def get_message(self, channel_id: str, ts: str) -> MessageLink | None: ...
