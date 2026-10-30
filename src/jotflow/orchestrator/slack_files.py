@@ -42,6 +42,9 @@ LEFT_OUT = "attachment_left_out"
 FILE_HOST = "files.slack.com"
 MAX_FILES_PER_MESSAGE = 5
 MAX_THREAD_TEXT = 64 * 1024
+# Read attempts a thread's packet makes, whatever each file's size or outcome:
+# empty or failing files cost a download too (CodeRabbit on #346).
+MAX_THREAD_READS = 10
 NAME_LIMIT = 100
 TIMEOUT_SECONDS = 10.0
 
@@ -52,6 +55,7 @@ TEXT_MIMETYPES = frozenset({"application/json", "application/x-yaml", "applicati
 NOT_TEXT = "not a text file JotFlow reads"
 TOO_LARGE = "too large: JotFlow reads text files up to 32 KiB"
 THREAD_FULL = "not read: the thread's files already reach 64 KiB"
+READ_LIMIT = "not read: JotFlow reads at most 10 files a thread"
 NOT_READABLE = "not readable as plain UTF-8 text"
 LOOKS_SECRET = "not read: it looks like it holds a password, key or token"
 UNAVAILABLE = "couldn't be read from Slack just now"
