@@ -344,21 +344,24 @@ class SqliteStore:
         # drops its pending drafts once it has no messages.
         first = existing["topic_id"] if existing is not None else None
         dropped: list[str] = []
+        detached: list[str] = []
         for other in dict.fromkeys([*extra, *([first] if first else [])]):
             if other != topic_id:
                 dropped += await self._drop_orphaned(other, now)
-                if by == "person" or topic_id is None:
-                    await self._detach(other, ref.ts, now)
+                detached += await self._detach(other, ref.ts, now)
         row = await self._one(
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
-        return dataclasses.replace(await self._linked(_found(row)), dropped=tuple(dropped))
+        return dataclasses.replace(
+            await self._linked(_found(row)), dropped=tuple(dropped), detached=tuple(detached)
+        )
 
-    async def _detach(self, topic_id: str, ts: str, now: str) -> None:
-        """Take a moved message's files off the topic's pending drafts (#391).
+    async def _detach(self, topic_id: str, ts: str, now: str) -> list[str]:
+        """Take a moved message's files off the topic's pending drafts; their ids (#391).
 
-        A person moved message ``ts`` off ``topic_id``, or undid its split, so a file
-        from it no longer belongs to that topic's draft. The draft keeps the rest, and
+        Message ``ts`` left ``topic_id``, by a person's decision or the agent's own
+        re-link, or an undone split, so a file from it no longer belongs to that
+        topic's draft. The draft keeps the rest, and
         a revision row names JotFlow, so the card says why and an earlier approval of
         the old text is stale. Approved or filed work stays as it is.
         """
@@ -368,6 +371,7 @@ class SqliteStore:
             " AND kind = 'create_issue' ORDER BY id",
             (topic_id, SELF_ADD_RUN),
         )
+        taken: list[str] = []
         for row in rows:
             draft = _PROPOSAL.validate_json(row["draft_json"])
             if not isinstance(draft, IssueProposal) or not draft.attached:
@@ -387,6 +391,8 @@ class SqliteStore:
                 " revised_at) VALUES (?, ?, ?, ?, ?)",
                 (row["id"], _found(revision)["revision"], DETACHED_RUN, "attached", now),
             )
+            taken.append(row["id"])
+        return taken
 
     async def _served_ts(self, run_id: str, attached: AttachedFile) -> str | None:
         """The message the run was served ``attached`` on, from the ledger."""
@@ -473,14 +479,18 @@ class SqliteStore:
             if topic["channel_id"] != ref.channel_id:
                 raise ConflictError("a message can only join a topic in its own channel")
             link = await self._decide(ref, topic_id, by)
-        if link.dropped:
+        if link.dropped or link.detached:
+            # The removed text, a dropped draft's or a detached file's, can still sit in
+            # the -wal file and free pages until scrubbed (#102, #391).
             await self._scrub_wal()
         return link
 
     async def mark_chatter(self, ref: MessageRef, *, by: LinkSource = "agent") -> MessageLink:
         async with self._write():
             link = await self._decide(ref, None, by)
-        if link.dropped:
+        if link.dropped or link.detached:
+            # The removed text, a dropped draft's or a detached file's, can still sit in
+            # the -wal file and free pages until scrubbed (#102, #391).
             await self._scrub_wal()
         return link
 

@@ -577,6 +577,7 @@ async def test_a_moved_messages_file_leaves_the_other_topics_draft(
     else:
         await store.mark_chatter(paste(), by="person")
     after = await store.get_proposal("p1")
+    assert (await store.get_message(CH, PASTE)) is not None
     assert after is not None and after.state.value == "pending"
     assert await attached_ids(store, "p1") == []
     assert after.revision == before.revision + 1  # the card is redrawn
@@ -595,7 +596,7 @@ async def test_a_file_from_another_message_stays(store: Store) -> None:
     assert await store.proposal_revisions("p1") == []
 
 
-async def test_approved_work_and_the_agents_own_move_keep_their_files(store: Store) -> None:
+async def test_approved_work_keeps_its_file(store: Store) -> None:
     from jotflow.models import ProposalState
 
     mixer, sensor = await split(store, "Sensor timing")
@@ -603,14 +604,46 @@ async def test_approved_work_and_the_agents_own_move_keep_their_files(store: Sto
     await store.link_message(reply, mixer)
     await with_file(store, "p1", mixer)
     await store.transition("p1", ProposalState.APPROVED, approved_by="auto")
-    await store.link_message(paste(), sensor, by="person")
+    link = await store.link_message(paste(), sensor, by="person")
+    assert link.detached == ()
     assert await attached_ids(store, "p1") == ["F0DOC1"]  # approved: as approved
+
+
+async def test_the_agents_own_re_link_takes_the_file_too(store: Store) -> None:
+    # #391 review: an agent that attached a file on topic A, then re-linked its message
+    # to B, would leave A's card carrying B's part. Any move takes it off.
     other = (await store.create_topic(CH, "Other")).topic.id
-    await store.link_message(MessageRef(channel_id=CH, ts="1792360200.000100"), other)
-    await with_file(store, "p2", other, on="1792360200.000100")
+    moved = MessageRef(channel_id=CH, ts="1792360200.000100")
+    await store.link_message(moved, other)
     await store.link_message(MessageRef(channel_id=CH, ts="1792360300.000100"), other)
-    await store.link_message(MessageRef(channel_id=CH, ts="1792360200.000100"), mixer)
-    assert await attached_ids(store, "p2") == ["F0DOC1"]  # the agent's own re-link
+    await with_file(store, "p2", other, on=moved.ts)
+    elsewhere = (await store.create_topic(CH, "Elsewhere")).topic.id
+    link = await store.link_message(moved, elsewhere)  # the agent's own
+    assert link.detached == ("p2",)
+    assert await attached_ids(store, "p2") == []
+
+
+async def test_a_detached_files_text_is_gone_from_the_database_files(tmp_path: Path) -> None:
+    # #391 security: the detach rewrites the draft, then scrubs the WAL, as a drop does.
+    secret = "SECRET-SENSOR-PART " * 40
+    sqlite = await SqliteStore.open(tmp_path / "jotflow.db")
+
+    def leftovers() -> list[str]:
+        return [p.name for p in tmp_path.iterdir() if b"SECRET-SENSOR-PART" in p.read_bytes()]
+
+    global FILE_TEXT
+    kept, FILE_TEXT = FILE_TEXT, secret
+    try:
+        mixer, sensor = await split(sqlite, "Sensor timing")
+        await sqlite.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), mixer)
+        await with_file(sqlite, "p1", mixer)
+        assert leftovers()  # the file's text is really on disk first
+        link = await sqlite.link_message(paste(), sensor, by="person")
+        assert link.detached == ("p1",)
+        assert leftovers() == []
+    finally:
+        FILE_TEXT = kept
+        await sqlite.close()
 
 
 def test_a_detached_card_says_why() -> None:

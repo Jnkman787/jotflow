@@ -180,14 +180,12 @@ class MemoryStore:
         first = existing.topic_id if existing is not None else None
         left = dict.fromkeys([*undone, *([first] if first else [])])
         dropped = [p for t in left if t != topic_id for p in self._drop_orphaned(t)]
-        if by == "person" or topic_id is None:
-            for other in left:
-                if other != topic_id:
-                    self._detach(other, ref.ts)
-        return replace(link, dropped=tuple(dropped))
+        detached = [p for t in left if t != topic_id for p in self._detach(t, ref.ts)]
+        return replace(link, dropped=tuple(dropped), detached=tuple(detached))
 
-    def _detach(self, topic_id: str, ts: str) -> None:
-        """Take a moved message's files off the topic's pending drafts (#391)."""
+    def _detach(self, topic_id: str, ts: str) -> list[str]:
+        """Take a moved message's files off the topic's pending drafts; their ids (#391)."""
+        taken: list[str] = []
         for record in sorted(self._proposals.values(), key=lambda r: r.id):
             draft = record.proposal
             if (
@@ -215,6 +213,8 @@ class MemoryStore:
                     record.id, updated.revision, DETACHED_RUN, ("attached",), (), self._clock()
                 )
             )
+            taken.append(record.id)
+        return taken
 
     def _served_ts(self, run_id: str, attached: AttachedFile) -> str | None:
         for call in self._calls:

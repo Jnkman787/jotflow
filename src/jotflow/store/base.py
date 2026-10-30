@@ -68,7 +68,7 @@ AUTO_APPROVER = "auto"
 # message's ts (#333, #374). The store reads it to find a file's message (#391).
 SERVED_FILE = "packet_file"
 # The run id a revision gets when JotFlow takes an attached file off a pending draft,
-# because a person moved the file's message to another topic (#391).
+# because the file's message was moved to another topic, by anyone (#391).
 DETACHED_RUN = "jotflow:detached"
 SELF_ADD_RUN = "add-me"
 
@@ -296,6 +296,9 @@ class MessageLink:
     # Pending proposals this decision dropped: a person's re: or skip: undid the split
     # and left their extra topic with no messages (#335). Set only on the write's result.
     dropped: tuple[str, ...] = ()
+    # Pending drafts this decision took a moved message's attached file off (#391).
+    # Set only on the write's result.
+    detached: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
