@@ -31,7 +31,7 @@ from jotflow.models import (
 )
 from jotflow.orchestrator.boards import BoardAdder
 from jotflow.orchestrator.cards import BOARDS_BLOCK, CardContext, render_card
-from jotflow.policy import Policy, has_marker, parse_policy
+from jotflow.policy import Policy, PolicyError, has_marker, parse_policy
 from jotflow.policy_writer import render_policy
 from jotflow.store import MemoryStore
 from tests.test_boards import FakeRunner
@@ -653,3 +653,68 @@ def test_check_says_board_scopes_need_the_read_token_too() -> None:
     notes = board_notes(POLICY)
     assert len(notes) == 2
     assert notes[1].startswith("board scopes for example-org: the read token needs Projects")
+
+
+# #376: no two boards share a nickname, and the first listing after a start is awaited
+
+
+def test_an_alias_shaped_like_another_boards_name_is_refused() -> None:
+    with pytest.raises(PolicyError, match="b<number> is what JotFlow calls board 12"):
+        parse_policy(TOML.replace("aliases = { design = 12 }", "aliases = { b12 = 14 }"))
+    parse_policy(TOML.replace("aliases = { design = 12 }", "aliases = { b14 = 14 }"))  # its own
+
+
+async def test_only_a_boards_own_alias_skips_the_nickname_clash_check() -> None:
+    # Past the policy check, say from an older file: board 14's auto name b12 is no
+    # longer handed to it just because some alias is spelled b12.
+    scope = POLICY.channels[CH].board_scopes[0].model_copy(update={"aliases": {"b12": 14}})
+    channel = POLICY.channels[CH].model_copy(update={"board_scopes": (scope,)})
+    policy = POLICY.model_copy(update={"channels": {CH: channel}})
+    boards = catalog(Finder(found(12), found(14)), Clock(), policy)
+    await boards.refresh(CH, 0)
+    names = [(e.nickname, e.board) for e in boards.boards(CH)]
+    assert len({nickname for nickname, _ in names}) == len(names)  # no nickname twice
+    assert ("b12", "example-org/14") in names and ("b12", "example-org/12") not in names
+
+
+def applied_on(board: str) -> ProposalRecord:
+    return ProposalRecord(
+        id="p1",
+        channel_id=CH,
+        thread_ts=THREAD,
+        run_id="run-1",
+        state=ProposalState.APPLIED,
+        proposal=IssueProposal(
+            repo="example-org/web",
+            title="T",
+            body="B",
+            confidence=0.9,
+            boards=[ProposedBoard(board=board, reason="Its team's")],
+        ),
+        content_hash="sha256:" + "0" * 64,
+        approved_by="U0CAROL",
+        result=ExecutionResult(issue_url="https://github.com/example-org/web/issues/42"),
+        created_at=START,
+    )
+
+
+async def test_a_found_board_waits_for_its_first_listing_after_a_start() -> None:
+    finder, clock = Finder(found(14)), Clock()
+    boards = catalog(finder, clock)  # just started: no listing loaded yet
+    runner = FakeRunner()
+    adder = BoardAdder(MemoryStore(), POLICY, runner, boards=boards)
+    waiting = await adder.add_all(applied_on("example-org/14"))
+    assert waiting.retry and waiting.failed == []  # not "add it by hand"
+    await boards.refresh(CH, 0)
+    assert (await adder.add_all(applied_on("example-org/14"))).added == ["b14"]
+
+
+async def test_past_the_grace_a_listing_never_loaded_fails_as_before() -> None:
+    from jotflow.board_catalog import LOAD_GRACE
+
+    clock = Clock()
+    boards = catalog(Finder(found(14)), clock)
+    clock.now += LOAD_GRACE + timedelta(seconds=1)  # the runner never answered
+    adder = BoardAdder(MemoryStore(), POLICY, FakeRunner(), boards=boards)
+    result = await adder.add_all(applied_on("example-org/14"))
+    assert not result.retry and result.failed == ["example-org/14"]
