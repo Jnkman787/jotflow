@@ -1577,3 +1577,40 @@ async def test_an_idea_replied_to_the_help_guide_gets_the_nudge_not_silence() ->
         assert [text for *_, text in replies.told] == [POST_IN_CHANNEL]
     finally:
         await rig.orchestrator.stop()
+
+
+async def test_a_limited_mention_under_jotflows_post_still_gets_the_pointer() -> None:
+    """#373: only a queued question answers, so a mention that's refused or limited
+    under JotFlow's own post gets the pointer, and never hears it is still read."""
+    from tests.test_summary_replies import Slack as RepliesSlack
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        assert rig.orchestrator.summary_replies is not None
+        replies = RepliesSlack()
+        rig.orchestrator.summary_replies._slack = replies
+        for n in range(2):
+            ts = f"1760781695.00010{n}"
+            event = {
+                "type": "message",
+                "channel": CH,
+                "ts": ts,
+                "thread_ts": THREAD,  # the pinned guide, with no summary row
+                "parent_user_id": IDENTITY.user_id,
+                "user": "U0ALEX",
+                "text": f"<@{IDENTITY.user_id}> add a CSV export",
+            }
+            ref = MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD)
+            await rig.orchestrator.note(Accepted(kind="message", ref=ref), event)
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+        from jotflow.orchestrator.questions import STILL_READ, TOO_SOON
+        from jotflow.orchestrator.summary_replies import POST_IN_CHANNEL
+
+        # The first was queued and is answered; the second is too soon, so it's pointed.
+        assert [text for *_, text in rig.questions.whispers] == [TOO_SOON]
+        assert all(STILL_READ not in text for *_, text in rig.questions.whispers)
+        assert [text for *_, text in replies.told] == [POST_IN_CHANNEL]
+    finally:
+        await rig.orchestrator.stop()
