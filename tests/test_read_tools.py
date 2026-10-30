@@ -748,3 +748,58 @@ description = "The customer-facing website"
     plain: Work = await call(tools(fresh, clock)["get_work"], await running(fresh))
     assert plain.conversation is not None and plain.conversation.channel is not None
     assert plain.conversation.channel.triage_guide is None
+
+
+async def test_an_undone_skip_under_a_summary_is_served_nothing_to_draft(
+    store: MemoryStore, clock: Clock
+) -> None:
+    """#373, from the reaction to the packet: undoing a skip on a reply under JotFlow's
+    weekly summary arms the reply's own ts, since Slack's reaction event names no
+    thread. Its drafting run gets a clean, empty packet, not an error, so the run ends
+    without a "did not finish" notice in the summary's thread. A question run there
+    still reads the thread."""
+    from jotflow.orchestrator.ingest import BotIdentity
+    from jotflow.orchestrator.keyword_handler import KeywordHandler
+    from jotflow.whiteboard.read_tools import UNDER_OWN_POST
+    from tests.test_keyword_handler import FakeSlack
+    from tests.test_packet import FakeReader, msg, source
+
+    summary, reply = POST, "1760781700.000100"
+    item = {"type": "message", "channel": CH, "ts": reply}
+    added = {"type": "reaction_added", "user": "U0ALEX", "item_user": "U0ALEX"}
+    added |= {"reaction": "no_entry_sign", "item": item}
+    keywords = KeywordHandler(store, POLICY, FakeSlack())
+    assert (await keywords.on_reaction(added)).action == "skipped"
+    undone = await keywords.on_reaction_removed({**added, "type": "reaction_removed"})
+    assert (undone.action, undone.detail) == ("unskipped", reply)  # armed on its own ts
+
+    # conversations.replies on a reply's ts gives its whole thread: the summary's.
+    thread = [
+        msg(summary, "Ideas this week: 1. Export", user="U0BOT", bot_id="B0BOT"),
+        msg(reply, "a new idea in the summary's thread", thread_ts=summary),
+    ]
+    reader = FakeReader({summary: thread, reply: thread})
+    slack = source(reader, store, bot=BotIdentity(user_id="U0BOT", bot_id="B0BOT"))
+    registry = tools(store, clock, slack)
+
+    grant = await running(store, thread=reply)
+    work: Work = await call(registry["get_work"], grant)  # no ToolError
+    assert work.conversation is not None
+    packet = work.conversation.thread
+    assert packet.messages == [] and packet.nothing_to_draft == UNDER_OWN_POST
+    assert work.conversation.related == []
+    assert "jotflow_root" not in packet.model_dump()  # JotFlow's own flag, never sent
+    assert await store.packet_ref(grant.run_id, CH, reply) is None  # nothing linkable
+    # The run is still running, so the agent ends it cleanly: only a failed or timed-out
+    # run gets a thread notice, and nothing here fails it.
+    from jotflow.models import RunStatus
+    from jotflow.orchestrator.launch import notice_for
+
+    live = await store.get_run(grant.run_id)
+    assert live is not None and live.status is RunStatus.RUNNING
+    assert notice_for(live.model_copy(update={"status": RunStatus.SUCCEEDED})) is None
+
+    asked = await running(store, RunKind.QUESTION, thread=summary)
+    question: Work = await call(registry["get_work"], asked)
+    assert question.conversation is not None
+    assert [m.ts for m in question.conversation.thread.messages] == [summary, reply]

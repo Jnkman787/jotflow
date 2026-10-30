@@ -265,6 +265,23 @@ class WorkThread(BaseModel):
             "seconds after their previous one: likely an addition or a correction (#334)"
         ),
     )
+    nothing_to_draft: str | None = Field(
+        default=None,
+        description=(
+            "JotFlow's own reason this thread is never drafted, such as being under its own "
+            "post. When set, the thread has no messages: stop without calling another tool"
+        ),
+    )
+    # The thread's first message is JotFlow's own top-level post (#373). JotFlow's own
+    # flag, never sent to the agent: get_work serves a drafting run nothing then.
+    jotflow_root: bool = Field(default=False, exclude=True)
+
+
+# A drafting run's thread under JotFlow's own top-level post (#318, #373).
+UNDER_OWN_POST = (
+    "This thread is under JotFlow's own post, such as the weekly summary or the help guide, "
+    "so there is nothing to draft."
+)
 
 
 class RelatedExcerpt(BaseModel):
@@ -670,10 +687,25 @@ def read_tools(
                     # A source bug must not let this run see, or link, another thread.
                     raise ToolError(f"the thread source returned another thread for run {run.id}")
                 index = await topics(grant, ListTopicsInput())
+                if grant.kind is RunKind.DRAFTING and thread.jotflow_root:
+                    # A clean, empty packet rather than an error, so the run ends
+                    # without a "did not finish" notice in JotFlow's own thread (#373).
+                    # With no messages served, nothing can be linked or proposed. A
+                    # question run there still reads the thread, as it is answered.
+                    thread = WorkThread(
+                        channel_id=thread.channel_id,
+                        thread_ts=thread.thread_ts,
+                        messages=[],
+                        nothing_to_draft=UNDER_OWN_POST,
+                    )
                 if grant.kind is RunKind.DRAFTING:
                     follows = thread.follows.topic_id if thread.follows else None
                     index = await _with_pending(grant.channel_id, run.thread_ts, index, follows)
-                related = await work_source.related(thread, index)
+                related = (
+                    []
+                    if thread.nothing_to_draft is not None
+                    else await work_source.related(thread, index)
+                )
         except TimeoutError:
             raise ToolError("Slack took too long to answer; try the run again shortly") from None
         # Record the run's own thread, and only that: link_message (#15) then accepts

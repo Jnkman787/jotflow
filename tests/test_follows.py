@@ -6,15 +6,12 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
-
 from jotflow.models import MessageRef
 from jotflow.orchestrator.debounce import Debouncer, Thread
 from jotflow.orchestrator.ingest import Accepted
 from jotflow.orchestrator.packet import FOLLOWS_WITHIN, SlackWorkSource
 from jotflow.policy import parse_policy
 from jotflow.store import MemoryStore
-from jotflow.whiteboard.tools import ToolError
 from tests.test_packet import FakeReader
 
 CH = "C0IDEAS01"
@@ -149,9 +146,8 @@ async def test_the_bots_or_jotflows_own_posts_never_count_as_the_previous_post()
     assert await follows(as_bot) is None
     jotflow = History([post(FIRST, "x", user="U0JOT"), post(SECOND, "y", user="U0JOT")])
     source = SlackWorkSource(jotflow, MemoryStore(), bot=BotIdentity("U0JOT", "B0JOT"))
-    # JotFlow's own post is never drafted at all (#373), so it never follows either.
-    with pytest.raises(ToolError, match="JotFlow's own post"):
-        await source.thread(CH, SECOND)
+    work = await source.thread(CH, SECOND)
+    assert work.follows is None and work.jotflow_root  # never drafted either (#373)
 
 
 async def test_the_per_author_map_drops_posts_past_the_window() -> None:
