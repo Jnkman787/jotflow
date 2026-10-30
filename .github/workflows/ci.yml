@@ -470,6 +470,36 @@ jobs:
   # JotFlow launches a run in each agent container and the agent calls back
   # over MCP with its token, across containers (#54, #55). Stub agents, no
   # Slack, no model, no GitHub.
+  ca-trust:
+    # #360: the agent image, built with the CLIs a deployment installs, trusts no
+    # eMudhra/emSign root, and every CLI uses only the cleaned system CA store. Each
+    # CLI must reach api.github.com, then fail once Sectigo's roots are distrusted in
+    # that store alone, so a CLI still trusting its own compiled-in roots fails here.
+    # Claude Code and Copilot must report a certificate error to count as refused.
+    # Codex reports a refused certificate and a lost network the same way, so it
+    # relies on a positive control: the network is checked just before, and it must
+    # reach GitHub again once the root is trusted. Anything unclear fails the job.
+    name: CA trust in the agent image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build with the agent CLIs
+        run: |
+          packages="$(python3 -c 'import re; t=open("docker/docker-compose.yml").read(); print(re.search(r"AGENT_NPM_PACKAGES: \"([^\"]+)\"", t).group(1))')"
+          copilot="$(python3 -c 'import json; print(json.load(open(".github/ci/copilot/package.json"))["dependencies"]["@github/copilot"])')"
+          docker build --file docker/Dockerfile.agent \
+            --build-arg AGENT_NPM_PACKAGES="${packages} @github/copilot@${copilot}" \
+            --tag jotflow-agent:ca-trust .
+
+      - name: Every CLI trusts only the cleaned system store
+        run: |
+          docker run --rm --user 0 \
+            -v "$PWD/docker/ca-trust-check.sh:/ca-trust-check.sh:ro" \
+            --entrypoint sh jotflow-agent:ca-trust /ca-trust-check.sh
+
   cross-container:
     name: Cross-container runs
     runs-on: ubuntu-latest

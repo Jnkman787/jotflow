@@ -27,7 +27,7 @@ from typing import Any, TextIO, cast
 from pydantic import TypeAdapter, ValidationError
 
 from jotflow import __version__, agent_setup, deploy
-from jotflow.adapters.presets import CODEX_DEFAULT_MODEL
+from jotflow.adapters.presets import CODEX_DEFAULT_MODEL, EXPERIMENTAL
 from jotflow.envfile import EnvChange, parse_env, read_env, write_envs
 from jotflow.github_cli import ListedRepo, gh_login, gh_repos, gh_visibility
 from jotflow.models import RepoName, RepoVisibility, RunKind, expected_runner_preset
@@ -714,12 +714,15 @@ def _ask_channel_repos(console: Console) -> tuple[RepoPolicy, ...]:
             return tuple(repos)
 
 
-def _preset_answer(value: str) -> str:
-    """``none``, or a preset JotFlow ships. Anything else is refused for now."""
+def _preset_answer(value: str, kept: str | None = None) -> str:
+    """``none``, a preset setup offers, or ``kept``: an experimental preset the team
+    already set up by hand (#367). Anything else is refused for now."""
     answer = value.strip().lower()
     if answer == "none":
         return answer
     preset = _check_preset(answer)
+    if kept is not None and preset == kept:
+        return preset
     if preset not in SUPPORTED_PRESETS:
         raise ValueError(
             f"JotFlow does not ship a {preset!r} preset yet. Type none for now, or one of: "
@@ -806,16 +809,24 @@ def _ask_preset(console: Console, existing: Policy | None, detected: str | None)
     current = existing.agent.preset if existing else DEFAULT_PRESET
     if current is None and detected is not None:
         current = detected
-    if current is not None and current not in SUPPORTED_PRESETS:
+    kept: str | None = None
+    if current is not None and current in EXPERIMENTAL:
+        # Set up by hand, as presets.md says, so setup keeps it rather than offer it (#367).
         console.say(
-            f"Your jotflow.toml names the preset {current}, which JotFlow does not ship yet, "
+            f"Your jotflow.toml uses the experimental {current} preset, which you set up by "
+            "hand (docs/presets.md). Press Enter to keep it."
+        )
+        kept = current
+    elif current is not None and current not in SUPPORTED_PRESETS:
+        console.say(
+            f"Your jotflow.toml names the preset {current}, which JotFlow does not ship, "
             "so the default below is none. Press Enter to switch to none."
         )
         current = None
     preset_answer = console.ask(
         "Agent preset",
         current or "none",
-        _preset_answer,
+        lambda value: _preset_answer(value, kept),
     )
     return None if preset_answer == "none" else preset_answer
 
@@ -977,6 +988,9 @@ def _ask_agent(console: Console, options: InitOptions, preset: str | None) -> Ag
         return None
     if preset == COMMAND_PRESET:
         # The runner refuses model settings next to a raw command.
+        return AgentChoice(preset)
+    if preset in EXPERIMENTAL:
+        # Its provider and model were set by hand: setup leaves them as they are (#367).
         return AgentChoice(preset)
     if preset == CODEX_PRESET:
         # One model passes the runner, so there is nothing to ask.
