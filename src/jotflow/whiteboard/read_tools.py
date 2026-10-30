@@ -214,6 +214,10 @@ class ThreadMessage(BaseModel):
     topic_id: str | None = Field(
         default=None, description="The topic this message is already linked to, if any"
     )
+    also_topics: list[str] = Field(
+        default_factory=list,
+        description="Other topics this message also feeds, for its separate actions (#335)",
+    )
     from_jotflow: bool = Field(
         default=False,
         description=(

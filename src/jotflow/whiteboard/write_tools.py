@@ -68,7 +68,16 @@ from jotflow.orchestrator.slack_files import current as current_file
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
-from jotflow.store.base import StaleRevisionError, check_github_login, utc_now
+from jotflow.store.base import (
+    ALSO_NOT_LINKED,
+    ALSO_PERSON,
+    ALSO_TOO_MANY,
+    MAX_TOPICS_PER_MESSAGE,
+    MessageLink,
+    StaleRevisionError,
+    check_github_login,
+    utc_now,
+)
 from jotflow.text import without_unsafe_chars
 from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
@@ -308,10 +317,19 @@ class ReviseResult(BaseModel):
 
 class LinkMessageArgs(BaseModel):
     ts: str = Field(description="The message's Slack timestamp, as get_work served it")
-    decision: Literal["new_topic", "existing_topic", "chatter"]
-    topic_id: str | None = Field(default=None, description="Required for existing_topic")
+    decision: Literal["new_topic", "existing_topic", "chatter", "also_topic"] = Field(
+        description=(
+            "also_topic: a message already in a topic also holds a separate action: give "
+            "it topic_id to join, or title to start one. At most 3 topics a message (#335)"
+        )
+    )
+    topic_id: str | None = Field(
+        default=None, description="Required for existing_topic; for also_topic, or a title"
+    )
     title: str | None = Field(
-        default=None, max_length=200, description="Required for new_topic: a short title"
+        default=None,
+        max_length=200,
+        description="Required for new_topic, or also_topic's new topic: a short title",
     )
     confidence: float = Field(ge=0.0, le=1.0)
 
@@ -323,6 +341,8 @@ class LinkMessageArgs(BaseModel):
             raise ValueError("existing_topic needs a topic_id and no title")
         if self.decision == "chatter" and (self.topic_id or self.title):
             raise ValueError("chatter takes no topic_id or title")
+        if self.decision == "also_topic" and bool(self.topic_id) == bool(self.title):
+            raise ValueError("also_topic needs a topic_id to join or a title to start, not both")
         return self
 
 
@@ -370,6 +390,9 @@ class LinkResult(BaseModel):
     topic_id: str | None
     chatter: bool
     decided_by: Literal["agent", "person"]
+    also_topics: list[str] = Field(
+        default_factory=list, description="Other topics the message also feeds (#335)"
+    )
 
 
 class AskResult(BaseModel):
@@ -1303,7 +1326,9 @@ class WriteTools:
             await self._cap(grant, ("link_message",), MAX_LINKS_PER_RUN, "message links")
             ref = await self._packet_ref(grant, args.ts)
             existing = await self._store.get_message(ref.channel_id, ref.ts)
-            if existing is not None and existing.linked_by == "person":
+            if args.decision == "also_topic":
+                link = await self._also_topic(grant, ref, existing, args)
+            elif existing is not None and existing.linked_by == "person":
                 link = existing
             elif args.decision == "chatter":
                 link = await self._store.mark_chatter(ref)
@@ -1326,9 +1351,34 @@ class WriteTools:
                 topic_id=link.topic_id,
                 chatter=link.chatter,
                 decided_by=link.linked_by,
+                also_topics=list(link.also_topics),
             )
 
         return await self._once(grant, "link_message", args, LinkResult, act)
+
+    async def _also_topic(
+        self, grant: Grant, ref: MessageRef, existing: MessageLink | None, args: LinkMessageArgs
+    ) -> MessageLink:
+        """One more topic for a message that holds several separate actions (#335)."""
+        if existing is None or existing.topic_id is None:
+            raise ToolError(ALSO_NOT_LINKED)
+        if existing.linked_by == "person":
+            raise ToolError(ALSO_PERSON)
+        if 1 + len(existing.also_topics) >= MAX_TOPICS_PER_MESSAGE:
+            raise ToolError(ALSO_TOO_MANY)
+        if args.title:
+            try:
+                topic = await self._store.create_topic(grant.channel_id, args.title)
+            except ValueError:
+                raise ToolError("that title has no words left once cleaned") from None
+            topic_id = topic.topic.id
+        else:
+            topic_id = args.topic_id or ""
+            await self._channel_topic_issue(grant, topic_id)
+        try:
+            return await self._store.also_link(ref, topic_id)
+        except ConflictError as refused:
+            raise ToolError(str(refused)) from None
 
     async def ask_channel(self, grant: Grant, arguments: Any) -> BaseModel:
         args: AskChannelArgs = arguments

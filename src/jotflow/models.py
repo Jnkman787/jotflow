@@ -707,6 +707,13 @@ class ProposalRecord(BaseModel):
         default=None,
         description="The [issues] label left off the write because GitHub said it doesn't exist",
     )
+    unsplit_at: AwareDatetime | None = Field(
+        default=None,
+        description=(
+            "When a person's decision undid the agent's split and left this proposal's topic "
+            "with no messages, so it was superseded (#335)"
+        ),
+    )
 
     @property
     def card_due(self) -> bool:
@@ -757,7 +764,7 @@ class Classification(BaseModel):
     """The agent's decision about where a Slack message belongs."""
 
     message: MessageRef
-    decision: Literal["new_topic", "existing_topic", "chatter"]
+    decision: Literal["new_topic", "existing_topic", "chatter", "also_topic"]
     topic_id: str | None = Field(
         default=None, description="Required when decision is existing_topic"
     )
