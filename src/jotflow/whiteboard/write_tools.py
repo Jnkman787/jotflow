@@ -1682,8 +1682,15 @@ def _keep_card_adds(
         reasons = [r for r in reasons if r.login.casefold() != key] + [add]
     if isinstance(draft, IssueProposal):
         return draft.model_copy(update={"assignees": logins, "assignee_reasons": reasons})
+    # Nor does the agent unassign them: a removal of a kept add goes (CodeRabbit).
+    restored = {add.login.casefold() for add in adds}
+    removals = [r for r in draft.changes.remove_assignees if r.casefold() not in restored]
     changes = draft.changes.model_copy(
-        update={"add_assignees": logins, "assignee_reasons": reasons}
+        update={
+            "add_assignees": logins,
+            "assignee_reasons": reasons,
+            "remove_assignees": removals,
+        }
     )
     return draft.model_copy(update={"changes": changes})
 

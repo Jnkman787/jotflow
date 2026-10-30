@@ -31,6 +31,7 @@ from jotflow.store.base import SELF_ADD_RUN, ToolCallRecord
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError
 from jotflow.whiteboard.write_tools import (
+    ProposeUpdateArgs,
     RevisedIssue,
     ReviseProposalArgs,
     WriteTools,
@@ -198,6 +199,46 @@ async def test_the_agent_still_never_claims_a_card_add_in_a_revision(
         await tools.revise_proposal(
             grant, revision(record, ["acme-alice", "acme-bob"], [*alice, claimed])
         )
+
+
+async def test_a_revision_never_unassigns_a_card_add_either(store: Store, clock: Clock) -> None:
+    tools, grant, topic_id = await drafting(store, clock)
+    await store.set_topic_issue(topic_id, "acme-co/web", 7)
+    made: Any = await tools.propose_update(
+        grant,
+        ProposeUpdateArgs.model_validate(
+            {
+                "topic_id": topic_id,
+                "repo": "acme-co/web",
+                "issue_number": 7,
+                "changes": {"comment": "Also export the totals."},
+                "sources": [{"channel_id": CH, "ts": REPLY}],
+                "confidence": 0.9,
+            }
+        ),
+    )
+    record = await store.get_proposal(made.proposal_id)
+    assert record is not None
+    edited = with_assignees(record.proposal, ["acme-bob"], added="acme-bob")
+    await store.edit_proposal(record.id, edited, by="U0BOB", field="assign")
+    current = await store.get_proposal(record.id)
+    assert current is not None
+    revised = ReviseProposalArgs(
+        proposal_id=current.id,
+        base_revision=current.revision,
+        changes=IssueChanges(
+            comment="Also export the totals, monthly.", remove_assignees=["Acme-Bob"]
+        ),
+        sources=[MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT)],
+        confidence=0.9,
+    )
+    result: Any = await tools.revise_proposal(grant, revised)
+    assert result.revised
+    after = await store.get_proposal(record.id)
+    assert after is not None and isinstance(after.proposal, UpdateProposal)
+    assert after.proposal.changes.add_assignees == ["acme-bob"]
+    assert after.proposal.changes.remove_assignees == []
+    assert after.proposal.changes.comment == "Also export the totals, monthly."
 
 
 async def add_me_request(store: Store, clock: Clock, topic_id: str) -> ProposalRecord:
