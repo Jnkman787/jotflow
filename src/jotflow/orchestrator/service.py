@@ -54,6 +54,7 @@ from jotflow.models import (
     RunKind,
     expected_runner_preset,
 )
+from jotflow.orchestrator.add_me import AddMe, AddMeSlack, BoltAddMeSlack, PersonChecks
 from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
 from jotflow.orchestrator.boards import BoardAdder
 from jotflow.orchestrator.card_edits import CardEdits
@@ -85,6 +86,7 @@ from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.orchestrator.slack_files import BoltFileSlack
 from jotflow.orchestrator.summary import BoltSummarySlack, WeeklySummaries
+from jotflow.orchestrator.summary_replies import BoltRepliesSlack, SummaryReplies
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
@@ -290,6 +292,7 @@ class Orchestrator:
         link_notifier: Notifier | None = None,
         mode_slack: ModeSlack | None = None,
         thread_slack: ThreadSlack | None = None,
+        add_me_slack: AddMeSlack | None = None,
         flush_seconds: float = FLUSH_SECONDS,
         tick_seconds: float | None = None,
         info_attempts: int = INFO_ATTEMPTS,
@@ -318,9 +321,12 @@ class Orchestrator:
         self._link_notifier = link_notifier
         self.approval: ApprovalHandler | None = None
         self.edits: CardEdits | None = None
+        self._add_me_slack = add_me_slack
+        self.add_me: AddMe | None = None
         self._mode_slack = mode_slack
         self._thread_slack = thread_slack
         self.threads: ThreadNotice | None = None
+        self.summary_replies: SummaryReplies | None = None
         self.modes: ModeCommand | None = None
         self.links: LinkCommand | None = None
         self.verify: VerifyCommand | None = None
@@ -403,6 +409,12 @@ class Orchestrator:
     def _label_checker(self) -> LabelChecker | None:
         """The drafting runner, when it's on, for an [issues] label check before a write
         (#306 follow-up). Without it the label stays, so a missing one stops the write."""
+        if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
+            return None
+        return self._runner
+
+    def _person_checks(self) -> PersonChecks | None:
+        """The drafting runner, when drafting is on, for Add me's GitHub checks (#305)."""
         if self._runner is None or RunKind.DRAFTING not in self.kinds.on:
             return None
         return self._runner
@@ -521,6 +533,16 @@ class Orchestrator:
             repos=self.repos,
             boards=self.boards,
         )
+        # Add me on a card or a filed issue's reply, through the same gate (#305).
+        self.add_me = AddMe(
+            self._store,
+            self._policy,
+            self.approval,
+            self._add_me_slack or BoltAddMeSlack(self._client),
+            self._person_checks,
+            refresh=self.cards.refresh,
+            repos=self.repos,
+        )
         # Keywords are a person's decisions, stored even while agent runs are off.
         self._keywords = KeywordHandler(
             self._store,
@@ -567,6 +589,8 @@ class Orchestrator:
                 authors=attribution.authors,
                 files=files,
                 mentions=attribution.mentions,
+                texts=attribution.text,
+                names=attribution.names,
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )
@@ -574,6 +598,13 @@ class Orchestrator:
         self.summaries: WeeklySummaries | None = None
         self.summary_slack = BoltSummarySlack(self._client, self._identity.user_id)
         self.summary_names = people
+        # Replies in a summary's thread (#318), whether or not runs are on.
+        self.summary_replies = SummaryReplies(
+            self._store,
+            self._policy,
+            BoltRepliesSlack(self._client, slack_people, people),
+            bot_user_id=self._identity.user_id,
+        )
         if any(c.summary is not None for c in self._policy.channels.values()):
             self.summaries = WeeklySummaries(
                 self._store, self._policy, self.summary_slack, attribution
@@ -694,6 +725,37 @@ class Orchestrator:
                 log.exception("could not read the channel's mode")
                 paused = True  # fail closed: read nothing rather than act in a paused channel
             if paused:
+                return
+        if (
+            isinstance(decision, Accepted)
+            and decision.kind == "message"
+            and event is not None
+            and self.summary_replies is not None
+        ):
+            # A summary's thread is never drafted, asked or keyword-handled (#318):
+            # only re: N routes a reply there, and nothing reaches the debouncer.
+            try:
+                post = await self.summary_replies.summary_thread(event)
+            except Exception:
+                log.exception("could not tell whether a reply is in a summary's thread")
+                return  # fail closed: never draft what might be a summary's thread
+            if post is not None or self.summary_replies.under_own_post(event):
+                # A question there is still answered: a question run only reads, and the
+                # summary is already in the channel. A mention never drafts here.
+                asked = False
+                if self._questions is not None:
+                    try:
+                        taken = await self._questions.on_message(event)
+                        asked = taken.outcome != "not_a_question"
+                    except Exception:
+                        log.exception("could not take a question")
+                try:
+                    if post is not None:
+                        await self.summary_replies.on_reply(event, post, asked=asked)
+                    else:
+                        await self.summary_replies.on_unrecorded(event, asked=asked)
+                except Exception:
+                    log.exception("could not handle a reply in a summary's thread")
                 return
         if (
             isinstance(decision, Accepted)

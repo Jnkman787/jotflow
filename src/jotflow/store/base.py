@@ -20,7 +20,7 @@ Rules every implementation follows, checked by one contract test suite:
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
@@ -62,6 +62,9 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
 }
 
 AUTO_APPROVER = "auto"
+# The run id of a proposal a person made with an Add me button (#305), which no agent
+# drafted. A new draft doesn't supersede it, and auto mode never approves it.
+SELF_ADD_RUN = "add-me"
 
 # Once final, a proposal's drafted text is cleared (#102). Failed is not final:
 # a person may retry it, until the draft is cleared explicitly.
@@ -1069,11 +1072,15 @@ class Store(Protocol):
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         """Mark every other pending proposal in the thread superseded, clearing their
-        drafts; return their ids.
+        drafts; return their ids. A person's Add me request (#305) is never superseded.
 
         A draft for a topic that shares a split message with the kept one's topic is
         spared: each topic of one pasted message keeps its own draft (#335).
         """
+        ...
+
+    async def count_self_adds(self, slack_user_id: str, since: datetime) -> int:
+        """How many Add me requests ``slack_user_id`` made since ``since`` (#305)."""
         ...
 
     # Identity links
@@ -1193,6 +1200,25 @@ class Store(Protocol):
         ...
 
     async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]: ...
+
+    async def set_summary_items(
+        self, channel_id: str, slot: datetime, topic_ids: Sequence[str]
+    ) -> None:
+        """Record a summary's items in their numbered order, replacing any earlier try's,
+        before it's posted (#318). Older summaries' items go: only the latest routes."""
+        ...
+
+    async def summary_items(self, channel_id: str, slot: datetime) -> list[str]:
+        """A summary's item topics, item 1 first (#318)."""
+        ...
+
+    async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
+        """The posted summary whose message is ``ts``, if any: a summary's thread (#318)."""
+        ...
+
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        """Whether ``ts`` is any summary's message, whatever its row's status (#318)."""
+        ...
 
     async def defer_topic(
         self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str
@@ -1358,6 +1384,11 @@ class Store(Protocol):
 
     async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
         """How many runs of ``kind`` were queued in the channel since ``since`` (#57)."""
+        ...
+
+    async def count_run_calls(self, run_id: str, tool: str, *, since: datetime) -> int:
+        """How many calls of ``tool`` were recorded under ``run_id`` since ``since``:
+        counted in the query, so a long history costs nothing (#305)."""
         ...
 
     # Packet membership (#14, #15): which message pointers a run's packet served

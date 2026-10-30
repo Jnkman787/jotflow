@@ -25,7 +25,7 @@ import httpx2
 from pydantic import ValidationError
 
 from jotflow.models import DiscoveredRepo, is_bare_repo_name, is_owner_name, under_owner
-from jotflow.policy import label_problem
+from jotflow.policy import label_lookup_problem
 
 API = "https://api.github.com"
 PAGE_SIZE = 100
@@ -117,7 +117,7 @@ async def label_exists(
     """
     if not is_owner_name(owner) or not is_bare_repo_name(name):
         raise GithubError("not a GitHub repo")
-    if label_problem(label) is not None:
+    if label_lookup_problem(label) is not None:
         raise GithubError("not a label")
     url = f"{api}/repos/{owner}/{name}/labels/{quote(label, safe='')}"
     status, _ = await _page(http, url, token, 64 * 1024)

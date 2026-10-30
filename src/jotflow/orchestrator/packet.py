@@ -32,6 +32,7 @@ import aiohttp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
+from jotflow.change_requests import change_request_by
 from jotflow.models import TopicIndex, UntrustedText
 from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
@@ -204,7 +205,12 @@ class BoltSlackReader:
         self, channel: str, ts: str, *, cursor: str | None, limit: int
     ) -> Mapping[str, Any]:
         response = await self._client.conversations_replies(
-            channel=channel, ts=ts, cursor=cursor, limit=limit, inclusive=True
+            channel=channel,
+            ts=ts,
+            cursor=cursor,
+            limit=limit,
+            inclusive=True,
+            include_all_metadata=True,
         )
         return response.data if isinstance(response.data, dict) else {}
 
@@ -601,6 +607,9 @@ class SlackWorkSource:
             topic_id=topic_id,
             from_jotflow=self._from_jotflow(raw),
             asks_jotflow=self._asks_jotflow(raw, keyword),
+            change_request_by=change_request_by(
+                raw, self._bot.user_id if self._bot is not None else None
+            ),
         )
 
     async def _with_files(

@@ -386,3 +386,14 @@ async def test_an_also_link_from_another_thread_credits_nobody() -> None:
     crowd = Crowd()
     crowd._authors = {PASTE: {"U0SAM"}, other.ts: {"U0OUTSIDE"}}  # type: ignore[assignment]
     assert await credit_line(store, sensor, crowd) == "Raised in Slack by Sam."
+
+
+async def test_an_add_me_request_on_an_orphaned_topic_is_kept(store: Store) -> None:
+    # A person's Add me request (#305) is never superseded, by a split's undoing either.
+    from jotflow.store.base import SELF_ADD_RUN
+
+    _, sensor = await split(store, "Sensor timing")
+    await store.add_proposal(draft("p2", sensor).model_copy(update={"run_id": SELF_ADD_RUN}))
+    link = await store.mark_chatter(paste(), by="person")
+    assert link.dropped == ()
+    assert await states(store) == {"p2": "pending"}

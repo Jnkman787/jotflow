@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -40,6 +40,7 @@ from jotflow.store.base import (
     MAX_SUMMARY_ATTEMPTS,
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
+    SELF_ADD_RUN,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -111,6 +112,7 @@ class MemoryStore:
         self._summaries: dict[tuple[str, datetime], SummaryPost] = {}
         self._deferrals: dict[tuple[str, datetime], SummaryDeferral] = {}
         self._summary_topics: dict[tuple[str, datetime], frozenset[str]] = {}
+        self._summary_items: dict[tuple[str, datetime], tuple[str, ...]] = {}
         self._unlinks: list[IdentityUnlink] = []
         self._codes: dict[str, IdentityCode] = {}
         self._operators: dict[str, OperatorToken] = {}
@@ -182,7 +184,9 @@ class MemoryStore:
         ids = sorted(
             r.id
             for r in self._proposals.values()
-            if r.proposal.topic_id == topic_id and r.state is ProposalState.PENDING
+            if r.proposal.topic_id == topic_id
+            and r.state is ProposalState.PENDING
+            and r.run_id != SELF_ADD_RUN
         )
         for proposal_id in ids:
             record = self._proposals[proposal_id]
@@ -622,6 +626,7 @@ class MemoryStore:
                 and r.state is ProposalState.PENDING
                 and r.id != keep_id
                 and r.proposal.topic_id not in spared
+                and r.run_id != SELF_ADD_RUN
             )
             for proposal_id in ids:
                 record = self._proposals[proposal_id]
@@ -632,6 +637,15 @@ class MemoryStore:
                 }
                 self._proposals[proposal_id] = record.model_copy(update=update, deep=True)
             return ids
+
+    async def count_self_adds(self, slack_user_id: str, since: datetime) -> int:
+        return sum(
+            1
+            for r in self._proposals.values()
+            if r.run_id == SELF_ADD_RUN
+            and slack_user_id in r.participants
+            and r.created_at >= since
+        )
 
     # Identity links
 
@@ -872,6 +886,29 @@ class MemoryStore:
 
     async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]:
         return self._summary_topics.get((channel_id, slot), frozenset())
+
+    async def set_summary_items(
+        self, channel_id: str, slot: datetime, topic_ids: Sequence[str]
+    ) -> None:
+        async with self._lock:
+            for key in [k for k in self._summary_items if k[0] == channel_id and k[1] < slot]:
+                del self._summary_items[key]
+            self._summary_items[(channel_id, slot)] = tuple(topic_ids)
+
+    async def summary_items(self, channel_id: str, slot: datetime) -> list[str]:
+        return list(self._summary_items.get((channel_id, slot), ()))
+
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        return any(
+            channel == channel_id and post.ts == ts
+            for (channel, _), post in self._summaries.items()
+        )
+
+    async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
+        for (channel, _), post in self._summaries.items():
+            if channel == channel_id and post.status == "posted" and post.ts == ts:
+                return post
+        return None
 
     async def defer_topic(
         self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str
@@ -1204,6 +1241,11 @@ class MemoryStore:
             for c in self._calls
             if (c.channel_id, c.thread_ts, c.tool) == (channel_id, thread_ts, tool)
             and c.called_at >= since
+        )
+
+    async def count_run_calls(self, run_id: str, tool: str, *, since: datetime) -> int:
+        return sum(
+            1 for c in self._calls if (c.run_id, c.tool) == (run_id, tool) and c.called_at >= since
         )
 
     async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:

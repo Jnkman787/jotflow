@@ -1,0 +1,235 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "priority-p0",
+  "description": "Alice posts \"P0: checkout fails for every card payment\". The channel maps P0 to the label priority: critical in jotflow.toml, so the proposal is labelled bug and priority: critical. The card shows both (#332).",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement",
+              "priority: critical"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement",
+              "priority: critical"
+            ]
+          }
+        ],
+        "priority_labels": {
+          "P0": "priority: critical",
+          "urgent": "priority: critical"
+        }
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792310400.000100",
+      "user": "U0ALICE",
+      "text": "P0: checkout fails for every card payment since this morning's release."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792310640.000100",
+      "user": "U0BOB",
+      "text": "Confirmed, every card payment returns an error page.",
+      "thread_ts": "1792310400.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792310400.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792310400.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "checkout",
+          "title": "Card checkout fails"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792310640.000100",
+              "thread_ts": "1792310400.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:checkout"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:checkout",
+            "repo": "acme-co/web",
+            "title": "Card checkout fails after this morning's release",
+            "body": "## Problem\nEvery card payment at checkout returns an error page since this morning's release.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Compare this morning's release with the last good one for checkout changes.\n2. Reproduce a card payment in staging.\n\n## Acceptance\n- [ ] A card payment at checkout completes\n",
+            "labels": [
+              "bug",
+              "priority: critical"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792310400.000100"
+              },
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792310640.000100",
+                "thread_ts": "1792310400.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement",
+        "priority: critical"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement",
+        "priority: critical"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "One topic with both messages, and one create_issue proposal labelled bug and priority: critical, the label P0 maps to.",
+    "accepted": [
+      "1792310400.000100",
+      "1792310640.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:checkout",
+        "messages": [
+          "1792310400.000100",
+          "1792310640.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:checkout",
+        "labels_include": [
+          "bug",
+          "priority: critical"
+        ]
+      }
+    ]
+  }
+}

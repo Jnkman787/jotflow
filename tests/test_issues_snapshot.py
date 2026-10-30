@@ -480,3 +480,24 @@ async def test_a_failed_card_shows_todays_settings_so_retry_can_approve() -> Non
     body["actions"][0]["action_id"] = ACTION_RETRY
     assert await gate.handler.on_approve(body) == "approved"
     assert (await gate.state()).approved_issues == SLACK.snapshot()
+
+
+@pytest.mark.parametrize("label", [".", ".."])
+async def test_a_dot_segment_label_is_never_looked_up(tmp_path: Path, label: str) -> None:
+    """quote() leaves "." and "..", which a client resolves away (#347 review)."""
+    fake = FakeGithub({"/repos/acme-co/web": status(200), "/repos/acme-co": status(200)})
+    with pytest.raises(GithubError):
+        await label_exists("acme-co", "web", label, READ, http=fake.client())
+    async with runner_http(tmp_path, fake) as http:
+        answer = await http.post(
+            "/repos/labels/check", json={"owner": "acme-co", "name": "web", "label": label}
+        )
+    assert answer.status_code == 400
+    runner, sent = runner_client(200, {"exists": True})
+    with pytest.raises(RunnerError):
+        await runner.label_exists("acme-co", "web", label)
+    assert fake.seen == [] and sent == []
+    # A label that merely contains dots is fine.
+    from jotflow.policy import label_lookup_problem
+
+    assert label_lookup_problem("v1.2") is None and label_lookup_problem("...") is None

@@ -8,7 +8,7 @@ so a file it returns always loads back to the same policy.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from jotflow.policy import IssuesPolicy, Policy, QuestionsPolicy, parse_policy
 
@@ -41,6 +41,15 @@ def toml_string(value: str) -> str:
 
 def _array(values: Iterable[str]) -> str:
     return "[" + ", ".join(toml_string(v) for v in values) + "]"
+
+
+def _table(values: Mapping[str, str]) -> str:
+    """An inline table of strings, keys quoted, such as { "P0" = "priority: critical" }."""
+    if not values:
+        return "{}"
+    return (
+        "{ " + ", ".join(f"{toml_string(k)} = {toml_string(v)}" for k, v in values.items()) + " }"
+    )
 
 
 def _bool(value: bool) -> str:
@@ -79,6 +88,8 @@ def render_policy(policy: Policy) -> str:
         "[identity]",
         f"admins = {_array(policy.identity.admins)}",
     ]
+    if policy.identity.github_org is not None:
+        lines.append(f"github_org = {toml_string(policy.identity.github_org)}")
     # Questions (#57): written only when a team changed them, so a default setup is unchanged.
     if policy.questions != QuestionsPolicy():
         lines += [
@@ -103,6 +114,8 @@ def render_policy(policy: Policy) -> str:
         if channel.attachments != "names":
             # Slack files (#333): off, or text, which copies file text toward GitHub.
             lines.append(f"attachments = {toml_string(channel.attachments)}")
+        if channel.priority_labels:
+            lines.append(f"priority_labels = {_table(channel.priority_labels)}")
         if channel.triage_guide is not None:
             # The team's guide to choosing a repo and boards (#317), as written.
             lines.append(f"triage_guide = {toml_string(channel.triage_guide)}")
@@ -114,6 +127,8 @@ def render_policy(policy: Policy) -> str:
                 f"nickname = {toml_string(repo.nickname)}",
                 f"description = {toml_string(repo.description)}",
             ]
+            if repo.aliases:
+                lines.append(f"aliases = {_array(repo.aliases)}")
             # No labels line means any label that exists on the repo.
             if repo.labels is not None:
                 lines.append(f"labels = {_array(repo.labels)}")
@@ -129,6 +144,8 @@ def render_policy(policy: Policy) -> str:
                 lines.append(f"read_paths = {_array(repo.read_paths)}")
             if repo.owner_hints is not None:
                 lines.append(f"owner_hints = {_array(repo.owner_hints)}")
+            if repo.priority_labels is not None:
+                lines.append(f"priority_labels = {_table(repo.priority_labels)}")
         for scope in channel.scopes:
             # Pattern scopes (#236): every field, so a rewrite keeps what was written.
             lines += [

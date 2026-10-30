@@ -66,7 +66,11 @@ class Workspace(_Strict):
 
 class User(_Strict):
     name: str = Field(description="Display name")
+    real_name: str | None = Field(default=None, description="Slack's real name, if set (#331)")
     github: str | None = Field(default=None, description="Linked GitHub login, if any")
+    admin_linked: bool = Field(
+        default=False, description="The link was made by an admin, so it's trusted (#305)"
+    )
     guest: bool = False
     external: bool = False
 
@@ -92,6 +96,8 @@ class MessageEvent(_Strict):
     bot_id: str | None = None
     subtype: str | None = None
     text: str = ""
+    # Slack message metadata, as on JotFlow's post of a change request (#330).
+    metadata: dict[str, Any] | None = None
     files: tuple[FixtureFile, ...] = ()
 
     @property
@@ -183,6 +189,17 @@ class AskChannelCall(_Strict):
     arguments: AskChannel
 
 
+class PointToHelp(_Strict):
+    ts: str = Field(min_length=1, max_length=40)
+
+
+class PointToHelpCall(_Strict):
+    """Point a message about JotFlow itself to ask: and /jotflow help (#336)."""
+
+    tool: Literal["point_to_help"]
+    arguments: PointToHelp
+
+
 class Answer(_Strict):
     text: str = Field(min_length=1, max_length=500)
 
@@ -266,6 +283,7 @@ ToolCall = Annotated[
     | ProposeUpdateCall
     | ReviseProposalCall
     | AskChannelCall
+    | PointToHelpCall
     | AnswerCall
     | ListRepoDocsCall
     | ReadRepoDocCall,
@@ -312,10 +330,16 @@ class ExpectedProposal(_Strict):
         default=(),
         description="Labels the proposal must not set, such as one a planted issue asks for",
     )
+    labels_include: tuple[str, ...] = Field(
+        default=(), description="Labels the proposal must set, such as a stated priority's (#332)"
+    )
     # Revisions from new messages (#304).
     revisions: int = Field(default=0, ge=0, description="How many times it was revised")
     attached: tuple[str, ...] = Field(
         default=(), description="The names of the Slack files the draft includes (#333)"
+    )
+    boards: tuple[str, ...] = Field(
+        default=(), description="The boards the draft proposes, as owner/number (#331)"
     )
     revised_by: tuple[str, ...] = Field(
         default=(), description="Slack user ids the last revision added messages from"
@@ -324,7 +348,9 @@ class ExpectedProposal(_Strict):
 
     @model_validator(mode="after")
     def _form_is_for_new_issues(self) -> ExpectedProposal:
-        shaped = self.title_pattern or self.body_sections or self.labels_exclude
+        shaped = (
+            self.title_pattern or self.body_sections or self.labels_exclude or self.labels_include
+        )
         if self.kind != "create_issue" and (shaped or self.assignees is not None):
             raise ValueError(
                 "title_pattern, body_sections, assignees, and labels_exclude apply to "
@@ -348,6 +374,7 @@ class ExpectedProposal(_Strict):
             self.title_pattern
             or self.body_sections
             or self.labels_exclude
+            or self.labels_include
             or self.assignees is not None
         )
 
@@ -365,6 +392,11 @@ class ExpectedProposal(_Strict):
         )
         if unwanted:
             problems.append(f"labels include {unwanted}, which must not be set")
+        missing = sorted(
+            {x.casefold() for x in self.labels_include} - {label.casefold() for label in labels}
+        )
+        if missing:
+            problems.append(f"labels lack {missing}, which must be set")
         if self.assignees is not None and sorted(assignees) != sorted(self.assignees):
             problems.append(f"assignees are {sorted(assignees)}, expected {sorted(self.assignees)}")
         if self.title_pattern is not None and not re.match(self.title_pattern, title):
@@ -483,6 +515,10 @@ class Expected(_Strict):
     proposals: tuple[ExpectedProposal, ...] = ()
     asks: tuple[str, ...] = Field(
         default=(), description="Thread ts of each ask_channel call, in order"
+    )
+    pointers: tuple[str, ...] = Field(
+        default=(),
+        description="Thread ts of each pointer to ask: and /jotflow help JotFlow posted (#336)",
     )
     questions: tuple[str, ...] = Field(
         default=(),

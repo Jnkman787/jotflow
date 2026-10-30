@@ -70,13 +70,13 @@ class Tell(Protocol):
     async def ephemeral(self, channel_id: str, user_id: str, text: str) -> None: ...
 
 
-def _assignees(draft: IssueProposal | UpdateProposal) -> list[str]:
+def assignees_of(draft: IssueProposal | UpdateProposal) -> list[str]:
     return list(
         draft.assignees if isinstance(draft, IssueProposal) else draft.changes.add_assignees
     )
 
 
-def _with_assignees(
+def with_assignees(
     draft: IssueProposal | UpdateProposal, logins: list[str], added: str | None = None
 ) -> IssueProposal | UpdateProposal:
     """The draft with ``logins`` as its assignees. Each keeps its reason, a removed one's
@@ -195,10 +195,10 @@ class CardEdits:
         link = await self._store.get_identity(user)
         if link is None:
             raise Refused(NOT_LINKED)
-        logins = _assignees(record.proposal)
+        logins = assignees_of(record.proposal)
         if link.github_login.casefold() in {login.casefold() for login in logins}:
             return await self._done(click, UNCHANGED, changed=False)
-        edited = _with_assignees(
+        edited = with_assignees(
             record.proposal, [*logins, link.github_login], added=link.github_login
         )
         await self._save(click, record, edited, "assign")
@@ -206,11 +206,11 @@ class CardEdits:
 
     async def _unassign(self, click: Click, record: ProposalRecord) -> str:
         login = self._check_may_edit(click, record)
-        logins = _assignees(record.proposal)
+        logins = assignees_of(record.proposal)
         kept = [existing for existing in logins if existing.casefold() != login.casefold()]
         if len(kept) == len(logins):
             return await self._done(click, UNCHANGED, changed=False)
-        edited = _with_assignees(record.proposal, kept)
+        edited = with_assignees(record.proposal, kept)
         await self._save(click, record, edited, "unassign")
         return await self._done(click, "Removed that assignee.")
 

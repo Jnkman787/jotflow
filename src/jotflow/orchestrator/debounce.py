@@ -187,6 +187,14 @@ class Debouncer:
         )
         queued: list[Thread] = []
         for thread in ready:
+            if await self._store.is_summary_message(thread.channel_id, thread.thread_ts):
+                # A summary's thread is never drafted (#318), even if it was armed.
+                del self._due[thread]
+                await self._store.drop_pending(thread.channel_id, thread.thread_ts)
+                log.warning(
+                    "thread %s in %s is a summary's; no run", thread.thread_ts, thread.channel_id
+                )
+                continue
             # Queues the run and forgets the thread in one step, so a crash
             # between the two cannot queue it twice after a restart. The store
             # queues nothing if a person skipped the thread's first message

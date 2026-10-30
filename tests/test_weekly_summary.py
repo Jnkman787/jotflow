@@ -433,7 +433,8 @@ async def test_a_busy_week_stays_within_slacks_limits() -> None:
     assert sum(1 for b in blocks if str(b.get("block_id", "")).startswith("item:")) == MAX_ITEMS
     assert "And 5 more" in texts(blocks)
     item = next(b for b in blocks if str(b.get("block_id", "")).startswith("item:"))
-    assert len(item["text"]["text"].splitlines()[0]) <= 80  # the card's title limit
+    number, _, title = item["text"]["text"].splitlines()[0].partition(". ")
+    assert number == "1" and len(title) <= 80  # numbered (#318); the card's title limit
 
 
 async def test_a_paused_channel_gets_no_summary_that_week() -> None:

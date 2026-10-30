@@ -494,8 +494,24 @@ CREATE TABLE summary_topics (
             " /* the [issues] label left off because GitHub said it doesn't exist */",
         ),
     ),
+    # Each summary's numbered items (#318), recorded before posting, so `re: 2` in its
+    # thread names item 2. Pointers only.
+    Migration(
+        22,
+        (
+            """
+CREATE TABLE summary_items (
+    channel_id TEXT NOT NULL, -- the summary's channel
+    slot TEXT NOT NULL, -- UTC, ISO 8601: the summary's slot
+    position INTEGER NOT NULL CHECK (position >= 1), -- the item's number in the post
+    topic_id TEXT NOT NULL, -- the item's topic
+    PRIMARY KEY (channel_id, slot, position)
+)
+""",
+        ),
+    ),
     # One message, several topics (#335): the extra topics a message feeds beyond its
-    # message_refs topic_id, the agent's split only. Pointers only. 23: #318 takes 22.
+    # message_refs topic_id, the agent's split only. Pointers only.
     Migration(
         23,
         (

@@ -100,6 +100,12 @@ per_person_seconds = 60
 # claimed that isn't theirs. Empty, the default, leaves only approvers, or
 # `jotflow identity unlink` on the host.
 admins = []
+# A GitHub organization that anyone adding themselves with Add me must belong to
+# (#305). The read token then needs the organization's Members: Read-only
+# permission, which lets it see every private membership in the organization.
+# Unset, the default, JotFlow checks only that the person can be assigned
+# issues in the repo.
+# github_org = "acme-co"
 
 # One table per Slack channel, keyed by channel id.
 [channels.C0EXAMPLE1]
@@ -140,6 +146,16 @@ debounce_seconds = 60
 # this repo, and the card says "listed as an owner of this repo". Only someone
 # with a linked GitHub login is ever assigned, and a person still approves.
 # owner_hints = ["U0123ABCD"]
+# aliases is optional: other names people use for this repo, such as "shop"
+# (#331). A post naming one is drafted for this repo without a question, and
+# re: shop#42 works too. Aliases share the channel's nicknames, so each is unique.
+# aliases = ["shop"]
+# Optional (#332): stated priorities and the label each means. A post that
+# states one, such as "P0: checkout is down", gets that label, shown on the card.
+# Explicit tags work best; an everyday word like "urgent" also matches "not
+# urgent". A repo can set its own map, which replaces this one for that repo.
+# A mapped label must be in a repo's labels list when it has one.
+# priority_labels = { "P0" = "priority: critical", "sev1" = "sev-1" }
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"

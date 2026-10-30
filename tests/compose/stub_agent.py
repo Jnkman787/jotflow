@@ -45,6 +45,7 @@ EXPECTED = {
         "revise_proposal",
         "link_message",
         "ask_channel",
+        "point_to_help",
     },
     "execution": {"get_work", "record_result"},
 }

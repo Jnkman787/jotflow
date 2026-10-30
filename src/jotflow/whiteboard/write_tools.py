@@ -26,9 +26,9 @@ import logging
 import re
 import secrets
 import unicodedata
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal, Protocol, TypeVar
 from urllib.parse import unquote
 
@@ -57,6 +57,7 @@ from jotflow.models import (
     UpdateProposal,
     check_reasons,
 )
+from jotflow.name_match import PACKET_PEOPLE, Names, candidates, only
 from jotflow.orchestrator.slack_files import (
     SERVED_FILE,
     FileSlack,
@@ -77,6 +78,7 @@ from jotflow.store.base import (
     check_github_login,
     utc_now,
 )
+from jotflow.text import without_unsafe_chars
 from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
 from jotflow.whiteboard.tokens import Grant
@@ -139,6 +141,9 @@ MAX_REVISIONS_PER_RUN = 3
 Authors = Callable[[Sequence[MessageRef]], Awaitable[set[str]]]
 # The people a message @-mentions, from Slack (#305).
 Mentions = Callable[[MessageRef], Awaitable[set[str]]]
+# A message's text, and a person's Slack names, for named_in_text (#331).
+Texts = Callable[[MessageRef], Awaitable[str]]
+NamesOf = Callable[[str], Awaitable[Names]]
 # A result lands while the write is in progress: executing, or reconciling when a
 # retry after an interrupted run finds the marker it left (or gives up).
 RESULT_STATES = frozenset({ProposalState.EXECUTING, ProposalState.RECONCILING})
@@ -148,6 +153,15 @@ _SLACK_USER = re.compile(r"[UW][A-Z0-9]{2,20}")
 _SPECIAL_MENTION = re.compile(r"<![^>]*>")
 _BARE_BROADCAST = re.compile(r"(?<![\w@])@(?:channel|here|everyone)\b", re.IGNORECASE)
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+# The reply to a message about JotFlow itself (#336): JotFlow's own words, never the agent's.
+POINT_TO_HELP = (
+    "This sounds like it's about JotFlow itself, so it isn't drafted as an issue. "
+    "To ask JotFlow something, start a message with ask: or mention it. "
+    "/jotflow help shows what it can do."
+)
+_EVER = datetime(2000, 1, 1, tzinfo=UTC)
 
 
 class ThreadPoster(Protocol):
@@ -336,6 +350,12 @@ class AskChannelArgs(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_QUESTION_LENGTH)
 
 
+class PointToHelpArgs(BaseModel):
+    ts: str = Field(
+        description="The message about JotFlow itself, as get_work served it, such as feedback"
+    )
+
+
 class AnswerArgs(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_ANSWER_LENGTH)
 
@@ -377,6 +397,12 @@ class LinkResult(BaseModel):
 
 class AskResult(BaseModel):
     posted_ts: str
+
+
+class PointResult(BaseModel):
+    posted_ts: str | None = Field(
+        default=None, description="The pointer JotFlow posted; none if the thread already had one"
+    )
 
 
 class AnswerResult(BaseModel):
@@ -618,6 +644,8 @@ class WriteTools:
         mentions: Mentions | None = None,
         boards: BoardCatalog | None = None,
         files: FileSlack | None = None,
+        texts: Texts | None = None,
+        names: NamesOf | None = None,
     ) -> None:
         self._store = store
         # JotFlow's own Slack file reader, for attachments (#333).
@@ -626,6 +654,8 @@ class WriteTools:
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
         self._mentions_of = mentions
+        self._text_of = texts
+        self._names_of = names
         # The channel's boards, listed and found, and which the write token can update (#309).
         self._board_catalog = boards if boards is not None else BoardCatalog.static(policy)
         # The run's doc reads, for the card's long-passage flag (#209).
@@ -762,8 +792,12 @@ class WriteTools:
         participants: list[str],
         kept: Sequence[AssigneeReason] = (),
         legacy: Sequence[str] = (),
+        found: dict[str, str] | None = None,
     ) -> list[str]:
         """Every assignee is a linked login with one reason JotFlow can check (#305).
+
+        ``found`` collects, by login without case, the name each named_in_text reason
+        matched, for the card (#331).
 
         ``kept`` holds the reasons already on a draft being revised: those stand as they
         are, a person's card add included, so a revision needn't prove them again.
@@ -784,7 +818,8 @@ class WriteTools:
                 continue  # on the draft from before reasons existed: it stands as approved
             if reason is None:
                 raise ToolError(
-                    f"give assignee {login} a reason: volunteered, named_owner or owner_hint"
+                    f"give assignee {login} a reason: volunteered, named_owner, named_in_text "
+                    "or owner_hint"
                 )
             if (login.casefold(), reason.why, reason.source_ts) in standing:
                 continue
@@ -811,6 +846,18 @@ class WriteTools:
                         f"{login} didn't write message {reason.source_ts}: a volunteer's "
                         "reason is their own message"
                     )
+            elif reason.why == "named_in_text":
+                hit = await self._named_in(grant, repo, ref)
+                if hit is None or hit[0] != link.slack_user_id:
+                    raise ToolError(
+                        f"message {reason.source_ts} doesn't name {login} by a name only they "
+                        "have here: @-mention them, or ask who should own it"
+                    )
+                if found is not None:
+                    shown = " ".join(without_unsafe_chars(hit[1]).split())[:80]
+                    found[login.casefold()] = shown
+                if not _trusted(link):
+                    left_off.append(login)
             elif link.slack_user_id not in await self._mentioned(ref):
                 raise ToolError(
                     f"message {reason.source_ts} doesn't @-mention {login}: a named owner's "
@@ -819,6 +866,22 @@ class WriteTools:
             elif not _trusted(link):
                 left_off.append(login)
         return left_off
+
+    async def _named_in(self, grant: Grant, repo: str, ref: MessageRef) -> tuple[str, str] | None:
+        """Who ``ref`` names in words, among the packet's people and the repo's owner hints,
+        if exactly one (#331). Names and text come from Slack, never the agent."""
+        if self._text_of is None or self._names_of is None:
+            raise ToolError("named_in_text isn't available here: @-mention them instead")
+        try:
+            text = await self._text_of(ref)
+        except LookupError:
+            raise ToolError(f"message {ref.ts} couldn't be read from Slack") from None
+        people: list[str] = []
+        for row in await self._store.tool_call_results(grant.run_id, (PACKET_PEOPLE,)):
+            people += [user for user in json.loads(row) if isinstance(user, str)]
+        hints = self._repos.repo(grant.channel_id, repo).owner_hints or ()
+        names = {user: await self._names_of(user) for user in candidates(people, hints)}
+        return only(text, names)
 
     async def _check_mentions(self, participants: list[str], *texts: str | None) -> None:
         """Only a linked participant may be @-mentioned in what goes to GitHub (#250)."""
@@ -1004,12 +1067,14 @@ class WriteTools:
             await self._check_title(grant, repo, args.title)
             self._check_no_slack_links(args.title, args.body)
             await self._check_mentions(args.participants, args.title, args.body)
+            matched: dict[str, str] = {}
             left = await self._check_assignees(
-                grant, repo, args.assignees, args.assignee_reasons, args.participants
+                grant, repo, args.assignees, args.assignee_reasons, args.participants, found=matched
             )
             related, dropped = self._related(grant, args.related)
             attached = await self._attach(grant, args.attachments, args.body)
             assignees, reasons = _without(args.assignees, args.assignee_reasons, left)
+            reasons = _with_matched(reasons, matched)
             draft = IssueProposal.model_validate(
                 {
                     **args.model_dump(exclude={"participants", "attachments"}),
@@ -1045,17 +1110,20 @@ class WriteTools:
                     f"topic {args.topic_id} is not linked to {repo}#{args.issue_number}"
                 )
             await self._check_mentions(args.participants, args.changes.body, args.changes.comment)
+            matched: dict[str, str] = {}
             left = await self._check_assignees(
                 grant,
                 repo,
                 args.changes.add_assignees,
                 args.changes.assignee_reasons,
                 args.participants,
+                found=matched,
             )
             _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
             added, reasons = _without(
                 args.changes.add_assignees, args.changes.assignee_reasons, left
             )
+            reasons = _with_matched(reasons, matched)
             changes = args.changes.model_copy(
                 update={"add_labels": labels, "add_assignees": added, "assignee_reasons": reasons}
             )
@@ -1095,8 +1163,12 @@ class WriteTools:
             added_by = sorted(await self._authors(sources))
             participants = sorted({*record.participants, *added_by})
             draft = self._revised(grant, record, args, sources)
-            left = await self._check_revised(grant, draft, participants, record.proposal)
+            matched: dict[str, str] = {}
+            left = await self._check_revised(
+                grant, draft, participants, record.proposal, found=matched
+            )
             draft = _leave_off(draft, left)
+            draft = _draft_with_matched(draft, matched)
             try:
                 updated = await self._store.revise_proposal(
                     record.id,
@@ -1207,6 +1279,7 @@ class WriteTools:
         draft: IssueProposal | UpdateProposal,
         participants: list[str],
         old: IssueProposal | UpdateProposal,
+        found: dict[str, str] | None = None,
     ) -> list[str]:
         """The same rules a new proposal keeps, by the same code. Reasons already on
         the draft stand, a person's card add included (#305). Returns who's left off."""
@@ -1226,6 +1299,7 @@ class WriteTools:
                 participants,
                 kept,
                 legacy,
+                found,
             )
         changes = draft.changes
         self._check_no_slack_links(changes.body, changes.comment)
@@ -1242,6 +1316,7 @@ class WriteTools:
             participants,
             kept,
             legacy,
+            found,
         )
 
     async def link_message(self, grant: Grant, arguments: Any) -> BaseModel:
@@ -1330,6 +1405,33 @@ class WriteTools:
             return AskResult(posted_ts=posted)
 
         return await self._once(grant, "ask_channel", args, AskResult, act)
+
+    async def point_to_help(self, grant: Grant, arguments: Any) -> BaseModel:
+        """Point a message about JotFlow itself to ``ask:`` and ``/jotflow help`` (#336).
+
+        The reply is JotFlow's fixed text, never the agent's, posted at most once a thread.
+        """
+        args: PointToHelpArgs = arguments
+        thread = grant.thread_ts
+        if thread is None:  # pragma: no cover - drafting grants always name one
+            raise ToolError("this run has no thread to reply in")
+
+        async def act() -> PointResult:
+            await self._packet_ref(grant, args.ts)
+            for already in ("point_to_help", "answer"):
+                # One pointer a thread, and none where JotFlow already answered a
+                # question, so it can't talk over its own answer (#336 review).
+                if await self._store.count_thread_calls(
+                    grant.channel_id, thread, already, since=_EVER
+                ):
+                    return PointResult()
+            try:
+                posted = await self._poster.post(grant.channel_id, thread, POINT_TO_HELP)
+            except PostError as refused:
+                raise ToolError(f"Slack did not post the pointer ({refused})") from None
+            return PointResult(posted_ts=posted)
+
+        return await self._once(grant, "point_to_help", args, PointResult, act)
 
     async def answer(self, grant: Grant, arguments: Any) -> BaseModel:
         """A question run's one answer, in its thread, as plain text (#57)."""
@@ -1427,6 +1529,12 @@ _DESCRIPTIONS = {
         "unsure. Broadcast mentions, links and @-mentions are removed. Asked at most twice "
         "per run."
     ),
+    "point_to_help": (
+        "For a message about JotFlow itself, such as feedback on it or how to use it: "
+        "JotFlow replies in the thread, once, with its own fixed pointer to ask: and "
+        "/jotflow help, unless it already answered a question there. You write nothing. "
+        "Mark the message chatter too."
+    ),
     "answer": (
         "Answer the question in this run's own Slack thread, once, in at most 3 short "
         "sentences. Name issues as owner/name#42 from this channel's repos only. Links, "
@@ -1468,6 +1576,33 @@ def _without(
     )
 
 
+def _with_matched(
+    reasons: Sequence[AssigneeReason], matched: Mapping[str, str]
+) -> list[AssigneeReason]:
+    """Each named_in_text reason with the name JotFlow matched, never the agent's (#331)."""
+    out: list[AssigneeReason] = []
+    for reason in reasons:
+        if reason.why == "named_in_text":
+            reason = reason.model_copy(update={"matched": matched.get(reason.login.casefold())})
+        elif reason.matched is not None:  # pragma: no cover - the model refuses it
+            reason = reason.model_copy(update={"matched": None})
+        out.append(reason)
+    return out
+
+
+def _draft_with_matched(
+    draft: IssueProposal | UpdateProposal, matched: Mapping[str, str]
+) -> IssueProposal | UpdateProposal:
+    if isinstance(draft, IssueProposal):
+        return draft.model_copy(
+            update={"assignee_reasons": _with_matched(draft.assignee_reasons, matched)}
+        )
+    changes = draft.changes.model_copy(
+        update={"assignee_reasons": _with_matched(draft.changes.assignee_reasons, matched)}
+    )
+    return draft.model_copy(update={"changes": changes})
+
+
 def _leave_off(
     draft: IssueProposal | UpdateProposal, left: Sequence[str]
 ) -> IssueProposal | UpdateProposal:
@@ -1500,6 +1635,8 @@ def write_tools(
     mentions: Mentions | None = None,
     boards: BoardCatalog | None = None,
     files: FileSlack | None = None,
+    texts: Texts | None = None,
+    names: NamesOf | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
     tools = WriteTools(
@@ -1512,6 +1649,8 @@ def write_tools(
         docs=docs,
         authors=authors,
         mentions=mentions,
+        texts=texts,
+        names=names,
         boards=boards,
         files=files,
     )
@@ -1521,6 +1660,7 @@ def write_tools(
         ("revise_proposal", ReviseProposalArgs, DRAFTING),
         ("link_message", LinkMessageArgs, DRAFTING),
         ("ask_channel", AskChannelArgs, DRAFTING),
+        ("point_to_help", PointToHelpArgs, DRAFTING),
         ("answer", AnswerArgs, ANSWERING),
         ("record_result", RecordResultArgs, EXECUTION),
     )

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from jotflow.models import AssigneeReason, IssueProposal, MessageRef, ProposalRecord
-from jotflow.orchestrator.card_edits import _with_assignees
+from jotflow.orchestrator.card_edits import with_assignees
 from jotflow.orchestrator.cards import CardContext, render_card
 from jotflow.policy import parse_policy
 from jotflow.store import MemoryStore
@@ -230,13 +230,13 @@ def test_a_card_edit_keeps_reasons_in_step() -> None:
         assignees=["acme-bob"],
         assignee_reasons=[AssigneeReason(login="acme-bob", why="volunteered", source_ts=REPLY)],
     )
-    added = _with_assignees(draft, ["acme-bob", "acme-kim"], added="acme-kim")
+    added = with_assignees(draft, ["acme-bob", "acme-kim"], added="acme-kim")
     assert isinstance(added, IssueProposal)
     assert [(r.login, r.why) for r in added.assignee_reasons] == [
         ("acme-bob", "volunteered"),
         ("acme-kim", "added_on_card"),
     ]
-    removed = _with_assignees(added, ["acme-kim"])
+    removed = with_assignees(added, ["acme-kim"])
     assert isinstance(removed, IssueProposal)
     assert [r.login for r in removed.assignee_reasons] == ["acme-kim"]
 
@@ -251,7 +251,7 @@ async def test_a_revision_keeps_a_reason_already_on_the_draft(
     first: Any = await tools.propose_issue(DRAFT, asked(topic_id, "acme-bob", "volunteered"))
     found = await store.get_proposal(first.proposal_id)
     assert found is not None
-    edited = _with_assignees(found.proposal, ["acme-bob", "acme-alice"], added="acme-alice")
+    edited = with_assignees(found.proposal, ["acme-bob", "acme-alice"], added="acme-alice")
     await store.edit_proposal(found.id, edited, by="U0ALICE", field="assign")
     current = await store.get_proposal(found.id)
     assert current is not None and isinstance(current.proposal, IssueProposal)
@@ -384,3 +384,141 @@ async def test_a_revision_leaves_an_unverified_nomination_off_too(
     assert result.revised and result.left_off_assignees == ["acme-alice"]
     after = await store.get_proposal(current.id)
     assert after is not None and after.proposal.assignees == ["acme-bob"]
+
+
+# named_in_text (#331): a name in words, checked by JotFlow against Slack's names
+
+
+class Texts:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    async def __call__(self, ref: MessageRef) -> str:
+        return self.text
+
+
+NAMES = {
+    "U0ALICE": ("Alice", "Alice Moreau"),
+    "U0BOB": ("Bob", None),
+    "U0OWNER": ("Olga", None),
+    "U0ALICE2": ("Alice", None),
+}
+
+
+async def names_of(user_id: str) -> Any:
+    from jotflow.name_match import Names
+
+    display, real = NAMES.get(user_id, (None, None))
+    return Names(display=display, real=real)
+
+
+async def named_tools(store: Any, clock: Any, text: str, people: list[str]) -> WriteTools:
+    import json
+
+    from jotflow.name_match import PACKET_PEOPLE
+    from jotflow.store.base import ToolCallRecord
+
+    await store.record_tool_call(
+        ToolCallRecord(
+            run_id="run-1",
+            tool=PACKET_PEOPLE,
+            args_hash="people",
+            channel_id=CH,
+            thread_ts=ROOT,
+            result_json=json.dumps(people),
+            called_at=clock(),
+        )
+    )
+    return WriteTools(
+        store,
+        POLICY,
+        Poster(),
+        clock=clock,
+        new_id=Ids(),
+        authors=Authors(),
+        mentions=Mentions(),
+        texts=Texts(text),
+        names=names_of,
+    )
+
+
+async def test_a_name_in_words_assigns_its_one_person(
+    tools: WriteTools, store: Any, clock: Any
+) -> None:
+    named = await named_tools(store, clock, "Assign to Alice please", ["U0ALICE", "U0BOB"])
+    topic_id = await new_topic(named)
+    result: Any = await named.propose_issue(
+        DRAFT, asked(topic_id, "acme-alice", "named_in_text", ts=ROOT)
+    )
+    assert result.left_off_assignees == []
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.assignees == ["acme-alice"]
+    (reason,) = record.proposal.assignee_reasons
+    assert (reason.why, reason.matched) == ("named_in_text", "Alice")
+    card = render_card(record, CardContext(channel=POLICY.channel(CH)))
+    assert "named in the thread ('Alice')" in str(card.blocks)
+
+
+async def test_an_untrusted_link_is_left_off(tools: WriteTools, store: Any, clock: Any) -> None:
+    named = await named_tools(store, clock, "Bob should own this", ["U0BOB"])
+    topic_id = await new_topic(named)
+    result: Any = await named.propose_issue(
+        DRAFT, asked(topic_id, "acme-bob", "named_in_text", ts=ROOT)
+    )
+    assert result.left_off_assignees == ["acme-bob"]
+
+
+@pytest.mark.parametrize(
+    ("text", "people", "why"),
+    [
+        ("Assign to Alice", ["U0BOB"], "not in the thread's people or the hints"),
+        ("Assign to Alice", ["U0ALICE", "U0ALICE2"], "two Alices"),
+        ("assign to alice", ["U0ALICE"], "case-sensitive"),
+        ("Assign to Bob", ["U0ALICE", "U0BOB"], "the message names someone else"),
+    ],
+)
+async def test_a_name_that_isnt_one_persons_is_refused(
+    tools: WriteTools, store: Any, clock: Any, text: str, people: list[str], why: str
+) -> None:
+    named = await named_tools(store, clock, text, people)
+    topic_id = await new_topic(named)
+    with pytest.raises(ToolError, match="doesn't name acme-alice by a name only they have"):
+        await named.propose_issue(DRAFT, asked(topic_id, "acme-alice", "named_in_text", ts=ROOT))
+
+
+async def test_an_owner_hint_is_reachable_by_name(
+    tools: WriteTools, store: Any, clock: Any
+) -> None:
+    named = await named_tools(store, clock, "Olga owns the web app", [])
+    topic_id = await new_topic(named)
+    result: Any = await named.propose_issue(
+        DRAFT, asked(topic_id, "acme-owner", "named_in_text", ts=ROOT)
+    )
+    record = await store.get_proposal(result.proposal_id)
+    assert record is not None and record.proposal.assignee_reasons[0].matched == "Olga"
+
+
+async def test_without_slack_lookups_a_name_in_words_is_refused(tools: WriteTools) -> None:
+    topic_id = await new_topic(tools)
+    with pytest.raises(ToolError, match="named_in_text isn't available"):
+        await tools.propose_issue(DRAFT, asked(topic_id, "acme-alice", "named_in_text", ts=ROOT))
+
+
+def test_only_named_in_text_carries_a_matched_name() -> None:
+    with pytest.raises(ValueError, match="only a named_in_text reason"):
+        AssigneeReason(login="acme-bob", why="volunteered", source_ts=REPLY, matched="Bob")
+
+
+def test_an_unset_matched_name_keeps_old_hashes() -> None:
+    reason = AssigneeReason(login="acme-bob", why="volunteered", source_ts=REPLY)
+    draft = IssueProposal(
+        repo="acme-co/web",
+        title="T",
+        body="B",
+        confidence=0.9,
+        assignees=["acme-bob"],
+        assignee_reasons=[reason],
+    )
+    from jotflow.store.hashing import canonical_json
+
+    assert '"matched"' not in canonical_json(draft, hashed=True)

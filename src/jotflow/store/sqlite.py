@@ -53,6 +53,7 @@ from jotflow.store.base import (
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
     REVISED_FIELDS,
+    SELF_ADD_RUN,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -345,7 +346,7 @@ class SqliteStore:
 
         A person's decision that undoes the agent's split can leave an extra topic
         with nothing to draft from. Its pending drafts are dropped, marked so the
-        card says why; anything approved or filed stays as it is.
+        card says why; anything approved or filed, and an Add me request, stays as it is.
         """
         left = await self._one(
             "SELECT 1 FROM message_refs WHERE topic_id = ?"
@@ -356,8 +357,8 @@ class SqliteStore:
             return []
         rows = await self._all(
             "SELECT id, draft_json FROM proposals WHERE topic_id = ? AND state = 'pending'"
-            " ORDER BY id",
-            (topic_id,),
+            " AND run_id != ? ORDER BY id",
+            (topic_id, SELF_ADD_RUN),
         )
         for row in rows:
             await self._db.execute(
@@ -718,8 +719,8 @@ class SqliteStore:
                 for row in await self._all(
                     "SELECT id, topic_id, draft_json FROM proposals"
                     " WHERE channel_id = ? AND thread_ts = ? AND state = 'pending' AND id != ?"
-                    " ORDER BY id",
-                    (channel_id, thread_ts, keep_id),
+                    " AND run_id != ? ORDER BY id",
+                    (channel_id, thread_ts, keep_id, SELF_ADD_RUN),
                 )
                 if row["topic_id"] not in spared
             ]
@@ -1059,6 +1060,15 @@ class SqliteStore:
             row["github_id"],
             "admin" if row["linked_by"] == "admin" else "self",
         )
+
+    async def count_self_adds(self, slack_user_id: str, since: datetime) -> int:
+        row = await self._one(
+            "SELECT COUNT(*) AS n FROM proposals p JOIN proposal_participants pp"
+            " ON pp.proposal_id = p.id WHERE p.run_id = ? AND pp.slack_user_id = ?"
+            " AND p.created_at >= ?",
+            (SELF_ADD_RUN, slack_user_id, to_text(since)),
+        )
+        return int(row["n"]) if row is not None else 0
 
     async def link_identity(self, slack_user_id: str, github_login: str) -> IdentityLink:
         check_id(slack_user_id, "Slack user id")
@@ -1582,6 +1592,47 @@ class SqliteStore:
             )
         return frozenset(row["topic_id"] for row in rows)
 
+    async def set_summary_items(
+        self, channel_id: str, slot: datetime, topic_ids: Sequence[str]
+    ) -> None:
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM summary_items WHERE channel_id = ? AND slot <= ?",
+                (channel_id, to_text(slot)),
+            )
+            await self._db.executemany(
+                "INSERT INTO summary_items (channel_id, slot, position, topic_id)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    (channel_id, to_text(slot), number, topic_id)
+                    for number, topic_id in enumerate(topic_ids, start=1)
+                ],
+            )
+
+    async def summary_items(self, channel_id: str, slot: datetime) -> list[str]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT topic_id FROM summary_items WHERE channel_id = ? AND slot = ?"
+                " ORDER BY position",
+                (channel_id, to_text(slot)),
+            )
+        return [row["topic_id"] for row in rows]
+
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        async with self._lock:
+            row = await self._one(
+                "SELECT 1 FROM summaries WHERE channel_id = ? AND ts = ?", (channel_id, ts)
+            )
+        return row is not None
+
+    async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT * FROM summaries WHERE channel_id = ? AND ts = ? AND status = 'posted'",
+                (channel_id, ts),
+            )
+        return None if row is None else self._summary(row)
+
     @staticmethod
     def _deferral(row: aiosqlite.Row) -> SummaryDeferral:
         return SummaryDeferral(
@@ -1999,6 +2050,15 @@ class SqliteStore:
                 "SELECT count(*) AS n FROM tool_calls WHERE channel_id = ? AND thread_ts IS ?"
                 " AND tool = ? AND called_at >= ?",
                 (channel_id, thread_ts, tool, to_text(since)),
+            )
+        return int(row["n"]) if row is not None else 0
+
+    async def count_run_calls(self, run_id: str, tool: str, *, since: datetime) -> int:
+        async with self._lock:
+            row = await self._one(
+                "SELECT count(*) AS n FROM tool_calls WHERE run_id = ? AND tool = ?"
+                " AND called_at >= ?",
+                (run_id, tool, to_text(since)),
             )
         return int(row["n"]) if row is not None else 0
 

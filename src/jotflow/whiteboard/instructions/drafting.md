@@ -32,6 +32,9 @@ Classify every message in `thread.messages` that has no `topic_id` and is not
 - `chatter`: greetings, thanks, lunch, logistics, jokes, or anything not
   about work the team could track.
 
+A `from_jotflow` message with `change_request_by` is that person's Request
+Changes note on the pending draft: don't classify it. Revise with it (step 6).
+
 Replies usually belong to their thread's topic. A message that already has a
 `topic_id` was placed by a person or by `re:`; leave it. Chatter never yields
 a proposal.
@@ -60,6 +63,10 @@ topic it's about, or mark it chatter, never start a topic from it, and don't
 contradict JotFlow's answer in the thread. If it asks for a change to tracked
 work, it's a follow-up (step 6).
 
+A message about JotFlow itself, such as feedback on it or how to use it, is
+chatter, never a topic, even when it names the bot without `ask:` or a
+mention. Call `point_to_help` on it; JotFlow replies once a thread.
+
 ## 3. Hints
 
 A message's `hint` is the keyword its author typed: `idea` or `bug` suggests
@@ -69,7 +76,9 @@ overrule it, set `hint_overruled` on the proposal to a one-line reason.
 ## 4. Choose the repo
 
 Pick the repo from `channel.repos` whose `description` fits the work, never
-one that is not listed. If `channel.triage_guide` is set, the team wrote it:
+one that is not listed. If the poster names one outright, by owner/name,
+`nickname` or one of its `aliases`, use it without asking; ask only when the
+name fits more than one. If `channel.triage_guide` is set, the team wrote it:
 choose the repo and boards by it, within those lists and these rules. If
 two repos fit and the choice matters, ask (step 8) instead of guessing.
 `scope_total` above the repos shown means more are in scope: if none shown
@@ -110,7 +119,8 @@ adding to or correcting its `topic_id`.
 
 - The topic has `pending`: call `revise_proposal` with its `proposal_id`
   and `revision`, the whole revised draft, and the new messages as
-  `sources`. Keep what they don't change. If you get `current` back, revise
+  `sources`, a change request among them. Do what a change request asks,
+  even when it changes the kind of work. Keep what they don't change. If you get `current` back, revise
   once more on top of it. Never propose again for it.
 - The topic has `issue_proposed` but no `pending`: link the message and don't
   propose again.
@@ -169,9 +179,12 @@ For each new topic that is real work, call `propose_issue` once:
   people's names and the channel.
 - `labels`: only labels that exist on the repo; check with `list_label`. If
   the repo has a `labels` list in `channel.repos`, choose only from it. Never
-  invent a label. Leave labels empty when none fits.
+  invent a label. Leave labels empty when none fits. If a message states a
+  priority in the repo's `priority_labels`, such as P0, add exactly that label.
+  Never infer a priority nobody stated.
 - `boards`: only from `channel.boards`, by their descriptions and the
-  guide; up to 3, each with a one-line `reason`. None when none fits.
+  guide; up to 3, each with a one-line `reason`. None when none fits. Propose
+  a board the poster names, by nickname or plainly by its description.
 - `attachments`: up to 3 `file_id`s of `files` that have `text`, only when the
   issue should carry that file, such as the document it's about. JotFlow
   copies the text in as a code block; don't paste it into the body.
@@ -189,7 +202,9 @@ thread calls for, in the same short headed sections when there is a lot.
   are not people.
 - Assign only a `github_login` in `people` or `owner_hints`, with one
   `assignee_reasons` entry each: `volunteered` ("add me"; their message is
-  `source_ts`), `named_owner` (a message @-mentions them as the owner), or
+  `source_ts`), `named_owner` (a message @-mentions them as the owner),
+  `named_in_text` (a message names them as the owner in words, "assign to
+  Sam", and they're in `people` or `owner_hints`; if two could match, ask), or
   `owner_hint` (only when the idea plainly falls to that repo). A mention
   alone never makes someone an assignee. If unsure, assign nobody.
 
@@ -199,6 +214,9 @@ Use `ask_channel` for one short, neutral question in the thread:
 
 - When you are unsure which topic or repo something belongs to, or whether it
   duplicates an issue: confidence below 0.6. Ask instead of proposing.
+- When a reply to your repo question names none of `channel.repos`, ask once
+  more, listing their nicknames. After a second vague answer, propose nothing.
+  Never guess a repo from a vague answer.
 - When the proposal is clear but who should own it is unclear and matters,
   for example people were mentioned but nobody took it: propose, then ask once
   who should own it.

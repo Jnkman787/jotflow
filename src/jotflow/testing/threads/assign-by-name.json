@@ -1,0 +1,238 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "assign-by-name",
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        },
+        {
+          "number": 42,
+          "title": "Export the dashboard table as CSV",
+          "state": "open",
+          "body": "Finance needs a monthly CSV of the dashboard table.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "description": "Carol reports a bug and writes \"Assign to Bob\", without an @-mention. Bob replied in the thread, so he's in the packet's people, and his link was made by an admin. JotFlow finds exactly one person named Bob, so the proposal assigns acme-bob as named_in_text, and the card shows the matched name (#331).",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob",
+      "admin_linked": true
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792330000.000100",
+      "user": "U0CAROL",
+      "text": "The CSV export drops the last row of every report table. Assign to Bob, he wrote the exporter."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792330300.000100",
+      "user": "U0BOB",
+      "text": "Yes, that's mine, I'll take a look.",
+      "thread_ts": "1792330000.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792330000.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792330000.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "csv-row",
+          "title": "CSV export drops the last row"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792330300.000100",
+              "thread_ts": "1792330000.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:csv-row"
+          }
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:csv-row",
+            "repo": "acme-co/web",
+            "title": "CSV export drops the last row",
+            "body": "## Problem\nThe CSV export leaves out the last row of every report table.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Check the exporter's loop bounds.\n2. Add a test with a one-row table.\n\n## Acceptance\n- [ ] Every exported CSV ends with the table's last row\n",
+            "labels": [
+              "bug"
+            ],
+            "assignees": [
+              "acme-bob"
+            ],
+            "assignee_reasons": [
+              {
+                "login": "acme-bob",
+                "why": "named_in_text",
+                "source_ts": "1792330000.000100"
+              }
+            ],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792330000.000100"
+              }
+            ],
+            "confidence": 0.85
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "summary": "One topic and one create_issue proposal assigning acme-bob, named in words.",
+    "accepted": [
+      "1792330000.000100",
+      "1792330300.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:csv-row",
+        "messages": [
+          "1792330000.000100",
+          "1792330300.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/web",
+        "topic": "key:csv-row",
+        "assignees": [
+          "acme-bob"
+        ]
+      }
+    ]
+  }
+}

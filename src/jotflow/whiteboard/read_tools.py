@@ -60,6 +60,7 @@ from jotflow.models import (
     TopicSummary,
     UntrustedText,
 )
+from jotflow.name_match import PACKET_PEOPLE
 from jotflow.orchestrator.help import help_text
 from jotflow.orchestrator.slack_files import (
     LEFT_OUT,
@@ -228,6 +229,13 @@ class ThreadMessage(BaseModel):
         default=False,
         description="True for a person's question to JotFlow: ask:, or a mention of JotFlow",
     )
+    change_request_by: str | None = Field(
+        default=None,
+        description=(
+            "On JotFlow's post of a person's Request Changes note: that person's Slack user "
+            "id. The note is their request to change the pending draft (#330)"
+        ),
+    )
     files: list[FileBrief] = Field(
         default_factory=list, description="Files attached to the message, at most 5 (#333)"
     )
@@ -277,10 +285,21 @@ class RepoBrief(BaseModel):
 
     repo: str = Field(description="owner/name")
     nickname: str
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="Other names for this repo (#331): a post naming one means this repo",
+    )
     description: str = Field(description="What the repo covers; choose the repo by this")
     labels: list[str] | None = Field(
         default=None,
         description="The only labels a proposal may use; null means any label the repo has",
+    )
+    priority_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Stated priorities, such as P0, and the label each means here (#332). Policy, "
+            "not Slack text"
+        ),
     )
     conventions: str | None = Field(
         default=None,
@@ -682,6 +701,20 @@ def read_tools(
                             called_at=clock(),
                         )
                     )
+        people = await _people(thread)
+        # Who a plain-text name may match (#331): this packet's people, by Slack id only.
+        with contextlib.suppress(ConflictError):
+            await store.record_tool_call(
+                ToolCallRecord(
+                    run_id=run.id,
+                    tool=PACKET_PEOPLE,
+                    args_hash="people",
+                    channel_id=grant.channel_id,
+                    thread_ts=run.thread_ts,
+                    result_json=json.dumps([person.user_id for person in people]),
+                    called_at=clock(),
+                )
+            )
         conversation = ConversationWork(
             notice=QUESTION_NOTICE if grant.kind is RunKind.QUESTION else DRAFTING_NOTICE,
             instructions=(
@@ -691,7 +724,7 @@ def read_tools(
             channel_id=grant.channel_id,
             channel=await _brief(grant.channel_id, thread),
             thread=thread,
-            people=await _people(thread),
+            people=people,
             topics=index,
             related=related,
             help=help_text() if grant.kind is RunKind.QUESTION else None,
@@ -749,8 +782,10 @@ def read_tools(
                 RepoBrief(
                     repo=r.repo,
                     nickname=r.nickname,
+                    aliases=list(r.aliases),
                     description=r.description,
                     labels=None if r.labels is None else list(r.labels),
+                    priority_labels=policy.channel(channel_id).priority_labels_for(r),
                     conventions=r.conventions,
                     title_pattern=r.title_pattern,
                     discovered=found.discovered,
@@ -840,39 +875,65 @@ def read_tools(
                 )
         return kept
 
-    async def _issues_for(record: ProposalRecord) -> IssuesPolicy:
-        """What [issues] adds to this write: what the approval locked (#306 follow-up),
-        less its label if GitHub said the repo doesn't have it. Only a definite no
-        drops it; a busy or missing runner keeps it, so the write stops as before."""
+    def _priority_labels(record: ProposalRecord) -> set[str]:
+        """The labels that stand for a stated priority in this repo now (#332), without case."""
+        try:
+            entry = catalog.repo(record.channel_id, record.proposal.repo)
+            mapped = policy.channel(record.channel_id).priority_labels_for(entry)
+        except (PolicyViolation, UnknownChannelError):
+            return set()
+        return {label.casefold() for label in mapped.values()}
+
+    async def _labels_for(record: ProposalRecord) -> tuple[ProposalRecord, IssuesPolicy]:
+        """What this write adds and keeps: the [issues] settings the approval locked (#306
+        follow-up), less any label GitHub said the repo doesn't have, among the [issues]
+        label and the draft's stated-priority labels (#332). Only a definite no drops one;
+        a busy or missing runner keeps it, so the write stops as before. Every other
+        label of the draft's is checked as always."""
         added = IssuesPolicy.from_snapshot(record.approved_issues, policy.issues)
         draft = record.proposal
-        label = added.label
-        if label is None or not isinstance(draft, IssueProposal):
-            return added
-        if label.casefold() in {own.casefold() for own in draft.labels}:
-            return added  # the draft's own, checked like the rest
-        if record.skipped_label is not None and record.skipped_label.casefold() == label.casefold():
-            return added.model_copy(update={"label": None})  # decided on an earlier try
+        if not isinstance(draft, IssueProposal):
+            return record, added
+        own = {label.casefold() for label in draft.labels}
+        optional: list[str] = []
+        if added.label is not None and added.label.casefold() not in own:
+            optional.append(added.label)
+        priority = _priority_labels(record)
+        optional += [label for label in draft.labels if label.casefold() in priority]
+        if not optional:
+            return record, added
+        earlier = record.skipped_label.split("\n") if record.skipped_label else []
+        before = {label.casefold() for label in earlier}
+        skipped = [label for label in optional if label.casefold() in before]
         checker = labels()
-        if checker is None:
-            return added
         owner, _, name = draft.repo.partition("/")
-        try:
-            exists = await checker.label_exists(owner, name, label)
-        except Exception as exc:
-            log.warning(
-                "proposal %s: couldn't check the [issues] label (%s); it stays in the write",
-                record.id,
-                type(exc).__name__,
-            )
-            return added
-        if exists:
-            return added
-        await store.set_skipped_label(record.id, label)
-        log.warning(
-            "proposal %s: %s has no [issues] label; filing without it", record.id, draft.repo
-        )
-        return added.model_copy(update={"label": None})
+        for label in optional:
+            if label in skipped or checker is None:
+                continue
+            try:
+                exists = await checker.label_exists(owner, name, label)
+            except Exception as exc:
+                log.warning(
+                    "proposal %s: couldn't check a label (%s); it stays in the write",
+                    record.id,
+                    type(exc).__name__,
+                )
+                continue
+            if not exists:
+                skipped.append(label)
+                log.warning(
+                    "proposal %s: %s lacks a label; filing without it", record.id, draft.repo
+                )
+        if not skipped:
+            return record, added
+        if skipped != earlier:
+            await store.set_skipped_label(record.id, "\n".join(skipped))
+        gone = {label.casefold() for label in skipped}
+        if added.label is not None and added.label.casefold() in gone:
+            added = added.model_copy(update={"label": None})
+        kept = [label for label in draft.labels if label.casefold() not in gone]
+        trimmed = record.model_copy(update={"proposal": draft.model_copy(update={"labels": kept})})
+        return trimmed, added
 
     async def _execution(grant: Grant, run_proposal: str | None) -> ExecutionWork:
         if run_proposal != grant.proposal_id or grant.proposal_id is None:
@@ -890,8 +951,8 @@ def read_tools(
         # JotFlow decides exactly what is written; the agent checks, then copies.
         tail = await execution_footer(record, policy, attribution, store)
         section = attachments_section(await _still_attached(record))
-        added = await _issues_for(record)
-        checks, writes = plan_writes(record, tail, added, section)
+        planned, added = await _labels_for(record)
+        checks, writes = plan_writes(planned, tail, added, section)
         return ExecutionWork(
             run_id=grant.run_id,
             proposal_id=record.id,
