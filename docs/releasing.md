@@ -49,7 +49,9 @@ A repository ruleset can stop anyone else from creating, moving, or deleting `v*
 
 ## Before the tag
 
-Make these changes in one pull request, `chore(release): 0.1.0`, through the normal review. Main is protected, so the tag must point at a commit already on main.
+**First, the integration pass.** List the release's features from the CHANGELOG. For each pair that shares a thread, a card, a store table or a guard, someone probes the two together, with a scenario test or a short script against the in-memory store. File each finding as an issue in the release's milestone. The pass ends when no finding is open. Each feature's own tests don't cover this: in 0.5.0, this pass found eleven bugs that unit tests at 94% coverage had missed.
+
+Then make these changes in one pull request, `chore(release): 0.1.0`, through the normal review. Main is protected, so the tag must point at a commit already on main.
 
 1. **The version**, in three places that must agree:
    - `version` in `pyproject.toml`

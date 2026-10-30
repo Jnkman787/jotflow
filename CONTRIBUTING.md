@@ -48,6 +48,24 @@ Only the maintainer cuts releases. [docs/releasing.md](docs/releasing.md) is the
 - Do not commit secrets, tokens, workspace identifiers, local databases, or agent CLI local settings.
 - Never add a workflow that uses `pull_request_target` to check out fork code.
 
+## Batches of features
+
+Features built in parallel, each reviewed in its own pull request, can pass every test of their own and still break where they meet. The 0.5.0 release built about fifteen at once, and a late audit found eleven bugs where two of them met in one thread. So when several features are in flight:
+
+- **Each plan names the features it meets.** Its "Features it meets" section lists the earlier and in-flight features that share its thread, card, store table or guard.
+- **Each pull request tests where they meet.** A pull request that touches drafting, cards or the store extends a scenario fixture (#380). Where it fits, it also adds an invariant to the stateful tests (#381).
+- **The second one says how they combine.** When two in-flight pull requests touch the same rule or table, the one that merges second states in its description how it combines with the first, and tests the two together.
+- **An integration pass comes before the release.** It is in [docs/releasing.md](docs/releasing.md), under "Before the tag".
+
+## Reviewing a pull request
+
+Besides a green `make check`, a reviewer asks:
+
+- Does it keep the principles below?
+- Does its description match the change, and link its issue with `Fixes` or `Refs`?
+- Are its user-facing changes in the CHANGELOG and the docs?
+- Which other feature meets this one, and is the combination tested?
+
 ## Principles that are not up for debate
 
 Contributions that violate these will not be merged:
