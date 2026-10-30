@@ -510,7 +510,11 @@ class MemoryStore:
         return [r.model_copy(deep=True) for r in due[:limit]]
 
     async def mark_card_shown(
-        self, proposal_id: str, revision: int, issues: str | None = None
+        self,
+        proposal_id: str,
+        revision: int,
+        issues: str | None = None,
+        credits: str | None = None,
     ) -> None:
         async with self._lock:
             record = self._proposals.get(proposal_id)
@@ -520,6 +524,9 @@ class MemoryStore:
             update: dict[str, object] = {"card_revision": shown}
             if issues is not None:
                 update["card_issues"] = issues
+            approvable = record.state in (ProposalState.PENDING, ProposalState.FAILED)
+            if credits is not None and approvable:
+                update["card_credits"] = credits
             self._proposals[proposal_id] = record.model_copy(update=update)
 
     async def set_skipped_label(self, proposal_id: str, label: str) -> None:

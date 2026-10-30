@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,6 +33,9 @@ def policy(links: str = "") -> Any:
     return parse_policy(POLICY.format(links=links))
 
 
+EVERYONE = ["U0SAM", "U0ALEX", "U0BOB", "U0KIM", "U0OUTSIDE", "U0CHAT"]
+
+
 def record(*sources: MessageRef) -> ProposalRecord:
     return ProposalRecord(
         id="p1",
@@ -44,6 +48,9 @@ def record(*sources: MessageRef) -> ProposalRecord:
         ),
         participants=["U0ALEX", "U0BOB", "U0SAM"],
         created_at=datetime(2026, 10, 19, tzinfo=UTC),
+        # The approved card showed everyone these tests know, so the footer's own
+        # rules decide who's named; the lock is tested on its own (#396).
+        card_credits=json.dumps(EVERYONE),
     )
 
 
