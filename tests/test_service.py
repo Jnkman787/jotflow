@@ -41,6 +41,19 @@ from tests.test_thread_notice import FakeThreadSlack
 IDENTITY = BotIdentity(user_id="U0BOT", bot_id="B0BOT")
 
 
+class OfflineClient(AsyncWebClient):
+    """Slack's client, offline: auth.test, which the credited names' workspace needs
+    (#396), is answered here, and any other call fails as an unreachable Slack would.
+    No test reaches slack.com (#406)."""
+
+    async def auth_test(self, **kwargs: Any) -> Any:
+        return {"ok": True, "team_id": "T0OURS", "url": "https://acme-co.slack.com/"}
+
+    async def api_call(self, api_method: str, **kwargs: Any) -> Any:
+        # Every other method fails as an unreachable Slack would, without a socket.
+        raise ConnectionError(f"no Slack in tests: {api_method}")
+
+
 def policy(*, preset: str | None = "claude-code", debounce: int = 1) -> Policy:
     agent: dict[str, Any] = {"max_concurrent_runs": 2}
     if preset is not None:
@@ -124,7 +137,7 @@ class Rig:
         self.orchestrator = Orchestrator(
             settings(**overrides),
             policy(preset=preset if runs else None),
-            AsyncWebClient(token="xoxb-test"),
+            OfflineClient(token="xoxb-test"),
             IDENTITY,
             make_server=self._server,
             open_store=self._open,
@@ -359,7 +372,7 @@ async def test_an_execution_run_end_to_end_records_only_the_approved_repo(
     orchestrator = Orchestrator(
         settings(mcp_port=port),
         policy(preset="command"),
-        AsyncWebClient(token="xoxb-test"),
+        OfflineClient(token="xoxb-test"),
         IDENTITY,
         make_server=make_mcp_server,
         open_store=opened,
@@ -657,7 +670,7 @@ async def _bolt_app(rig: Rig) -> Any:
     from jotflow.orchestrator.slack import register_handlers
 
     app = AsyncApp(
-        client=AsyncWebClient(token="xoxb-test"),
+        client=OfflineClient(token="xoxb-test"),
         authorize=_authorize,
         request_verification_enabled=False,
         process_before_response=True,
@@ -1310,7 +1323,7 @@ async def test_a_scope_is_listed_through_the_drafting_runner_at_start() -> None:
     rig.orchestrator = Orchestrator(
         settings(),
         scoped,
-        AsyncWebClient(token="xoxb-test"),
+        OfflineClient(token="xoxb-test"),
         IDENTITY,
         make_server=rig._server,
         open_store=rig._open,
@@ -1344,7 +1357,7 @@ async def test_with_runs_off_a_scope_finds_nothing_and_says_why(
     orchestrator = Orchestrator(
         settings(),
         scoped.model_copy(update={"agent": scoped.agent.model_copy(update={"preset": None})}),
-        AsyncWebClient(token="xoxb-test"),
+        OfflineClient(token="xoxb-test"),
         IDENTITY,
         make_server=rig._server,
         open_store=rig._open,
