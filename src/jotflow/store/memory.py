@@ -328,7 +328,11 @@ class MemoryStore:
     # Proposals
 
     async def add_proposal(
-        self, record: ProposalRecord, *, sources_on_topic: bool = False
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
     ) -> ProposalRecord:
         check_new_proposal(record)
         async with self._lock:
@@ -344,7 +348,7 @@ class MemoryStore:
                 if sources_on_topic:
                     sources = record.proposal.sources
                     links = {r.ts: self._messages.get((record.channel_id, r.ts)) for r in sources}
-                    check_sources_on_topic(topic_id, sources, links)
+                    check_sources_on_topic(topic_id, sources, links, requests_on_topic)
             stored = record.model_copy(
                 update={"participants": sorted(set(record.participants))}, deep=True
             )

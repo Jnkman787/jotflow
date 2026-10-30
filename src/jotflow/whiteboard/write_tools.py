@@ -1112,7 +1112,13 @@ class WriteTools:
             created_at=self._clock(),
         )
         try:
-            stored = await self._store.add_proposal(record, sources_on_topic=True)
+            # A change request the proposal cites passed _check_cited_requests: it's on
+            # this topic's card, though no link places JotFlow's own message (#375).
+            made_on = await self._made_on(grant)
+            requests = {s.ts for s in proposal.sources if s.ts in made_on}
+            stored = await self._store.add_proposal(
+                record, sources_on_topic=True, requests_on_topic=requests
+            )
         except SourceOffTopicError as refused:  # #394, #395: its fixed reason
             raise ToolError(str(refused)) from None
         except ConflictError:

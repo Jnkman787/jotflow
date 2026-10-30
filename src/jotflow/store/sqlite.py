@@ -630,7 +630,11 @@ class SqliteStore:
         return None if row is None else await self._proposal(row)
 
     async def add_proposal(
-        self, record: ProposalRecord, *, sources_on_topic: bool = False
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
     ) -> ProposalRecord:
         check_new_proposal(record)
         draft = record.proposal
@@ -653,7 +657,7 @@ class SqliteStore:
                             (record.channel_id, source.ts),
                         )
                         links[source.ts] = None if row is None else await self._linked(row)
-                    check_sources_on_topic(draft.topic_id, draft.sources, links)
+                    check_sources_on_topic(draft.topic_id, draft.sources, links, requests_on_topic)
             now = to_text(self._clock())
             await self._db.execute(
                 """
