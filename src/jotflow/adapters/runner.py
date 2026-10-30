@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 import httpx2
@@ -73,8 +73,9 @@ from jotflow.adapters.presets import (
 )
 from jotflow.models import RunKind, is_bare_repo_name, is_owner_name
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
-from jotflow.policy import label_lookup_problem
+from jotflow.policy import is_board_marker, label_lookup_problem
 from jotflow.store.base import DEFAULT_RUN_TIMEOUTS
+from jotflow.text import unsafe_text_problem
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, MAX_TOKEN_TTL_SECONDS, TOKEN_PREFIX
 
 log = logging.getLogger("jotflow.runner")
@@ -153,6 +154,43 @@ class RunState(StrEnum):
     TIMED_OUT = "timed_out"
     KILLED = "killed"
     FAILED = "failed"
+
+
+class BoardFindRequest(BaseModel):
+    """JotFlow's request to find one organisation's boards in a channel's scope
+    (#309 PR 2). The whole scope rides along, so the runner filters and an excluded
+    board never leaves it. Not a query string: RunnerGate refuses those."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    owner: str = Field(min_length=1, max_length=39)
+    numbers: list[Annotated[int, Field(ge=1, le=10**9)]] = Field(default=[], max_length=10)
+    marker: str | None = Field(default=None, max_length=40)
+    creator_ids: list[Annotated[int, Field(ge=1)]] = Field(default=[], max_length=50)
+    exclude: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        default=[], max_length=20
+    )
+
+    @field_validator("owner")
+    @classmethod
+    def _owner(cls, value: str) -> str:
+        if not is_owner_name(value):
+            raise ValueError("not a GitHub owner")
+        return value
+
+    @field_validator("marker")
+    @classmethod
+    def _marker(cls, value: str | None) -> str | None:
+        if value is not None and not is_board_marker(value):
+            raise ValueError("not a board marker")
+        return value
+
+    @field_validator("exclude")
+    @classmethod
+    def _exclude(cls, value: list[str]) -> list[str]:
+        if any(unsafe_text_problem(glob) for glob in value):
+            raise ValueError("a title glob must be plain text")
+        return value
 
 
 class BoardAddRequest(BaseModel):
@@ -1009,6 +1047,41 @@ def build_runner_app(
             return JSONResponse({"error": "GitHub could not be asked"}, status_code=502)
         return JSONResponse({"can_update": ok})
 
+    async def board_find(request: Request) -> Response:
+        # The drafting runner's read token only (#309 PR 2): it reads, never adds.
+        if config.read_token is None or config.serves_execution:
+            return JSONResponse({"error": "board discovery is the drafting runner's"}, 404)
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_BODY_BYTES:
+                return JSONResponse({"error": "request body is too large"}, status_code=413)
+        try:
+            asked = BoardFindRequest.model_validate_json(body)
+        except ValidationError:
+            return JSONResponse({"error": "expected a board scope"}, status_code=400)
+        try:
+            found = await github_projects.find_boards(
+                asked.owner,
+                config.read_token,
+                numbers=frozenset(asked.numbers),
+                marker=asked.marker,
+                creator_ids=frozenset(asked.creator_ids),
+                exclude=tuple(asked.exclude),
+                http=http,
+                url=graphql,
+            )
+        except github_repos.RateLimited:
+            return JSONResponse({"error": "GitHub's rate limit"}, status_code=429)
+        except github_projects.Denied:
+            return JSONResponse({"error": "the read token can't list boards"}, status_code=403)
+        except (github_repos.GithubError, httpx2.HTTPError) as exc:
+            log.warning("board discovery for %s failed: %s", asked.owner, type(exc).__name__)
+            return JSONResponse({"error": "GitHub could not list the boards"}, status_code=502)
+        # Counts only: a board's title is GitHub's text, and never logged.
+        log.info("found %d boards in scope for %s", len(found), asked.owner)
+        return JSONResponse({"boards": [b.model_dump() for b in found]})
+
     async def board_add(request: Request) -> Response:
         if config.write_token is None:
             return JSONResponse({"error": "boards are the execution runner's"}, 404)
@@ -1176,6 +1249,7 @@ def build_runner_app(
             Route("/repos/{owner}", repos, methods=["GET"]),
             Route("/repos/{owner}/{name}/access", access, methods=["GET"]),
             Route("/boards/add", board_add, methods=["POST"]),
+            Route("/boards/find", board_find, methods=["POST"]),
             Route("/boards/{owner}/{number}/access", board_access, methods=["GET"]),
             Route("/repos/{owner}/{name}/issues/{number}", one_issue, methods=["GET"]),
             # Assigning by request (#305): who an account is, and where it may be assigned.

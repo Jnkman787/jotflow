@@ -636,3 +636,56 @@ async def test_a_retried_execution_records_a_left_out_file_once() -> None:
     await call(specs["get_work"], grant)
     await call(specs["get_work"], grant)  # no ConflictError
     assert len(await store.tool_call_results("attachments:p1", (LEFT_OUT,))) == 1
+
+
+async def test_a_thread_makes_at_most_ten_file_reads_however_small() -> None:
+    # CodeRabbit on #346: empty files cost a download each, so reads are capped too.
+    ids = [f"F0E{i:02d}" for i in range(12)]
+    reader = Files({k: b"" for k in ids})
+    files = [raw_file(k, size=0) for k in ids]
+    thread = await packet("text", files, reader)
+    briefs = thread.messages[0].files[:5]  # five files a message are listed
+    assert all(b.not_read is None or b.not_read != slack_files.READ_LIMIT for b in briefs)
+    assert len(reader.fetched) <= slack_files.MAX_THREAD_READS
+
+
+async def test_reads_past_the_cap_get_the_read_limit_reason() -> None:
+    from jotflow.orchestrator.packet import SlackWorkSource
+
+    ids = [f"F0E{i:02d}" for i in range(12)]
+    reader = Files({k: b"x" for k in ids})
+
+    class Many:
+        async def replies(self, channel: str, ts: str, *, cursor: Any, limit: int) -> Any:
+            messages = [
+                {
+                    "ts": f"1792310400.00010{n}",
+                    "text": "files",
+                    "user": "U0SAM",
+                    "thread_ts": ROOT,
+                    "files": [raw_file(k, size=1) for k in ids[n * 4 : n * 4 + 4]],
+                }
+                for n in range(3)
+            ]
+            messages[0]["ts"] = ROOT
+            return {"messages": messages, "has_more": False}
+
+        async def user(self, user_id: str) -> Any:
+            return {"user": {"profile": {"display_name": "Sam"}}}
+
+    source = SlackWorkSource(Many(), MemoryStore(), files=reader, attachments_for=lambda c: "text")
+    thread = await source.thread(CH, ROOT)
+    reasons = [f.not_read for m in thread.messages for f in m.files]
+    assert len(reader.fetched) == slack_files.MAX_THREAD_READS
+    assert reasons.count(slack_files.READ_LIMIT) == 2
+
+
+async def test_a_revision_must_keep_the_body_and_its_files_under_githubs_limit() -> None:
+    from jotflow.whiteboard.write_tools import ATTACH_TOO_LONG, _check_body_with_files
+
+    attached = attached_record().proposal.attached
+    _check_body_with_files("short", attached)
+    with pytest.raises(ToolError, match="length limit") as raised:
+        _check_body_with_files("x" * 60_000, attached)
+    assert str(raised.value.reason) == ATTACH_TOO_LONG
+    _check_body_with_files("x" * 70_000, [])  # no files: GitHub's own limit applies
