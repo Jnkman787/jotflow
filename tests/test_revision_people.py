@@ -204,6 +204,8 @@ async def test_the_agent_still_never_claims_a_card_add_in_a_revision(
 async def test_a_revision_never_unassigns_a_card_add_either(store: Store, clock: Clock) -> None:
     tools, grant, topic_id = await drafting(store, clock)
     await store.set_topic_issue(topic_id, "acme-co/web", 7)
+    # The follow-up is on the topic, as the agent links it first (#395).
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=ROOT), topic_id)
     made: Any = await tools.propose_update(
         grant,
         ProposeUpdateArgs.model_validate(

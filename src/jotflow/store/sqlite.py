@@ -93,6 +93,7 @@ from jotflow.store.base import (
     check_notice,
     check_revision,
     check_run_request,
+    check_sources_on_topic,
     cleared_draft,
     edited_draft,
     from_text,
@@ -319,7 +320,7 @@ class SqliteStore:
             )
         # A person's decision, or chatter, wins over the agent's split (#335); and the
         # first topic is never also an extra one.
-        dropped: list[str] = []
+        extra: list[str] = []
         if not self._split:
             pass
         elif by == "person" or topic_id is None:
@@ -328,46 +329,60 @@ class SqliteStore:
                 "DELETE FROM message_topics WHERE channel_id = ? AND ts = ?",
                 (ref.channel_id, ref.ts),
             )
-            # Every topic the split message leaves, its first one too (#374), drops
-            # its pending drafts once it has no messages.
-            first = existing["topic_id"] if existing is not None and extra else None
-            for other in dict.fromkeys([*extra, *([first] if first else [])]):
-                if other != topic_id:
-                    dropped += await self._drop_orphaned(other, now)
         else:
             await self._db.execute(
                 "DELETE FROM message_topics WHERE channel_id = ? AND ts = ? AND topic_id = ?",
                 (ref.channel_id, ref.ts, topic_id),
             )
+        # Every topic the message leaves, a split's or not, whoever decided (#374, #395),
+        # drops its pending drafts once it has no messages.
+        first = existing["topic_id"] if existing is not None else None
+        dropped: list[str] = []
+        for other in dict.fromkeys([*extra, *([first] if first else [])]):
+            if other != topic_id:
+                dropped += await self._drop_orphaned(other, now)
         row = await self._one(
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
         return dataclasses.replace(await self._linked(_found(row)), dropped=tuple(dropped))
 
+    async def _has_messages(self, topic_id: str) -> bool:
+        """Whether any message is on the topic, as its first or an extra one."""
+        if self._split:
+            row = await self._one(
+                "SELECT 1 FROM message_refs WHERE topic_id = ?"
+                " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
+                (topic_id, topic_id),
+            )
+        else:
+            row = await self._one(
+                "SELECT 1 FROM message_refs WHERE topic_id = ? LIMIT 1", (topic_id,)
+            )
+        return row is not None
+
     async def _drop_orphaned(self, topic_id: str, now: str) -> list[str]:
         """Supersede a topic's pending proposals once it has no messages left (#335).
 
-        A person's decision that undoes the agent's split can leave an extra topic
-        with nothing to draft from. Its pending drafts are dropped, marked so the
-        card says why; anything approved or filed, and an Add me request, stays as it is.
+        A decision that moves a topic's last message elsewhere, a person's or the
+        agent's, split or not (#395), leaves it nothing to draft from. Its pending
+        drafts are dropped, marked so the card says why; anything approved or filed,
+        and an Add me request, stays as it is.
         """
-        left = await self._one(
-            "SELECT 1 FROM message_refs WHERE topic_id = ?"
-            " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
-            (topic_id, topic_id),
-        )
-        if left is not None:
+        if await self._has_messages(topic_id):
             return []
         rows = await self._all(
             "SELECT id, draft_json FROM proposals WHERE topic_id = ? AND state = 'pending'"
             " AND run_id != ? ORDER BY id",
             (topic_id, SELF_ADD_RUN),
         )
+        # unsplit_at came with message_topics, in migration 23: an older schema has
+        # neither, and its card says only that a newer proposal replaced it.
+        mark = "unsplit_at = ?, " if self._split else ""
         for row in rows:
             await self._db.execute(
-                "UPDATE proposals SET state = 'superseded', unsplit_at = ?, updated_at = ?,"
+                f"UPDATE proposals SET state = 'superseded', {mark}updated_at = ?,"
                 " revision = revision + 1 WHERE id = ? AND state = 'pending'",
-                (now, now, row["id"]),
+                (*([now] if self._split else []), now, row["id"]),
             )
             await self._clear(row["id"], _PROPOSAL.validate_json(row["draft_json"]), now)
         return [row["id"] for row in rows]
@@ -604,7 +619,9 @@ class SqliteStore:
             created_at=from_text(row["created_at"]),
             card_issues=row["card_issues"],
             approved_issues=row["approved_issues"],
-            card_credits=row["card_credits"],
+            # Migration 24's column (#403): a store opened at an older migration, as the
+            # upgrade tests do, has none.
+            card_credits=row["card_credits"] if "card_credits" in row.keys() else None,  # noqa: SIM118
             skipped_label=row["skipped_label"],
             unsplit_at=from_text(row["unsplit_at"])
             if self._split and row["unsplit_at"] is not None
@@ -615,7 +632,13 @@ class SqliteStore:
         row = await self._one("SELECT * FROM proposals WHERE id = ?", (proposal_id,))
         return None if row is None else await self._proposal(row)
 
-    async def add_proposal(self, record: ProposalRecord) -> ProposalRecord:
+    async def add_proposal(
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
+    ) -> ProposalRecord:
         check_new_proposal(record)
         draft = record.proposal
         async with self._write():
@@ -629,6 +652,15 @@ class SqliteStore:
                     raise NotFoundError(f"no topic {draft.topic_id}")
                 if topic["channel_id"] != record.channel_id:
                     raise ConflictError("a proposal can only be for a topic in its own channel")
+                if sources_on_topic:
+                    links = {}
+                    for source in draft.sources:
+                        row = await self._one(
+                            "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?",
+                            (record.channel_id, source.ts),
+                        )
+                        links[source.ts] = None if row is None else await self._linked(row)
+                    check_sources_on_topic(draft.topic_id, draft.sources, links, requests_on_topic)
             now = to_text(self._clock())
             await self._db.execute(
                 """
@@ -770,14 +802,23 @@ class SqliteStore:
         return [row["id"] for row in rows]
 
     async def _clear(
-        self, proposal_id: str, draft: IssueProposal | UpdateProposal, now: str
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        now: str,
+        *,
+        bump: bool = False,
     ) -> None:
-        """Replace the stored draft with its cleared form, inside the caller's transaction."""
+        """Replace the stored draft with its cleared form, inside the caller's transaction.
+
+        A clear that comes with a state change rides on that change's revision, as the
+        memory store's does (#395). Only a clear on its own, ``bump``, raises it.
+        """
         await self._db.execute(
             "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?,"
-            " revision = revision + 1"
+            " revision = revision + ?"
             " WHERE id = ? AND draft_cleared_at IS NULL",
-            (canonical_json(cleared_draft(draft)), now, now, proposal_id),
+            (canonical_json(cleared_draft(draft)), now, now, int(bump), proposal_id),
         )
 
     async def _scrub_wal(self) -> None:
@@ -1015,7 +1056,7 @@ class SqliteStore:
                 raise NotFoundError(f"no proposal {proposal_id}")
             check_clearable(record)
             cleared = record.draft_cleared_at is None
-            await self._clear(proposal_id, record.proposal, to_text(self._clock()))
+            await self._clear(proposal_id, record.proposal, to_text(self._clock()), bump=True)
             updated = await self._get_proposal(proposal_id)
         if cleared:
             await self._scrub_wal()

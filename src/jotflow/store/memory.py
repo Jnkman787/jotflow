@@ -78,6 +78,7 @@ from jotflow.store.base import (
     check_notice,
     check_revision,
     check_run_request,
+    check_sources_on_topic,
     cleared_draft,
     edited_draft,
     plan_duplicate,
@@ -171,8 +172,8 @@ class MemoryStore:
         self._messages[key] = link
         if topic_id is not None:
             self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
-        # Every topic the split message leaves, its first one too (#374).
-        first = existing.topic_id if existing is not None and undone else None
+        # Every topic the message leaves, a split's or not, whoever decided (#374, #395).
+        first = existing.topic_id if existing is not None else None
         left = dict.fromkeys([*undone, *([first] if first else [])])
         dropped = [p for t in left if t != topic_id for p in self._drop_orphaned(t)]
         return replace(link, dropped=tuple(dropped))
@@ -326,7 +327,13 @@ class MemoryStore:
 
     # Proposals
 
-    async def add_proposal(self, record: ProposalRecord) -> ProposalRecord:
+    async def add_proposal(
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
+    ) -> ProposalRecord:
         check_new_proposal(record)
         async with self._lock:
             if record.id in self._proposals:
@@ -338,6 +345,10 @@ class MemoryStore:
                     raise NotFoundError(f"no topic {topic_id}")
                 if topic.topic.channel_id != record.channel_id:
                     raise ConflictError("a proposal can only be for a topic in its own channel")
+                if sources_on_topic:
+                    sources = record.proposal.sources
+                    links = {r.ts: self._messages.get((record.channel_id, r.ts)) for r in sources}
+                    check_sources_on_topic(topic_id, sources, links, requests_on_topic)
             stored = record.model_copy(
                 update={"participants": sorted(set(record.participants))}, deep=True
             )

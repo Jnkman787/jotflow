@@ -78,9 +78,7 @@ _PERMALINK = re.compile(
 )
 
 FAILED_LINE = "The write failed. The agent's reason is stored with the proposal."
-UNSPLIT_LINE = (
-    "Dropped. Someone put the message it came from in one topic, so this one has none left."
-)
+UNSPLIT_LINE = "Dropped. The messages it came from were moved off this topic, so it has none left."
 # The same drop when a person marked that message not an idea, as a skip does.
 UNSPLIT_SKIPPED_LINE = (
     "Dropped. Someone marked the message it came from as not an idea, so this one has none left."

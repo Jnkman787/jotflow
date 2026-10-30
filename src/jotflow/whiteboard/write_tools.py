@@ -77,6 +77,7 @@ from jotflow.store.base import (
     MAX_TOPICS_PER_MESSAGE,
     SELF_ADD_RUN,
     MessageLink,
+    SourceOffTopicError,
     StaleRevisionError,
     check_github_login,
     utc_now,
@@ -1111,8 +1112,18 @@ class WriteTools:
             created_at=self._clock(),
         )
         try:
-            stored = await self._store.add_proposal(record)
-        except (NotFoundError, ConflictError):
+            # A change request the proposal cites passed _check_cited_requests: it's on
+            # this topic's card, though no link places JotFlow's own message (#375).
+            made_on = await self._made_on(grant)
+            requests = {s.ts for s in proposal.sources if s.ts in made_on}
+            stored = await self._store.add_proposal(
+                record, sources_on_topic=True, requests_on_topic=requests
+            )
+        except SourceOffTopicError as refused:  # #394, #395: its fixed reason
+            raise ToolError(str(refused)) from None
+        except ConflictError:
+            raise ToolError(f"no topic {proposal.topic_id}") from None
+        except NotFoundError:
             raise ToolError(f"no topic {proposal.topic_id}") from None
         superseded = await self._store.supersede_pending(
             grant.channel_id, thread, keep_id=stored.id
@@ -1236,6 +1247,7 @@ class WriteTools:
                     "a verified or admin link. Ask in the thread who should own it instead"
                 )
             related, dropped = self._related(grant, args.related, own=(repo, args.issue_number))
+            sources = await self._sources(grant, args.sources)
             draft = UpdateProposal.model_validate(
                 {
                     **args.model_dump(exclude={"participants"}),

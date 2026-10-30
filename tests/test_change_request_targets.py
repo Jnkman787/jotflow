@@ -183,7 +183,9 @@ async def test_an_update_cannot_cite_another_topics_change_request(
     elsewhere = await other_topic(store)
     await store.set_topic_issue(elsewhere, "acme-co/web", 42)
     with pytest.raises(ToolError, match=f"is a change request for proposal {card} on another"):
-        await tools.propose_update(DRAFT, update(elsewhere))
+        await tools.propose_update(
+            DRAFT, update(elsewhere, sources=[{"channel_id": CH, "ts": REPLY}])
+        )
 
 
 async def test_a_new_proposal_on_the_cards_own_topic_may_cite_it(

@@ -448,7 +448,8 @@ def update(topic_id: str, **fields: Any) -> ProposeUpdateArgs:
         "repo": "acme-co/web",
         "issue_number": 42,
         "changes": {"comment": "Also apply the date filter.", "add_labels": ["BUG"]},
-        "sources": [{"channel_id": CH, "ts": REPLY}],
+        # The topic's own message, as new_topic links it: sources sit on the topic (#395).
+        "sources": [{"channel_id": CH, "ts": ROOT}],
         "confidence": 0.9,
     }
     base.update(fields)
@@ -1476,7 +1477,7 @@ async def test_propose_issue_takes_a_found_repo_and_refuses_the_rest(
     tools = await scoped_tools(store, poster, clock)
     topic_id = await new_topic(tools)
     found: Any = await tools.propose_issue(
-        DRAFT, issue(topic_id, repo="acme-co/svc-billing", sources=[])
+        DRAFT, issue(topic_id, repo="acme-co/svc-billing", sources=[{"channel_id": CH, "ts": ROOT}])
     )
     record = await store.get_proposal(found.proposal_id)
     assert record is not None and record.proposal.repo == "acme-co/svc-billing"
@@ -1500,9 +1501,7 @@ async def test_propose_update_works_on_a_found_repos_issue(
     tools = await scoped_tools(store, poster, clock)
     topic_id = await new_topic(tools)
     await store.set_topic_issue(topic_id, "acme-co/svc-billing", 42)
-    result: Any = await tools.propose_update(
-        DRAFT, update(topic_id, repo="acme-co/svc-billing", sources=[])
-    )
+    result: Any = await tools.propose_update(DRAFT, update(topic_id, repo="acme-co/svc-billing"))
     assert result.state is ProposalState.PENDING
 
 
@@ -1514,6 +1513,33 @@ async def test_propose_issue_refuses_an_excluded_repo_whatever_its_case(
         topic = await new_topic(tools)
         with pytest.raises(ToolError, match="is not one of channel"):
             await tools.propose_issue(DRAFT, issue(topic, repo=repo, title=repo, sources=[]))
+
+
+async def test_a_proposal_cites_only_its_own_topics_messages(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    """#394, #395: at least one source, and every one on the proposal's own topic, checked
+    in the store's insert. That covers a topic emptied by the run's own re-link, and a
+    topic that still has other messages but is cited from another topic's."""
+    first = await new_topic(tools)  # ROOT
+    await tools.link_message(
+        DRAFT, link(REPLY, decision="existing_topic", title=None, topic_id=first)
+    )
+    other: Any = await tools.link_message(DRAFT, link(title="Somewhere else"))  # ROOT moves
+    root = [{"channel_id": CH, "ts": ROOT}]
+    with pytest.raises(ToolError, match="cite at least one of the topic's messages"):
+        await tools.propose_issue(DRAFT, issue(first, sources=[]))
+    with pytest.raises(ToolError, match=f"message {ROOT} isn't on topic {first}"):
+        await tools.propose_issue(DRAFT, issue(first, sources=root))  # first still has REPLY
+    await store.set_topic_issue(first, "acme-co/web", 42)
+    for sources in ([], root):
+        with pytest.raises(ToolError, match=r"cite at least one|isn't on topic"):
+            await tools.propose_update(DRAFT, update(first, sources=sources))
+    assert await store.thread_proposals(CH, ROOT) == []
+    # On its own topic, each goes ahead.
+    reply = [{"channel_id": CH, "ts": REPLY}]
+    assert (await tools.propose_update(DRAFT, update(first, sources=reply))).proposal_id  # type: ignore[attr-defined]
+    assert (await tools.propose_issue(DRAFT, issue(other.topic_id, sources=root))).proposal_id  # type: ignore[attr-defined]
 
 
 async def test_every_drafting_write_needs_get_work_to_have_served_something(

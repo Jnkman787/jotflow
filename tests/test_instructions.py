@@ -339,6 +339,9 @@ DRAFTING_RULES = {
     ),
     "never ask if serious": "never ask whether an idea is serious",
     # 9. Stop
+    "sources are the topic's own messages (#394, #395)": (
+        "at least one, each linked to the proposal's topic. Link a message first, then cite it"
+    ),
     "stop, don't summarise": "Do not summarise",
     "nothing to draft: stop (#373)": (
         "If `thread.nothing_to_draft` is set, stop at once without calling another tool"
