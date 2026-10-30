@@ -183,6 +183,17 @@ class Refused(Exception):
     """The click is refused; the message is the fixed reply for the person."""
 
 
+def approved_issues(policy: Policy, repos: RepoCatalog, record: ProposalRecord) -> str:
+    """What approving ``record`` locks: today's [issues] settings, and which labels stand
+    for a stated priority in its repo (#332), so a later map change can't flip a skip."""
+    try:
+        entry = repos.repo(record.channel_id, record.proposal.repo)
+        mapped = list(policy.channel(record.channel_id).priority_labels_for(entry).values())
+    except (PolicyViolation, UnknownChannelError):
+        mapped = []
+    return policy.issues.approved_snapshot(mapped)
+
+
 class ApprovalHandler:
     def __init__(
         self,
@@ -515,7 +526,8 @@ class ApprovalHandler:
         if record.state not in (ProposalState.PENDING, ProposalState.FAILED):
             raise Refused(_already(record.state))
         await self._check_repo(record)
-        issues = await self._check_issues(record)
+        await self._check_issues(record)
+        issues = approved_issues(self._policy, self._repos, record)
         try:
             approved = await self._store.transition(
                 record.id,

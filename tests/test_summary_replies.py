@@ -260,7 +260,7 @@ async def test_a_reply_under_jotflows_own_post_without_a_row(store: Store) -> No
     assert rig.slack.told[-1][3] == m.OWN_POST_RE_SUMMARY
     idea_text = {**under, "text": "an idea", "ts": "1793000101.000100"}
     assert await rig.replies.on_unrecorded(idea_text) == "pointed"
-    assert rig.slack.told[-1][3] == m.OWN_POST_NEW_IDEAS
+    assert rig.slack.told[-1][3] == m.POST_IN_CHANNEL
     assert await rig.replies.on_unrecorded(idea_text) == "left"
     assert await rig.replies.on_unrecorded(idea_text, asked=True) == "left"
     rig.slack.people["U0EVE"] = Person("U0EVE", guest=True)
@@ -270,12 +270,10 @@ async def test_a_reply_under_jotflows_own_post_without_a_row(store: Store) -> No
 def test_replies_under_any_own_post_never_call_it_a_summary() -> None:
     # The help guide, a mode announcement or the live check's post may be the parent,
     # so the private replies there name no summary item or summary thread as the post.
-    for text in (m.OWN_POST_RE, m.OWN_POST_RE_SUMMARY, m.OWN_POST_NEW_IDEAS):
+    for text in (m.OWN_POST_RE, m.OWN_POST_RE_SUMMARY, m.POST_IN_CHANNEL):
         assert "summary's thread, re: takes" not in text
         assert "That summary" not in text
         assert "in the summary" not in text
-        assert "JotFlow's post" not in text
-    assert "this post" in m.OWN_POST_NEW_IDEAS
     assert "summary" not in m.OWN_POST_RE  # for a channel with no weekly summary
     assert "latest weekly summary's thread" in m.OWN_POST_RE_SUMMARY  # where re: N works
 

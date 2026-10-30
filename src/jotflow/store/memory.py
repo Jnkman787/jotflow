@@ -28,6 +28,9 @@ from jotflow.models import (
 )
 from jotflow.store.base import (
     ACTIVE_RUN_STATUSES,
+    ALSO_NOT_LINKED,
+    ALSO_PERSON,
+    ALSO_TOO_MANY,
     AUTO_APPROVER,
     BOUND_STATES,
     DEFAULT_RUN_TIMEOUTS,
@@ -35,6 +38,7 @@ from jotflow.store.base import (
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
     MAX_SUMMARY_ATTEMPTS,
+    MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
     SELF_ADD_RUN,
     SUMMARY_POSTING_STALE,
@@ -100,6 +104,8 @@ class MemoryStore:
         self._source = clock
         self._lock = asyncio.Lock()
         self._messages: dict[tuple[str, str], MessageLink] = {}
+        # A message's extra topics, beyond its first (#335).
+        self._also: dict[tuple[str, str], list[str]] = {}
         self._topics: dict[str, TopicRecord] = {}
         self._proposals: dict[str, ProposalRecord] = {}
         self._identities: dict[str, IdentityLink] = {}
@@ -132,8 +138,13 @@ class MemoryStore:
     # Slack message pointers
 
     def _with_messages(self, record: TopicRecord) -> TopicRecord:
+        topic_id = record.topic.id
         messages = sorted(
-            (link.ref for link in self._messages.values() if link.topic_id == record.topic.id),
+            (
+                link.ref
+                for key, link in self._messages.items()
+                if link.topic_id == topic_id or topic_id in self._also.get(key, ())
+            ),
             key=lambda ref: ref.ts,
         )
         return replace(record, topic=record.topic.model_copy(update={"messages": messages}))
@@ -146,11 +157,62 @@ class MemoryStore:
         if existing is not None and existing.linked_by == "person" and by == "agent":
             return existing
         now = self._clock()
-        link = MessageLink(ref, topic_id, topic_id is None, by, now)
+        # A person's decision, or chatter, wins over the agent's split (#335).
+        also = self._also.get(key, [])
+        undone = also if by == "person" or topic_id is None else []
+        if undone:
+            also = []
+        also = [t for t in also if t != topic_id]
+        if also:
+            self._also[key] = also
+        else:
+            self._also.pop(key, None)
+        link = MessageLink(ref, topic_id, topic_id is None, by, now, tuple(also))
         self._messages[key] = link
         if topic_id is not None:
             self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
-        return link
+        dropped = [p for t in undone if t != topic_id for p in self._drop_orphaned(t)]
+        return replace(link, dropped=tuple(dropped))
+
+    def _drop_orphaned(self, topic_id: str) -> list[str]:
+        """Supersede a topic's pending proposals once it has no messages left (#335)."""
+        if any(
+            link.topic_id == topic_id or topic_id in self._also.get(key, ())
+            for key, link in self._messages.items()
+        ):
+            return []
+        ids = sorted(
+            r.id
+            for r in self._proposals.values()
+            if r.proposal.topic_id == topic_id
+            and r.state is ProposalState.PENDING
+            and r.run_id != SELF_ADD_RUN
+        )
+        for proposal_id in ids:
+            record = self._proposals[proposal_id]
+            update = {
+                "state": ProposalState.SUPERSEDED,
+                "revision": record.revision + 1,
+                "unsplit_at": self._clock(),
+                **self._cleared(record),
+            }
+            self._proposals[proposal_id] = record.model_copy(update=update, deep=True)
+        return ids
+
+    def _split_siblings(self, proposal_id: str) -> set[str]:
+        """The topics that share a split message with this proposal's topic (#335)."""
+        record = self._proposals.get(proposal_id)
+        topic_id = None if record is None else record.proposal.topic_id
+        if topic_id is None:
+            return set()
+        siblings: set[str] = set()
+        for key, extra in self._also.items():
+            first = self._messages[key].topic_id
+            group = {first, *extra}
+            if topic_id in group:
+                siblings |= {t for t in group if t is not None}
+        siblings.discard(topic_id)
+        return siblings
 
     async def link_message(
         self, ref: MessageRef, topic_id: str, *, by: LinkSource = "agent"
@@ -169,6 +231,32 @@ class MemoryStore:
 
     async def get_message(self, channel_id: str, ts: str) -> MessageLink | None:
         return self._messages.get((channel_id, ts))
+
+    async def also_link(self, ref: MessageRef, topic_id: str) -> MessageLink:
+        async with self._lock:
+            topic = self._topics.get(topic_id)
+            if topic is None:
+                raise NotFoundError(f"no topic {topic_id}")
+            if topic.topic.channel_id != ref.channel_id:
+                raise ConflictError("a message can only join a topic in its own channel")
+            key = (ref.channel_id, ref.ts)
+            existing = self._messages.get(key)
+            if existing is None or existing.topic_id is None:
+                raise ConflictError(ALSO_NOT_LINKED)
+            if existing.linked_by == "person":
+                raise ConflictError(ALSO_PERSON)
+            also = list(self._also.get(key, []))
+            if topic_id == existing.topic_id or topic_id in also:
+                return existing
+            if 1 + len(also) >= MAX_TOPICS_PER_MESSAGE:
+                raise ConflictError(ALSO_TOO_MANY)
+            also.append(topic_id)
+            self._also[key] = also
+            now = self._clock()
+            self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
+            link = replace(existing, also_topics=tuple(also))
+            self._messages[key] = link
+            return link
 
     # Topics
 
@@ -529,6 +617,7 @@ class MemoryStore:
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         async with self._lock:
+            spared = self._split_siblings(keep_id)
             ids = sorted(
                 r.id
                 for r in self._proposals.values()
@@ -536,6 +625,7 @@ class MemoryStore:
                 and r.thread_ts == thread_ts
                 and r.state is ProposalState.PENDING
                 and r.id != keep_id
+                and r.proposal.topic_id not in spared
                 and r.run_id != SELF_ADD_RUN
             )
             for proposal_id in ids:

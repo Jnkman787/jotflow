@@ -262,6 +262,11 @@ class MessageLink:
     chatter: bool
     linked_by: LinkSource
     linked_at: datetime
+    # The other topics it also feeds, as the agent split it (#335). topic_id is its first.
+    also_topics: tuple[str, ...] = ()
+    # Pending proposals this decision dropped: a person's re: or skip: undid the split
+    # and left their extra topic with no messages (#335). Set only on the write's result.
+    dropped: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -481,6 +486,13 @@ def check_mark(channel_id: str, ts: str, user_id: str, keyword: str) -> None:
     check_id(user_id, "Slack user id")
     if keyword not in REACTION_KEYWORDS:
         raise ValueError(f"no reaction stands for {keyword!r}")
+
+
+# One message, several topics (#335): its first, and at most two more.
+MAX_TOPICS_PER_MESSAGE = 3
+ALSO_NOT_LINKED = "link the message to its first topic before adding another"
+ALSO_PERSON = "a person placed this message, so it stays where they put it"
+ALSO_TOO_MANY = "a message feeds at most 3 topics"
 
 
 # What a person changed from the card (#160). The value itself is never stored.
@@ -875,6 +887,15 @@ class Store(Protocol):
         """Record that a message is not an idea, with the same override rule."""
         ...
 
+    async def also_link(self, ref: MessageRef, topic_id: str) -> MessageLink:
+        """The agent's: a message already in one topic also feeds ``topic_id`` (#335).
+
+        Only over the agent's own placement, never a person's, and at most
+        :data:`MAX_TOPICS_PER_MESSAGE` topics a message. A person's later decision
+        on the message, or the agent marking it chatter, clears the extra topics.
+        """
+        ...
+
     async def get_message(self, channel_id: str, ts: str) -> MessageLink | None: ...
 
     # Topics
@@ -1051,7 +1072,11 @@ class Store(Protocol):
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         """Mark every other pending proposal in the thread superseded, clearing their
-        drafts; return their ids. A person's Add me request (#305) is never superseded."""
+        drafts; return their ids. A person's Add me request (#305) is never superseded.
+
+        A draft for a topic that shares a split message with the kept one's topic is
+        spared: each topic of one pasted message keeps its own draft (#335).
+        """
         ...
 
     async def count_self_adds(self, slack_user_id: str, since: datetime) -> int:

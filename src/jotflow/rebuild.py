@@ -24,6 +24,7 @@ The walk (:func:`collect`) only reads, so ``--dry-run`` and the real run share i
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
@@ -35,7 +36,7 @@ from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.packet import Budget, Sleep, with_backoff
 from jotflow.policy import Policy
-from jotflow.store import Store
+from jotflow.store import ConflictError, Store
 
 log = logging.getLogger("jotflow.rebuild")
 
@@ -394,7 +395,16 @@ async def apply_github(
             bound[(repo.casefold(), issue.number)] = created.topic
             done.topics += 1
             for source in sources:
-                if await store.get_message(plan.channel_id, source.ts) is not None:
+                linked = await store.get_message(plan.channel_id, source.ts)
+                if linked is not None:
+                    # One message cited by two issues fed two topics (#335): the second
+                    # is an extra topic, never a move. A person's placement stays.
+                    if linked.topic_id not in (None, created.topic.id) and (
+                        linked.linked_by == "agent"
+                    ):
+                        with contextlib.suppress(ConflictError):
+                            await store.also_link(linked.ref, created.topic.id)
+                            done.linked += 1
                     continue
                 ref = MessageRef(
                     channel_id=plan.channel_id, ts=source.ts, thread_ts=plan.seen[source.ts]

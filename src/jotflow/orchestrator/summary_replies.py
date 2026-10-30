@@ -56,12 +56,12 @@ NEEDS_NUMBER = "In a summary's thread, re: takes an item's number, such as re: 2
 # Under one of JotFlow's own top-level posts with no posted summary on record: the
 # help guide, a mode announcement, the live check's post, or a summary not yet
 # recorded. So these never assume the post is a summary.
+POST_IN_CHANNEL = "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post."
 OWN_POST_RE = "Nothing was linked from this reply. To add to an idea, reply in its own thread."
 # The same, in a channel with a weekly summary, where re: N works in its thread.
 OWN_POST_RE_SUMMARY = (
     OWN_POST_RE + " Or reply in the latest weekly summary's thread with re: and its number."
 )
-OWN_POST_NEW_IDEAS = "To suggest a new idea, post it in the channel, not in a reply to this post."
 
 
 def no_item(number: int) -> str:
@@ -189,7 +189,7 @@ class SummaryReplies:
         if asked or (channel, thread, user) in self._pointed_threads:
             return "left"
         self._pointed_threads.add((channel, thread, user))
-        await self._tell(channel, user, thread, OWN_POST_NEW_IDEAS)
+        await self._tell(channel, user, thread, POST_IN_CHANNEL)
         return "pointed"
 
     def _prune(self, slot: datetime) -> None:

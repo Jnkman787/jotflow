@@ -510,6 +510,26 @@ CREATE TABLE summary_items (
 """,
         ),
     ),
+    # One message, several topics (#335): the extra topics a message feeds beyond its
+    # message_refs topic_id, the agent's split only. Pointers only.
+    Migration(
+        23,
+        (
+            """
+CREATE TABLE message_topics (
+    channel_id TEXT NOT NULL, -- the message's Slack channel id
+    ts TEXT NOT NULL, -- the message's Slack timestamp
+    topic_id TEXT NOT NULL REFERENCES topics (id) ON DELETE CASCADE, -- a topic it also feeds
+    added_at TEXT NOT NULL, -- UTC, ISO 8601
+    PRIMARY KEY (channel_id, ts, topic_id),
+    FOREIGN KEY (channel_id, ts) REFERENCES message_refs (channel_id, ts) ON DELETE CASCADE
+)
+""",
+            "CREATE INDEX message_topics_topic ON message_topics (topic_id)",
+            "ALTER TABLE proposals ADD COLUMN unsplit_at TEXT"
+            " /* UTC: when a person's decision left its extra topic no messages (#335) */",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

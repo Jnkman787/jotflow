@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Protocol
 
-from jotflow.models import ChannelMode, ProposalState, RunKind
+from jotflow.models import ChannelMode, ProposalRecord, ProposalState, RunKind
 from jotflow.orchestrator.card_sync import AUTO
 from jotflow.orchestrator.packet import Budget, Sleep, with_backoff
 from jotflow.orchestrator.people import Person, classify
@@ -75,11 +75,20 @@ class AutoApprover:
     Add me request that went on a card for an approver (#305).
     """
 
-    def __init__(self, store: Store, mode_for: ModeFor, issues: IssuesPolicy | None = None) -> None:
+    def __init__(
+        self,
+        store: Store,
+        mode_for: ModeFor,
+        issues: IssuesPolicy | None = None,
+        *,
+        locks: Callable[[ProposalRecord], str] | None = None,
+    ) -> None:
         self._store = store
         self._mode_for = mode_for
-        # The [issues] settings in force, locked with each approval (#306 follow-up).
+        # What each approval locks (#306 follow-up, #332): the [issues] settings and the
+        # repo's priority labels, through ``locks`` when given.
         self._issues = issues
+        self._locks = locks
 
     async def approve_due(self) -> int:
         approved = 0
@@ -97,7 +106,7 @@ class AutoApprover:
                     expected={ProposalState.PENDING},
                     approved_by=AUTO,
                     expected_hash=content_hash(record.proposal),
-                    issues=None if self._issues is None else self._issues.snapshot(),
+                    issues=self._lock(record),
                 )
             except TransitionError:
                 continue  # superseded or changed meanwhile: nothing to approve
@@ -107,6 +116,11 @@ class AutoApprover:
             log.info("proposal %s approved by auto mode; execution queued", done.id)
             approved += 1
         return approved
+
+    def _lock(self, record: ProposalRecord) -> str | None:
+        if self._locks is not None:
+            return self._locks(record)
+        return None if self._issues is None else self._issues.snapshot()
 
 
 class ModeSlack(Protocol):

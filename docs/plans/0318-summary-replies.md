@@ -90,7 +90,7 @@ Also from the reviewer:
 - `tests/test_service.py` checks two things. A new idea, a bot mention and a `re: 1` in a summary's thread leave the debouncer empty, and the keyword handler never sees them. A `re: 2` in an ordinary thread still attaches to web#2.
 - `make check` passes.
 
-**Security's second look:** a reply that lands before the summary's row is marked posted, or under a row a crash left failed, was missed by `summary_for_thread`. Now a reply whose `parent_user_id` is JotFlow's bot is handled as a summary-thread reply whatever the row says, and the debouncer re-checks at flush. `tests/test_service.py` covers the window and `tests/test_debounce.py` the flush. `_pointed` and `_noted` are pruned by slot, as the reviewer asked. Replies to the help guide, JotFlow's other top-level post, are now never drafted either. They get the same pointer to post new ideas in the channel.
+**Security's second look:** a reply that lands before the summary's row is marked posted, or under a row a crash left failed, was missed by `summary_for_thread`. Now a reply whose `parent_user_id` is JotFlow's bot is handled as a summary-thread reply whatever the row says, and the debouncer re-checks at flush. `tests/test_service.py` covers the window and `tests/test_debounce.py` the flush. `_pointed` and `_noted` are pruned by slot, as the reviewer asked. Replies to the help guide, JotFlow's other top-level post, are now never drafted either. So nothing is silently dropped, each author gets one private nudge per thread, "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post." A service test covers it.
 
 ## Handoff notes
 

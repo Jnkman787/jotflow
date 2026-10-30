@@ -440,6 +440,15 @@ class SlackWorkSource:
                 return "bug"
         return None
 
+    async def _with_also(self, channel_id: str, message: ThreadMessage) -> ThreadMessage:
+        """A message's other topics, when the agent split its actions (#335)."""
+        if message.topic_id is None:
+            return message
+        link = await self._store.get_message(channel_id, message.ts)
+        if link is None or not link.also_topics:
+            return message
+        return message.model_copy(update={"also_topics": list(link.also_topics)})
+
     async def _kept_by_person_as_chatter(self, channel: str, ts: str) -> tuple[bool, str | None]:
         link = await self._store.get_message(channel, ts)
         if link is None:
@@ -489,6 +498,7 @@ class SlackWorkSource:
             for m, rest, topic_id in kept
         ]
         messages = await self._with_files(channel_id, [m for m, _, _ in kept], messages)
+        messages = [await self._with_also(channel_id, m) for m in messages]
         trimmed, trimmed_out = _trim(messages)
         omitted = skipped_while_paging + trimmed_out
         log.info(

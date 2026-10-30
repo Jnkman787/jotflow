@@ -268,10 +268,16 @@ async def _name_new_topics(prepared: Prepared) -> None:
     for want in state.thread.expected.topics:
         if not want.topic.startswith(TOPIC_KEY_PREFIX) or want.topic in state.topics:
             continue
+        taken = set(state.topics.values())
         for ts in want.messages:
             link = await state.store.get_message(channel, ts)
-            if link is not None and link.topic_id is not None:
-                state.topics[want.topic] = link.topic_id
+            if link is None or link.topic_id is None:
+                continue
+            # A split message is in several topics (#335): each key takes the first of
+            # them not taken yet, in the order the fixture lists its topics.
+            free = [t for t in (link.topic_id, *link.also_topics) if t not in taken]
+            if free:
+                state.topics[want.topic] = free[0]
                 break
 
 

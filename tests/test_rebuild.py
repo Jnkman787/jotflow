@@ -819,3 +819,33 @@ async def test_a_rebuilt_link_is_the_agents_so_a_persons_later_choice_wins(tmp_p
         assert moved.topic_id == other.topic.id and moved.linked_by == "person"
     finally:
         await store.close()
+
+
+async def test_from_github_puts_a_second_citing_issue_on_an_extra_topic(tmp_path: Path) -> None:
+    # #335: one pasted message the source of two issues fed two topics. Rebuild keeps
+    # the first as its topic and adds the second as an extra one, never a move.
+    store = await SqliteStore.open(str(tmp_path / "jotflow.db"))
+    source = FakeGithubSource(
+        {"acme-co/web": [marked(88, "Mixer cleaning", LOST), marked(89, "Sensor timing", LOST)]}
+    )
+    try:
+        await rebuild(
+            store,
+            POLICY,
+            workspace(),
+            BOT,
+            [CH],
+            oldest=None,
+            merge=False,
+            dry_run=False,
+            github=source,
+            say=lambda line: None,
+        )
+        topics = {r.topic.issue_number: r.topic for r in await store.channel_topics(CH)}
+        link = await store.get_message(CH, "1300.000100")
+        assert link is not None
+        assert {link.topic_id, *link.also_topics} == {topics[88].id, topics[89].id}
+        for number in (88, 89):
+            assert "1300.000100" in [m.ts for m in topics[number].messages]
+    finally:
+        await store.close()
