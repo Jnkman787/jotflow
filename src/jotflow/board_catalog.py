@@ -23,7 +23,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from jotflow.models import FoundBoard
 from jotflow.policy import BoardScopePolicy, ChannelPolicy, Policy, UnknownChannelError
@@ -36,6 +36,8 @@ log = logging.getLogger("jotflow.boards")
 # drafting packet and the card's menu, which Slack caps at 100 options.
 MAX_FOUND = 20
 TITLE_LIMIT = 100
+# How long after a start a scope's first listing is waited for, not failed (#376).
+LOAD_GRACE = timedelta(minutes=10)
 
 Finder = Callable[
     [str, Sequence[int], "str | None", Sequence[int], Sequence[str]], Awaitable[list[FoundBoard]]
@@ -97,6 +99,8 @@ class BoardCatalog:
         self._resolve = resolve
         self._access = access
         self._clock = clock
+        # When the catalog began: a scope's first listing is awaited for LOAD_GRACE (#376).
+        self._since = clock()
         # Listed boards the write token can't update, from JotFlow's start-up check.
         self.off: set[str] = set(off)
         self._listings: dict[tuple[str, int], _Listing] = {
@@ -228,6 +232,21 @@ class BoardCatalog:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), REFRESH_EVERY.total_seconds())
 
+    def awaiting(self, channel_id: str) -> bool:
+        """A board scope's first listing hasn't loaded yet, soon after a start (#376).
+
+        A found board missing then may only be not listed yet: an add waits for it, and
+        a card's board menu, which couldn't offer it, isn't saved over it. Past
+        LOAD_GRACE, a listing still missing counts as missing, as before.
+        """
+        if self._clock() - self._since > LOAD_GRACE:
+            return False
+        return any(
+            listing.fetched_at is None
+            for (channel, _), listing in self._listings.items()
+            if channel == channel_id
+        )
+
     # The channel's boards
 
     def _fresh(self, channel_id: str, index: int) -> list[FoundBoard]:
@@ -261,7 +280,9 @@ class BoardCatalog:
                 ):
                     continue  # a listed board wins, with the team's description
                 nickname = names.get(board.number) or f"b{board.number}"
-                if nickname not in names.values() and nickname in taken:
+                # Only the board's own alias skips the clash check: an alias shaped like
+                # another board's auto name can't hand that name over (#376).
+                if names.get(board.number) is None and nickname in taken:
                     self._note(
                         channel_id,
                         f"clash:{ref}",

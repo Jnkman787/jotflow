@@ -121,7 +121,8 @@ adding to or correcting one of its topics, its `topic_id` or one of its
 - The topic has `pending`: call `revise_proposal` with its `proposal_id`
   and `revision`, the whole revised draft, and the new messages as
   `sources`, a change request among them. Do what a change request asks,
-  even when it changes the kind of work. Keep what they don't change. If you get `current` back, revise
+  even when it changes the kind of work. Keep what they don't change, and each
+  kept assignee's reason as `pending` gives it. If you get `current` back, revise
   once more on top of it. Never propose again for it.
 - The topic has `issue_proposed` but no `pending`: link the message and don't
   propose again.
