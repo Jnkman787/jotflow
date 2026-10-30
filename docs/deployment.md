@@ -169,7 +169,7 @@ Do the steps above first: read this, take a backup, re-pin, and start. Then work
 
 **Certificate authorities (#360).** Both images now distrust eMudhra's four emSign root certificates, after an intermediate under them had its keys compromised (GHSA-hq85-5cpj-mr62). Every agent run's Node is also given `--use-openssl-ca`, so the agent CLIs trust only the image's cleaned store rather than their own compiled-in roots. You don't need to do anything. If something you connect to has a certificate from emSign, it will stop working: replace that certificate.
 
-**The store.** Migrations 16 to 23 run on the first start. They add tables and columns of pointers, Slack ids, times and settings, never message text:
+**The store.** Migrations 16 to 24 run on the first start. They add tables and columns of pointers, Slack ids, times and settings, never message text:
 
 | Migration | What it adds |
 |---|---|
@@ -181,6 +181,7 @@ Do the steps above first: read this, take a backup, re-pin, and start. Then work
 | 21 | The `[issues]` settings a card showed and an approval locked, and labels left off a write (#306, #347) |
 | 22 | Each summary's numbered items, for `re: 2` in its thread (#318) |
 | 23 | Extra topics a message feeds, for a pasted email with several actions, and when a person's decision undid a split (#335) |
+| 24 | Who an approvable card credited, so the issue's footer names only those people (#396) |
 
 Rolling back means restoring the backup from before the upgrade. A 0.4 JotFlow refuses a 0.5 database.
 

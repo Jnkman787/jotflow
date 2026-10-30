@@ -2,9 +2,9 @@
 
 What changed in each JotFlow release, for the people who run it. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may change configuration or behaviour, and these notes say when.
 
-## [Unreleased]
+## [0.5.0] - 2026-10-30
 
-A minor release for 0.5.0. It brings drafting that follows a thread more closely, Add me and assignee reasons, a weekly summary, Projects boards, Slack files, and priority labels. It also has an experimental `copilot` preset with OpenAI, Azure or Anthropic models, and a codex preset that checks each model's tools at startup. One check can stop a start: the agent runners now refuse a `NODE_OPTIONS` holding any option outside a short allowlist. Upgrade both images: the drafting runner gains fixed GitHub calls, and the agent image changed. The default Compose files and the Slack manifest are unchanged. Only a channel that sets `attachments = "text"` needs a new Slack scope and a reinstall. It adds store migrations 16 to 23, so rolling back means restoring the backup from before the upgrade, then removing the new keys from `jotflow.toml`, since older versions refuse keys they don't know. [Upgrading to 0.5.0](docs/deployment.md#upgrading-to-050) has the checklist: the optional token permissions, board creator ids to pin, the new settings, and the changes people will notice.
+A minor release for 0.5.0. It brings drafting that follows a thread more closely, Add me and assignee reasons, a weekly summary, Projects boards, Slack files, and priority labels. It also has an experimental `copilot` preset with OpenAI, Azure or Anthropic models, and a codex preset that checks each model's tools at startup. One check can stop a start: the agent runners now refuse a `NODE_OPTIONS` holding any option outside a short allowlist. Both images now distrust eMudhra's compromised emSign roots, so a service with an emSign certificate stops working until that certificate is replaced. Upgrade both images: the drafting runner gains fixed GitHub calls, and the agent image changed. The default Compose files and the Slack manifest are unchanged. Only a channel that sets `attachments = "text"` needs a new Slack scope and a reinstall. It adds store migrations 16 to 24, so rolling back means restoring the backup from before the upgrade, then removing the new keys from `jotflow.toml`, since older versions refuse keys they don't know. [Upgrading to 0.5.0](docs/deployment.md#upgrading-to-050) has the checklist: the optional token permissions, board creator ids to pin, the new settings, and the changes people will notice.
 
 ### Added
 
@@ -201,7 +201,8 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
-[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.2.0
