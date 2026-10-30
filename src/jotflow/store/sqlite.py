@@ -619,7 +619,9 @@ class SqliteStore:
             created_at=from_text(row["created_at"]),
             card_issues=row["card_issues"],
             approved_issues=row["approved_issues"],
-            card_credits=row["card_credits"],
+            # Migration 24's column (#403): a store opened at an older migration, as the
+            # upgrade tests do, has none.
+            card_credits=row["card_credits"] if "card_credits" in row.keys() else None,  # noqa: SIM118
             skipped_label=row["skipped_label"],
             unsplit_at=from_text(row["unsplit_at"])
             if self._split and row["unsplit_at"] is not None
