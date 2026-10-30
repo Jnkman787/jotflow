@@ -81,6 +81,10 @@ FAILED_LINE = "The write failed. The agent's reason is stored with the proposal.
 UNSPLIT_LINE = (
     "Dropped. Someone put the message it came from in one topic, so this one has none left."
 )
+# The same drop when a person marked that message not an idea, as a skip does.
+UNSPLIT_SKIPPED_LINE = (
+    "Dropped. Someone marked the message it came from as not an idea, so this one has none left."
+)
 _STATE_LINES = {
     ProposalState.EXECUTING: "Creating it on GitHub now.",
     ProposalState.RECONCILING: "The write was interrupted; checking whether it already happened.",
@@ -108,6 +112,8 @@ class CardContext:
     # None means the channel's listed boards, all offered.
     boards: tuple[BoardEntry, ...] | None = None
     offered_boards: tuple[BoardEntry, ...] | None = None
+    # A card dropped by an unsplit: whether a person marked its message not an idea.
+    source_skipped: bool = False
 
     @property
     def channel_boards(self) -> tuple[BoardEntry, ...]:
@@ -653,8 +659,8 @@ def _sources_block(record: ProposalRecord) -> Block | None:
     }
 
 
-def _state_block(record: ProposalRecord) -> Block | None:
-    block = _state_line(record)
+def _state_block(record: ProposalRecord, skipped: bool = False) -> Block | None:
+    block = _state_line(record, skipped)
     if (
         block is not None
         and record.approved_by == AUTO_APPROVER
@@ -756,7 +762,7 @@ def _duplicate_line(record: ProposalRecord) -> Block | None:
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
 
 
-def _state_line(record: ProposalRecord) -> Block | None:
+def _state_line(record: ProposalRecord, skipped: bool = False) -> Block | None:
     state = record.state
     if state is ProposalState.PENDING:
         return None
@@ -778,7 +784,7 @@ def _state_line(record: ProposalRecord) -> Block | None:
         # The agent's reason can quote private repo content, so it stays in the store.
         return _context(FAILED_LINE + suffix)
     if state is ProposalState.SUPERSEDED and record.unsplit_at is not None:
-        return _context(UNSPLIT_LINE + suffix)
+        return _context((UNSPLIT_SKIPPED_LINE if skipped else UNSPLIT_LINE) + suffix)
     return _context(_STATE_LINES.get(state, state.value) + suffix)
 
 
@@ -911,7 +917,7 @@ def _assemble(
     if (sources := _sources_block(record)) is not None:
         blocks.append(sources)
     blocks += _docs_blocks(context)
-    if (state := _state_block(record)) is not None:
+    if (state := _state_block(record, context.source_skipped)) is not None:
         blocks.append(state)
     return blocks, header, shortened
 

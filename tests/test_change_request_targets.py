@@ -157,3 +157,42 @@ async def test_a_change_request_seen_by_a_later_get_work_is_checked_too(clock: A
         "1760781700.000100": "aaaaaaaaaaaaaaaa",
         "1760781800.000100": "bbbbbbbbbbbbbbbb",
     }
+
+
+async def other_topic(store: Any) -> str:
+    return str((await store.create_topic(CH, "Something else")).topic.id)
+
+
+async def test_a_new_issue_cannot_cite_another_topics_change_request(
+    tools: Any, store: Any, clock: Any
+) -> None:
+    card = await pending(tools)
+    await made_on(store, clock, card)
+    cited = issue(await other_topic(store), sources=[{"channel_id": CH, "ts": REPLY}])
+    with pytest.raises(ToolError, match=f"is a change request for proposal {card} on another"):
+        await tools.propose_issue(DRAFT, cited)
+
+
+async def test_an_update_cannot_cite_another_topics_change_request(
+    tools: Any, store: Any, clock: Any
+) -> None:
+    from tests.test_write_tools import update
+
+    card = await pending(tools)
+    await made_on(store, clock, card)
+    elsewhere = await other_topic(store)
+    await store.set_topic_issue(elsewhere, "acme-co/web", 42)
+    with pytest.raises(ToolError, match=f"is a change request for proposal {card} on another"):
+        await tools.propose_update(DRAFT, update(elsewhere))
+
+
+async def test_a_new_proposal_on_the_cards_own_topic_may_cite_it(
+    tools: Any, store: Any, clock: Any
+) -> None:
+    card = await pending(tools)
+    await made_on(store, clock, card)
+    topic_id = (await store.get_proposal(card)).proposal.topic_id
+    again: Any = await tools.propose_issue(
+        DRAFT, issue(topic_id, sources=[{"channel_id": CH, "ts": REPLY}])
+    )
+    assert again.proposal_id != card

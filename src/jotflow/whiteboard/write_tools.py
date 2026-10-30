@@ -878,15 +878,38 @@ class WriteTools:
         self, grant: Grant, proposal_id: str, sources: Sequence[MessageRef]
     ) -> None:
         """A change request made on one card never revises another (#375)."""
-        made_on: dict[str, str] = {}
-        for row in await self._store.tool_call_results(grant.run_id, (PACKET_CHANGE_REQUESTS,)):
-            made_on |= {ts: p for ts, p in json.loads(row).items() if isinstance(p, str)}
+        made_on = await self._made_on(grant)
         for source in sources:
             target = made_on.get(source.ts)
             if target is not None and target != proposal_id:
                 raise ToolError(
                     f"message {source.ts} is a change request for proposal {target}, not "
                     f"{proposal_id}: revise that one with it"
+                )
+
+    async def _made_on(self, grant: Grant) -> dict[str, str]:
+        """Each change request this run was served, by ts, and the card it was made on:
+        from get_work's ledger rows, never from the agent (#375)."""
+        made_on: dict[str, str] = {}
+        for row in await self._store.tool_call_results(grant.run_id, (PACKET_CHANGE_REQUESTS,)):
+            made_on |= {ts: p for ts, p in json.loads(row).items() if isinstance(p, str)}
+        return made_on
+
+    async def _check_cited_requests(
+        self, grant: Grant, topic_id: str | None, sources: Sequence[MessageRef]
+    ) -> None:
+        """A new proposal may cite a change request only on its own card's topic, such
+        as one that changes the kind of work (#375 review)."""
+        made_on = await self._made_on(grant)
+        for source in sources:
+            target = made_on.get(source.ts)
+            if target is None:
+                continue
+            record = await self._store.get_proposal(target)
+            if record is None or topic_id is None or record.proposal.topic_id != topic_id:
+                raise ToolError(
+                    f"message {source.ts} is a change request for proposal {target} on "
+                    "another topic: revise that one with it"
                 )
 
     async def _named_in(self, grant: Grant, repo: str, ref: MessageRef) -> tuple[str, str] | None:
@@ -1134,6 +1157,7 @@ class WriteTools:
             )
             related, dropped = self._related(grant, args.related)
             sources = await self._sources(grant, args.sources)
+            await self._check_cited_requests(grant, args.topic_id, sources)
             attached = await self._attach(
                 grant, args.attachments, args.body, topic_id=args.topic_id, sources=sources
             )
@@ -1184,6 +1208,8 @@ class WriteTools:
                 found=matched,
             )
             _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
+            sources = await self._sources(grant, args.sources)
+            await self._check_cited_requests(grant, args.topic_id, sources)
             added, reasons = _without(
                 args.changes.add_assignees, args.changes.assignee_reasons, left
             )
@@ -1203,7 +1229,7 @@ class WriteTools:
                     **args.model_dump(exclude={"participants"}),
                     "repo": repo,
                     "changes": changes.model_dump(),
-                    "sources": await self._sources(grant, args.sources),
+                    "sources": sources,
                     "related": [r.model_dump() for r in related],
                 }
             )
