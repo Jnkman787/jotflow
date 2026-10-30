@@ -941,3 +941,18 @@ async def test_a_question_to_jotflow_is_flagged_in_the_packet() -> None:
         ("1.5", False),
     ]
     assert messages[1].hint == "ask"
+
+
+@pytest.mark.parametrize("asked", [ROOT, "1.5"])
+async def test_a_thread_under_jotflows_own_post_is_flagged(asked: str) -> None:
+    # #373: however the run was armed, such as by undoing a skip on a reply there whose
+    # thread Slack's reaction event doesn't name, the summary's or guide's thread is out.
+    thread = [
+        msg(ROOT, "Ideas this week: 1. Export", user="U0BOT", bot_id="B0BOT"),
+        msg("1.5", "a new idea in the summary's thread", thread_ts=ROOT),
+    ]
+    reader = FakeReader({ROOT: thread, "1.5": thread})
+    bot = BotIdentity(user_id="U0BOT", bot_id="B0BOT")
+    assert (await source(reader, bot=bot).thread(CH, asked)).jotflow_root
+    ordinary = FakeReader({ROOT: [msg(ROOT, "a progress bar"), msg("1.2", "+1")]})
+    assert not (await source(ordinary, bot=bot).thread(CH, ROOT)).jotflow_root

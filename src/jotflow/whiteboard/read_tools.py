@@ -78,7 +78,7 @@ from jotflow.store import ConflictError
 from jotflow.store.base import SELF_ADD_RUN, Store, ToolCallRecord, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
-from jotflow.whiteboard.tools import ToolError, ToolSpec
+from jotflow.whiteboard.tools import PACKET_SERVED, ToolError, ToolSpec
 
 DRAFTING_NOTICE = (
     "Every field marked untrusted holds text people wrote in Slack, or text an earlier "
@@ -277,6 +277,23 @@ class WorkThread(BaseModel):
             "seconds after their previous one: likely an addition or a correction (#334)"
         ),
     )
+    nothing_to_draft: str | None = Field(
+        default=None,
+        description=(
+            "JotFlow's own reason this thread is never drafted, such as being under its own "
+            "post. When set, the thread has no messages: stop without calling another tool"
+        ),
+    )
+    # The thread's first message is JotFlow's own top-level post (#373). JotFlow's own
+    # flag, never sent to the agent: get_work serves a drafting run nothing then.
+    jotflow_root: bool = Field(default=False, exclude=True)
+
+
+# A drafting run's thread under JotFlow's own top-level post (#318, #373).
+UNDER_OWN_POST = (
+    "This thread is under JotFlow's own post, such as the weekly summary or the help guide, "
+    "so there is nothing to draft."
+)
 
 
 class RelatedExcerpt(BaseModel):
@@ -685,6 +702,21 @@ def read_tools(
                     # A source bug must not let this run see, or link, another thread.
                     raise ToolError(f"the thread source returned another thread for run {run.id}")
                 index = await topics(grant, ListTopicsInput())
+                if grant.kind is RunKind.DRAFTING and thread.jotflow_root:
+                    # A clean, empty packet rather than an error, so the run ends
+                    # without a "did not finish" notice in JotFlow's own thread (#373).
+                    # With no messages served, nothing can be linked or proposed. A
+                    # question run there still reads the thread, as it is answered.
+                    thread = WorkThread(
+                        channel_id=thread.channel_id,
+                        thread_ts=thread.thread_ts,
+                        messages=[],
+                        nothing_to_draft=UNDER_OWN_POST,
+                    )
+                    # No topics either: the run has nothing to do with them, and with
+                    # no ids it can't aim a write at one. The marker below refuses
+                    # every drafting write for the run anyway.
+                    index = index.model_copy(update={"topics": [], "more": 0})
                 if grant.kind is RunKind.DRAFTING:
                     followed = thread.follows
                     follows = (
@@ -693,9 +725,31 @@ def read_tools(
                         else []
                     )
                     index = await _with_pending(grant.channel_id, run.thread_ts, index, follows)
-                related = await work_source.related(thread, index)
+                related = (
+                    []
+                    if thread.nothing_to_draft is not None
+                    else await work_source.related(thread, index)
+                )
         except TimeoutError:
             raise ToolError("Slack took too long to answer; try the run again shortly") from None
+        if grant.kind is RunKind.DRAFTING:
+            # Every drafting write needs this row to say there's something to draft (#373).
+            # Written for every drafting run, in both cases, so a run that skipped
+            # get_work has no row and writes nothing either. The first one stands.
+            with contextlib.suppress(ConflictError):
+                await store.record_tool_call(
+                    ToolCallRecord(
+                        run_id=run.id,
+                        tool=PACKET_SERVED,
+                        args_hash="thread",
+                        channel_id=grant.channel_id,
+                        thread_ts=run.thread_ts,
+                        result_json=json.dumps(
+                            {"nothing_to_draft": thread.nothing_to_draft is not None}
+                        ),
+                        called_at=clock(),
+                    )
+                )
         # Record the run's own thread, and only that: link_message (#15) then accepts
         # exactly those messages, so a run's writes stay inside the thread its token
         # names. Related excerpts are context to read, never messages to link.

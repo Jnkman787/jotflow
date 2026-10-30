@@ -97,6 +97,14 @@ class RepliesSlack(Protocol):
     async def note(self, channel_id: str, thread_ts: str, text: str) -> None: ...
 
 
+def _without_mention(text: str, bot: str | None) -> str:
+    """The text without a leading mention of JotFlow, so "@JotFlow re: 2" routes (#373)."""
+    if bot is None:
+        return text
+    match = re.match(rf"\s*<@{re.escape(bot)}(?:\|[^>]*)?>[\s,:]*", text)
+    return text[match.end() :] if match else text
+
+
 def _str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -178,7 +186,7 @@ class SummaryReplies:
         person = await self._slack.person(user)
         if person.guest or person.external:
             return "ignored"
-        keyword, _ = split_keyword(str(event.get("text") or ""))
+        keyword, _ = split_keyword(_without_mention(str(event.get("text") or ""), self._bot))
         if keyword == "re":
             listed = self._policy.channels.get(channel)
             summaries = listed is not None and listed.summary is not None
@@ -215,7 +223,7 @@ class SummaryReplies:
         person = await self._slack.person(user)
         if person.guest or person.external:
             return "ignored"  # only members route, and nobody else is told anything
-        keyword, rest = split_keyword(str(event.get("text") or ""))
+        keyword, rest = split_keyword(_without_mention(str(event.get("text") or ""), self._bot))
         if keyword != "re":
             if asked or (channel, post.slot, user) in self._pointed:
                 return "left"

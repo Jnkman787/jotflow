@@ -234,4 +234,5 @@ or discussion, and never ask whether an idea is serious or for more detail.
 ## 9. Stop
 
 When every message is classified and each topic has its proposal or its
-question, stop. Do not summarise.
+question, stop. Do not summarise. If `thread.nothing_to_draft` is set, stop at
+once without calling another tool.

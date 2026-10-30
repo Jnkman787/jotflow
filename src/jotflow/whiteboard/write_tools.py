@@ -85,7 +85,13 @@ from jotflow.text import without_unsafe_chars
 from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
 from jotflow.whiteboard.tokens import Grant
-from jotflow.whiteboard.tools import ToolError, ToolSpec
+from jotflow.whiteboard.tools import (
+    CALL_GET_WORK_FIRST,
+    NOTHING_TO_DRAFT_REFUSAL,
+    PACKET_SERVED,
+    ToolError,
+    ToolSpec,
+)
 
 log = logging.getLogger("jotflow.whiteboard")
 
@@ -1812,8 +1818,34 @@ def write_tools(
             name=name,
             description=_DESCRIPTIONS[name],
             input_model=model,
-            handler=getattr(tools, name),
+            handler=(
+                _drafting_guard(store, getattr(tools, name))
+                if RunKind.DRAFTING in kinds
+                else getattr(tools, name)
+            ),
             kinds=kinds,
         )
         for name, model, kinds in plan
     )
+
+
+def _drafting_guard(store: Store, handler: Any) -> Any:
+    """Allow a drafting write only after get_work served the run something to draft (#373).
+
+    An allow-list, on every drafting write tool, here where they're registered, so a
+    new tool can't miss it. A run that never called get_work has no served row and is
+    refused; a run served a thread under JotFlow's own post is refused too. Neither
+    links, proposes, revises, asks or points, whatever the agent does.
+    """
+
+    async def guarded(grant: Grant, arguments: Any) -> BaseModel:
+        if grant.kind is RunKind.DRAFTING:
+            served = await store.find_tool_call(grant.run_id, PACKET_SERVED, "thread")
+            if served is None:
+                raise ToolError(CALL_GET_WORK_FIRST)
+            if json.loads(served).get("nothing_to_draft") is not False:
+                raise ToolError(NOTHING_TO_DRAFT_REFUSAL)
+        result: BaseModel = await handler(grant, arguments)
+        return result
+
+    return guarded
