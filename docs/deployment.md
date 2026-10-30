@@ -161,6 +161,82 @@ Rebuild also skips a JotFlow reply for a repo that's no longer in `jotflow.toml`
 
 Database migrations run when JotFlow starts, each in one transaction, so a failed migration leaves the previous version intact. JotFlow refuses a database written by a newer JotFlow, rather than guessing. So **rolling back means restoring the backup from before the upgrade**, then pinning the older version again.
 
+## Upgrading to 0.5.0
+
+Do the steps above first: read this, take a backup, re-pin, and start. Then work through what applies to you.
+
+**The store.** Migrations 16 to 23 run on the first start. They add tables and columns of pointers, Slack ids, times and settings, never message text:
+
+| Migration | What it adds |
+|---|---|
+| 16 | A draft's revisions from follow-up messages, and who wrote them (#304) |
+| 17 | Who made each GitHub link, the person or an admin (#305) |
+| 18 | The weekly summary's posts and the ideas put off with Not this week (#308) |
+| 19 | Board edits on a card, in a rebuilt card-edit table (#309) |
+| 20 | The ideas each summary offered Not this week for (#340) |
+| 21 | The `[issues]` settings a card showed and an approval locked, and labels left off a write (#306, #347) |
+| 22 | Each summary's numbered items, for `re: 2` in its thread (#318) |
+| 23 | Extra topics a message feeds, for a pasted email with several actions (#335) |
+
+Rolling back means restoring the backup from before the upgrade. A 0.4 JotFlow refuses a 0.5 database.
+
+**Token permissions, only for what you turn on.** Nothing new is needed for a setup that turns on none of these:
+
+- **`[identity] github_org`**, which Add me uses to require membership of one organization. The read token needs **Members: Read-only** on that organization. That lets it see every private membership there, so leave `github_org` unset if you only need "can be assigned in the repo".
+- **A channel's `board_scopes`**, to find boards live. The read token needs **Projects: Read-only** on the organization, or `read:project` on a classic token.
+- **A channel's `boards`**, to add approved issues to Projects boards. The write token needs **Projects: Read and write** on the organization.
+- **`attachments = "text"`** on a channel, to read small text files. The bot needs the **`files:read`** scope: add it under **OAuth & Permissions**, then click **Reinstall to Workspace**. `files:read` reads every file in the bot's channels, not only the ones JotFlow reads.
+
+`jotflow check` names the Projects and `files:read` permissions when a setting needs them. The Members permission shows up only when Add me checks someone: without it, the check fails closed and says what's missing.
+
+**Board creators, pinned by account id.** A `board_scopes` entry that finds boards by a marker in their description counts only boards made by the people you list, each as `{ login = "octo-example", id = 583231 }`. The id is GitHub's numeric account id, which survives a rename, and it's what JotFlow matches, never the login. Run `jotflow check` to print each listed login's current id, and copy it into `jotflow.toml`. If a login later belongs to a different account, that creator is dropped with a warning until you fix the line.
+
+**New settings, all optional.** Each is off until set:
+
+```toml
+[issues]
+label = "from-slack"          # added to every new issue; skipped, with a note, where a repo lacks it
+title_prefix = "[Slack]"
+
+[identity]
+github_org = "acme-co"        # Add me requires membership; needs Members: Read-only
+
+[channels.C0EXAMPLE1]
+attachments = "names"         # "off", "names" (the default) or "text"
+triage_guide = "Billing emails go to api. Customer-reported bugs go on the support board."
+priority_labels = { "P0" = "priority: critical", "sev1" = "sev-1" }
+
+[channels.C0EXAMPLE1.summary]
+day = "monday"
+time = "09:30"
+timezone = "Europe/London"
+
+[[channels.C0EXAMPLE1.repos]]
+repo = "acme-co/web"
+nickname = "web"
+aliases = ["shop"]            # other names people use for the repo
+description = "The customer web app"
+owner_hints = ["U0123ABCD"]   # people who own this repo's area
+```
+
+Boards (`boards`, `board_scopes`) have their own section in the example `jotflow.toml`. Before rolling back, remove every key a 0.4 JotFlow doesn't know: `[issues]`, `github_org`, `attachments`, `triage_guide`, `priority_labels`, `summary`, `aliases`, `owner_hints`, `boards` and `board_scopes`.
+
+**What people will notice.**
+
+- **Follow-ups revise the waiting card** instead of being lost. The card names who changed it and marks what changed, and once it has changed in place it's approved with its button, not a reaction.
+- **A Request Changes note revises the draft,** and credits whoever wrote it.
+- **A mention of the bot is read by drafting too.** A request such as "@JotFlow add the date range" becomes a follow-up card, and a question is still answered. Every mention starts the thread's quiet window, so a channel that mostly mentions the bot sees more drafting runs.
+- **Assignees have reasons on the card,** such as "volunteered in the thread" or "named in the thread ('Sam')". "Assign to Sam" works without an @-mention when Sam is in the thread and has a verified or admin link.
+- **Add me** buttons sit on waiting cards and on the reply once an issue is filed.
+- **The repo, board or priority a post names is used** without a question, and a vague answer to the repo question gets one more question.
+- **A pasted email with several actions** becomes a card for each, up to 3, or one checklist issue.
+- **The issue footer credits everyone who contributed,** such as "Raised in Slack by Sam, with contributions from Alex and Kim".
+- **Cards are quieter.** Same as appears only for a likely duplicate, and one "Not checked" line replaces two notes.
+- **A missing `[issues]` or priority label no longer stops a write.** The issue is filed without it, and the thread says so. Any other missing label still stops it.
+- **If `[issues]` changes in `jotflow.toml` after a card was drawn,** Approve redraws the card instead of approving.
+- **The weekly summary is numbered,** and nothing in its thread is drafted. `re: 2` there points at idea 2. The same goes for replies to the pinned help guide, whose authors are told privately to post in the channel.
+- **A message about JotFlow itself** is chatter, with one pointer to `ask:` and `/jotflow help`.
+
 ## Health and logs
 
 - **Is it connected?** `docker compose ps` shows `healthy` while JotFlow is connected to Slack. The health check, `jotflow health`, reads a heartbeat that `jotflow run` rewrites every 30 seconds while connected, so a lost connection shows `unhealthy` within a few minutes. Point any monitoring at that status.
