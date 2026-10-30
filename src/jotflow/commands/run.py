@@ -241,6 +241,7 @@ async def serve(settings: Settings, policy: Policy) -> int:
             orchestrator.links,
             orchestrator.verify,
             orchestrator.repos,
+            orchestrator.boards,
         )
         if orchestrator.approval is not None:
             register_actions(app, orchestrator.approval)

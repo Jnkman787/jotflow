@@ -221,6 +221,24 @@ board = "example-org/4"
 nickname = "roadmap"
 description = "Planned work for the next two quarters"
 
+# Boards found live, beside the listed ones (#309). Name them by number: the
+# simplest and safest scope. Or, for a team that creates boards often, by a word
+# in the board's short description, counted only on boards one of `creators`
+# made: anyone in the organisation can write that word into a board. Each creator
+# is pinned by GitHub account id, which jotflow check prints; the login is only a
+# label. A login that later belongs to someone else stops counting. A title
+# never puts a board in scope; `exclude` globs on titles only leave boards out.
+# Found boards are named by `aliases`, or b<number>, and show "found by scope" on
+# the card. The read token then needs Projects: Read-only on the organisation.
+[[channels.G0EXAMPLE2.board_scopes]]
+owner = "example-org"
+numbers = [12, 14]
+marker = "jotflow:triage"
+creators = [{ login = "example-lead", id = 1001 }]  # id from jotflow check
+exclude = ["* (archive)"]
+description = "Each team's own board"
+aliases = { design = 12 }
+
 # This channel keeps its own help quieter: no pinned guide.
 [channels.G0EXAMPLE2.help]
 guide = false

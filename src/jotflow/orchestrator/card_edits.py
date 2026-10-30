@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
+from jotflow.board_catalog import BoardCatalog, BoardEntry
 from jotflow.models import IssueProposal, ProposalRecord, ProposedBoard, UpdateProposal
 from jotflow.orchestrator.approval import Click, Refused
 from jotflow.orchestrator.cards import (
@@ -30,7 +31,7 @@ from jotflow.orchestrator.cards import (
     BOARDS_BLOCK,
     MAX_CARD_BOARDS,
 )
-from jotflow.policy import _NICKNAME, BoardPolicy, Policy, PolicyViolation, RepoPolicy
+from jotflow.policy import NICKNAME_PATTERN, Policy, PolicyViolation, RepoPolicy
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store.base import (
     ADDED_ON_CARD,
@@ -111,7 +112,7 @@ def _boards_click(body: Mapping[str, Any]) -> Mapping[str, Any]:
     if found is None or not isinstance(options, list) or len(options) > MAX_CARD_BOARDS:
         return {**body, "actions": [{}]}
     nicknames = [o.get("value") if isinstance(o, Mapping) else None for o in options]
-    if not all(isinstance(n, str) and _NICKNAME.fullmatch(n) for n in nicknames):
+    if not all(isinstance(n, str) and NICKNAME_PATTERN.fullmatch(n) for n in nicknames):
         return {**body, "actions": [{}]}
     value = f"{found['id']}:{','.join(str(n) for n in nicknames)}"
     return {**body, "actions": [{"value": value}]}
@@ -127,12 +128,12 @@ class CardEdits:
         *,
         refresh: Refresh | None = None,
         repos: RepoCatalog | None = None,
-        boards_off: Collection[str] = frozenset(),
+        boards: BoardCatalog | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
-        # Boards the write token can't update, found at JotFlow's start (#309).
-        self._boards_off = boards_off
+        # The channel's boards, listed and found, and which can be updated (#309).
+        self._board_catalog = boards if boards is not None else BoardCatalog.static(policy)
         self._repos = repos if repos is not None else RepoCatalog.static(policy)
         self._guarded = guarded
         self._tell = tell
@@ -219,7 +220,7 @@ class CardEdits:
         if not isinstance(draft, IssueProposal):
             raise Refused(UPDATE_HAS_NO_BOARDS)
         wanted = [nickname for nickname in payload.split(",") if nickname]
-        chosen: list[BoardPolicy] = []
+        chosen: list[BoardEntry] = []
         for nickname in wanted:
             board = self._channel_board(record.channel_id, nickname)
             if board not in chosen:
@@ -241,16 +242,13 @@ class CardEdits:
 
     # Helpers
 
-    def _channel_board(self, channel_id: str, nickname: str) -> BoardPolicy:
-        """The menu sends a nickname. Only one of the channel's listed boards, by its
-        nickname, is accepted, and only one the write token can update."""
-        try:
-            boards = self._policy.channel(channel_id).boards
-        except PolicyViolation:
-            raise Refused(NOT_A_CHANNEL_BOARD) from None
-        for board in boards:
+    def _channel_board(self, channel_id: str, nickname: str) -> BoardEntry:
+        """The menu sends a nickname. Only one of the channel's boards, listed or found
+        in a fresh listing, by its nickname, is accepted, and only one the write
+        token can update as far as JotFlow knows."""
+        for board in self._board_catalog.boards(channel_id):
             if board.nickname == nickname:
-                if board.board in self._boards_off:
+                if not self._board_catalog.usable(board):
                     raise Refused(BOARD_OFF)
                 return board
         raise Refused(NOT_A_CHANNEL_BOARD)

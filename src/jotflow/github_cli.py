@@ -103,6 +103,18 @@ def gh_login(*, which: Which = shutil.which, run: Run = subprocess.run) -> str |
     return login if isinstance(login, str) and _OWNER.fullmatch(login) else None
 
 
+def gh_user_id(login: str, *, which: Which = shutil.which, run: Run = subprocess.run) -> int | None:
+    """A person's GitHub account id, through ``gh api users/<login>``, or None if
+    ``gh`` can't say or it isn't a person's account (#348). Read-only."""
+    if not _OWNER.fullmatch(login):
+        return None
+    answer = _gh_json(["api", f"users/{login}"], which, run)
+    if not isinstance(answer, dict) or answer.get("type") != "User":
+        return None
+    found = answer.get("id")
+    return found if isinstance(found, int) and not isinstance(found, bool) else None
+
+
 def gh_repos(
     owner: str, *, which: Which = shutil.which, run: Run = subprocess.run
 ) -> list[ListedRepo] | None:

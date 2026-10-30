@@ -33,7 +33,7 @@ import contextlib
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from datetime import datetime
 from importlib import resources
 from typing import Literal, Protocol
@@ -41,6 +41,7 @@ from typing import Literal, Protocol
 import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.execution.attribution import Attribution, execution_footer
 from jotflow.execution.writes import PlannedChecks, PlannedWrite
 from jotflow.execution.writes import plan as plan_writes
@@ -320,11 +321,23 @@ class OwnerHint(BaseModel):
 
 
 class BoardBrief(BaseModel):
-    """A Projects board an issue may be added to (#309). Policy, from jotflow.toml."""
+    """A Projects board an issue may be added to (#309): listed in jotflow.toml, or
+    found by one of the channel's board scopes."""
 
     board: str = Field(description="owner/number")
     nickname: str
-    description: str = Field(description="What belongs on it; propose boards by this")
+    description: str = Field(
+        description="The team's words for what belongs on it; propose boards by this"
+    )
+    discovered: bool = Field(
+        default=False, description="Found by the channel's board scope, not listed in its policy"
+    )
+    github_title: UntrustedText | None = Field(
+        default=None, description="A found board's title on GitHub, cleaned; untrusted"
+    )
+    github_description: UntrustedText | None = Field(
+        default=None, description="A found board's description on GitHub, cleaned; untrusted"
+    )
 
 
 class ChannelBrief(BaseModel):
@@ -490,7 +503,7 @@ def read_tools(
     attribution: Attribution | None = None,
     repos: RepoCatalog | None = None,
     issues: Callable[[], IssueReader | None] = lambda: None,
-    boards_off: Collection[str] = frozenset(),
+    boards: BoardCatalog | None = None,
     files: FileSlack | None = None,
     labels: Callable[[], LabelChecker | None] = lambda: None,
 ) -> tuple[ToolSpec, ...]:
@@ -501,6 +514,7 @@ def read_tools(
     """
     work_source: WorkSource = source or NoWorkSource()
     catalog = repos if repos is not None else RepoCatalog.static(policy)
+    board_catalog = boards if boards is not None else BoardCatalog.static(policy)
     lookups: OrderedDict[str, int] = OrderedDict()
 
     def _audit(grant: Grant, tool: str, channel: str) -> None:
@@ -749,10 +763,19 @@ def read_tools(
             issue_links=policy.issue_links,
             scope_total=catalog.scope_total(channel_id),
             scopes=catalog.summaries(channel_id),
+            # Only boards the write token can update, as far as JotFlow knows (#309).
             boards=[
-                BoardBrief(board=b.board, nickname=b.nickname, description=b.description)
-                for b in policy.channel(channel_id).boards
-                if b.board not in boards_off  # the write token can't update it (#309)
+                BoardBrief(
+                    board=b.board,
+                    nickname=b.nickname,
+                    description=b.description,
+                    discovered=b.found,
+                    github_title=UntrustedText(text=b.title) if b.title else None,
+                    github_description=(
+                        UntrustedText(text=b.github_description) if b.github_description else None
+                    ),
+                )
+                for b in board_catalog.offered(channel_id)
             ],
             triage_guide=policy.channel(channel_id).triage_guide,
         )
