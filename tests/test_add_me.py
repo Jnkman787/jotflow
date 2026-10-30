@@ -937,3 +937,40 @@ async def test_add_me_on_cards_counts_toward_the_same_hourly_cap() -> None:
     assert rig.slack.ephemerals[-1][2] == m.TOO_MANY_ADDS
     rig.clock.now = START + m.SELF_ADD_WINDOW + timedelta(seconds=1)
     assert await rig.add_me.on_filed(filed_click()) == "filing"
+
+
+async def test_only_card_adds_inside_the_hour_count_toward_the_cap(store: Store) -> None:
+    # The card count is the store's, within the window: older adds never count, however many.
+    from jotflow.store.base import ToolCallRecord
+
+    rig = Rig(store)
+    await rig.filed()
+    await rig.store.admin_link(ALEX, "octo-alex", ALEX_ID)
+    long_ago = START - m.SELF_ADD_WINDOW - timedelta(minutes=5)
+    for n in range(20):
+        await rig.store.record_tool_call(
+            ToolCallRecord(
+                run_id=f"add_me:{ALEX}",
+                tool=m.CARD_ADD,
+                args_hash=f"old-{n}",
+                channel_id=CH,
+                thread_ts=THREAD,
+                result_json="{}",
+                called_at=long_ago,
+            )
+        )
+    since = START - m.SELF_ADD_WINDOW
+    assert await rig.store.count_run_calls(f"add_me:{ALEX}", m.CARD_ADD, since=since) == 0
+    assert await rig.add_me.on_filed(filed_click()) == "filing"
+    await rig.store.record_tool_call(
+        ToolCallRecord(
+            run_id=f"add_me:{ALEX}",
+            tool=m.CARD_ADD,
+            args_hash="recent",
+            channel_id=CH,
+            thread_ts=THREAD,
+            result_json="{}",
+            called_at=START,
+        )
+    )
+    assert await rig.store.count_run_calls(f"add_me:{ALEX}", m.CARD_ADD, since=since) == 1

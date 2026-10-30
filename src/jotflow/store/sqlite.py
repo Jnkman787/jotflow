@@ -1861,6 +1861,15 @@ class SqliteStore:
             )
         return int(row["n"]) if row is not None else 0
 
+    async def count_run_calls(self, run_id: str, tool: str, *, since: datetime) -> int:
+        async with self._lock:
+            row = await self._one(
+                "SELECT count(*) AS n FROM tool_calls WHERE run_id = ? AND tool = ?"
+                " AND called_at >= ?",
+                (run_id, tool, to_text(since)),
+            )
+        return int(row["n"]) if row is not None else 0
+
     async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
         async with self._lock:
             row = await self._one(
