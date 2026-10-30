@@ -117,12 +117,18 @@ def reply_text(
 
 
 def skipped_line(record: ProposalRecord) -> str | None:
-    """What the thread hears about an [issues] label left off (#306 follow-up)."""
-    label = record.skipped_label
-    if label is None:
+    """What the thread hears about labels left off (#306 follow-up, #332): one or more."""
+    if not record.skipped_label:
         return None
-    shown = label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return f"Filed without the label {shown}, which doesn't exist in {record.proposal.repo}."
+    shown = [
+        label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        for label in record.skipped_label.split("\n")
+    ]
+    repo = record.proposal.repo
+    if len(shown) == 1:
+        return f"Filed without the label {shown[0]}, which doesn't exist in {repo}."
+    named = ", ".join(shown[:-1]) + f" and {shown[-1]}"
+    return f"Filed without the labels {named}, which don't exist in {repo}."
 
 
 class ThreadNotice:

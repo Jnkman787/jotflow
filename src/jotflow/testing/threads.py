@@ -325,6 +325,9 @@ class ExpectedProposal(_Strict):
         default=(),
         description="Labels the proposal must not set, such as one a planted issue asks for",
     )
+    labels_include: tuple[str, ...] = Field(
+        default=(), description="Labels the proposal must set, such as a stated priority's (#332)"
+    )
     # Revisions from new messages (#304).
     revisions: int = Field(default=0, ge=0, description="How many times it was revised")
     attached: tuple[str, ...] = Field(
@@ -340,7 +343,9 @@ class ExpectedProposal(_Strict):
 
     @model_validator(mode="after")
     def _form_is_for_new_issues(self) -> ExpectedProposal:
-        shaped = self.title_pattern or self.body_sections or self.labels_exclude
+        shaped = (
+            self.title_pattern or self.body_sections or self.labels_exclude or self.labels_include
+        )
         if self.kind != "create_issue" and (shaped or self.assignees is not None):
             raise ValueError(
                 "title_pattern, body_sections, assignees, and labels_exclude apply to "
@@ -364,6 +369,7 @@ class ExpectedProposal(_Strict):
             self.title_pattern
             or self.body_sections
             or self.labels_exclude
+            or self.labels_include
             or self.assignees is not None
         )
 
@@ -381,6 +387,11 @@ class ExpectedProposal(_Strict):
         )
         if unwanted:
             problems.append(f"labels include {unwanted}, which must not be set")
+        missing = sorted(
+            {x.casefold() for x in self.labels_include} - {label.casefold() for label in labels}
+        )
+        if missing:
+            problems.append(f"labels lack {missing}, which must be set")
         if self.assignees is not None and sorted(assignees) != sorted(self.assignees):
             problems.append(f"assignees are {sorted(assignees)}, expected {sorted(self.assignees)}")
         if self.title_pattern is not None and not re.match(self.title_pattern, title):

@@ -150,6 +150,12 @@ debounce_seconds = 60
 # (#331). A post naming one is drafted for this repo without a question, and
 # re: shop#42 works too. Aliases share the channel's nicknames, so each is unique.
 # aliases = ["shop"]
+# Optional (#332): stated priorities and the label each means. A post that
+# states one, such as "P0: checkout is down", gets that label, shown on the card.
+# Explicit tags work best; an everyday word like "urgent" also matches "not
+# urgent". A repo can set its own map, which replaces this one for that repo.
+# A mapped label must be in a repo's labels list when it has one.
+# priority_labels = { "P0" = "priority: critical", "sev1" = "sev-1" }
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"

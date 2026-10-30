@@ -55,6 +55,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `vague-repo-answer.json` | As `ambiguous-repo.json`, the agent asks which repo. Alice answers "whichever affects the billing most", so the next run asks once more, listing the nicknames, and proposes nothing (#331). |
 | `assign-by-name.json` | "Assign to Bob" without an @-mention. Bob replied in the thread and has an admin link, so the proposal assigns `acme-bob` as `named_in_text`, and the card shows the matched name (#331). |
 | `common-word-name.json` | "we will fix it" with a Will in the thread. The agent tries to assign Will by name, and JotFlow refuses, since matching is case-sensitive and Will is on the stoplist. The proposal has no assignee (#331). |
+| `priority-p0.json` | Alice posts "P0: checkout fails…", and the channel maps P0 to the label `priority: critical`. The proposal is labelled `bug` and `priority: critical` (#332). |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.
