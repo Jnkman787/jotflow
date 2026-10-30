@@ -1059,11 +1059,17 @@ class Store(Protocol):
         ...
 
     async def mark_card_shown(
-        self, proposal_id: str, revision: int, issues: str | None = None
+        self,
+        proposal_id: str,
+        revision: int,
+        issues: str | None = None,
+        credits: str | None = None,
     ) -> None:
         """Record that the card now shows ``revision``. Never moves backwards, so a
         change that landed while the card was being drawn keeps it due. ``issues``
-        is the [issues] settings it was drawn with (#306 follow-up)."""
+        is the [issues] settings it was drawn with (#306 follow-up). ``credits`` is
+        who it credited, kept only while the proposal is pending or failed, so what an
+        approval saw stays fixed (#396)."""
         ...
 
     async def set_skipped_label(self, proposal_id: str, label: str) -> None:
