@@ -20,7 +20,7 @@ Rules every implementation follows, checked by one contract test suite:
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
@@ -1175,6 +1175,25 @@ class Store(Protocol):
         ...
 
     async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]: ...
+
+    async def set_summary_items(
+        self, channel_id: str, slot: datetime, topic_ids: Sequence[str]
+    ) -> None:
+        """Record a summary's items in their numbered order, replacing any earlier try's,
+        before it's posted (#318). Older summaries' items go: only the latest routes."""
+        ...
+
+    async def summary_items(self, channel_id: str, slot: datetime) -> list[str]:
+        """A summary's item topics, item 1 first (#318)."""
+        ...
+
+    async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
+        """The posted summary whose message is ``ts``, if any: a summary's thread (#318)."""
+        ...
+
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        """Whether ``ts`` is any summary's message, whatever its row's status (#318)."""
+        ...
 
     async def defer_topic(
         self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str

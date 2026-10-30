@@ -1441,6 +1441,47 @@ class SqliteStore:
             )
         return frozenset(row["topic_id"] for row in rows)
 
+    async def set_summary_items(
+        self, channel_id: str, slot: datetime, topic_ids: Sequence[str]
+    ) -> None:
+        async with self._write():
+            await self._db.execute(
+                "DELETE FROM summary_items WHERE channel_id = ? AND slot <= ?",
+                (channel_id, to_text(slot)),
+            )
+            await self._db.executemany(
+                "INSERT INTO summary_items (channel_id, slot, position, topic_id)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    (channel_id, to_text(slot), number, topic_id)
+                    for number, topic_id in enumerate(topic_ids, start=1)
+                ],
+            )
+
+    async def summary_items(self, channel_id: str, slot: datetime) -> list[str]:
+        async with self._lock:
+            rows = await self._all(
+                "SELECT topic_id FROM summary_items WHERE channel_id = ? AND slot = ?"
+                " ORDER BY position",
+                (channel_id, to_text(slot)),
+            )
+        return [row["topic_id"] for row in rows]
+
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        async with self._lock:
+            row = await self._one(
+                "SELECT 1 FROM summaries WHERE channel_id = ? AND ts = ?", (channel_id, ts)
+            )
+        return row is not None
+
+    async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
+        async with self._lock:
+            row = await self._one(
+                "SELECT * FROM summaries WHERE channel_id = ? AND ts = ? AND status = 'posted'",
+                (channel_id, ts),
+            )
+        return None if row is None else self._summary(row)
+
     @staticmethod
     def _deferral(row: aiosqlite.Row) -> SummaryDeferral:
         return SummaryDeferral(

@@ -281,8 +281,9 @@ def blocks_for(
     ]
     if not shown:
         blocks.append({"type": "section", "text": _plain("No new ideas this week.")})
-    for item in shown:
-        lines = [item.title, f"{item.status}, {item.day}"]
+    for number, item in enumerate(shown, start=1):
+        # Numbered, so a reply in the thread can name it with re: 2 (#318).
+        lines = [f"{number}. {item.title}", f"{item.status}, {item.day}"]
         if item.suggested_by:
             lines.append(f"Suggested by {item.suggested_by}")
         if item.added_by:
@@ -404,6 +405,9 @@ class WeeklySummaries:
             # What Not this week may put off: only the topics this post offers it for.
             offered = [item.topic_id for item in items[:MAX_ITEMS] if item.waiting]
             await self._store.set_summary_topics(channel_id, slot, offered)
+            await self._store.set_summary_items(
+                channel_id, slot, [item.topic_id for item in items[:MAX_ITEMS]]
+            )
             ts = await self._slack.post(channel_id, text, blocks, slot)
         except Exception as exc:
             error = slack_error(exc)
