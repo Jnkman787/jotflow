@@ -325,3 +325,27 @@ async def test_an_add_me_request_is_not_a_topics_pending_draft(store: Store, clo
     assert work.conversation is not None
     (topic,) = [t for t in work.conversation.topics.topics if t.id == topic_id]
     assert topic.pending is None
+
+
+async def test_card_adds_past_the_assignee_cap_refuse_the_revision(
+    store: Store, clock: Clock
+) -> None:
+    from jotflow.models import MAX_ASSIGNEES
+
+    tools, grant, record = await named_alice(store, clock)
+    current = await card_add(store, record)
+    alice = [r for r in PendingDraft.of(current).assignee_reasons if r.login == "acme-alice"]
+    # Under the cap: Alice and Bob's card add, as before.
+    ok: Any = await tools.revise_proposal(grant, revision(current, ["acme-alice"], alice))
+    assert ok.revised
+    current = await store.get_proposal(record.id)
+    assert current is not None
+    # The agent's own picks fill the cap, so keeping Bob's add would pass it.
+    owners = [f"acme-hint{n}" for n in range(MAX_ASSIGNEES)]
+    for n, login in enumerate(owners):
+        await store.finish_verification(f"U0HINT{n}", github_login=login, github_id=2000 + n)
+    reasons = [AssigneeReason(login=login, why="owner_hint") for login in owners]
+    with pytest.raises(ToolError, match=r"stay assigned.*drop one of yours"):
+        await tools.revise_proposal(grant, revision(current, owners, reasons))
+    after = await store.get_proposal(record.id)
+    assert after is not None and after.revision == current.revision

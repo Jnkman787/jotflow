@@ -390,6 +390,9 @@ class AttachedFile(BaseModel):
     text: str = Field(max_length=MAX_ATTACHMENT_BYTES)
 
 
+# The most assignees one issue gets: GitHub allows ten (#305).
+MAX_ASSIGNEES = 10
+
 # Why an assignee is proposed (#305). A fixed choice, so no agent text reaches the card.
 AssigneeWhy = Literal["volunteered", "named_owner", "named_in_text", "owner_hint", "added_on_card"]
 ASSIGNEE_REASON_TEXT: dict[str, str] = {

@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from jotflow.board_catalog import BoardCatalog
 from jotflow.models import (
+    MAX_ASSIGNEES,
     MAX_ATTACHED,
     MAX_RELATED,
     SLACK_FILE_ID,
@@ -1680,6 +1681,13 @@ def _keep_card_adds(
         if key not in {login.casefold() for login in logins}:
             logins.append(add.login)
         reasons = [r for r in reasons if r.login.casefold() != key] + [add]
+    if len(logins) > MAX_ASSIGNEES:
+        # The card's own adds are kept, so the agent's choices make room (#378 review).
+        added = ", ".join(add.login for add in adds)
+        raise ToolError(
+            f"people added on the card ({added}) stay assigned, which would make more "
+            f"than {MAX_ASSIGNEES} assignees: drop one of yours"
+        )
     if isinstance(draft, IssueProposal):
         return draft.model_copy(update={"assignees": logins, "assignee_reasons": reasons})
     # Nor does the agent unassign them: a removal of a kept add goes (CodeRabbit).
