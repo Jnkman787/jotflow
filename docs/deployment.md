@@ -165,7 +165,7 @@ Database migrations run when JotFlow starts, each in one transaction, so a faile
 
 Do the steps above first: read this, take a backup, re-pin, and start. Then work through what applies to you.
 
-**Before you start: `NODE_OPTIONS`.** If `agent.env` or `agent-exec.env` sets `NODE_OPTIONS`, check it first. Both agent runners now refuse to start when it holds any option outside this list, since Node options can load code or write secrets (#294): `--max-old-space-size=N`, `--max-semi-space-size=N`, `--dns-result-order`, `--unhandled-rejections`, `--no-warnings`, `--no-deprecation`, `--enable-source-maps`, `--use-openssl-ca` and `--use-bundled-ca`. Anything else, such as `--require` for a monitoring agent, stops the runner, and its log names the option it refused. Remove such options before upgrading.
+**Before you start: `NODE_OPTIONS`.** If `agent.env` or `agent-exec.env` sets `NODE_OPTIONS`, check it first. Both agent runners now refuse to start when it holds any option outside this list, since Node options can load code or write secrets (#294): `--max-old-space-size=N`, `--max-semi-space-size=N`, `--dns-result-order` (`=ipv4first`, `=ipv6first` or `=verbatim`), `--unhandled-rejections` (`=strict`, `=warn`, `=none`, `=throw` or `=warn-with-error-code`), `--no-warnings`, `--no-deprecation`, `--enable-source-maps`, `--use-openssl-ca` and `--use-bundled-ca`. Anything else, such as `--require` for a monitoring agent, stops the runner, and its log names the option it refused. Remove such options before upgrading.
 
 **The store.** Migrations 16 to 23 run on the first start. They add tables and columns of pointers, Slack ids, times and settings, never message text:
 
