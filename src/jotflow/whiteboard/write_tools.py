@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from jotflow.board_catalog import BoardCatalog
 from jotflow.models import (
+    MAX_ASSIGNEES,
     MAX_ATTACHED,
     MAX_RELATED,
     SLACK_FILE_ID,
@@ -73,6 +74,7 @@ from jotflow.store.base import (
     ALSO_PERSON,
     ALSO_TOO_MANY,
     MAX_TOPICS_PER_MESSAGE,
+    SELF_ADD_RUN,
     MessageLink,
     StaleRevisionError,
     check_github_login,
@@ -202,6 +204,12 @@ ATTACH_NOT_SERVED = "isn't a file this run was given the text of"
 ATTACH_GONE = "is no longer shared in this channel"
 ATTACH_CHANGED = "changed since this run read it; draft from the thread again"
 ATTACH_SLACK_LINK = "holds a Slack link, and this channel sends none to GitHub"
+ATTACH_NOT_SOURCE = "isn't on a message among this proposal's sources"
+ATTACH_OTHER_TOPIC = "is on a message that isn't on this proposal's topic"
+ATTACH_SPLIT = (
+    "is already attached to another topic's proposal from the same message; "
+    "quote this topic's own part in the body instead"
+)
 ATTACH_TOO_LONG = "the body with its attachments would pass GitHub's length limit; attach fewer"
 # GitHub's issue body limit is 65,536 characters; JotFlow's footer needs the rest.
 MAX_BODY_WITH_FILES = 60_000
@@ -810,7 +818,7 @@ class WriteTools:
         if not assignees:
             return left_off
         by_login = {reason.login.casefold(): reason for reason in reasons}
-        standing = {(r.login.casefold(), r.why, r.source_ts) for r in kept}
+        standing = {(r.login.casefold(), r.why, r.source_ts): r.matched for r in kept}
         old = {login.casefold() for login in legacy}
         for login in assignees:
             reason = by_login.get(login.casefold())
@@ -821,7 +829,11 @@ class WriteTools:
                     f"give assignee {login} a reason: volunteered, named_owner, named_in_text "
                     "or owner_hint"
                 )
-            if (login.casefold(), reason.why, reason.source_ts) in standing:
+            key = (login.casefold(), reason.why, reason.source_ts)
+            if key in standing:
+                # A kept named_in_text reason keeps the name JotFlow matched (#378).
+                if found is not None and (shown := standing[key]) is not None:
+                    found[login.casefold()] = shown
                 continue
             link = await self._store.identity_for_login(login)
             if link is None:
@@ -901,12 +913,23 @@ class WriteTools:
             if text and _SLACK_LINK.search(_for_link_check(text)):
                 raise ToolError(NO_SLACK_LINKS)
 
-    async def _attach(self, grant: Grant, file_ids: list[str], body: str) -> list[AttachedFile]:
+    async def _attach(
+        self,
+        grant: Grant,
+        file_ids: list[str],
+        body: str,
+        *,
+        topic_id: str,
+        sources: list[MessageRef],
+    ) -> list[AttachedFile]:
         """Each named file's text, read again by JotFlow and snapshotted (#333).
 
-        Only a file this run's packet gave text for, still shared in this channel,
+        Only a file this run's packet gave text for, on a message among the
+        proposal's sources and on its topic (#374), still shared in this channel,
         unchanged since, with no credential's shape, and, under issue_links none, no
-        Slack link. The issue stays inside GitHub's body limit, or it's refused.
+        Slack link. A file a split message's other topic already attached is refused,
+        so each topic quotes only its own part. The issue stays inside GitHub's body
+        limit, or it's refused.
         """
         if not file_ids:
             return []
@@ -917,6 +940,7 @@ class WriteTools:
             served = await self._store.find_tool_call(grant.run_id, SERVED_FILE, file_id)
             if served is None:
                 raise ToolError(f"{file_id} {ATTACH_NOT_SERVED}")
+            await self._check_attach_place(grant, file_id, served, topic_id, sources)
             file = await current_file(file_id, self._files)
             if file is None or grant.channel_id not in file.channels:
                 raise ToolError(f"{file_id} {ATTACH_GONE}")
@@ -940,6 +964,33 @@ class WriteTools:
             )
         _check_body_with_files(body, out)
         return out
+
+    async def _check_attach_place(
+        self,
+        grant: Grant,
+        file_id: str,
+        served: str,
+        topic_id: str,
+        sources: list[MessageRef],
+    ) -> None:
+        """The file's message is a source, on this topic, and not another split topic's."""
+        ts = json.loads(served).get("ts")
+        if not isinstance(ts, str) or ts not in {source.ts for source in sources}:
+            raise ToolError(f"{file_id} {ATTACH_NOT_SOURCE}")
+        link = await self._store.get_message(grant.channel_id, ts)
+        if link is None or topic_id not in (link.topic_id, *link.also_topics):
+            raise ToolError(f"{file_id} {ATTACH_OTHER_TOPIC}")
+        others = {link.topic_id, *link.also_topics} - {topic_id, None}
+        if not others or grant.thread_ts is None:
+            return
+        for record in await self._store.thread_proposals(grant.channel_id, grant.thread_ts):
+            if (
+                record.proposal.topic_id in others
+                and record.state not in (ProposalState.REJECTED, ProposalState.SUPERSEDED)
+                and isinstance(record.proposal, IssueProposal)
+                and any(a.file_id == file_id for a in record.proposal.attached)
+            ):
+                raise ToolError(f"{file_id} {ATTACH_SPLIT}")
 
     def _related(
         self, grant: Grant, related: list[RelatedIssue], *, own: tuple[str, int] | None = None
@@ -1072,7 +1123,10 @@ class WriteTools:
                 grant, repo, args.assignees, args.assignee_reasons, args.participants, found=matched
             )
             related, dropped = self._related(grant, args.related)
-            attached = await self._attach(grant, args.attachments, args.body)
+            sources = await self._sources(grant, args.sources)
+            attached = await self._attach(
+                grant, args.attachments, args.body, topic_id=args.topic_id, sources=sources
+            )
             assignees, reasons = _without(args.assignees, args.assignee_reasons, left)
             reasons = _with_matched(reasons, matched)
             draft = IssueProposal.model_validate(
@@ -1082,7 +1136,7 @@ class WriteTools:
                     "assignee_reasons": [r.model_dump() for r in reasons],
                     "repo": repo,
                     "labels": labels,
-                    "sources": await self._sources(grant, args.sources),
+                    "sources": sources,
                     "related": [r.model_dump() for r in related],
                     "boards": [b.model_dump() for b in self._boards(grant, args.boards)],
                     "attached": [a.model_dump() for a in attached],
@@ -1158,11 +1212,17 @@ class WriteTools:
             record = await self._store.get_proposal(args.proposal_id)
             if record is None or record.channel_id != grant.channel_id:
                 raise ToolError(f"no proposal {args.proposal_id} in this channel")
+            if record.run_id == SELF_ADD_RUN:
+                # A person's own Add me request: its requester and cap stand (#378).
+                raise ToolError(
+                    f"proposal {record.id} is a person's Add me request: propose a "
+                    "separate update instead"
+                )
             await self._check_feeds(grant, record)
             sources = await self._sources(grant, args.sources)
             added_by = sorted(await self._authors(sources))
             participants = sorted({*record.participants, *added_by})
-            draft = self._revised(grant, record, args, sources)
+            draft = _keep_card_adds(self._revised(grant, record, args, sources), record.proposal)
             matched: dict[str, str] = {}
             left = await self._check_revised(
                 grant, draft, participants, record.proposal, found=matched
@@ -1599,6 +1659,46 @@ def _draft_with_matched(
         )
     changes = draft.changes.model_copy(
         update={"assignee_reasons": _with_matched(draft.changes.assignee_reasons, matched)}
+    )
+    return draft.model_copy(update={"changes": changes})
+
+
+def _keep_card_adds(
+    draft: IssueProposal | UpdateProposal, old: IssueProposal | UpdateProposal
+) -> IssueProposal | UpdateProposal:
+    """A person's add on the card survives a revision: only a person removes it, on
+    the card (#378). The agent's revision gets each one back, reason and all."""
+    kept = old.assignee_reasons if isinstance(old, IssueProposal) else old.changes.assignee_reasons
+    adds = [r for r in kept if r.why == "added_on_card"]
+    if not adds or type(draft) is not type(old):
+        return draft
+    if isinstance(draft, IssueProposal):
+        logins, reasons = list(draft.assignees), list(draft.assignee_reasons)
+    else:
+        logins, reasons = list(draft.changes.add_assignees), list(draft.changes.assignee_reasons)
+    for add in adds:
+        key = add.login.casefold()
+        if key not in {login.casefold() for login in logins}:
+            logins.append(add.login)
+        reasons = [r for r in reasons if r.login.casefold() != key] + [add]
+    if len(logins) > MAX_ASSIGNEES:
+        # The card's own adds are kept, so the agent's choices make room (#378 review).
+        added = ", ".join(add.login for add in adds)
+        raise ToolError(
+            f"people added on the card ({added}) stay assigned, which would make more "
+            f"than {MAX_ASSIGNEES} assignees: drop one of yours"
+        )
+    if isinstance(draft, IssueProposal):
+        return draft.model_copy(update={"assignees": logins, "assignee_reasons": reasons})
+    # Nor does the agent unassign them: a removal of a kept add goes (CodeRabbit).
+    restored = {add.login.casefold() for add in adds}
+    removals = [r for r in draft.changes.remove_assignees if r.casefold() not in restored]
+    changes = draft.changes.model_copy(
+        update={
+            "add_assignees": logins,
+            "assignee_reasons": reasons,
+            "remove_assignees": removals,
+        }
     )
     return draft.model_copy(update={"changes": changes})
 

@@ -37,6 +37,11 @@ FROM python:3.14-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2
 
 ARG JOTFLOW_UID=10001
 
+# Distrust the compromised eMudhra/emSign roots, and fail the build if any is
+# still trusted (#360): see docker/distrust-ca.sh.
+RUN --mount=type=bind,source=docker/distrust-ca.sh,target=/tmp/distrust-ca.sh \
+    sh /tmp/distrust-ca.sh
+
 RUN groupadd --system --gid "${JOTFLOW_UID}" jotflow \
     && useradd --system --uid "${JOTFLOW_UID}" --gid jotflow \
         --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin jotflow \

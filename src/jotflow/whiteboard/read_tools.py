@@ -33,7 +33,7 @@ import contextlib
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime
 from importlib import resources
 from typing import Literal, Protocol
@@ -74,7 +74,7 @@ from jotflow.orchestrator.topics import list_topics as build_topic_list
 from jotflow.policy import IssueLinks, IssuesPolicy, Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError
-from jotflow.store.base import Store, ToolCallRecord, utc_now
+from jotflow.store.base import SELF_ADD_RUN, Store, ToolCallRecord, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
@@ -247,6 +247,10 @@ class FollowsPost(BaseModel):
     ts: str = Field(description="Slack timestamp of that post, a pointer")
     seconds_before: int = Field(ge=0, description="How long before this thread's post it came")
     topic_id: str | None = Field(default=None, description="That post's topic, if it has one")
+    also_topics: list[str] = Field(
+        default_factory=list,
+        description="That post's other topics, when its separate actions were split (#335)",
+    )
 
 
 class WorkThread(BaseModel):
@@ -603,15 +607,15 @@ def read_tools(
         return summary
 
     async def _with_pending(
-        channel_id: str, thread_ts: str, index: TopicIndex, follows: str | None = None
+        channel_id: str, thread_ts: str, index: TopicIndex, follows: Collection[str] = ()
     ) -> TopicIndex:
         """Each topic this thread feeds gets its pending draft, so the run can revise it
-        (#304). Only those, and the topic of the author's own post just before this
-        one, which ``thread.follows`` names (#334): another thread's draft otherwise
-        never enters this run's packet."""
+        (#304). Only those, and the topics of the author's own post just before this
+        one, which ``thread.follows`` names (#334), each of a split post's (#374):
+        another thread's draft otherwise never enters this run's packet."""
         marked = []
         for summary in index.topics:
-            if thread_ts not in summary.threads and summary.id != follows:
+            if thread_ts not in summary.threads and summary.id not in follows:
                 marked.append(summary)
                 continue
             found = None
@@ -619,10 +623,13 @@ def read_tools(
                 for record in await store.thread_proposals(channel_id, thread):
                     # Live, not only pending: revising an approved one leaves the
                     # follow-up due, so it's drafted again once the issue is filed.
+                    # A person's Add me request isn't the topic's draft: the agent
+                    # proposes a separate update instead (#378).
                     if (
                         record.state in LIVE_PROPOSAL_STATES
                         and record.proposal.topic_id == summary.id
                         and record.draft_cleared_at is None
+                        and record.run_id != SELF_ADD_RUN
                     ):
                         found = PendingDraft.of(record)
             marked.append(summary.model_copy(update={"pending": found}) if found else summary)
@@ -671,7 +678,12 @@ def read_tools(
                     raise ToolError(f"the thread source returned another thread for run {run.id}")
                 index = await topics(grant, ListTopicsInput())
                 if grant.kind is RunKind.DRAFTING:
-                    follows = thread.follows.topic_id if thread.follows else None
+                    followed = thread.follows
+                    follows = (
+                        [t for t in (followed.topic_id, *followed.also_topics) if t]
+                        if followed is not None
+                        else []
+                    )
                     index = await _with_pending(grant.channel_id, run.thread_ts, index, follows)
                 related = await work_source.related(thread, index)
         except TimeoutError:
@@ -697,7 +709,9 @@ def read_tools(
                             args_hash=file.file_id,
                             channel_id=grant.channel_id,
                             thread_ts=run.thread_ts,
-                            result_json=json.dumps({"sha256": file.sha256}),
+                            # The message it came on, so only a proposal sourced from
+                            # that message, on its topic, may attach it (#374).
+                            result_json=json.dumps({"sha256": file.sha256, "ts": message.ts}),
                             called_at=clock(),
                         )
                     )

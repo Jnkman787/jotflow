@@ -57,6 +57,9 @@ NOT_LINKED = (
 )
 UNCHANGED = "Nothing changed."
 NOT_A_CHANNEL_BOARD = "That board is not one this channel lists."
+BOARDS_LOADING = (
+    "JotFlow is still finding this channel's boards after a restart. Try again in a minute."
+)
 BOARD_OFF = "JotFlow's write token can't update that board, so it can't be chosen."
 TOO_MANY_BOARDS = f"Choose at most {MAX_CARD_BOARDS} boards."
 UPDATE_HAS_NO_BOARDS = "An update to an existing issue doesn't change its boards."
@@ -219,6 +222,9 @@ class CardEdits:
         draft = record.proposal
         if not isinstance(draft, IssueProposal):
             raise Refused(UPDATE_HAS_NO_BOARDS)
+        if self._board_catalog.awaiting(record.channel_id):
+            # The menu couldn't offer found boards yet, so saving it could drop them.
+            raise Refused(BOARDS_LOADING)
         wanted = [nickname for nickname in payload.split(",") if nickname]
         chosen: list[BoardEntry] = []
         for nickname in wanted:

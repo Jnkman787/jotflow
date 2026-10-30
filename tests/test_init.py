@@ -758,8 +758,34 @@ def test_an_unsupported_existing_preset_is_named_before_it_is_dropped(
     # keep both tokens, rewrite the policy, keep the first channel, drop the second, Enter
     script = Script(answers=["", "", "n", "C0EXAMPLE1", "", "", ""])
     assert run_init(script.console(), FakeSlackApi.working(), options) == 0
-    assert "names the preset codex-cli, which JotFlow does not ship yet" in script.text
+    assert "names the preset codex-cli, which JotFlow does not ship," in script.text
     assert load_policy(options.config_file).agent.preset is None
+
+
+def test_a_rerun_keeps_the_experimental_copilot_preset_on_enter(options: InitOptions) -> None:
+    """copilot is set up by hand, so setup doesn't offer it, but keeps it (#367)."""
+    _with_agent(options)
+    toml = options.config_file.read_text()
+    assert 'preset = "claude-code"' in toml
+    options.config_file.write_text(toml.replace('preset = "claude-code"', 'preset = "copilot"'))
+    for path in (options.agent_file, options.agent_exec_file):
+        path.write_text(path.read_text().replace("=claude-code", "=copilot"))
+    before = options.config_file.read_text()
+    script = Script(answers=["", "", "", ""])  # tokens, keep the policy, Enter at the preset
+    assert run_init(script.console(), FakeSlackApi.working(), options) == 0
+    assert "uses the experimental copilot preset" in script.text
+    assert any(p.startswith("Agent preset [copilot]") for p in script.prompts)
+    assert not any(p.startswith("Agent model") for p in script.prompts)  # left as set by hand
+    assert load_policy(options.config_file).agent.preset == "copilot"
+    assert options.config_file.read_text() == before
+    for path in (options.agent_file, options.agent_exec_file):
+        assert read_env(path).get("JOTFLOW_AGENT_PRESET") == "copilot"
+
+
+def test_copilot_is_still_not_offered_to_a_new_setup() -> None:
+    with pytest.raises(ValueError, match="does not ship"):
+        init._preset_answer("copilot")
+    assert init._preset_answer("copilot", kept="copilot") == "copilot"
 
 
 def test_rerun_keeps_the_run_cap(options: InitOptions) -> None:
