@@ -218,6 +218,23 @@ class MemoryStore:
         siblings.discard(topic_id)
         return siblings
 
+    def _topics_in_thread(self, channel_id: str, thread_ts: str, keep_id: str) -> set[str]:
+        """Other topics still linked in this thread, when the new draft's own topic is too
+        (#375); see the SQLite store."""
+        record = self._proposals.get(keep_id)
+        own = None if record is None else record.proposal.topic_id
+        found: set[str] = set()
+        for key, link in self._messages.items():
+            if key[0] != channel_id or thread_ts not in (link.ref.ts, link.ref.thread_ts):
+                continue
+            if link.topic_id is not None:
+                found.add(link.topic_id)
+            found |= set(self._also.get(key, ()))
+        if own is None or own not in found:
+            return set()
+        found.discard(own)
+        return found
+
     async def link_message(
         self, ref: MessageRef, topic_id: str, *, by: LinkSource = "agent"
     ) -> MessageLink:
@@ -627,7 +644,9 @@ class MemoryStore:
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         async with self._lock:
-            spared = self._split_siblings(keep_id)
+            spared = self._split_siblings(keep_id) | self._topics_in_thread(
+                channel_id, thread_ts, keep_id
+            )
             ids = sorted(
                 r.id
                 for r in self._proposals.values()

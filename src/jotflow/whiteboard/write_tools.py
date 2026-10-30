@@ -36,7 +36,9 @@ import anyio
 from pydantic import BaseModel, Field, model_validator
 
 from jotflow.board_catalog import BoardCatalog
+from jotflow.change_requests import PACKET_CHANGE_REQUESTS
 from jotflow.models import (
+    MAX_ASSIGNEES,
     MAX_ATTACHED,
     MAX_RELATED,
     SLACK_FILE_ID,
@@ -73,6 +75,7 @@ from jotflow.store.base import (
     ALSO_PERSON,
     ALSO_TOO_MANY,
     MAX_TOPICS_PER_MESSAGE,
+    SELF_ADD_RUN,
     MessageLink,
     SourceOffTopicError,
     StaleRevisionError,
@@ -83,7 +86,13 @@ from jotflow.text import without_unsafe_chars
 from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
 from jotflow.whiteboard.tokens import Grant
-from jotflow.whiteboard.tools import ToolError, ToolSpec
+from jotflow.whiteboard.tools import (
+    CALL_GET_WORK_FIRST,
+    NOTHING_TO_DRAFT_REFUSAL,
+    PACKET_SERVED,
+    ToolError,
+    ToolSpec,
+)
 
 log = logging.getLogger("jotflow.whiteboard")
 
@@ -817,7 +826,7 @@ class WriteTools:
         if not assignees:
             return left_off
         by_login = {reason.login.casefold(): reason for reason in reasons}
-        standing = {(r.login.casefold(), r.why, r.source_ts) for r in kept}
+        standing = {(r.login.casefold(), r.why, r.source_ts): r.matched for r in kept}
         old = {login.casefold() for login in legacy}
         for login in assignees:
             reason = by_login.get(login.casefold())
@@ -828,7 +837,11 @@ class WriteTools:
                     f"give assignee {login} a reason: volunteered, named_owner, named_in_text "
                     "or owner_hint"
                 )
-            if (login.casefold(), reason.why, reason.source_ts) in standing:
+            key = (login.casefold(), reason.why, reason.source_ts)
+            if key in standing:
+                # A kept named_in_text reason keeps the name JotFlow matched (#378).
+                if found is not None and (shown := standing[key]) is not None:
+                    found[login.casefold()] = shown
                 continue
             link = await self._store.identity_for_login(login)
             if link is None:
@@ -873,6 +886,44 @@ class WriteTools:
             elif not _trusted(link):
                 left_off.append(login)
         return left_off
+
+    async def _check_change_requests(
+        self, grant: Grant, proposal_id: str, sources: Sequence[MessageRef]
+    ) -> None:
+        """A change request made on one card never revises another (#375)."""
+        made_on = await self._made_on(grant)
+        for source in sources:
+            target = made_on.get(source.ts)
+            if target is not None and target != proposal_id:
+                raise ToolError(
+                    f"message {source.ts} is a change request for proposal {target}, not "
+                    f"{proposal_id}: revise that one with it"
+                )
+
+    async def _made_on(self, grant: Grant) -> dict[str, str]:
+        """Each change request this run was served, by ts, and the card it was made on:
+        from get_work's ledger rows, never from the agent (#375)."""
+        made_on: dict[str, str] = {}
+        for row in await self._store.tool_call_results(grant.run_id, (PACKET_CHANGE_REQUESTS,)):
+            made_on |= {ts: p for ts, p in json.loads(row).items() if isinstance(p, str)}
+        return made_on
+
+    async def _check_cited_requests(
+        self, grant: Grant, topic_id: str | None, sources: Sequence[MessageRef]
+    ) -> None:
+        """A new proposal may cite a change request only on its own card's topic, such
+        as one that changes the kind of work (#375 review)."""
+        made_on = await self._made_on(grant)
+        for source in sources:
+            target = made_on.get(source.ts)
+            if target is None:
+                continue
+            record = await self._store.get_proposal(target)
+            if record is None or topic_id is None or record.proposal.topic_id != topic_id:
+                raise ToolError(
+                    f"message {source.ts} is a change request for proposal {target} on "
+                    "another topic: revise that one with it"
+                )
 
     async def _named_in(self, grant: Grant, repo: str, ref: MessageRef) -> tuple[str, str] | None:
         """Who ``ref`` names in words, among the packet's people and the repo's owner hints,
@@ -1123,6 +1174,7 @@ class WriteTools:
             )
             related, dropped = self._related(grant, args.related)
             sources = await self._sources(grant, args.sources)
+            await self._check_cited_requests(grant, args.topic_id, sources)
             attached = await self._attach(
                 grant, args.attachments, args.body, topic_id=args.topic_id, sources=sources
             )
@@ -1173,6 +1225,8 @@ class WriteTools:
                 found=matched,
             )
             _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
+            sources = await self._sources(grant, args.sources)
+            await self._check_cited_requests(grant, args.topic_id, sources)
             added, reasons = _without(
                 args.changes.add_assignees, args.changes.assignee_reasons, left
             )
@@ -1212,11 +1266,18 @@ class WriteTools:
             record = await self._store.get_proposal(args.proposal_id)
             if record is None or record.channel_id != grant.channel_id:
                 raise ToolError(f"no proposal {args.proposal_id} in this channel")
+            if record.run_id == SELF_ADD_RUN:
+                # A person's own Add me request: its requester and cap stand (#378).
+                raise ToolError(
+                    f"proposal {record.id} is a person's Add me request: propose a "
+                    "separate update instead"
+                )
             await self._check_feeds(grant, record)
             sources = await self._sources(grant, args.sources)
+            await self._check_change_requests(grant, record.id, sources)
             added_by = sorted(await self._authors(sources))
             participants = sorted({*record.participants, *added_by})
-            draft = self._revised(grant, record, args, sources)
+            draft = _keep_card_adds(self._revised(grant, record, args, sources), record.proposal)
             matched: dict[str, str] = {}
             left = await self._check_revised(
                 grant, draft, participants, record.proposal, found=matched
@@ -1657,6 +1718,46 @@ def _draft_with_matched(
     return draft.model_copy(update={"changes": changes})
 
 
+def _keep_card_adds(
+    draft: IssueProposal | UpdateProposal, old: IssueProposal | UpdateProposal
+) -> IssueProposal | UpdateProposal:
+    """A person's add on the card survives a revision: only a person removes it, on
+    the card (#378). The agent's revision gets each one back, reason and all."""
+    kept = old.assignee_reasons if isinstance(old, IssueProposal) else old.changes.assignee_reasons
+    adds = [r for r in kept if r.why == "added_on_card"]
+    if not adds or type(draft) is not type(old):
+        return draft
+    if isinstance(draft, IssueProposal):
+        logins, reasons = list(draft.assignees), list(draft.assignee_reasons)
+    else:
+        logins, reasons = list(draft.changes.add_assignees), list(draft.changes.assignee_reasons)
+    for add in adds:
+        key = add.login.casefold()
+        if key not in {login.casefold() for login in logins}:
+            logins.append(add.login)
+        reasons = [r for r in reasons if r.login.casefold() != key] + [add]
+    if len(logins) > MAX_ASSIGNEES:
+        # The card's own adds are kept, so the agent's choices make room (#378 review).
+        added = ", ".join(add.login for add in adds)
+        raise ToolError(
+            f"people added on the card ({added}) stay assigned, which would make more "
+            f"than {MAX_ASSIGNEES} assignees: drop one of yours"
+        )
+    if isinstance(draft, IssueProposal):
+        return draft.model_copy(update={"assignees": logins, "assignee_reasons": reasons})
+    # Nor does the agent unassign them: a removal of a kept add goes (CodeRabbit).
+    restored = {add.login.casefold() for add in adds}
+    removals = [r for r in draft.changes.remove_assignees if r.casefold() not in restored]
+    changes = draft.changes.model_copy(
+        update={
+            "add_assignees": logins,
+            "assignee_reasons": reasons,
+            "remove_assignees": removals,
+        }
+    )
+    return draft.model_copy(update={"changes": changes})
+
+
 def _leave_off(
     draft: IssueProposal | UpdateProposal, left: Sequence[str]
 ) -> IssueProposal | UpdateProposal:
@@ -1723,8 +1824,34 @@ def write_tools(
             name=name,
             description=_DESCRIPTIONS[name],
             input_model=model,
-            handler=getattr(tools, name),
+            handler=(
+                _drafting_guard(store, getattr(tools, name))
+                if RunKind.DRAFTING in kinds
+                else getattr(tools, name)
+            ),
             kinds=kinds,
         )
         for name, model, kinds in plan
     )
+
+
+def _drafting_guard(store: Store, handler: Any) -> Any:
+    """Allow a drafting write only after get_work served the run something to draft (#373).
+
+    An allow-list, on every drafting write tool, here where they're registered, so a
+    new tool can't miss it. A run that never called get_work has no served row and is
+    refused; a run served a thread under JotFlow's own post is refused too. Neither
+    links, proposes, revises, asks or points, whatever the agent does.
+    """
+
+    async def guarded(grant: Grant, arguments: Any) -> BaseModel:
+        if grant.kind is RunKind.DRAFTING:
+            served = await store.find_tool_call(grant.run_id, PACKET_SERVED, "thread")
+            if served is None:
+                raise ToolError(CALL_GET_WORK_FIRST)
+            if json.loads(served).get("nothing_to_draft") is not False:
+                raise ToolError(NOTHING_TO_DRAFT_REFUSAL)
+        result: BaseModel = await handler(grant, arguments)
+        return result
+
+    return guarded

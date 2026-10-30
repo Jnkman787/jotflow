@@ -390,6 +390,9 @@ class AttachedFile(BaseModel):
     text: str = Field(max_length=MAX_ATTACHMENT_BYTES)
 
 
+# The most assignees one issue gets: GitHub allows ten (#305).
+MAX_ASSIGNEES = 10
+
 # Why an assignee is proposed (#305). A fixed choice, so no agent text reaches the card.
 AssigneeWhy = Literal["volunteered", "named_owner", "named_in_text", "owner_hint", "added_on_card"]
 ASSIGNEE_REASON_TEXT: dict[str, str] = {
@@ -819,6 +822,13 @@ class PendingDraft(BaseModel):
     comment: UntrustedText | None = None
     labels: list[str] = Field(default_factory=list)
     assignees: list[str] = Field(default_factory=list)
+    assignee_reasons: list[AssigneeReason] = Field(
+        default_factory=list,
+        description=(
+            "Why each assignee is on the draft. Keep a reason as it is when you keep its "
+            "assignee; an added_on_card one is a person's, and stays"
+        ),
+    )
     issue_number: int | None = None
 
     @classmethod
@@ -839,6 +849,7 @@ class PendingDraft(BaseModel):
                 body=text(draft.body),
                 labels=list(draft.labels),
                 assignees=list(draft.assignees),
+                assignee_reasons=_shown(draft.assignee_reasons),
             )
         changes = draft.changes
         return cls(
@@ -850,8 +861,15 @@ class PendingDraft(BaseModel):
             comment=text(changes.comment),
             labels=list(changes.add_labels),
             assignees=list(changes.add_assignees),
+            assignee_reasons=_shown(changes.assignee_reasons),
             issue_number=draft.issue_number,
         )
+
+
+def _shown(reasons: list[AssigneeReason]) -> list[AssigneeReason]:
+    """The reasons as the packet gives them: JotFlow's matched name stays off, since
+    it's Slack text and JotFlow sets it again (#378)."""
+    return [r.model_copy(update={"matched": None}) for r in reasons]
 
 
 class TopicSummary(BaseModel):
