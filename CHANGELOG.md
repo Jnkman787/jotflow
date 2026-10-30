@@ -201,7 +201,8 @@ The threat model's [Accepted in v1](docs/threat-model.md#accepted-in-v1) lists e
 - A custom agent command's tools are the team's responsibility.
 - Rebuilding the database from Slack isn't in 0.1.0, so keep backups. It's planned after 0.1.0 (#38).
 
-[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Jnkman787/jotflow/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Jnkman787/jotflow/releases/tag/v0.2.0
