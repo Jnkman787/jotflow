@@ -1467,6 +1467,13 @@ class SqliteStore:
             )
         return [row["topic_id"] for row in rows]
 
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        async with self._lock:
+            row = await self._one(
+                "SELECT 1 FROM summaries WHERE channel_id = ? AND ts = ?", (channel_id, ts)
+            )
+        return row is not None
+
     async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
         async with self._lock:
             row = await self._one(

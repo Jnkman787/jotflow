@@ -49,7 +49,7 @@ TOLD_WINDOW_SECONDS = 600.0
 PASSED = "That summary has passed. Reply in the idea's own thread instead."
 NOT_OPEN = "That idea is no longer open, so nothing was linked."
 NEW_IDEAS_HERE = (
-    "To suggest a new idea, post it in the channel, not in the summary's thread. "
+    "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post. "
     "To add to an idea in the summary, start your reply with re: and its number, such as re: 2."
 )
 NEEDS_NUMBER = "In a summary's thread, re: takes an item's number, such as re: 2."
@@ -108,9 +108,11 @@ class SummaryReplies:
         policy: Policy,
         slack: RepliesSlack,
         *,
+        bot_user_id: str | None = None,
         clock: Callable[[], datetime] = utc_now,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._bot = bot_user_id
         self._store = store
         self._policy = policy
         self._slack = slack
@@ -120,6 +122,8 @@ class SummaryReplies:
         self._pointed: set[tuple[str, datetime, str]] = set()
         # One note per person per item per summary: later replies are only reacted to.
         self._noted: set[tuple[str, datetime, str, str]] = set()
+        # Pointers under JotFlow's own posts with no summary row, by thread.
+        self._pointed_threads: set[tuple[str, str, str]] = set()
 
     async def summary_thread(self, event: Mapping[str, Any]) -> SummaryPost | None:
         """The posted summary whose thread this reply is in, or None."""
@@ -129,6 +133,47 @@ class SummaryReplies:
         if channel is None or thread is None or ts == thread or not _TS.fullmatch(thread):
             return None
         return await self._store.summary_for_thread(channel, thread)
+
+    def under_own_post(self, event: Mapping[str, Any]) -> bool:
+        """A reply under one of JotFlow's own top-level posts, by Slack's parent_user_id.
+
+        JotFlow posts cards and notes inside threads, so its own top-level post is a
+        summary, or the help guide. This holds before the summary's row is marked
+        posted, or after a crash left it failed, so such a thread is never drafted.
+        """
+        thread = _str(event.get("thread_ts"))
+        return (
+            self._bot is not None
+            and thread is not None
+            and thread != _str(event.get("ts"))
+            and event.get("parent_user_id") == self._bot
+        )
+
+    async def on_unrecorded(self, event: Mapping[str, Any], *, asked: bool = False) -> str:
+        """A reply under JotFlow's own post with no posted summary on record: nothing
+        routes, and it's never drafted. re: N hears the summary has passed."""
+        user = _str(event.get("user"))
+        channel = _str(event.get("channel"))
+        thread = _str(event.get("thread_ts"))
+        if user is None or channel is None or thread is None:
+            return "ignored"
+        person = await self._slack.person(user)
+        if person.guest or person.external:
+            return "ignored"
+        keyword, _ = split_keyword(str(event.get("text") or ""))
+        if keyword == "re":
+            await self._tell(channel, user, thread, PASSED)
+            return "refused"
+        if asked or (channel, thread, user) in self._pointed_threads:
+            return "left"
+        self._pointed_threads.add((channel, thread, user))
+        await self._tell(channel, user, thread, NEW_IDEAS_HERE)
+        return "pointed"
+
+    def _prune(self, slot: datetime) -> None:
+        """Forget older summaries' pointers and notes: only the latest routes."""
+        self._pointed = {key for key in self._pointed if key[1] >= slot}
+        self._noted = {key for key in self._noted if key[1] >= slot}
 
     async def on_reply(
         self, event: Mapping[str, Any], post: SummaryPost, *, asked: bool = False
@@ -144,6 +189,7 @@ class SummaryReplies:
         thread = post.ts
         if user is None or ts is None or thread is None:
             return "ignored"
+        self._prune(post.slot)
         person = await self._slack.person(user)
         if person.guest or person.external:
             return "ignored"  # only members route, and nobody else is told anything

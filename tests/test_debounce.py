@@ -353,3 +353,18 @@ async def test_arm_starts_a_window_for_a_message_ingest_never_sees(
     assert pending.due_at == clock.now + timedelta(seconds=10)
     clock.advance(11)
     assert await debouncer.flush() == [thread]
+
+
+async def test_a_summarys_thread_is_never_drafted_even_if_armed(
+    store: Store, debouncer: Debouncer, clock: Clock
+) -> None:
+    """A second guard at flush (#318): ingest should never arm it, but if it did."""
+    slot = datetime(2026, 10, 26, 9, 30, tzinfo=UTC)
+    await debouncer.note(message("1760781610.000100", thread=ROOT))
+    await store.start_summary(CH, slot)
+    await store.finish_summary(CH, slot, "posted", ROOT)
+    clock.advance(3600)
+    assert await debouncer.flush() == []
+    assert await queued(store, CH, ROOT) == []
+    assert debouncer.pending() == {}
+    assert await store.pending_threads() == []

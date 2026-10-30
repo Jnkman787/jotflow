@@ -808,6 +808,12 @@ class MemoryStore:
     async def summary_items(self, channel_id: str, slot: datetime) -> list[str]:
         return list(self._summary_items.get((channel_id, slot), ()))
 
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        return any(
+            channel == channel_id and post.ts == ts
+            for (channel, _), post in self._summaries.items()
+        )
+
     async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
         for (channel, _), post in self._summaries.items():
             if channel == channel_id and post.status == "posted" and post.ts == ts:

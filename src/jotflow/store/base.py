@@ -1191,6 +1191,10 @@ class Store(Protocol):
         """The posted summary whose message is ``ts``, if any: a summary's thread (#318)."""
         ...
 
+    async def is_summary_message(self, channel_id: str, ts: str) -> bool:
+        """Whether ``ts`` is any summary's message, whatever its row's status (#318)."""
+        ...
+
     async def defer_topic(
         self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str
     ) -> SummaryDeferral:

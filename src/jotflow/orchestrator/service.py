@@ -601,6 +601,7 @@ class Orchestrator:
             self._store,
             self._policy,
             BoltRepliesSlack(self._client, slack_people, people),
+            bot_user_id=self._identity.user_id,
         )
         if any(c.summary is not None for c in self._policy.channels.values()):
             self.summaries = WeeklySummaries(
@@ -736,7 +737,7 @@ class Orchestrator:
             except Exception:
                 log.exception("could not tell whether a reply is in a summary's thread")
                 return  # fail closed: never draft what might be a summary's thread
-            if post is not None:
+            if post is not None or self.summary_replies.under_own_post(event):
                 # A question there is still answered: a question run only reads, and the
                 # summary is already in the channel. A mention never drafts here.
                 asked = False
@@ -747,7 +748,10 @@ class Orchestrator:
                     except Exception:
                         log.exception("could not take a question")
                 try:
-                    await self.summary_replies.on_reply(event, post, asked=asked)
+                    if post is not None:
+                        await self.summary_replies.on_reply(event, post, asked=asked)
+                    else:
+                        await self.summary_replies.on_unrecorded(event, asked=asked)
                 except Exception:
                     log.exception("could not handle a reply in a summary's thread")
                 return

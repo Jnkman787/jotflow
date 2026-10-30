@@ -1505,3 +1505,40 @@ async def test_re_n_outside_a_summarys_thread_keeps_its_meaning() -> None:
         assert topic is not None and topic.topic.issue_number == 2
     finally:
         await rig.orchestrator.stop()
+
+
+async def test_a_reply_before_the_summary_is_recorded_is_never_drafted() -> None:
+    """Slack posted the summary, but its row isn't marked posted yet, or failed (#318)."""
+    from datetime import UTC, datetime
+
+    from tests.test_summary_replies import Slack as RepliesSlack
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        assert rig.orchestrator.summary_replies is not None
+        replies = RepliesSlack()
+        rig.orchestrator.summary_replies._slack = replies
+        slot = datetime(2026, 10, 26, 9, 30, tzinfo=UTC)
+        await rig.store.start_summary(CH, slot)  # posting: no ts recorded yet
+        for n, text in enumerate(("re: 1", "<@U0BOT> draft this", "a new idea")):
+            ts = f"1760781680.00010{n}"
+            event = {
+                "type": "message",
+                "channel": CH,
+                "ts": ts,
+                "thread_ts": THREAD,
+                "parent_user_id": IDENTITY.user_id,
+                "user": "U0ALEX",
+                "text": text,
+            }
+            ref = MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD)
+            await rig.orchestrator.note(Accepted(kind="message", ref=ref), event)
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+        assert rig.slack.replies == []
+        told = [text for *_, text in replies.told]
+        assert told[0].startswith("That summary has passed")
+        assert told[-1].startswith("To suggest a new idea")
+    finally:
+        await rig.orchestrator.stop()
