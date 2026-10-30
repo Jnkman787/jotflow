@@ -116,3 +116,32 @@ def test_the_thread_names_every_skipped_label() -> None:
     assert skipped_line(record(skipped_label="x")) == (
         "Filed without the label x, which doesn't exist in acme-co/web."
     )
+
+
+async def execute_with(store: MemoryStore, approved_under: Policy, run_under: Policy) -> Any:
+    """Approve under one policy and write under another, as after a restart (#359 review)."""
+    from jotflow.orchestrator.approval import approved_issues
+    from jotflow.repo_catalog import RepoCatalog
+
+    draft = IssueProposal(
+        repo="acme-co/web", title="Checkout", body="Fails.", labels=[CRITICAL], confidence=0.9
+    )
+    added = await store.add_proposal(
+        record(proposal=draft, channel_id=CH, thread_ts="1760781600.000100")
+    )
+    locked = approved_issues(approved_under, RepoCatalog.static(approved_under), added)
+    await store.transition(PID, ProposalState.APPROVED, approved_by=AUTO_APPROVER, issues=locked)
+    grant = await running(store, RunKind.EXECUTION, proposal_id=PID, thread="1760781600.000100")
+    labels = Labels(False)
+    specs = checked_registry(read_tools(store, run_under, FakeSource(), labels=lambda: labels))
+    return (await call(specs["get_work"], grant)).execution, labels
+
+
+async def test_the_priority_map_is_the_one_approved_not_todays() -> None:
+    no_map = parse_policy(toml())
+    # Approved as a stated priority, then the map was removed: still skipped if missing.
+    work, labels = await execute_with(MemoryStore(), policy_with_map(), no_map)
+    assert work.checks.labels == [] and labels.asked == [("acme-co", "web", CRITICAL)]
+    # Approved as an ordinary label, then mapped: still stops the write if missing.
+    work, labels = await execute_with(MemoryStore(), no_map, policy_with_map())
+    assert work.checks.labels == [CRITICAL] and labels.asked == []

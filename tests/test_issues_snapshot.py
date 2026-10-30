@@ -155,7 +155,7 @@ async def test_a_card_showing_the_current_settings_approves_and_locks_them() -> 
     gate = Gate(SLACK)
     value = await gate.card(SLACK)
     assert await gate.handler.on_approve(click(value)) == "approved"
-    assert (await gate.state()).approved_issues == SLACK.snapshot()
+    assert (await gate.state()).approved_issues == SLACK.approved_snapshot([])
     assert gate.redrawn == []
 
 
@@ -175,7 +175,7 @@ async def test_an_old_card_approves_when_nothing_is_added_then_or_now() -> None:
     gate = Gate(None)
     value = await gate.card(None)
     assert await gate.handler.on_approve(click(value)) == "approved"
-    assert (await gate.state()).approved_issues == IssuesPolicy().snapshot()
+    assert (await gate.state()).approved_issues == IssuesPolicy().approved_snapshot([])
 
 
 async def test_auto_mode_locks_the_settings_too() -> None:
@@ -479,7 +479,7 @@ async def test_a_failed_card_shows_todays_settings_so_retry_can_approve() -> Non
     body = click(f"{PID}:{locked}")
     body["actions"][0]["action_id"] = ACTION_RETRY
     assert await gate.handler.on_approve(body) == "approved"
-    assert (await gate.state()).approved_issues == SLACK.snapshot()
+    assert (await gate.state()).approved_issues == SLACK.approved_snapshot([])
 
 
 @pytest.mark.parametrize("label", [".", ".."])

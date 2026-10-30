@@ -894,7 +894,9 @@ def read_tools(
         optional: list[str] = []
         if added.label is not None and added.label.casefold() not in own:
             optional.append(added.label)
-        priority = _priority_labels(record)
+        # The priority labels the approval locked, or today's for an older approval.
+        locked = IssuesPolicy.priority_from_snapshot(record.approved_issues)
+        priority = set(locked) if locked is not None else _priority_labels(record)
         optional += [label for label in draft.labels if label.casefold() in priority]
         if not optional:
             return record, added

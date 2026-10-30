@@ -55,7 +55,12 @@ from jotflow.models import (
     expected_runner_preset,
 )
 from jotflow.orchestrator.add_me import AddMe, AddMeSlack, BoltAddMeSlack, PersonChecks
-from jotflow.orchestrator.approval import ApprovalHandler, ApprovalSlack, BoltApprovalSlack
+from jotflow.orchestrator.approval import (
+    ApprovalHandler,
+    ApprovalSlack,
+    BoltApprovalSlack,
+    approved_issues,
+)
 from jotflow.orchestrator.boards import BoardAdder
 from jotflow.orchestrator.card_edits import CardEdits
 from jotflow.orchestrator.card_sync import (
@@ -465,7 +470,12 @@ class Orchestrator:
             boards=self.boards,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
-        self.auto = AutoApprover(self._store, self.channel_mode, self._policy.issues)
+        self.auto = AutoApprover(
+            self._store,
+            self.channel_mode,
+            self._policy.issues,
+            locks=lambda record: approved_issues(self._policy, self.repos, record),
+        )
         # Once an issue is written, its thread hears where it went (#32).
         self.threads = ThreadNotice(
             self._store,
