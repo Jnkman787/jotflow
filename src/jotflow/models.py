@@ -718,8 +718,9 @@ class ProposalRecord(BaseModel):
     unsplit_at: AwareDatetime | None = Field(
         default=None,
         description=(
-            "When a person's decision undid the agent's split and left this proposal's topic "
-            "with no messages, so it was superseded (#335)"
+            "When a decision moved the last message off this proposal's topic, such as a "
+            "person's skip: or re:, or undoing the agent's split, so it was superseded "
+            "(#335, #395)"
         ),
     )
 

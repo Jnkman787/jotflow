@@ -7,12 +7,14 @@ tests. Nothing survives the process.
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 
 from jotflow.models import (
+    AttachedFile,
     ChannelMode,
     Duplicate,
     ExecutionResult,
@@ -34,6 +36,7 @@ from jotflow.store.base import (
     AUTO_APPROVER,
     BOUND_STATES,
     DEFAULT_RUN_TIMEOUTS,
+    DETACHED_RUN,
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
@@ -41,6 +44,7 @@ from jotflow.store.base import (
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
     SELF_ADD_RUN,
+    SERVED_FILE,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -78,6 +82,7 @@ from jotflow.store.base import (
     check_notice,
     check_revision,
     check_run_request,
+    check_sources_on_topic,
     cleared_draft,
     edited_draft,
     plan_duplicate,
@@ -171,11 +176,52 @@ class MemoryStore:
         self._messages[key] = link
         if topic_id is not None:
             self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
-        # Every topic the split message leaves, its first one too (#374).
-        first = existing.topic_id if existing is not None and undone else None
+        # Every topic the message leaves, a split's or not, whoever decided (#374, #395).
+        first = existing.topic_id if existing is not None else None
         left = dict.fromkeys([*undone, *([first] if first else [])])
         dropped = [p for t in left if t != topic_id for p in self._drop_orphaned(t)]
-        return replace(link, dropped=tuple(dropped))
+        detached = [p for t in left if t != topic_id for p in self._detach(t, ref.ts)]
+        return replace(link, dropped=tuple(dropped), detached=tuple(detached))
+
+    def _detach(self, topic_id: str, ts: str) -> list[str]:
+        """Take a moved message's files off the topic's pending drafts; their ids (#391)."""
+        taken: list[str] = []
+        for record in sorted(self._proposals.values(), key=lambda r: r.id):
+            draft = record.proposal
+            if (
+                draft.topic_id != topic_id
+                or record.state is not ProposalState.PENDING
+                or record.draft_cleared_at is not None
+                or record.run_id == SELF_ADD_RUN
+                or not isinstance(draft, IssueProposal)
+                or not draft.attached
+            ):
+                continue
+            kept = [a for a in draft.attached if self._served_ts(record.run_id, a) != ts]
+            if len(kept) == len(draft.attached):
+                continue
+            updated = record.model_copy(
+                update={
+                    "proposal": draft.model_copy(update={"attached": kept}),
+                    "revision": record.revision + 1,
+                },
+                deep=True,
+            )
+            self._proposals[record.id] = updated
+            self._revisions.append(
+                ProposalRevision(
+                    record.id, updated.revision, DETACHED_RUN, ("attached",), (), self._clock()
+                )
+            )
+            taken.append(record.id)
+        return taken
+
+    def _served_ts(self, run_id: str, attached: AttachedFile) -> str | None:
+        for call in self._calls:
+            if (call.run_id, call.tool, call.args_hash) == (run_id, SERVED_FILE, attached.file_id):
+                ts = json.loads(call.result_json).get("ts")
+                return ts if isinstance(ts, str) else None
+        return None
 
     def _drop_orphaned(self, topic_id: str) -> list[str]:
         """Supersede a topic's pending proposals once it has no messages left (#335)."""
@@ -326,7 +372,13 @@ class MemoryStore:
 
     # Proposals
 
-    async def add_proposal(self, record: ProposalRecord) -> ProposalRecord:
+    async def add_proposal(
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
+    ) -> ProposalRecord:
         check_new_proposal(record)
         async with self._lock:
             if record.id in self._proposals:
@@ -338,6 +390,10 @@ class MemoryStore:
                     raise NotFoundError(f"no topic {topic_id}")
                 if topic.topic.channel_id != record.channel_id:
                     raise ConflictError("a proposal can only be for a topic in its own channel")
+                if sources_on_topic:
+                    sources = record.proposal.sources
+                    links = {r.ts: self._messages.get((record.channel_id, r.ts)) for r in sources}
+                    check_sources_on_topic(topic_id, sources, links, requests_on_topic)
             stored = record.model_copy(
                 update={"participants": sorted(set(record.participants))}, deep=True
             )

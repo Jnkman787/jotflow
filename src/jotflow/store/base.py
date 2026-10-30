@@ -64,6 +64,12 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
 AUTO_APPROVER = "auto"
 # The run id of a proposal a person made with an Add me button (#305), which no agent
 # drafted. A new draft doesn't supersede it, and auto mode never approves it.
+# The tool-call ledger's record of a file a run's packet gave text for, with its
+# message's ts (#333, #374). The store reads it to find a file's message (#391).
+SERVED_FILE = "packet_file"
+# The run id a revision gets when JotFlow takes an attached file off a pending draft,
+# because the file's message was moved to another topic, by anyone (#391).
+DETACHED_RUN = "jotflow:detached"
 SELF_ADD_RUN = "add-me"
 
 # Once final, a proposal's drafted text is cleared (#102). Failed is not final:
@@ -128,6 +134,36 @@ class DraftClearedError(TransitionError):
 
 class ContentChangedError(StoreError):
     """Approval named a content hash that no longer matches the draft."""
+
+
+class SourceOffTopicError(ConflictError):
+    """A drafting proposal cites no message, or one not on its own topic (#394, #395).
+
+    ``str()`` is the fixed reason, naming at most a message's ts and the topic id.
+    """
+
+
+def check_sources_on_topic(
+    topic_id: str,
+    sources: Sequence[MessageRef],
+    links: Mapping[str, MessageLink | None],
+    on_topic: Collection[str] = (),
+) -> None:
+    """At least one source, and every one on ``topic_id``, first or extra. ``links`` holds
+    each source's stored link by ts, read in the caller's write. ``on_topic``: the ts of
+    JotFlow's own change requests already checked to be on this topic's card (#375),
+    which no link places, since the agent never links JotFlow's messages."""
+    if not sources:
+        raise SourceOffTopicError("cite at least one of the topic's messages as a source")
+    for source in sources:
+        if source.ts in on_topic:
+            continue
+        link = links.get(source.ts)
+        if link is None or topic_id not in (link.topic_id, *link.also_topics):
+            raise SourceOffTopicError(
+                f"message {source.ts} isn't on topic {topic_id}: link it there first, or cite "
+                "only that topic's messages"
+            )
 
 
 class DuplicateRefusedError(ConflictError):
@@ -267,6 +303,9 @@ class MessageLink:
     # Pending proposals this decision dropped: a person's re: or skip: undid the split
     # and left their extra topic with no messages (#335). Set only on the write's result.
     dropped: tuple[str, ...] = ()
+    # Pending drafts this decision took a moved message's attached file off (#391).
+    # Set only on the write's result.
+    detached: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -539,7 +578,7 @@ def edited_draft(
 
 # A drafting run's revision of a pending draft, from new messages (#304). The store
 # keeps which fields changed and whose messages, never the values.
-RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related"]
+RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related", "attached"]
 REVISED_FIELDS: tuple[RevisedField, ...] = (
     "title",
     "body",
@@ -916,7 +955,19 @@ class Store(Protocol):
         ...
 
     # Proposals
-    async def add_proposal(self, record: ProposalRecord) -> ProposalRecord: ...
+    async def add_proposal(
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
+    ) -> ProposalRecord:
+        """Store a new proposal. ``sources_on_topic``, for the agent's: refuse, with
+        :class:`SourceOffTopicError`, one that cites no message or one not on its own
+        topic, checked in the same write as the insert, so a decision that moves a
+        message can't slip in between (#394, #395). JotFlow's own, such as Add me, skip it.
+        """
+        ...
 
     async def get_proposal(self, proposal_id: str) -> ProposalRecord | None: ...
 

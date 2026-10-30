@@ -16,6 +16,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import typing
 from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -26,6 +27,7 @@ import aiosqlite
 from pydantic import TypeAdapter
 
 from jotflow.models import (
+    AttachedFile,
     ChannelMode,
     Duplicate,
     ExecutionResult,
@@ -46,14 +48,15 @@ from jotflow.store.base import (
     ALSO_PERSON,
     ALSO_TOO_MANY,
     DEFAULT_RUN_TIMEOUTS,
+    DETACHED_RUN,
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
     MAX_SUMMARY_ATTEMPTS,
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
-    REVISED_FIELDS,
     SELF_ADD_RUN,
+    SERVED_FILE,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -75,6 +78,7 @@ from jotflow.store.base import (
     ReactionKeyword,
     ReactionMark,
     Recovery,
+    RevisedField,
     StaleRevisionError,
     StoreError,
     SummaryDeferral,
@@ -93,6 +97,7 @@ from jotflow.store.base import (
     check_notice,
     check_revision,
     check_run_request,
+    check_sources_on_topic,
     cleared_draft,
     edited_draft,
     from_text,
@@ -108,6 +113,8 @@ from jotflow.store.lock import UNSUPPORTED, LockUnsupportedError, StoreLock, acq
 from jotflow.store.migrations import MIGRATIONS, Migration
 from jotflow.store.titles import clean_title
 
+# Every field a revision row may name: a run's, and JotFlow's own "attached" (#391).
+_CHANGED_FIELDS = frozenset(typing.get_args(RevisedField))
 log = logging.getLogger("jotflow.store")
 
 _PROPOSAL = TypeAdapter[Proposal](Proposal)
@@ -319,7 +326,7 @@ class SqliteStore:
             )
         # A person's decision, or chatter, wins over the agent's split (#335); and the
         # first topic is never also an extra one.
-        dropped: list[str] = []
+        extra: list[str] = []
         if not self._split:
             pass
         elif by == "person" or topic_id is None:
@@ -328,46 +335,113 @@ class SqliteStore:
                 "DELETE FROM message_topics WHERE channel_id = ? AND ts = ?",
                 (ref.channel_id, ref.ts),
             )
-            # Every topic the split message leaves, its first one too (#374), drops
-            # its pending drafts once it has no messages.
-            first = existing["topic_id"] if existing is not None and extra else None
-            for other in dict.fromkeys([*extra, *([first] if first else [])]):
-                if other != topic_id:
-                    dropped += await self._drop_orphaned(other, now)
         else:
             await self._db.execute(
                 "DELETE FROM message_topics WHERE channel_id = ? AND ts = ? AND topic_id = ?",
                 (ref.channel_id, ref.ts, topic_id),
             )
+        # Every topic the message leaves, a split's or not, whoever decided (#374, #395),
+        # drops its pending drafts once it has no messages.
+        first = existing["topic_id"] if existing is not None else None
+        dropped: list[str] = []
+        detached: list[str] = []
+        for other in dict.fromkeys([*extra, *([first] if first else [])]):
+            if other != topic_id:
+                dropped += await self._drop_orphaned(other, now)
+                detached += await self._detach(other, ref.ts, now)
         row = await self._one(
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
-        return dataclasses.replace(await self._linked(_found(row)), dropped=tuple(dropped))
+        return dataclasses.replace(
+            await self._linked(_found(row)), dropped=tuple(dropped), detached=tuple(detached)
+        )
+
+    async def _detach(self, topic_id: str, ts: str, now: str) -> list[str]:
+        """Take a moved message's files off the topic's pending drafts; their ids (#391).
+
+        Message ``ts`` left ``topic_id``, by a person's decision or the agent's own
+        re-link, or an undone split, so a file from it no longer belongs to that
+        topic's draft. The draft keeps the rest, and
+        a revision row names JotFlow, so the card says why and an earlier approval of
+        the old text is stale. Approved or filed work stays as it is.
+        """
+        rows = await self._all(
+            "SELECT id, run_id, draft_json FROM proposals WHERE topic_id = ?"
+            " AND state = 'pending' AND draft_cleared_at IS NULL AND run_id != ?"
+            " AND kind = 'create_issue' ORDER BY id",
+            (topic_id, SELF_ADD_RUN),
+        )
+        taken: list[str] = []
+        for row in rows:
+            draft = _PROPOSAL.validate_json(row["draft_json"])
+            if not isinstance(draft, IssueProposal) or not draft.attached:
+                continue
+            kept = [a for a in draft.attached if await self._served_ts(row["run_id"], a) != ts]
+            if len(kept) == len(draft.attached):
+                continue
+            detached = draft.model_copy(update={"attached": kept})
+            await self._db.execute(
+                "UPDATE proposals SET draft_json = ?, updated_at = ?, revision = revision + 1"
+                " WHERE id = ?",
+                (canonical_json(detached), now, row["id"]),
+            )
+            revision = await self._one("SELECT revision FROM proposals WHERE id = ?", (row["id"],))
+            await self._db.execute(
+                "INSERT INTO proposal_revisions (proposal_id, revision, run_id, changed,"
+                " revised_at) VALUES (?, ?, ?, ?, ?)",
+                (row["id"], _found(revision)["revision"], DETACHED_RUN, "attached", now),
+            )
+            taken.append(row["id"])
+        return taken
+
+    async def _served_ts(self, run_id: str, attached: AttachedFile) -> str | None:
+        """The message the run was served ``attached`` on, from the ledger."""
+        row = await self._one(
+            "SELECT result_json FROM tool_calls WHERE run_id = ? AND tool = ? AND args_hash = ?",
+            (run_id, SERVED_FILE, attached.file_id),
+        )
+        if row is None:
+            return None
+        ts = json.loads(row["result_json"]).get("ts")
+        return ts if isinstance(ts, str) else None
+
+    async def _has_messages(self, topic_id: str) -> bool:
+        """Whether any message is on the topic, as its first or an extra one."""
+        if self._split:
+            row = await self._one(
+                "SELECT 1 FROM message_refs WHERE topic_id = ?"
+                " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
+                (topic_id, topic_id),
+            )
+        else:
+            row = await self._one(
+                "SELECT 1 FROM message_refs WHERE topic_id = ? LIMIT 1", (topic_id,)
+            )
+        return row is not None
 
     async def _drop_orphaned(self, topic_id: str, now: str) -> list[str]:
         """Supersede a topic's pending proposals once it has no messages left (#335).
 
-        A person's decision that undoes the agent's split can leave an extra topic
-        with nothing to draft from. Its pending drafts are dropped, marked so the
-        card says why; anything approved or filed, and an Add me request, stays as it is.
+        A decision that moves a topic's last message elsewhere, a person's or the
+        agent's, split or not (#395), leaves it nothing to draft from. Its pending
+        drafts are dropped, marked so the card says why; anything approved or filed,
+        and an Add me request, stays as it is.
         """
-        left = await self._one(
-            "SELECT 1 FROM message_refs WHERE topic_id = ?"
-            " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
-            (topic_id, topic_id),
-        )
-        if left is not None:
+        if await self._has_messages(topic_id):
             return []
         rows = await self._all(
             "SELECT id, draft_json FROM proposals WHERE topic_id = ? AND state = 'pending'"
             " AND run_id != ? ORDER BY id",
             (topic_id, SELF_ADD_RUN),
         )
+        # unsplit_at came with message_topics, in migration 23: an older schema has
+        # neither, and its card says only that a newer proposal replaced it.
+        mark = "unsplit_at = ?, " if self._split else ""
         for row in rows:
             await self._db.execute(
-                "UPDATE proposals SET state = 'superseded', unsplit_at = ?, updated_at = ?,"
+                f"UPDATE proposals SET state = 'superseded', {mark}updated_at = ?,"
                 " revision = revision + 1 WHERE id = ? AND state = 'pending'",
-                (now, now, row["id"]),
+                (*([now] if self._split else []), now, row["id"]),
             )
             await self._clear(row["id"], _PROPOSAL.validate_json(row["draft_json"]), now)
         return [row["id"] for row in rows]
@@ -432,14 +506,18 @@ class SqliteStore:
             if topic["channel_id"] != ref.channel_id:
                 raise ConflictError("a message can only join a topic in its own channel")
             link = await self._decide(ref, topic_id, by)
-        if link.dropped:
+        if link.dropped or link.detached:
+            # The removed text, a dropped draft's or a detached file's, can still sit in
+            # the -wal file and free pages until scrubbed (#102, #391).
             await self._scrub_wal()
         return link
 
     async def mark_chatter(self, ref: MessageRef, *, by: LinkSource = "agent") -> MessageLink:
         async with self._write():
             link = await self._decide(ref, None, by)
-        if link.dropped:
+        if link.dropped or link.detached:
+            # The removed text, a dropped draft's or a detached file's, can still sit in
+            # the -wal file and free pages until scrubbed (#102, #391).
             await self._scrub_wal()
         return link
 
@@ -604,7 +682,9 @@ class SqliteStore:
             created_at=from_text(row["created_at"]),
             card_issues=row["card_issues"],
             approved_issues=row["approved_issues"],
-            card_credits=row["card_credits"],
+            # Migration 24's column (#403): a store opened at an older migration, as the
+            # upgrade tests do, has none.
+            card_credits=row["card_credits"] if "card_credits" in row.keys() else None,  # noqa: SIM118
             skipped_label=row["skipped_label"],
             unsplit_at=from_text(row["unsplit_at"])
             if self._split and row["unsplit_at"] is not None
@@ -615,7 +695,13 @@ class SqliteStore:
         row = await self._one("SELECT * FROM proposals WHERE id = ?", (proposal_id,))
         return None if row is None else await self._proposal(row)
 
-    async def add_proposal(self, record: ProposalRecord) -> ProposalRecord:
+    async def add_proposal(
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
+    ) -> ProposalRecord:
         check_new_proposal(record)
         draft = record.proposal
         async with self._write():
@@ -629,6 +715,15 @@ class SqliteStore:
                     raise NotFoundError(f"no topic {draft.topic_id}")
                 if topic["channel_id"] != record.channel_id:
                     raise ConflictError("a proposal can only be for a topic in its own channel")
+                if sources_on_topic:
+                    links = {}
+                    for source in draft.sources:
+                        row = await self._one(
+                            "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?",
+                            (record.channel_id, source.ts),
+                        )
+                        links[source.ts] = None if row is None else await self._linked(row)
+                    check_sources_on_topic(draft.topic_id, draft.sources, links, requests_on_topic)
             now = to_text(self._clock())
             await self._db.execute(
                 """
@@ -770,14 +865,23 @@ class SqliteStore:
         return [row["id"] for row in rows]
 
     async def _clear(
-        self, proposal_id: str, draft: IssueProposal | UpdateProposal, now: str
+        self,
+        proposal_id: str,
+        draft: IssueProposal | UpdateProposal,
+        now: str,
+        *,
+        bump: bool = False,
     ) -> None:
-        """Replace the stored draft with its cleared form, inside the caller's transaction."""
+        """Replace the stored draft with its cleared form, inside the caller's transaction.
+
+        A clear that comes with a state change rides on that change's revision, as the
+        memory store's does (#395). Only a clear on its own, ``bump``, raises it.
+        """
         await self._db.execute(
             "UPDATE proposals SET draft_json = ?, draft_cleared_at = ?, updated_at = ?,"
-            " revision = revision + 1"
+            " revision = revision + ?"
             " WHERE id = ? AND draft_cleared_at IS NULL",
-            (canonical_json(cleared_draft(draft)), now, now, proposal_id),
+            (canonical_json(cleared_draft(draft)), now, now, int(bump), proposal_id),
         )
 
     async def _scrub_wal(self) -> None:
@@ -906,7 +1010,7 @@ class SqliteStore:
                 r["proposal_id"],
                 int(r["revision"]),
                 r["run_id"],
-                tuple(f for f in r["changed"].split(",") if f in REVISED_FIELDS),
+                tuple(f for f in r["changed"].split(",") if f in _CHANGED_FIELDS),
                 tuple(by_revision.get(int(r["revision"]), ())),
                 from_text(r["revised_at"]),
             )
@@ -1015,7 +1119,7 @@ class SqliteStore:
                 raise NotFoundError(f"no proposal {proposal_id}")
             check_clearable(record)
             cleared = record.draft_cleared_at is None
-            await self._clear(proposal_id, record.proposal, to_text(self._clock()))
+            await self._clear(proposal_id, record.proposal, to_text(self._clock()), bump=True)
             updated = await self._get_proposal(proposal_id)
         if cleared:
             await self._scrub_wal()
