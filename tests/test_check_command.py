@@ -619,3 +619,15 @@ def test_codex_with_read_paths_is_no_longer_refused(
     main(["check"])
     out = capsys.readouterr().out
     assert "fail  policy" not in out and "drafting runs are off" not in out
+
+
+def test_the_issues_label_note_says_a_missing_label_is_skipped() -> None:
+    """#366: since #347 a repo GitHub says lacks the label gets the issue without it."""
+    from jotflow.policy import IssuesPolicy
+    from tests.test_write_tools import POLICY
+
+    policy = POLICY.model_copy(update={"issues": IssuesPolicy(label="from-slack")})
+    [note] = [n for n in check_command.issue_notes(policy) if "from-slack" in n]
+    assert "JotFlow never creates labels" in note
+    assert "filed without it and the thread says so" in note
+    assert "fails to file" not in note
