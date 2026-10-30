@@ -152,6 +152,9 @@ class SqliteStore:
         # Whether the schema has message_topics (#335): a store opened at an older
         # migration, as upgrade tests do, has none, and so no message has extra topics.
         self._split = True
+        # Whether proposals has card_credits (#396, migration 24), likewise: an older
+        # store records none, so its issues credit no one, the safe default.
+        self._credits = True
 
     @classmethod
     async def open(
@@ -206,6 +209,8 @@ class SqliteStore:
             await db.execute("SELECT 1 FROM sqlite_master WHERE name = 'message_topics'")
         ).fetchone()
         store._split = found is not None
+        columns = await (await db.execute("PRAGMA table_info(proposals)")).fetchall()
+        store._credits = any(column[1] == "card_credits" for column in columns)
         store._wal = not in_memory
         store._file_lock = file_lock
         return store
@@ -604,7 +609,7 @@ class SqliteStore:
             created_at=from_text(row["created_at"]),
             card_issues=row["card_issues"],
             approved_issues=row["approved_issues"],
-            card_credits=row["card_credits"],
+            card_credits=row["card_credits"] if self._credits else None,
             skipped_label=row["skipped_label"],
             unsplit_at=from_text(row["unsplit_at"])
             if self._split and row["unsplit_at"] is not None
@@ -966,15 +971,21 @@ class SqliteStore:
         issues: str | None = None,
         credits: str | None = None,
     ) -> None:
+        locked = (
+            " card_credits = CASE WHEN state IN ('pending', 'failed')"
+            " THEN COALESCE(?, card_credits) ELSE card_credits END,"
+            if self._credits
+            else ""
+        )
+        values = (revision, *((credits,) if self._credits else ()), issues, proposal_id)
         async with self._write():
             cursor = await self._db.execute(
                 "UPDATE proposals"
                 " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision)),"
-                " card_issues = COALESCE(?, card_issues),"
-                " card_credits = CASE WHEN state IN ('pending', 'failed')"
-                " THEN COALESCE(?, card_credits) ELSE card_credits END"
+                f"{locked}"
+                " card_issues = COALESCE(?, card_issues)"
                 " WHERE id = ?",
-                (revision, issues, credits, proposal_id),
+                values,
             )
             if cursor.rowcount == 0:
                 raise NotFoundError(f"no proposal {proposal_id}")

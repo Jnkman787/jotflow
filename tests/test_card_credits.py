@@ -152,3 +152,35 @@ def test_a_record_without_shown_credits_credits_no_one() -> None:
     assert shown_credits(base.model_copy(update={"card_credits": "not json"})) == frozenset()
     assert shown_credits(base.model_copy(update={"card_credits": '["U0SAM", 3]'})) == {"U0SAM"}
     assert shown_credits(base.model_copy(update={"approved_by": AUTO_APPROVER})) is None
+
+
+async def test_a_store_before_migration_24_records_and_reads_no_credits(tmp_path: Path) -> None:
+    """Upgrade tests open older schemas: card_credits is read and written only when
+    the column exists, and a store without it credits no one."""
+    from jotflow.store.migrations import MIGRATIONS
+
+    old = await SqliteStore.open(tmp_path / "old.db", migrations=MIGRATIONS[:23])
+    try:
+        record = await old.add_proposal(
+            ProposalRecord(
+                id="0123456789abcdef",
+                channel_id=CH,
+                thread_ts=ROOT,
+                run_id="r1",
+                proposal=IssueProposal(repo="acme-co/web", title="t", body="b", confidence=0.9),
+                created_at=datetime(2026, 10, 19, tzinfo=UTC),
+            )
+        )
+        await old.mark_card_shown(record.id, record.revision, '{"label": null}', '["U0SAM"]')
+        found = await old.get_proposal(record.id)
+        assert found is not None and found.card_credits is None
+        assert found.card_issues == '{"label": null}' and found.card_revision == record.revision
+    finally:
+        await old.close()
+    new = await SqliteStore.open(tmp_path / "old.db")
+    try:
+        await new.mark_card_shown("0123456789abcdef", 1, None, '["U0SAM"]')
+        found = await new.get_proposal("0123456789abcdef")
+        assert found is not None and found.card_credits == '["U0SAM"]'
+    finally:
+        await new.close()
