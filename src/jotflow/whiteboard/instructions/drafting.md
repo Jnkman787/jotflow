@@ -170,7 +170,9 @@ For each new topic that is real work, call `propose_issue` once:
   people's names and the channel.
 - `labels`: only labels that exist on the repo; check with `list_label`. If
   the repo has a `labels` list in `channel.repos`, choose only from it. Never
-  invent a label. Leave labels empty when none fits.
+  invent a label. Leave labels empty when none fits. If a message states a
+  priority in the repo's `priority_labels`, such as P0, add exactly that label.
+  Never infer a priority nobody stated.
 - `boards`: only from `channel.boards`, by their descriptions and the
   guide; up to 3, each with a one-line `reason`. None when none fits. Propose
   a board the poster names, by nickname or plainly by its description.

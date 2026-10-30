@@ -15,7 +15,7 @@ import fnmatch
 import json
 import re
 import tomllib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -100,6 +100,30 @@ def _check_label_name(value: str) -> str:
 
 
 Label = Annotated[str, AfterValidator(_check_label_name)]
+
+MAX_PRIORITY_KEY = 30
+MAX_PRIORITIES = 20
+
+
+def _check_priority_key(value: str) -> str:
+    """A stated priority a team maps to a label (#332), such as P0 or urgent."""
+    if not 0 < len(value) <= MAX_PRIORITY_KEY or value != value.strip():
+        raise ValueError(
+            f"priority {shown(value)} must be 1 to {MAX_PRIORITY_KEY} characters, no outer spaces"
+        )
+    if problem := unsafe_text_problem(value):
+        raise ValueError(f"priority {shown(value)} {problem}")
+    return value
+
+
+PriorityKey = Annotated[str, AfterValidator(_check_priority_key)]
+PriorityLabels = Annotated[dict[PriorityKey, Label], Field(max_length=MAX_PRIORITIES)]
+
+
+def _unique_priorities(labels: Mapping[str, str] | None, where: str) -> None:
+    if labels and (dupes := _duplicates(key.casefold() for key in labels)):
+        raise ValueError(f"{where} names a priority more than once: {', '.join(dupes)}")
+
 
 IssueLinks = Literal["permalinks", "none"]
 
@@ -227,6 +251,13 @@ class RepoPolicy(_Strict):
             "every repo that token reaches (#209)"
         ),
     )
+    priority_labels: PriorityLabels | None = Field(
+        default=None,
+        description=(
+            "Optional. Stated priorities, such as P0 or sev1, each mapped to a label the agent "
+            "adds when a post states it (#332). Replaces the channel's map for this repo"
+        ),
+    )
     owner_hints: tuple[UserId, ...] | None = Field(
         default=None,
         max_length=20,
@@ -236,6 +267,12 @@ class RepoPolicy(_Strict):
             "to this repo (#305). Only someone with a linked GitHub login is ever assigned"
         ),
     )
+
+    @field_validator("priority_labels")
+    @classmethod
+    def _unique_repo_priorities(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        _unique_priorities(value, "a repo's priority_labels")
+        return value
 
     @field_validator("read_paths")
     @classmethod
@@ -727,6 +764,18 @@ class ChannelPolicy(_Strict):
     summary: ChannelSummary | None = Field(
         default=None, description="A weekly post of the channel's ideas (#308); off if unset"
     )
+    priority_labels: PriorityLabels = Field(
+        default_factory=dict,
+        description=(
+            "Optional. Stated priorities, such as P0 or sev1, each mapped to a label the agent "
+            "adds when a post states it (#332). A repo's own map replaces this one"
+        ),
+    )
+
+    def priority_labels_for(self, repo: RepoPolicy) -> dict[str, str]:
+        """The priority map in force for ``repo``: its own, or the channel's."""
+        own = repo.priority_labels
+        return dict(own if own is not None else self.priority_labels)
 
     @field_validator("triage_guide")
     @classmethod
@@ -751,7 +800,23 @@ class ChannelPolicy(_Strict):
             raise ValueError(f"boards listed more than once: {', '.join(dupes)}")
         if dupes := _duplicates(s.owner.casefold() for s in self.board_scopes):
             raise ValueError(f"board scopes given more than once for: {', '.join(dupes)}")
+        self._check_priority_labels()
         return self
+
+    def _check_priority_labels(self) -> None:
+        """Every mapped label is one each affected repo may use (#332, #351 review)."""
+        _unique_priorities(self.priority_labels, "priority_labels")
+        restricted = [(r.nickname, r.labels, self.priority_labels_for(r)) for r in self.repos]
+        restricted += [(s.owner, s.labels, self.priority_labels) for s in self.scopes]
+        for name, labels, mapped in restricted:
+            if labels is None:
+                continue
+            allowed = {label.casefold() for label in labels}
+            for key, label in mapped.items():
+                if label.casefold() not in allowed:
+                    raise ValueError(
+                        f"priority {key} maps to {label}, which isn't in {name}'s labels list"
+                    )
 
     def board(self, ref: str) -> BoardPolicy | None:
         """A listed board by nickname or ``owner/number``, ignoring the owner's case."""

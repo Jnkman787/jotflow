@@ -112,6 +112,7 @@ def test_the_instructions_name_only_tools_that_exist() -> None:
     fields = {
         "topic_id",
         "from_jotflow",
+        "priority_labels",
         "change_request_by",
         "new_topic",
         "existing_topic",
@@ -279,6 +280,10 @@ DRAFTING_RULES = {
     "no Slack links in the body": "Put no Slack links in the body",
     "issue_links none leaves people out": "also leave out people's names and the channel",
     "only real labels": "Never invent a label",
+    "a stated priority's label (#332)": (
+        "If a message states a priority in the repo's `priority_labels`"
+    ),
+    "never infer a priority (#332)": "Never infer a priority nobody stated",
     "only the channel's boards (#309)": "only from `channel.boards`",
     "a board the poster names (#331)": "Propose a board the poster names",
     "JotFlow copies an attachment's text (#333)": (
