@@ -1542,3 +1542,36 @@ async def test_a_reply_before_the_summary_is_recorded_is_never_drafted() -> None
         assert told[-1].startswith("To suggest a new idea")
     finally:
         await rig.orchestrator.stop()
+
+
+async def test_an_idea_replied_to_the_help_guide_gets_the_nudge_not_silence() -> None:
+    """The guide is JotFlow's other top-level post: a reply there is never drafted, so its
+    author is told, once, to post the idea in the channel (#318 review)."""
+    from tests.test_summary_replies import Slack as RepliesSlack
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        assert rig.orchestrator.summary_replies is not None
+        replies = RepliesSlack()
+        rig.orchestrator.summary_replies._slack = replies
+        for n in range(2):
+            ts = f"1760781690.00010{n}"
+            event = {
+                "type": "message",
+                "channel": CH,
+                "ts": ts,
+                "thread_ts": THREAD,  # the pinned guide, with no summary row
+                "parent_user_id": IDENTITY.user_id,
+                "user": "U0ALEX",
+                "text": "Idea: export the dashboard as PDF",
+            }
+            ref = MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD)
+            await rig.orchestrator.note(Accepted(kind="message", ref=ref), event)
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+        from jotflow.orchestrator.summary_replies import POST_IN_CHANNEL
+
+        assert [text for *_, text in replies.told] == [POST_IN_CHANNEL]
+    finally:
+        await rig.orchestrator.stop()
