@@ -574,7 +574,9 @@ class SlackWorkSource:
         skipped, topic_id = await self._kept_by_person_as_chatter(channel, other)
         if skipped:
             return None  # a person said skip: for it
-        return FollowsPost(ts=other, seconds_before=int(gap), topic_id=topic_id)
+        link = await self._store.get_message(channel, other)
+        also = list(link.also_topics) if link is not None else []  # a split post (#374)
+        return FollowsPost(ts=other, seconds_before=int(gap), topic_id=topic_id, also_topics=also)
 
     def _message(
         self,

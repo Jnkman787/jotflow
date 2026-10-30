@@ -328,7 +328,10 @@ class SqliteStore:
                 "DELETE FROM message_topics WHERE channel_id = ? AND ts = ?",
                 (ref.channel_id, ref.ts),
             )
-            for other in extra:
+            # Every topic the split message leaves, its first one too (#374), drops
+            # its pending drafts once it has no messages.
+            first = existing["topic_id"] if existing is not None and extra else None
+            for other in dict.fromkeys([*extra, *([first] if first else [])]):
                 if other != topic_id:
                     dropped += await self._drop_orphaned(other, now)
         else:

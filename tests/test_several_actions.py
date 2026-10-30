@@ -299,23 +299,46 @@ async def test_a_persons_decision_drops_the_extra_topics_pending_drafts(
         link = await store.link_message(paste(), elsewhere, by="person")
     else:
         link = await store.mark_chatter(paste(), by="person")
-    assert link.dropped == ("p2",)
-    dropped = await store.get_proposal("p2")
-    assert dropped is not None and dropped.state is ProposalState.SUPERSEDED
-    assert dropped.unsplit_at is not None and dropped.draft_cleared_at is not None
-    assert dropped.revision > 1  # so its card is redrawn
-    assert await states(store) == {"p1": "pending", "p2": "superseded", "p3": "pending"}
+    # The first topic is dropped too when the message leaves it, and it's empty (#374).
+    leaves_first = decision != "re: the first"
+    assert link.dropped == (("p2", "p1") if leaves_first else ("p2",))
+    for proposal_id in link.dropped:
+        dropped = await store.get_proposal(proposal_id)
+        assert dropped is not None and dropped.state is ProposalState.SUPERSEDED
+        assert dropped.unsplit_at is not None and dropped.draft_cleared_at is not None
+        assert dropped.revision > 1  # so its card is redrawn
+    first = "superseded" if leaves_first else "pending"
+    assert await states(store) == {"p1": first, "p2": "superseded", "p3": "pending"}
     again = await store.get_message(CH, PASTE)
     assert again is not None and again.dropped == ()  # only on the write's own result
 
 
 async def test_a_person_moving_it_to_an_extra_topic_keeps_that_draft(store: Store) -> None:
+    # The draft of the topic it moved to stays; the emptied first topic's is dropped (#374).
     mixer, sensor = await split(store, "Sensor timing")
     for record in (draft("p1", mixer), draft("p2", sensor)):
         await store.add_proposal(record)
     link = await store.link_message(paste(), sensor, by="person")
-    assert link.dropped == ()
-    assert await states(store) == {"p1": "pending", "p2": "pending"}
+    assert link.dropped == ("p1",)
+    assert await states(store) == {"p1": "superseded", "p2": "pending"}
+
+
+async def test_the_first_topic_keeps_its_draft_while_it_has_messages(store: Store) -> None:
+    mixer, _ = await split(store, "Sensor timing")
+    await store.add_proposal(draft("p1", mixer))
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), mixer)
+    link = await store.mark_chatter(paste(), by="person")
+    assert "p1" not in link.dropped
+    assert (await states(store))["p1"] == "pending"
+
+
+async def test_an_unsplit_messages_skip_drops_nothing(store: Store) -> None:
+    # Only a split's undoing drops a draft; a lone message's skip is as before.
+    only = (await store.create_topic(CH, "Mixer")).topic.id
+    await store.link_message(paste(), only)
+    await store.add_proposal(draft("p1", only))
+    assert (await store.mark_chatter(paste(), by="person")).dropped == ()
+    assert await states(store) == {"p1": "pending"}
 
 
 async def test_an_approved_draft_on_an_orphaned_topic_is_left_alone(store: Store) -> None:
