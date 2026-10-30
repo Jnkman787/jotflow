@@ -191,7 +191,20 @@ async def card_context(
         revisions=tuple(await store.proposal_revisions(record.id)),
         boards=tuple(board_catalog.boards(record.channel_id)),
         offered_boards=tuple(board_catalog.offered(record.channel_id)),
+        source_skipped=await _source_skipped(store, record),
     )
+
+
+async def _source_skipped(store: Store, record: ProposalRecord) -> bool:
+    """Whether an unsplit dropped this card because a person marked its message not
+    an idea, so the card says that rather than that it was moved."""
+    if record.unsplit_at is None:
+        return False
+    for ref in record.proposal.sources:
+        link = await store.get_message(ref.channel_id, ref.ts)
+        if link is not None and link.chatter and link.linked_by == "person":
+            return True
+    return False
 
 
 # Settled states after which a lost follow-up is drafted again (#304): written, or

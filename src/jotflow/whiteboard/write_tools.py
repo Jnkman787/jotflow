@@ -36,6 +36,7 @@ import anyio
 from pydantic import BaseModel, Field, model_validator
 
 from jotflow.board_catalog import BoardCatalog
+from jotflow.change_requests import PACKET_CHANGE_REQUESTS
 from jotflow.models import (
     MAX_ASSIGNEES,
     MAX_ATTACHED,
@@ -84,7 +85,13 @@ from jotflow.text import without_unsafe_chars
 from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
 from jotflow.whiteboard.tokens import Grant
-from jotflow.whiteboard.tools import ToolError, ToolSpec
+from jotflow.whiteboard.tools import (
+    CALL_GET_WORK_FIRST,
+    NOTHING_TO_DRAFT_REFUSAL,
+    PACKET_SERVED,
+    ToolError,
+    ToolSpec,
+)
 
 log = logging.getLogger("jotflow.whiteboard")
 
@@ -879,6 +886,44 @@ class WriteTools:
                 left_off.append(login)
         return left_off
 
+    async def _check_change_requests(
+        self, grant: Grant, proposal_id: str, sources: Sequence[MessageRef]
+    ) -> None:
+        """A change request made on one card never revises another (#375)."""
+        made_on = await self._made_on(grant)
+        for source in sources:
+            target = made_on.get(source.ts)
+            if target is not None and target != proposal_id:
+                raise ToolError(
+                    f"message {source.ts} is a change request for proposal {target}, not "
+                    f"{proposal_id}: revise that one with it"
+                )
+
+    async def _made_on(self, grant: Grant) -> dict[str, str]:
+        """Each change request this run was served, by ts, and the card it was made on:
+        from get_work's ledger rows, never from the agent (#375)."""
+        made_on: dict[str, str] = {}
+        for row in await self._store.tool_call_results(grant.run_id, (PACKET_CHANGE_REQUESTS,)):
+            made_on |= {ts: p for ts, p in json.loads(row).items() if isinstance(p, str)}
+        return made_on
+
+    async def _check_cited_requests(
+        self, grant: Grant, topic_id: str | None, sources: Sequence[MessageRef]
+    ) -> None:
+        """A new proposal may cite a change request only on its own card's topic, such
+        as one that changes the kind of work (#375 review)."""
+        made_on = await self._made_on(grant)
+        for source in sources:
+            target = made_on.get(source.ts)
+            if target is None:
+                continue
+            record = await self._store.get_proposal(target)
+            if record is None or topic_id is None or record.proposal.topic_id != topic_id:
+                raise ToolError(
+                    f"message {source.ts} is a change request for proposal {target} on "
+                    "another topic: revise that one with it"
+                )
+
     async def _named_in(self, grant: Grant, repo: str, ref: MessageRef) -> tuple[str, str] | None:
         """Who ``ref`` names in words, among the packet's people and the repo's owner hints,
         if exactly one (#331). Names and text come from Slack, never the agent."""
@@ -1124,6 +1169,7 @@ class WriteTools:
             )
             related, dropped = self._related(grant, args.related)
             sources = await self._sources(grant, args.sources)
+            await self._check_cited_requests(grant, args.topic_id, sources)
             attached = await self._attach(
                 grant, args.attachments, args.body, topic_id=args.topic_id, sources=sources
             )
@@ -1174,6 +1220,8 @@ class WriteTools:
                 found=matched,
             )
             _check_removals(args.changes.remove_labels, args.changes.remove_assignees)
+            sources = await self._sources(grant, args.sources)
+            await self._check_cited_requests(grant, args.topic_id, sources)
             added, reasons = _without(
                 args.changes.add_assignees, args.changes.assignee_reasons, left
             )
@@ -1193,7 +1241,7 @@ class WriteTools:
                     **args.model_dump(exclude={"participants"}),
                     "repo": repo,
                     "changes": changes.model_dump(),
-                    "sources": await self._sources(grant, args.sources),
+                    "sources": sources,
                     "related": [r.model_dump() for r in related],
                 }
             )
@@ -1220,6 +1268,7 @@ class WriteTools:
                 )
             await self._check_feeds(grant, record)
             sources = await self._sources(grant, args.sources)
+            await self._check_change_requests(grant, record.id, sources)
             added_by = sorted(await self._authors(sources))
             participants = sorted({*record.participants, *added_by})
             draft = _keep_card_adds(self._revised(grant, record, args, sources), record.proposal)
@@ -1769,8 +1818,34 @@ def write_tools(
             name=name,
             description=_DESCRIPTIONS[name],
             input_model=model,
-            handler=getattr(tools, name),
+            handler=(
+                _drafting_guard(store, getattr(tools, name))
+                if RunKind.DRAFTING in kinds
+                else getattr(tools, name)
+            ),
             kinds=kinds,
         )
         for name, model, kinds in plan
     )
+
+
+def _drafting_guard(store: Store, handler: Any) -> Any:
+    """Allow a drafting write only after get_work served the run something to draft (#373).
+
+    An allow-list, on every drafting write tool, here where they're registered, so a
+    new tool can't miss it. A run that never called get_work has no served row and is
+    refused; a run served a thread under JotFlow's own post is refused too. Neither
+    links, proposes, revises, asks or points, whatever the agent does.
+    """
+
+    async def guarded(grant: Grant, arguments: Any) -> BaseModel:
+        if grant.kind is RunKind.DRAFTING:
+            served = await store.find_tool_call(grant.run_id, PACKET_SERVED, "thread")
+            if served is None:
+                raise ToolError(CALL_GET_WORK_FIRST)
+            if json.loads(served).get("nothing_to_draft") is not False:
+                raise ToolError(NOTHING_TO_DRAFT_REFUSAL)
+        result: BaseModel = await handler(grant, arguments)
+        return result
+
+    return guarded

@@ -33,7 +33,8 @@ Classify every message in `thread.messages` that has no `topic_id` and is not
   about work the team could track.
 
 A `from_jotflow` message with `change_request_by` is that person's Request
-Changes note on the pending draft: don't classify it. Revise with it (step 6).
+Changes note on the pending draft: don't classify it. Revise with it (step 6),
+the proposal its `change_request_for` names, never another.
 
 Replies usually belong to their thread's topic. A message that already has a
 `topic_id` was placed by a person or by `re:`; leave it. Chatter never yields
@@ -233,4 +234,5 @@ or discussion, and never ask whether an idea is serious or for more detail.
 ## 9. Stop
 
 When every message is classified and each topic has its proposal or its
-question, stop. Do not summarise.
+question, stop. Do not summarise. If `thread.nothing_to_draft` is set, stop at
+once without calling another tool.
