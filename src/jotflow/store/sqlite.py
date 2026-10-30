@@ -16,6 +16,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import typing
 from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -26,6 +27,7 @@ import aiosqlite
 from pydantic import TypeAdapter
 
 from jotflow.models import (
+    AttachedFile,
     ChannelMode,
     Duplicate,
     ExecutionResult,
@@ -46,14 +48,15 @@ from jotflow.store.base import (
     ALSO_PERSON,
     ALSO_TOO_MANY,
     DEFAULT_RUN_TIMEOUTS,
+    DETACHED_RUN,
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
     MAX_SUMMARY_ATTEMPTS,
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
-    REVISED_FIELDS,
     SELF_ADD_RUN,
+    SERVED_FILE,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -75,6 +78,7 @@ from jotflow.store.base import (
     ReactionKeyword,
     ReactionMark,
     Recovery,
+    RevisedField,
     StaleRevisionError,
     StoreError,
     SummaryDeferral,
@@ -109,6 +113,8 @@ from jotflow.store.lock import UNSUPPORTED, LockUnsupportedError, StoreLock, acq
 from jotflow.store.migrations import MIGRATIONS, Migration
 from jotflow.store.titles import clean_title
 
+# Every field a revision row may name: a run's, and JotFlow's own "attached" (#391).
+_CHANGED_FIELDS = frozenset(typing.get_args(RevisedField))
 log = logging.getLogger("jotflow.store")
 
 _PROPOSAL = TypeAdapter[Proposal](Proposal)
@@ -338,13 +344,66 @@ class SqliteStore:
         # drops its pending drafts once it has no messages.
         first = existing["topic_id"] if existing is not None else None
         dropped: list[str] = []
+        detached: list[str] = []
         for other in dict.fromkeys([*extra, *([first] if first else [])]):
             if other != topic_id:
                 dropped += await self._drop_orphaned(other, now)
+                detached += await self._detach(other, ref.ts, now)
         row = await self._one(
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
-        return dataclasses.replace(await self._linked(_found(row)), dropped=tuple(dropped))
+        return dataclasses.replace(
+            await self._linked(_found(row)), dropped=tuple(dropped), detached=tuple(detached)
+        )
+
+    async def _detach(self, topic_id: str, ts: str, now: str) -> list[str]:
+        """Take a moved message's files off the topic's pending drafts; their ids (#391).
+
+        Message ``ts`` left ``topic_id``, by a person's decision or the agent's own
+        re-link, or an undone split, so a file from it no longer belongs to that
+        topic's draft. The draft keeps the rest, and
+        a revision row names JotFlow, so the card says why and an earlier approval of
+        the old text is stale. Approved or filed work stays as it is.
+        """
+        rows = await self._all(
+            "SELECT id, run_id, draft_json FROM proposals WHERE topic_id = ?"
+            " AND state = 'pending' AND draft_cleared_at IS NULL AND run_id != ?"
+            " AND kind = 'create_issue' ORDER BY id",
+            (topic_id, SELF_ADD_RUN),
+        )
+        taken: list[str] = []
+        for row in rows:
+            draft = _PROPOSAL.validate_json(row["draft_json"])
+            if not isinstance(draft, IssueProposal) or not draft.attached:
+                continue
+            kept = [a for a in draft.attached if await self._served_ts(row["run_id"], a) != ts]
+            if len(kept) == len(draft.attached):
+                continue
+            detached = draft.model_copy(update={"attached": kept})
+            await self._db.execute(
+                "UPDATE proposals SET draft_json = ?, updated_at = ?, revision = revision + 1"
+                " WHERE id = ?",
+                (canonical_json(detached), now, row["id"]),
+            )
+            revision = await self._one("SELECT revision FROM proposals WHERE id = ?", (row["id"],))
+            await self._db.execute(
+                "INSERT INTO proposal_revisions (proposal_id, revision, run_id, changed,"
+                " revised_at) VALUES (?, ?, ?, ?, ?)",
+                (row["id"], _found(revision)["revision"], DETACHED_RUN, "attached", now),
+            )
+            taken.append(row["id"])
+        return taken
+
+    async def _served_ts(self, run_id: str, attached: AttachedFile) -> str | None:
+        """The message the run was served ``attached`` on, from the ledger."""
+        row = await self._one(
+            "SELECT result_json FROM tool_calls WHERE run_id = ? AND tool = ? AND args_hash = ?",
+            (run_id, SERVED_FILE, attached.file_id),
+        )
+        if row is None:
+            return None
+        ts = json.loads(row["result_json"]).get("ts")
+        return ts if isinstance(ts, str) else None
 
     async def _has_messages(self, topic_id: str) -> bool:
         """Whether any message is on the topic, as its first or an extra one."""
@@ -447,14 +506,18 @@ class SqliteStore:
             if topic["channel_id"] != ref.channel_id:
                 raise ConflictError("a message can only join a topic in its own channel")
             link = await self._decide(ref, topic_id, by)
-        if link.dropped:
+        if link.dropped or link.detached:
+            # The removed text, a dropped draft's or a detached file's, can still sit in
+            # the -wal file and free pages until scrubbed (#102, #391).
             await self._scrub_wal()
         return link
 
     async def mark_chatter(self, ref: MessageRef, *, by: LinkSource = "agent") -> MessageLink:
         async with self._write():
             link = await self._decide(ref, None, by)
-        if link.dropped:
+        if link.dropped or link.detached:
+            # The removed text, a dropped draft's or a detached file's, can still sit in
+            # the -wal file and free pages until scrubbed (#102, #391).
             await self._scrub_wal()
         return link
 
@@ -947,7 +1010,7 @@ class SqliteStore:
                 r["proposal_id"],
                 int(r["revision"]),
                 r["run_id"],
-                tuple(f for f in r["changed"].split(",") if f in REVISED_FIELDS),
+                tuple(f for f in r["changed"].split(",") if f in _CHANGED_FIELDS),
                 tuple(by_revision.get(int(r["revision"]), ())),
                 from_text(r["revised_at"]),
             )

@@ -35,6 +35,7 @@ from jotflow.policy import ChannelPolicy, IssuesPolicy, RepoPolicy
 from jotflow.store.base import (
     ADDED_ON_CARD,
     AUTO_APPROVER,
+    DETACHED_RUN,
     SELF_ADD_RUN,
     IdentityLink,
     ProposalRevision,
@@ -77,6 +78,10 @@ _PERMALINK = re.compile(
     r"https://[a-z0-9-]+\.slack\.com/archives/[A-Za-z0-9]+/p[0-9]+(\?[A-Za-z0-9=&._-]*)?"
 )
 
+DETACHED_LINE = (
+    "An attached file was taken off: its message was moved to another topic. "
+    "Reread before approving."
+)
 FAILED_LINE = "The write failed. The agent's reason is stored with the proposal."
 UNSPLIT_LINE = "Dropped. The messages it came from were moved off this topic, so it has none left."
 # The same drop when a person marked that message not an idea, as a skip does.
@@ -619,6 +624,7 @@ FIELD_NAMES = {
     "labels": "labels",
     "assignees": "assignees",
     "related": "related issues",
+    "attached": "attached files",
 }
 
 
@@ -630,6 +636,9 @@ def _revision_block(context: CardContext) -> Block | None:
     if not context.revisions:
         return None
     last = context.revisions[-1]
+    if last.run_id == DETACHED_RUN:
+        # JotFlow's own change: a person moved the file's message to another topic (#391).
+        return _context(DETACHED_LINE)
     fields = ", ".join(FIELD_NAMES[f] for f in last.changed)
     names = [context.names.get(user, user) for user in last.added_by]
     who = f" with new messages from {_and(names)}" if names else " with new messages"
