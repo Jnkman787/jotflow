@@ -695,6 +695,13 @@ class ProposalRecord(BaseModel):
         default=None,
         description="The [issues] label left off the write because GitHub said it doesn't exist",
     )
+    unsplit_at: AwareDatetime | None = Field(
+        default=None,
+        description=(
+            "When a person's decision undid the agent's split and left this proposal's topic "
+            "with no messages, so it was superseded (#335)"
+        ),
+    )
 
     @property
     def card_due(self) -> bool:

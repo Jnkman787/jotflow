@@ -10,6 +10,7 @@ and a busy timeout absorbs short waits for the lock.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -317,13 +318,18 @@ class SqliteStore:
             )
         # A person's decision, or chatter, wins over the agent's split (#335); and the
         # first topic is never also an extra one.
+        dropped: list[str] = []
         if not self._split:
             pass
         elif by == "person" or topic_id is None:
+            extra = await self._also_of(ref.channel_id, ref.ts)
             await self._db.execute(
                 "DELETE FROM message_topics WHERE channel_id = ? AND ts = ?",
                 (ref.channel_id, ref.ts),
             )
+            for other in extra:
+                if other != topic_id:
+                    dropped += await self._drop_orphaned(other, now)
         else:
             await self._db.execute(
                 "DELETE FROM message_topics WHERE channel_id = ? AND ts = ? AND topic_id = ?",
@@ -332,7 +338,58 @@ class SqliteStore:
         row = await self._one(
             "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?", (ref.channel_id, ref.ts)
         )
-        return await self._linked(_found(row))
+        return dataclasses.replace(await self._linked(_found(row)), dropped=tuple(dropped))
+
+    async def _drop_orphaned(self, topic_id: str, now: str) -> list[str]:
+        """Supersede a topic's pending proposals once it has no messages left (#335).
+
+        A person's decision that undoes the agent's split can leave an extra topic
+        with nothing to draft from. Its pending drafts are dropped, marked so the
+        card says why; anything approved or filed stays as it is.
+        """
+        left = await self._one(
+            "SELECT 1 FROM message_refs WHERE topic_id = ?"
+            " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
+            (topic_id, topic_id),
+        )
+        if left is not None:
+            return []
+        rows = await self._all(
+            "SELECT id, draft_json FROM proposals WHERE topic_id = ? AND state = 'pending'"
+            " ORDER BY id",
+            (topic_id,),
+        )
+        for row in rows:
+            await self._db.execute(
+                "UPDATE proposals SET state = 'superseded', unsplit_at = ?, updated_at = ?,"
+                " revision = revision + 1 WHERE id = ? AND state = 'pending'",
+                (now, now, row["id"]),
+            )
+            await self._clear(row["id"], _PROPOSAL.validate_json(row["draft_json"]), now)
+        return [row["id"] for row in rows]
+
+    async def _split_siblings(self, proposal_id: str) -> set[str]:
+        """The topics that share a split message with this proposal's topic (#335).
+
+        One pasted message can feed up to three topics, each with its own draft in
+        the same thread, so a new draft for one never replaces another's.
+        """
+        if not self._split:
+            return set()
+        row = await self._one("SELECT topic_id FROM proposals WHERE id = ?", (proposal_id,))
+        if row is None or row["topic_id"] is None:
+            return set()
+        topic_id = row["topic_id"]
+        rows = await self._all(
+            "SELECT r.topic_id AS first, m.topic_id AS extra FROM message_topics m"
+            " JOIN message_refs r ON r.channel_id = m.channel_id AND r.ts = m.ts"
+            " WHERE r.topic_id = ? OR EXISTS (SELECT 1 FROM message_topics k"
+            " WHERE k.channel_id = m.channel_id AND k.ts = m.ts AND k.topic_id = ?)",
+            (topic_id, topic_id),
+        )
+        siblings = {t for r in rows for t in (r["first"], r["extra"]) if t is not None}
+        siblings.discard(topic_id)
+        return siblings
 
     async def link_message(
         self, ref: MessageRef, topic_id: str, *, by: LinkSource = "agent"
@@ -343,11 +400,17 @@ class SqliteStore:
                 raise NotFoundError(f"no topic {topic_id}")
             if topic["channel_id"] != ref.channel_id:
                 raise ConflictError("a message can only join a topic in its own channel")
-            return await self._decide(ref, topic_id, by)
+            link = await self._decide(ref, topic_id, by)
+        if link.dropped:
+            await self._scrub_wal()
+        return link
 
     async def mark_chatter(self, ref: MessageRef, *, by: LinkSource = "agent") -> MessageLink:
         async with self._write():
-            return await self._decide(ref, None, by)
+            link = await self._decide(ref, None, by)
+        if link.dropped:
+            await self._scrub_wal()
+        return link
 
     async def get_message(self, channel_id: str, ts: str) -> MessageLink | None:
         async with self._lock:
@@ -511,6 +574,9 @@ class SqliteStore:
             card_issues=row["card_issues"],
             approved_issues=row["approved_issues"],
             skipped_label=row["skipped_label"],
+            unsplit_at=from_text(row["unsplit_at"])
+            if self._split and row["unsplit_at"] is not None
+            else None,
         )
 
     async def _get_proposal(self, proposal_id: str) -> ProposalRecord | None:
@@ -646,11 +712,17 @@ class SqliteStore:
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         async with self._write():
-            rows = await self._all(
-                "SELECT id, draft_json FROM proposals WHERE channel_id = ? AND thread_ts = ?"
-                " AND state = 'pending' AND id != ? ORDER BY id",
-                (channel_id, thread_ts, keep_id),
-            )
+            spared = await self._split_siblings(keep_id)
+            rows = [
+                row
+                for row in await self._all(
+                    "SELECT id, topic_id, draft_json FROM proposals"
+                    " WHERE channel_id = ? AND thread_ts = ? AND state = 'pending' AND id != ?"
+                    " ORDER BY id",
+                    (channel_id, thread_ts, keep_id),
+                )
+                if row["topic_id"] not in spared
+            ]
             now = to_text(self._clock())
             for row in rows:
                 await self._db.execute(

@@ -73,6 +73,9 @@ _PERMALINK = re.compile(
 )
 
 FAILED_LINE = "The write failed. The agent's reason is stored with the proposal."
+UNSPLIT_LINE = (
+    "Dropped. Someone put the message it came from in one topic, so this one has none left."
+)
 _STATE_LINES = {
     ProposalState.EXECUTING: "Creating it on GitHub now.",
     ProposalState.RECONCILING: "The write was interrupted; checking whether it already happened.",
@@ -744,6 +747,8 @@ def _state_line(record: ProposalRecord) -> Block | None:
     if state is ProposalState.FAILED:
         # The agent's reason can quote private repo content, so it stays in the store.
         return _context(FAILED_LINE + suffix)
+    if state is ProposalState.SUPERSEDED and record.unsplit_at is not None:
+        return _context(UNSPLIT_LINE + suffix)
     return _context(_STATE_LINES.get(state, state.value) + suffix)
 
 

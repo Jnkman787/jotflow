@@ -157,7 +157,8 @@ class MemoryStore:
         now = self._clock()
         # A person's decision, or chatter, wins over the agent's split (#335).
         also = self._also.get(key, [])
-        if by == "person" or topic_id is None:
+        undone = also if by == "person" or topic_id is None else []
+        if undone:
             also = []
         also = [t for t in also if t != topic_id]
         if also:
@@ -168,7 +169,46 @@ class MemoryStore:
         self._messages[key] = link
         if topic_id is not None:
             self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
-        return link
+        dropped = [p for t in undone if t != topic_id for p in self._drop_orphaned(t)]
+        return replace(link, dropped=tuple(dropped))
+
+    def _drop_orphaned(self, topic_id: str) -> list[str]:
+        """Supersede a topic's pending proposals once it has no messages left (#335)."""
+        if any(
+            link.topic_id == topic_id or topic_id in self._also.get(key, ())
+            for key, link in self._messages.items()
+        ):
+            return []
+        ids = sorted(
+            r.id
+            for r in self._proposals.values()
+            if r.proposal.topic_id == topic_id and r.state is ProposalState.PENDING
+        )
+        for proposal_id in ids:
+            record = self._proposals[proposal_id]
+            update = {
+                "state": ProposalState.SUPERSEDED,
+                "revision": record.revision + 1,
+                "unsplit_at": self._clock(),
+                **self._cleared(record),
+            }
+            self._proposals[proposal_id] = record.model_copy(update=update, deep=True)
+        return ids
+
+    def _split_siblings(self, proposal_id: str) -> set[str]:
+        """The topics that share a split message with this proposal's topic (#335)."""
+        record = self._proposals.get(proposal_id)
+        topic_id = None if record is None else record.proposal.topic_id
+        if topic_id is None:
+            return set()
+        siblings: set[str] = set()
+        for key, extra in self._also.items():
+            first = self._messages[key].topic_id
+            group = {first, *extra}
+            if topic_id in group:
+                siblings |= {t for t in group if t is not None}
+        siblings.discard(topic_id)
+        return siblings
 
     async def link_message(
         self, ref: MessageRef, topic_id: str, *, by: LinkSource = "agent"
@@ -573,6 +613,7 @@ class MemoryStore:
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         async with self._lock:
+            spared = self._split_siblings(keep_id)
             ids = sorted(
                 r.id
                 for r in self._proposals.values()
@@ -580,6 +621,7 @@ class MemoryStore:
                 and r.thread_ts == thread_ts
                 and r.state is ProposalState.PENDING
                 and r.id != keep_id
+                and r.proposal.topic_id not in spared
             )
             for proposal_id in ids:
                 record = self._proposals[proposal_id]

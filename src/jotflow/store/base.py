@@ -261,6 +261,9 @@ class MessageLink:
     linked_at: datetime
     # The other topics it also feeds, as the agent split it (#335). topic_id is its first.
     also_topics: tuple[str, ...] = ()
+    # Pending proposals this decision dropped: a person's re: or skip: undid the split
+    # and left their extra topic with no messages (#335). Set only on the write's result.
+    dropped: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1066,7 +1069,11 @@ class Store(Protocol):
         self, channel_id: str, thread_ts: str, *, keep_id: str
     ) -> list[str]:
         """Mark every other pending proposal in the thread superseded, clearing their
-        drafts; return their ids."""
+        drafts; return their ids.
+
+        A draft for a topic that shares a split message with the kept one's topic is
+        spared: each topic of one pasted message keeps its own draft (#335).
+        """
         ...
 
     # Identity links

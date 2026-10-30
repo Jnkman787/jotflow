@@ -510,6 +510,8 @@ CREATE TABLE message_topics (
 )
 """,
             "CREATE INDEX message_topics_topic ON message_topics (topic_id)",
+            "ALTER TABLE proposals ADD COLUMN unsplit_at TEXT"
+            " /* UTC: when a person's decision left its extra topic no messages (#335) */",
         ),
     ),
 )
