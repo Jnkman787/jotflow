@@ -454,3 +454,35 @@ async def test_an_add_me_request_on_an_orphaned_topic_is_kept(store: Store) -> N
     link = await store.mark_chatter(paste(), by="person")
     assert link.dropped == ()
     assert await states(store) == {"p2": "pending"}
+
+
+async def test_an_older_schema_drops_an_emptied_topics_draft_too(tmp_path: Path) -> None:
+    # #395 review: before migration 23 there's no message_topics and no unsplit_at, and
+    # an emptied topic's draft is still dropped, with neither touched.
+    from jotflow.models import ProposalState
+    from jotflow.store.migrations import MIGRATIONS
+
+    old = await SqliteStore.open(tmp_path / "old.db", migrations=MIGRATIONS[:22])
+    try:
+        only = (await old.create_topic(CH, "Mixer")).topic.id
+        await old.link_message(paste(), only)
+        await old.add_proposal(draft("p1", only))
+        link = await old.mark_chatter(paste(), by="person")
+        assert link.dropped == ("p1",)
+        dropped = await old.get_proposal("p1")
+        assert dropped is not None and dropped.state is ProposalState.SUPERSEDED
+        assert dropped.unsplit_at is None and dropped.draft_cleared_at is not None
+    finally:
+        await old.close()
+
+
+async def test_the_store_refuses_a_draft_for_an_empty_topic_when_asked(store: Store) -> None:
+    # #395 review: checked in the insert's own write, so nothing can empty it in between.
+    from jotflow.store.base import EMPTY_TOPIC
+
+    empty = (await store.create_topic(CH, "Nothing yet")).topic.id
+    with pytest.raises(ConflictError, match=EMPTY_TOPIC):
+        await store.add_proposal(draft("p1", empty), needs_message=True)
+    await store.add_proposal(draft("p2", empty))  # JotFlow's own, unasked: as before
+    await store.link_message(paste(), empty)
+    await store.add_proposal(draft("p3", empty), needs_message=True)

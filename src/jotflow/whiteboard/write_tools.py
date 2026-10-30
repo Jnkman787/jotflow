@@ -72,6 +72,7 @@ from jotflow.store.base import (
     ALSO_NOT_LINKED,
     ALSO_PERSON,
     ALSO_TOO_MANY,
+    EMPTY_TOPIC,
     MAX_TOPICS_PER_MESSAGE,
     MessageLink,
     StaleRevisionError,
@@ -960,16 +961,6 @@ class WriteTools:
         _check_body_with_files(body, out)
         return out
 
-    async def _check_on_topic(self, topic_id: str) -> None:
-        """The proposal's topic has at least one message (#395).
-
-        Otherwise the draft would sit on a topic with nothing in it, such as one whose
-        only message the run moved elsewhere: link a message to it first.
-        """
-        record = await self._store.get_topic(topic_id)
-        if record is not None and not record.topic.messages:
-            raise ToolError(f"topic {topic_id} {NOT_ON_TOPIC}")
-
     async def _check_attach_place(
         self,
         grant: Grant,
@@ -1071,8 +1062,12 @@ class WriteTools:
             created_at=self._clock(),
         )
         try:
-            stored = await self._store.add_proposal(record)
-        except (NotFoundError, ConflictError):
+            stored = await self._store.add_proposal(record, needs_message=True)
+        except ConflictError as refused:
+            if str(refused) == EMPTY_TOPIC:  # a draft on a topic with nothing in it (#395)
+                raise ToolError(f"topic {proposal.topic_id} {NOT_ON_TOPIC}") from None
+            raise ToolError(f"no topic {proposal.topic_id}") from None
+        except NotFoundError:
             raise ToolError(f"no topic {proposal.topic_id}") from None
         superseded = await self._store.supersede_pending(
             grant.channel_id, thread, keep_id=stored.id
@@ -1129,7 +1124,6 @@ class WriteTools:
             )
             related, dropped = self._related(grant, args.related)
             sources = await self._sources(grant, args.sources)
-            await self._check_on_topic(args.topic_id)
             attached = await self._attach(
                 grant, args.attachments, args.body, topic_id=args.topic_id, sources=sources
             )
@@ -1195,7 +1189,6 @@ class WriteTools:
                 )
             related, dropped = self._related(grant, args.related, own=(repo, args.issue_number))
             sources = await self._sources(grant, args.sources)
-            await self._check_on_topic(args.topic_id)
             draft = UpdateProposal.model_validate(
                 {
                     **args.model_dump(exclude={"participants"}),

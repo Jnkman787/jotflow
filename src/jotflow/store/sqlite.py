@@ -49,6 +49,7 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
+    EMPTY_TOPIC,
     MAX_SUMMARY_ATTEMPTS,
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
@@ -345,36 +346,43 @@ class SqliteStore:
         )
         return dataclasses.replace(await self._linked(_found(row)), dropped=tuple(dropped))
 
-    async def _drop_orphaned(self, topic_id: str, now: str) -> list[str]:
-        """Supersede a topic's pending proposals once it has no messages left (#335).
-
-        A person's decision that undoes the agent's split can leave an extra topic
-        with nothing to draft from. Its pending drafts are dropped, marked so the
-        card says why; anything approved or filed, and an Add me request, stays as it is.
-        """
-        left = (
-            await self._one(
+    async def _has_messages(self, topic_id: str) -> bool:
+        """Whether any message is on the topic, as its first or an extra one."""
+        if self._split:
+            row = await self._one(
                 "SELECT 1 FROM message_refs WHERE topic_id = ?"
                 " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
                 (topic_id, topic_id),
             )
-            if self._split
-            else await self._one(
+        else:
+            row = await self._one(
                 "SELECT 1 FROM message_refs WHERE topic_id = ? LIMIT 1", (topic_id,)
             )
-        )
-        if left is not None:
+        return row is not None
+
+    async def _drop_orphaned(self, topic_id: str, now: str) -> list[str]:
+        """Supersede a topic's pending proposals once it has no messages left (#335).
+
+        A decision that moves a topic's last message elsewhere, a person's or the
+        agent's, split or not (#395), leaves it nothing to draft from. Its pending
+        drafts are dropped, marked so the card says why; anything approved or filed,
+        and an Add me request, stays as it is.
+        """
+        if await self._has_messages(topic_id):
             return []
         rows = await self._all(
             "SELECT id, draft_json FROM proposals WHERE topic_id = ? AND state = 'pending'"
             " AND run_id != ? ORDER BY id",
             (topic_id, SELF_ADD_RUN),
         )
+        # unsplit_at came with message_topics, in migration 23: an older schema has
+        # neither, and its card says only that a newer proposal replaced it.
+        mark = "unsplit_at = ?, " if self._split else ""
         for row in rows:
             await self._db.execute(
-                "UPDATE proposals SET state = 'superseded', unsplit_at = ?, updated_at = ?,"
+                f"UPDATE proposals SET state = 'superseded', {mark}updated_at = ?,"
                 " revision = revision + 1 WHERE id = ? AND state = 'pending'",
-                (now, now, row["id"]),
+                (*([now] if self._split else []), now, row["id"]),
             )
             await self._clear(row["id"], _PROPOSAL.validate_json(row["draft_json"]), now)
         return [row["id"] for row in rows]
@@ -594,7 +602,9 @@ class SqliteStore:
         row = await self._one("SELECT * FROM proposals WHERE id = ?", (proposal_id,))
         return None if row is None else await self._proposal(row)
 
-    async def add_proposal(self, record: ProposalRecord) -> ProposalRecord:
+    async def add_proposal(
+        self, record: ProposalRecord, *, needs_message: bool = False
+    ) -> ProposalRecord:
         check_new_proposal(record)
         draft = record.proposal
         async with self._write():
@@ -608,6 +618,8 @@ class SqliteStore:
                     raise NotFoundError(f"no topic {draft.topic_id}")
                 if topic["channel_id"] != record.channel_id:
                     raise ConflictError("a proposal can only be for a topic in its own channel")
+                if needs_message and not await self._has_messages(draft.topic_id):
+                    raise ConflictError(EMPTY_TOPIC)
             now = to_text(self._clock())
             await self._db.execute(
                 """
