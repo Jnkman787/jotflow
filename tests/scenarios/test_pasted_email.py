@@ -92,6 +92,9 @@ async def test_a_split_email_followed_up_changed_and_added_to(store: Store, cloc
     assert await s.states(paste) == {mixer_card: PENDING, sensor_card: PENDING}
     assert "Show one mixer cleaning cycle" in await s.card(mixer_card)
     assert "Send sensor readings every second" in await s.card(sensor_card)
+    # Each card says who its issue will credit, and locks it (#396).
+    assert "Credited in the issue: raised by Carol" in await s.card(mixer_card)
+    assert (await s.proposal(mixer_card)).card_credits == '["U0CAROL"]'
 
     # 2. The follow-up's run sees what it follows, and each split topic's card (#374).
     assert await s.quiet() == [follow]
@@ -147,6 +150,7 @@ async def test_a_split_email_followed_up_changed_and_added_to(store: Store, cloc
     sensor_now = await s.proposal(sensor_card)
     assert sensor_now.revision == 2 and BOB in sensor_now.participants
     card = await s.card(sensor_card)
+    assert "Credited in the issue: raised by Carol, with contributions from Bob" in card
     assert "Send sensor readings every half second" in card
     assert "Revised with new messages from Bob" in card
     assert "labelled Cleaning" in await s.card(mixer_card)

@@ -247,6 +247,9 @@ class Slack:
     async def name(self, user_id: str) -> str | None:
         return NAMES.get(user_id)
 
+    async def workspace_url(self) -> str | None:
+        return "https://acme-co.slack.com/"
+
     # The gate, Add me, keywords and card edits
 
     async def own_team(self) -> str | None:
@@ -521,6 +524,8 @@ class Scenario:
             clock=self.clock,
             arm_thread=self.arm,
             boards=self.boards,
+            # Who the issue will credit, as the service hands the card loop (#396).
+            attribution=self.slack,
         )
         self.gate = ApprovalHandler(
             store, self.policy, self.slack, refresh=self._refresh, arm_thread=self.arm
