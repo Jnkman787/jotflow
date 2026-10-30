@@ -234,7 +234,7 @@ Boards (`boards`, `board_scopes`) have their own section in the example `jotflow
 - **Cards are quieter.** Same as appears only for a likely duplicate, and one "Not checked" line replaces two notes.
 - **A missing `[issues]` or priority label no longer stops a write.** The issue is filed without it, and the thread says so. Any other missing label still stops it.
 - **If `[issues]` changes in `jotflow.toml` after a card was drawn,** Approve redraws the card instead of approving.
-- **The weekly summary is numbered,** and nothing in its thread is drafted. `re: 2` there points at idea 2. The same goes for replies to the pinned help guide, whose authors are told privately to post in the channel.
+- **The weekly summary is numbered,** and nothing in its thread is drafted. `re: 2` there points at idea 2. Replies under any of JotFlow's own top-level posts, meaning the weekly summary, the help guide, the pause, resume and auto-mode announcements, and `jotflow check`'s live test post, are never drafted. Their authors get a one-time private nudge to post in the channel instead.
 - **A message about JotFlow itself** is chatter, with one pointer to `ask:` and `/jotflow help`.
 
 ## Health and logs
