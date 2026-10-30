@@ -604,6 +604,7 @@ class SqliteStore:
             created_at=from_text(row["created_at"]),
             card_issues=row["card_issues"],
             approved_issues=row["approved_issues"],
+            card_credits=row["card_credits"],
             skipped_label=row["skipped_label"],
             unsplit_at=from_text(row["unsplit_at"])
             if self._split and row["unsplit_at"] is not None
@@ -959,15 +960,21 @@ class SqliteStore:
             return [await self._proposal(row) for row in rows]
 
     async def mark_card_shown(
-        self, proposal_id: str, revision: int, issues: str | None = None
+        self,
+        proposal_id: str,
+        revision: int,
+        issues: str | None = None,
+        credits: str | None = None,
     ) -> None:
         async with self._write():
             cursor = await self._db.execute(
                 "UPDATE proposals"
                 " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision)),"
-                " card_issues = COALESCE(?, card_issues)"
+                " card_issues = COALESCE(?, card_issues),"
+                " card_credits = CASE WHEN state IN ('pending', 'failed')"
+                " THEN COALESCE(?, card_credits) ELSE card_credits END"
                 " WHERE id = ?",
-                (revision, issues, proposal_id),
+                (revision, issues, credits, proposal_id),
             )
             if cursor.rowcount == 0:
                 raise NotFoundError(f"no proposal {proposal_id}")
