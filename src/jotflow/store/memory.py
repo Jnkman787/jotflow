@@ -7,12 +7,14 @@ tests. Nothing survives the process.
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 
 from jotflow.models import (
+    AttachedFile,
     ChannelMode,
     Duplicate,
     ExecutionResult,
@@ -34,6 +36,7 @@ from jotflow.store.base import (
     AUTO_APPROVER,
     BOUND_STATES,
     DEFAULT_RUN_TIMEOUTS,
+    DETACHED_RUN,
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
@@ -42,6 +45,7 @@ from jotflow.store.base import (
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
     SELF_ADD_RUN,
+    SERVED_FILE,
     SUMMARY_POSTING_STALE,
     VERIFICATION_REMOVER,
     ChannelModeSetting,
@@ -176,7 +180,48 @@ class MemoryStore:
         first = existing.topic_id if existing is not None else None
         left = dict.fromkeys([*undone, *([first] if first else [])])
         dropped = [p for t in left if t != topic_id for p in self._drop_orphaned(t)]
+        if by == "person" or topic_id is None:
+            for other in left:
+                if other != topic_id:
+                    self._detach(other, ref.ts)
         return replace(link, dropped=tuple(dropped))
+
+    def _detach(self, topic_id: str, ts: str) -> None:
+        """Take a moved message's files off the topic's pending drafts (#391)."""
+        for record in sorted(self._proposals.values(), key=lambda r: r.id):
+            draft = record.proposal
+            if (
+                draft.topic_id != topic_id
+                or record.state is not ProposalState.PENDING
+                or record.draft_cleared_at is not None
+                or record.run_id == SELF_ADD_RUN
+                or not isinstance(draft, IssueProposal)
+                or not draft.attached
+            ):
+                continue
+            kept = [a for a in draft.attached if self._served_ts(record.run_id, a) != ts]
+            if len(kept) == len(draft.attached):
+                continue
+            updated = record.model_copy(
+                update={
+                    "proposal": draft.model_copy(update={"attached": kept}),
+                    "revision": record.revision + 1,
+                },
+                deep=True,
+            )
+            self._proposals[record.id] = updated
+            self._revisions.append(
+                ProposalRevision(
+                    record.id, updated.revision, DETACHED_RUN, ("attached",), (), self._clock()
+                )
+            )
+
+    def _served_ts(self, run_id: str, attached: AttachedFile) -> str | None:
+        for call in self._calls:
+            if (call.run_id, call.tool, call.args_hash) == (run_id, SERVED_FILE, attached.file_id):
+                ts = json.loads(call.result_json).get("ts")
+                return ts if isinstance(ts, str) else None
+        return None
 
     def _drop_orphaned(self, topic_id: str) -> list[str]:
         """Supersede a topic's pending proposals once it has no messages left (#335)."""

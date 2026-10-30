@@ -486,3 +486,133 @@ async def test_the_store_refuses_a_draft_for_an_empty_topic_when_asked(store: St
     await store.add_proposal(draft("p2", empty))  # JotFlow's own, unasked: as before
     await store.link_message(paste(), empty)
     await store.add_proposal(draft("p3", empty), needs_message=True)
+
+
+# #391: a moved message takes its file off another topic's pending draft
+
+FILE_TEXT = "Mixer: one cycle.\nSensor: every second.\n"
+
+
+async def with_file(store: Store, proposal_id: str, topic_id: str, *, on: str = PASTE) -> None:
+    """A pending draft on ``topic_id`` attaching a file the run was served on ``on``."""
+    import hashlib
+    import json
+    from datetime import UTC, datetime
+
+    from jotflow.models import AttachedFile, IssueProposal, ProposalRecord
+    from jotflow.store.base import SERVED_FILE, ToolCallRecord
+
+    sha = hashlib.sha256(FILE_TEXT.encode()).hexdigest()
+    run_id = f"run-{proposal_id}"
+    await store.record_tool_call(
+        ToolCallRecord(
+            run_id=run_id,
+            tool=SERVED_FILE,
+            args_hash="F0DOC1",
+            channel_id=CH,
+            thread_ts=PASTE,
+            result_json=json.dumps({"sha256": sha, "ts": on}),
+            called_at=datetime(2026, 10, 30, tzinfo=UTC),
+        )
+    )
+    attached = AttachedFile(
+        file_id="F0DOC1", name="notes.txt", size=len(FILE_TEXT), sha256=sha, text=FILE_TEXT
+    )
+    await store.add_proposal(
+        ProposalRecord(
+            id=proposal_id,
+            channel_id=CH,
+            thread_ts=PASTE,
+            run_id=run_id,
+            proposal=IssueProposal(
+                topic_id=topic_id,
+                repo="acme-co/web",
+                title="Mixer",
+                body="b",
+                confidence=0.9,
+                sources=[paste()],
+                attached=[attached],
+            ),
+            created_at=datetime(2026, 10, 30, tzinfo=UTC),
+        )
+    )
+
+
+async def attached_ids(store: Store, proposal_id: str) -> list[str]:
+    from jotflow.models import IssueProposal
+
+    record = await store.get_proposal(proposal_id)
+    assert record is not None and isinstance(record.proposal, IssueProposal)
+    return [a.file_id for a in record.proposal.attached]
+
+
+@pytest.mark.parametrize("decision", ["re: the extra", "re: elsewhere", "skip:"])
+async def test_a_moved_messages_file_leaves_the_other_topics_draft(
+    store: Store, decision: str
+) -> None:
+    from jotflow.store import content_hash
+    from jotflow.store.base import DETACHED_RUN
+
+    mixer, sensor = await split(store, "Sensor timing")
+    # The mixer topic keeps a reply, so its draft stays, only without the paste's file.
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), mixer)
+    await with_file(store, "p1", mixer)
+    before = await store.get_proposal("p1")
+    assert before is not None
+    if decision == "re: the extra":
+        await store.link_message(paste(), sensor, by="person")
+    elif decision == "re: elsewhere":
+        web42 = (await store.create_topic(CH, "web#42")).topic.id
+        await store.link_message(paste(), web42, by="person")
+    else:
+        await store.mark_chatter(paste(), by="person")
+    after = await store.get_proposal("p1")
+    assert after is not None and after.state.value == "pending"
+    assert await attached_ids(store, "p1") == []
+    assert after.revision == before.revision + 1  # the card is redrawn
+    assert content_hash(after.proposal) != content_hash(before.proposal)  # an old approve is stale
+    [revision] = await store.proposal_revisions("p1")
+    assert (revision.run_id, revision.changed) == (DETACHED_RUN, ("attached",))
+
+
+async def test_a_file_from_another_message_stays(store: Store) -> None:
+    mixer, sensor = await split(store, "Sensor timing")
+    reply = MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE)
+    await store.link_message(reply, mixer)
+    await with_file(store, "p1", mixer, on=REPLY)  # the file came on the reply
+    await store.link_message(paste(), sensor, by="person")
+    assert await attached_ids(store, "p1") == ["F0DOC1"]
+    assert await store.proposal_revisions("p1") == []
+
+
+async def test_approved_work_and_the_agents_own_move_keep_their_files(store: Store) -> None:
+    from jotflow.models import ProposalState
+
+    mixer, sensor = await split(store, "Sensor timing")
+    reply = MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE)
+    await store.link_message(reply, mixer)
+    await with_file(store, "p1", mixer)
+    await store.transition("p1", ProposalState.APPROVED, approved_by="auto")
+    await store.link_message(paste(), sensor, by="person")
+    assert await attached_ids(store, "p1") == ["F0DOC1"]  # approved: as approved
+    other = (await store.create_topic(CH, "Other")).topic.id
+    await store.link_message(MessageRef(channel_id=CH, ts="1792360200.000100"), other)
+    await with_file(store, "p2", other, on="1792360200.000100")
+    await store.link_message(MessageRef(channel_id=CH, ts="1792360300.000100"), other)
+    await store.link_message(MessageRef(channel_id=CH, ts="1792360200.000100"), mixer)
+    assert await attached_ids(store, "p2") == ["F0DOC1"]  # the agent's own re-link
+
+
+def test_a_detached_card_says_why() -> None:
+    from datetime import UTC, datetime
+
+    from jotflow.orchestrator.cards import DETACHED_LINE, CardContext, _revision_block
+    from jotflow.store.base import DETACHED_RUN, ProposalRevision
+    from tests.test_execution_attribution import policy
+
+    revision = ProposalRevision(
+        "p1", 2, DETACHED_RUN, ("attached",), (), datetime(2026, 10, 30, tzinfo=UTC)
+    )
+    context = CardContext(channel=policy().channel(CH), revisions=(revision,))
+    block = _revision_block(context)
+    assert block is not None and block["elements"][0]["text"] == DETACHED_LINE

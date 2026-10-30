@@ -65,6 +65,12 @@ AUTO_APPROVER = "auto"
 # The run id of a proposal a person made with an Add me button (#305), which no agent
 # drafted. A new draft doesn't supersede it, and auto mode never approves it.
 EMPTY_TOPIC = "the topic has no messages"
+# The tool-call ledger's record of a file a run's packet gave text for, with its
+# message's ts (#333, #374). The store reads it to find a file's message (#391).
+SERVED_FILE = "packet_file"
+# The run id a revision gets when JotFlow takes an attached file off a pending draft,
+# because a person moved the file's message to another topic (#391).
+DETACHED_RUN = "jotflow:detached"
 SELF_ADD_RUN = "add-me"
 
 # Once final, a proposal's drafted text is cleared (#102). Failed is not final:
@@ -540,7 +546,7 @@ def edited_draft(
 
 # A drafting run's revision of a pending draft, from new messages (#304). The store
 # keeps which fields changed and whose messages, never the values.
-RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related"]
+RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related", "attached"]
 REVISED_FIELDS: tuple[RevisedField, ...] = (
     "title",
     "body",
