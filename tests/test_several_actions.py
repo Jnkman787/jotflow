@@ -334,13 +334,47 @@ async def test_the_first_topic_keeps_its_draft_while_it_has_messages(store: Stor
     assert (await states(store))["p1"] == "pending"
 
 
-async def test_an_unsplit_messages_skip_drops_nothing(store: Store) -> None:
-    # Only a split's undoing drops a draft; a lone message's skip is as before.
+@pytest.mark.parametrize("who", ["person skip", "person re:", "agent re-link"])
+async def test_any_decision_that_empties_a_topic_drops_its_draft(store: Store, who: str) -> None:
+    # #395: split or not, whoever moves a topic's last message off it drops its draft.
     only = (await store.create_topic(CH, "Mixer")).topic.id
     await store.link_message(paste(), only)
     await store.add_proposal(draft("p1", only))
+    elsewhere = (await store.create_topic(CH, "web#42")).topic.id
+    if who == "person skip":
+        link = await store.mark_chatter(paste(), by="person")
+    elif who == "person re:":
+        link = await store.link_message(paste(), elsewhere, by="person")
+    else:
+        link = await store.link_message(paste(), elsewhere)
+    assert link.dropped == ("p1",)
+    dropped = await store.get_proposal("p1")
+    assert dropped is not None and dropped.unsplit_at is not None
+    assert await states(store) == {"p1": "superseded"}
+
+
+async def test_a_topic_with_other_messages_keeps_its_draft(store: Store) -> None:
+    only = (await store.create_topic(CH, "Mixer")).topic.id
+    await store.link_message(paste(), only)
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), only)
+    await store.add_proposal(draft("p1", only))
     assert (await store.mark_chatter(paste(), by="person")).dropped == ()
     assert await states(store) == {"p1": "pending"}
+
+
+async def test_a_cleared_drafts_revision_counts_the_same_in_both_stores(store: Store) -> None:
+    # #395: SQLite bumped twice when a state change cleared the draft; memory once.
+    from jotflow.models import ProposalState
+
+    mixer, sensor = await split(store, "Sensor timing")
+    for record in (draft("p1", mixer), draft("p2", sensor), draft("p3", mixer)):
+        await store.add_proposal(record)
+    await store.supersede_pending(CH, PASTE, keep_id="p3")  # p1: superseded, cleared
+    await store.transition("p2", ProposalState.REJECTED)  # cleared with the rejection
+    revisions = {p: (await store.get_proposal(p)).revision for p in ("p1", "p2")}  # type: ignore[union-attr]
+    assert revisions == {"p1": 2, "p2": 2}
+    cleared = await store.clear_draft("p1")  # already cleared: no change
+    assert cleared.revision == 2
 
 
 async def test_an_approved_draft_on_an_orphaned_topic_is_left_alone(store: Store) -> None:
@@ -424,6 +458,48 @@ async def test_an_add_me_request_on_an_orphaned_topic_is_kept(store: Store) -> N
     link = await store.mark_chatter(paste(), by="person")
     assert link.dropped == ()
     assert await states(store) == {"p2": "pending"}
+
+
+async def test_an_older_schema_drops_an_emptied_topics_draft_too(tmp_path: Path) -> None:
+    # #395 review: before migration 23 there's no message_topics and no unsplit_at, and
+    # an emptied topic's draft is still dropped, with neither touched.
+    from jotflow.models import ProposalState
+    from jotflow.store.migrations import MIGRATIONS
+
+    old = await SqliteStore.open(tmp_path / "old.db", migrations=MIGRATIONS[:22])
+    try:
+        only = (await old.create_topic(CH, "Mixer")).topic.id
+        await old.link_message(paste(), only)
+        await old.add_proposal(draft("p1", only))
+        link = await old.mark_chatter(paste(), by="person")
+        assert link.dropped == ("p1",)
+        dropped = await old.get_proposal("p1")
+        assert dropped is not None and dropped.state is ProposalState.SUPERSEDED
+        assert dropped.unsplit_at is None and dropped.draft_cleared_at is not None
+    finally:
+        await old.close()
+
+
+async def test_the_store_checks_sources_on_the_topic_in_its_insert(store: Store) -> None:
+    # #395 review: checked in the insert's own write, so nothing can move them in between.
+    from jotflow.store.base import SourceOffTopicError
+
+    empty = await store.create_topic(CH, "Nothing yet")
+    topic_id = empty.topic.id
+    with pytest.raises(SourceOffTopicError, match="isn't on topic"):
+        await store.add_proposal(draft("p1", topic_id), sources_on_topic=True)
+    with pytest.raises(SourceOffTopicError, match="cite at least one"):
+        await store.add_proposal(
+            draft("p1", topic_id).model_copy(
+                update={
+                    "proposal": draft("p1", topic_id).proposal.model_copy(update={"sources": []})
+                }
+            ),
+            sources_on_topic=True,
+        )
+    await store.add_proposal(draft("p2", topic_id))  # JotFlow's own, unasked: as before
+    await store.link_message(paste(), topic_id)
+    await store.add_proposal(draft("p3", topic_id), sources_on_topic=True)
 
 
 async def test_a_surviving_extra_topic_keeps_its_draft_after_an_unsplit(store: Store) -> None:

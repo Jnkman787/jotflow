@@ -130,6 +130,36 @@ class ContentChangedError(StoreError):
     """Approval named a content hash that no longer matches the draft."""
 
 
+class SourceOffTopicError(ConflictError):
+    """A drafting proposal cites no message, or one not on its own topic (#394, #395).
+
+    ``str()`` is the fixed reason, naming at most a message's ts and the topic id.
+    """
+
+
+def check_sources_on_topic(
+    topic_id: str,
+    sources: Sequence[MessageRef],
+    links: Mapping[str, MessageLink | None],
+    on_topic: Collection[str] = (),
+) -> None:
+    """At least one source, and every one on ``topic_id``, first or extra. ``links`` holds
+    each source's stored link by ts, read in the caller's write. ``on_topic``: the ts of
+    JotFlow's own change requests already checked to be on this topic's card (#375),
+    which no link places, since the agent never links JotFlow's messages."""
+    if not sources:
+        raise SourceOffTopicError("cite at least one of the topic's messages as a source")
+    for source in sources:
+        if source.ts in on_topic:
+            continue
+        link = links.get(source.ts)
+        if link is None or topic_id not in (link.topic_id, *link.also_topics):
+            raise SourceOffTopicError(
+                f"message {source.ts} isn't on topic {topic_id}: link it there first, or cite "
+                "only that topic's messages"
+            )
+
+
 class DuplicateRefusedError(ConflictError):
     """A "same as" or its undo can't apply; ``str()`` is the fixed reason (#36)."""
 
@@ -916,7 +946,19 @@ class Store(Protocol):
         ...
 
     # Proposals
-    async def add_proposal(self, record: ProposalRecord) -> ProposalRecord: ...
+    async def add_proposal(
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
+    ) -> ProposalRecord:
+        """Store a new proposal. ``sources_on_topic``, for the agent's: refuse, with
+        :class:`SourceOffTopicError`, one that cites no message or one not on its own
+        topic, checked in the same write as the insert, so a decision that moves a
+        message can't slip in between (#394, #395). JotFlow's own, such as Add me, skip it.
+        """
+        ...
 
     async def get_proposal(self, proposal_id: str) -> ProposalRecord | None: ...
 

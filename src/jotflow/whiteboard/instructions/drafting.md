@@ -191,7 +191,8 @@ For each new topic that is real work, call `propose_issue` once:
 - `attachments`: up to 3 `file_id`s of `files` that have `text`, only when the
   issue should carry that file, such as the document it's about. JotFlow
   copies the text in as a code block; don't paste it into the body.
-- `sources`: the messages the proposal draws on.
+- `sources`: the messages the proposal draws on: at least one, each linked
+  to the proposal's topic. Link a message first, then cite it.
 - `confidence`: how sure you are that this is a real, new piece of work for
   this repo, from 0 to 1. Be honest.
 
