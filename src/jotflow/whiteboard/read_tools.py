@@ -74,7 +74,7 @@ from jotflow.orchestrator.topics import list_topics as build_topic_list
 from jotflow.policy import IssueLinks, IssuesPolicy, Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError
-from jotflow.store.base import Store, ToolCallRecord, utc_now
+from jotflow.store.base import SELF_ADD_RUN, Store, ToolCallRecord, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
 from jotflow.whiteboard.tools import ToolError, ToolSpec
@@ -623,10 +623,13 @@ def read_tools(
                 for record in await store.thread_proposals(channel_id, thread):
                     # Live, not only pending: revising an approved one leaves the
                     # follow-up due, so it's drafted again once the issue is filed.
+                    # A person's Add me request isn't the topic's draft: the agent
+                    # proposes a separate update instead (#378).
                     if (
                         record.state in LIVE_PROPOSAL_STATES
                         and record.proposal.topic_id == summary.id
                         and record.draft_cleared_at is None
+                        and record.run_id != SELF_ADD_RUN
                     ):
                         found = PendingDraft.of(record)
             marked.append(summary.model_copy(update={"pending": found}) if found else summary)

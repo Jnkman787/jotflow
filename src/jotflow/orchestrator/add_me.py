@@ -47,6 +47,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from jotflow.models import (
+    MAX_ASSIGNEES,
     Assignable,
     AssigneeReason,
     IssueChanges,
@@ -88,8 +89,6 @@ CARD_ADD = "add_me_card"
 SELF_ADD_WINDOW = timedelta(hours=1)
 MAX_CHECKS = 10
 CHECK_WINDOW_SECONDS = 600.0
-# GitHub's own limit on an issue's assignees.
-MAX_ASSIGNEES = 10
 
 _PROPOSAL_ID = re.compile(r"[0-9a-f]{16}")
 _TS = re.compile(r"[0-9]{1,12}\.[0-9]{1,8}")
