@@ -56,9 +56,10 @@ NEEDS_NUMBER = "In a summary's thread, re: takes an item's number, such as re: 2
 # Under one of JotFlow's own top-level posts with no posted summary on record: the
 # help guide, a mode announcement, the live check's post, or a summary not yet
 # recorded. So these never assume the post is a summary.
-OWN_POST_RE = (
-    "Nothing was linked from this reply. To add to an idea, reply in the idea's own "
-    "thread, or in the latest weekly summary's thread with re: and the idea's number."
+OWN_POST_RE = "Nothing was linked from this reply. To add to an idea, reply in its own thread."
+# The same, in a channel with a weekly summary, where re: N works in its thread.
+OWN_POST_RE_SUMMARY = (
+    OWN_POST_RE + " Or reply in the latest weekly summary's thread with re: and its number."
 )
 OWN_POST_NEW_IDEAS = "To suggest a new idea, post it in the channel, not in a reply to this post."
 
@@ -179,7 +180,11 @@ class SummaryReplies:
             return "ignored"
         keyword, _ = split_keyword(str(event.get("text") or ""))
         if keyword == "re":
-            await self._tell(channel, user, thread, OWN_POST_RE)
+            listed = self._policy.channels.get(channel)
+            summaries = listed is not None and listed.summary is not None
+            await self._tell(
+                channel, user, thread, OWN_POST_RE_SUMMARY if summaries else OWN_POST_RE
+            )
             return "refused"
         if asked or (channel, thread, user) in self._pointed_threads:
             return "left"

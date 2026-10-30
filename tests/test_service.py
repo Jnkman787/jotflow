@@ -1540,7 +1540,7 @@ async def test_a_reply_before_the_summary_is_recorded_is_never_drafted() -> None
         told = [text for *_, text in replies.told]
         from jotflow.orchestrator.summary_replies import OWN_POST_NEW_IDEAS, OWN_POST_RE
 
-        assert told[0] == OWN_POST_RE
+        assert told[0] == OWN_POST_RE  # this channel has no weekly summary
         assert told[-1] == OWN_POST_NEW_IDEAS
     finally:
         await rig.orchestrator.stop()
