@@ -4,6 +4,8 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ## [Unreleased]
 
+A minor release for 0.5.0. It brings drafting that follows a thread more closely, Add me and assignee reasons, a weekly summary, Projects boards, Slack files, and priority labels. It also has an experimental `copilot` preset with OpenAI, Azure or Anthropic models, and a codex preset that checks each model's tools at startup. One check can stop a start: the agent runners now refuse a `NODE_OPTIONS` holding any option outside a short allowlist. Upgrade both images: the drafting runner gains fixed GitHub calls, and the agent image changed. The default Compose files and the Slack manifest are unchanged. Only a channel that sets `attachments = "text"` needs a new Slack scope and a reinstall. It adds store migrations 16 to 23, so rolling back means restoring the backup from before the upgrade, then removing the new keys from `jotflow.toml`, since older versions refuse keys they don't know. [Upgrading to 0.5.0](docs/deployment.md#upgrading-to-050) has the checklist: the optional token permissions, board creator ids to pin, the new settings, and the changes people will notice.
+
 ### Added
 
 - **JotFlow uses the repo, board and owner a post names (#331).** "For the api: …" or "put it on the support board" is used without a question, and a repo can have `aliases` in `jotflow.toml`. "Assign to Sam" assigns Sam without an @-mention when Sam is in the thread or an owner hint, has a verified or admin link, and is the only person that name matches. The card shows the matched name. A vague answer to the repo question gets one more question, never a guess.

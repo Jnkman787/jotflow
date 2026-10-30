@@ -95,3 +95,5 @@ Also from the reviewer:
 ## Handoff notes
 
 Fictional examples only: `C0EXAMPLE1`, Alex.
+
+**Which posts the guard covers:** replies under any of JotFlow's own top-level posts, meaning the weekly summary, the help guide, the pause, resume and auto-mode announcements, and `jotflow check`'s live test post, are never drafted. Their authors get a one-time private nudge instead (#362).
