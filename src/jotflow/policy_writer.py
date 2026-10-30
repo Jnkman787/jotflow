@@ -79,6 +79,8 @@ def render_policy(policy: Policy) -> str:
         "[identity]",
         f"admins = {_array(policy.identity.admins)}",
     ]
+    if policy.identity.github_org is not None:
+        lines.append(f"github_org = {toml_string(policy.identity.github_org)}")
     # Questions (#57): written only when a team changed them, so a default setup is unchanged.
     if policy.questions != QuestionsPolicy():
         lines += [

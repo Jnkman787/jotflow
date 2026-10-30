@@ -239,7 +239,9 @@ class _FixtureSlack:
     async def react(self, channel_id: str, ts: str, name: str) -> None:
         self.reactions.append((ts, name))
 
-    async def reply(self, channel_id: str, thread_ts: str, text: str) -> None:
+    async def reply(
+        self, channel_id: str, thread_ts: str, text: str, blocks: list[dict[str, Any]] | None = None
+    ) -> None:
         self.replies.append(thread_ts)
 
     async def person(self, user_id: str) -> Person:

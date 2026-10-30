@@ -35,6 +35,7 @@ from jotflow.logs import (
     check_bodies_allowed,
     configure_logging,
 )
+from jotflow.orchestrator.add_me import register_add_me
 from jotflow.orchestrator.approval import register_actions
 from jotflow.orchestrator.card_edits import register_edits
 from jotflow.orchestrator.health import ConnectionWatch, Heartbeat, Watched, heartbeat_path
@@ -254,6 +255,8 @@ async def serve(settings: Settings, policy: Policy) -> int:
                 orchestrator.summary_slack,
                 orchestrator.summary_names,
             )
+        if orchestrator.add_me is not None:
+            register_add_me(app, orchestrator.add_me)
         await orchestrator.ensure_guides([c for c in policy.channels if c not in missing])
     except BaseException:
         # Started is stopped, whatever fails after it.

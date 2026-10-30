@@ -45,6 +45,7 @@ from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import content_hash
 from jotflow.store.base import MAX_AUTHOR_LOOKUPS as STORE_AUTHOR_LOOKUPS
 from jotflow.store.base import (
+    SELF_ADD_RUN,
     ContentChangedError,
     DraftClearedError,
     DuplicateRefusedError,
@@ -349,6 +350,39 @@ class ApprovalHandler:
         """
         return await self._guarded(body, action)
 
+    async def member_click(
+        self, body: Mapping[str, Any], action: Callable[[Click], Awaitable[str]]
+    ) -> str:
+        """Run ``action`` for a click any member may make on one of JotFlow's messages
+        that isn't a card, such as Add me on a filed issue's reply (#305).
+
+        A member of this workspace, not a guest or external user, in a channel the
+        policy lists and that isn't paused. No approver rule: ``action`` applies its own.
+        Returns the action's outcome, ``"refused"``, or ``"ignored"``.
+        """
+        click = _click(body)
+        if click is None or click.channel_id is None or click.message_ts is None:
+            log.warning("a click payload was malformed; ignored")
+            return "ignored"
+        try:
+            await self._check_person(body, click.user_id)
+            if click.channel_id not in self._policy.channels:
+                raise Refused(NOT_ALLOWED)
+            await self._check_not_paused(click.channel_id)
+            return await action(click)
+        except Refused as refused:
+            log.info("click refused for user %s", click.user_id)
+            await self._tell(click.user_id, str(refused), channel=click.channel_id)
+            return "refused"
+
+    async def check_member(self, body: Mapping[str, Any], user_id: str, channel_id: str) -> None:
+        """A dialog's submitter is a member, not a guest or external, and ``channel_id``
+        is a listed channel that isn't paused. Raises :class:`Refused` (#305)."""
+        await self._check_person(body, user_id)
+        if channel_id not in self._policy.channels:
+            raise Refused(NOT_ALLOWED)
+        await self._check_not_paused(channel_id)
+
     async def _guarded(
         self,
         body: Mapping[str, Any],
@@ -457,10 +491,15 @@ class ApprovalHandler:
                 raise Refused(NOT_AN_APPROVER)
             # A listed approver may approve their own proposal unless the team
             # asks for a second person (#244). Only this clause is optional.
-            if approval.require_second_approver and click.user_id in await self._source_authors(
-                record
-            ):
+            if approval.require_second_approver and (await self._is_own(click.user_id, record)):
                 raise Refused(OWN_PROPOSAL)
+
+    async def _is_own(self, user: str, record: ProposalRecord) -> bool:
+        """Whether ``user`` wrote the proposal's messages, or asked for it with Add me,
+        which has no messages: its requester is its only participant (#344 review)."""
+        if record.run_id == SELF_ADD_RUN and user in record.participants:
+            return True
+        return user in await self._source_authors(record)
 
     async def _approve(self, click: Click, record: ProposalRecord) -> str:
         match = _APPROVE_VALUE.fullmatch(click.value)

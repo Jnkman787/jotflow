@@ -28,7 +28,7 @@ from jotflow.orchestrator.card_sync import AUTO
 from jotflow.orchestrator.packet import Budget, Sleep, with_backoff
 from jotflow.orchestrator.people import Person, classify
 from jotflow.policy import IssuesPolicy, Policy
-from jotflow.store.base import Store, TransitionError
+from jotflow.store.base import SELF_ADD_RUN, Store, TransitionError
 from jotflow.store.hashing import content_hash
 
 log = logging.getLogger("jotflow.modes")
@@ -71,7 +71,8 @@ class AutoApprover:
     """Approves new proposals in ``auto`` channels and queues their writes (#28).
 
     Only a proposal whose card has not been posted: switching a channel to
-    ``auto`` never approves something a person was already looking at.
+    ``auto`` never approves something a person was already looking at. Never an
+    Add me request that went on a card for an approver (#305).
     """
 
     def __init__(self, store: Store, mode_for: ModeFor, issues: IssuesPolicy | None = None) -> None:
@@ -85,6 +86,8 @@ class AutoApprover:
         for record in await self._store.cards_due():
             if record.state is not ProposalState.PENDING or record.card_ts is not None:
                 continue
+            if record.run_id == SELF_ADD_RUN:
+                continue  # an Add me request waiting for a person, never auto mode (#305)
             if await self._mode_for(record.channel_id) is not ChannelMode.AUTO:
                 continue
             try:

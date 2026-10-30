@@ -518,8 +518,10 @@ async def test_serve_registers_the_card_actions(monkeypatch: pytest.MonkeyPatch)
         "jotflow_assign",
         "jotflow_unassign",
         "jotflow_boards",
+        "jotflow_add_me",
+        "jotflow_add_me_filed",
     }
-    assert set(harness.app.views) == {"jotflow_changes"}
+    assert set(harness.app.views) == {"jotflow_changes", "jotflow_add_me_login"}
 
 
 async def test_serve_stops_the_orchestrator_if_registration_fails(
