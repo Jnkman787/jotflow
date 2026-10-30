@@ -4,13 +4,15 @@ post, a found board picked on the card, a revision, and the approval (#380).
 Features met: listed and found boards (#309), the card's board menu (#327), a board
 and an owner named in words (#331), a stated priority (#332), the triage guide
 (#317), the [issues] label and title prefix (#306), revisions (#304), and approval
-with its hash and locked settings (#152, #306). It covers #376's naming; its
-nickname clash is pinned with that fix.
+with its hash and locked settings (#152, #306). It pins #376: no two boards
+share a nickname, so the menu's pick is the board it names.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+import pytest
 
 from jotflow.models import FoundBoard, IssueProposal, ProposalState
 from jotflow.store import Store
@@ -75,8 +77,10 @@ async def test_boards_named_picked_revised_and_approved(store: Store, clock: Clo
     assert channel is not None and channel.triage_guide is not None
     (web,) = [r for r in channel.repos if r.repo == "acme-co/web"]
     assert web.priority_labels == {"urgent": "priority: high"}
-    offered = {b.nickname for b in channel.boards}
+    nicknames = [b.nickname for b in channel.boards]
+    offered = set(nicknames)
     assert {"roadmap", "design"} <= offered and len(offered) == 3
+    assert len(nicknames) == len(offered)  # no two boards share a name (#376)
     ops = next(n for n in offered if n not in ("roadmap", "design"))
     new = {"ts": idea, "decision": "new_topic", "title": "Sign-in layout", "confidence": 0.9}
     topic_id = (await run.call("link_message", new)).topic_id
@@ -161,3 +165,14 @@ async def test_boards_named_picked_revised_and_approved(store: Store, clock: Clo
     assert "priority: high" in approved.proposal.labels
     assert approved.approved_issues is not None
     assert "from-slack" in approved.approved_issues and "[Slack]" in approved.approved_issues
+
+
+def test_an_alias_that_takes_another_found_boards_name_is_refused() -> None:
+    """#376: aliasing b14 to board 12 would give two boards the name b14, so a menu
+    pick of b14 approved board 12. jotflow.toml refuses it."""
+    from jotflow.policy import PolicyError, parse_policy
+
+    clash = BOARDED.replace("aliases = { design = 12 }", "aliases = { b14 = 12 }")
+    assert clash != BOARDED
+    with pytest.raises(PolicyError, match="alias b14 names board 12"):
+        parse_policy(clash)
