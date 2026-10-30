@@ -788,6 +788,11 @@ async def test_an_undone_skip_under_a_summary_is_served_nothing_to_draft(
     packet = work.conversation.thread
     assert packet.messages == [] and packet.nothing_to_draft == UNDER_OWN_POST
     assert work.conversation.related == []
+    assert work.conversation.topics.topics == []  # no ids to aim a write at
+    from jotflow.whiteboard.tools import NOTHING_TO_DRAFT
+
+    # The marker every drafting write tool refuses on.
+    assert await store.find_tool_call(grant.run_id, NOTHING_TO_DRAFT, "thread") is not None
     assert "jotflow_root" not in packet.model_dump()  # JotFlow's own flag, never sent
     assert await store.packet_ref(grant.run_id, CH, reply) is None  # nothing linkable
     # The run is still running, so the agent ends it cleanly: only a failed or timed-out
@@ -803,3 +808,4 @@ async def test_an_undone_skip_under_a_summary_is_served_nothing_to_draft(
     question: Work = await call(registry["get_work"], asked)
     assert question.conversation is not None
     assert [m.ts for m in question.conversation.thread.messages] == [summary, reply]
+    assert await store.find_tool_call(asked.run_id, NOTHING_TO_DRAFT, "thread") is None

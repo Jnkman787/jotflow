@@ -82,7 +82,12 @@ from jotflow.text import without_unsafe_chars
 from jotflow.title_pattern import Match, match_title_async
 from jotflow.whiteboard.doc_tools import PASSAGES, DocReads, passages_row
 from jotflow.whiteboard.tokens import Grant
-from jotflow.whiteboard.tools import ToolError, ToolSpec
+from jotflow.whiteboard.tools import (
+    NOTHING_TO_DRAFT,
+    NOTHING_TO_DRAFT_REFUSAL,
+    ToolError,
+    ToolSpec,
+)
 
 log = logging.getLogger("jotflow.whiteboard")
 
@@ -1669,8 +1674,31 @@ def write_tools(
             name=name,
             description=_DESCRIPTIONS[name],
             input_model=model,
-            handler=getattr(tools, name),
+            handler=(
+                _drafting_guard(store, getattr(tools, name))
+                if RunKind.DRAFTING in kinds
+                else getattr(tools, name)
+            ),
             kinds=kinds,
         )
         for name, model, kinds in plan
     )
+
+
+def _drafting_guard(store: Store, handler: Any) -> Any:
+    """Refuse a drafting write for a run get_work served nothing to draft (#373).
+
+    One guard on every drafting write tool, here where they're registered, so a new
+    tool can't miss it: a thread under JotFlow's own post gets no link, proposal,
+    revision, question or pointer, whatever the agent does.
+    """
+
+    async def guarded(grant: Grant, arguments: Any) -> BaseModel:
+        if grant.kind is RunKind.DRAFTING and await store.find_tool_call(
+            grant.run_id, NOTHING_TO_DRAFT, "thread"
+        ):
+            raise ToolError(NOTHING_TO_DRAFT_REFUSAL)
+        result: BaseModel = await handler(grant, arguments)
+        return result
+
+    return guarded

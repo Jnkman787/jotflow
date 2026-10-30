@@ -1492,3 +1492,66 @@ async def test_propose_issue_refuses_an_excluded_repo_whatever_its_case(
         topic = await new_topic(tools)
         with pytest.raises(ToolError, match="is not one of channel"):
             await tools.propose_issue(DRAFT, issue(topic, repo=repo, title=repo, sources=[]))
+
+
+async def test_every_drafting_write_refuses_a_run_served_nothing_to_draft(
+    store: LiveStore, poster: Poster, clock: Clock
+) -> None:
+    """#373: a drafting run under JotFlow's own post gets an empty packet, and get_work's
+    marker makes every drafting write refuse it, through the one guard where the tools
+    are registered. An empty packet alone wouldn't stop a sourceless proposal or a
+    question. Nothing is posted or stored."""
+    from jotflow.store.base import ToolCallRecord
+    from jotflow.whiteboard.tools import NOTHING_TO_DRAFT, NOTHING_TO_DRAFT_REFUSAL
+    from jotflow.whiteboard.write_tools import (
+        PointToHelpArgs,
+        ReviseProposalArgs,
+        write_tools,
+    )
+
+    packet = [MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT)]
+    await store.record_packet("run-1", packet)
+    registry = {
+        spec.name: spec for spec in write_tools(store, POLICY, poster, clock=clock, new_id=Ids())
+    }
+    # An ordinary run first, through the same guarded handlers: a topic and a draft.
+    topic: Any = await registry["link_message"].handler(DRAFT, link())
+    made: Any = await registry["propose_issue"].handler(
+        DRAFT, issue(topic.topic_id, sources=[{"channel_id": CH, "ts": ROOT}])
+    )
+    before = (len(poster.posts), len(await store.thread_proposals(CH, ROOT)))
+
+    # run-2 was served nothing to draft.
+    await store.record_tool_call(
+        ToolCallRecord(
+            run_id="run-2",
+            tool=NOTHING_TO_DRAFT,
+            args_hash="thread",
+            channel_id=CH,
+            thread_ts=ROOT,
+            result_json="{}",
+            called_at=clock(),
+        )
+    )
+    calls: dict[str, Any] = {
+        "link_message": link(),
+        "propose_issue": issue(topic.topic_id, sources=[]),
+        "propose_update": update(topic.topic_id, sources=[]),
+        "revise_proposal": ReviseProposalArgs.model_validate(
+            {
+                "proposal_id": made.proposal_id,
+                "base_revision": 1,
+                "issue": {"title": "T", "body": "B"},
+                "sources": [{"channel_id": CH, "ts": ROOT}],
+                "confidence": 0.8,
+            }
+        ),
+        "ask_channel": AskChannelArgs(text="Which repo?"),
+        "point_to_help": PointToHelpArgs(ts=ROOT),
+    }
+    drafting = {name for name, spec in registry.items() if RunKind.DRAFTING in spec.kinds}
+    assert drafting == set(calls)  # a new drafting tool must be added here, and is guarded
+    for name, arguments in calls.items():
+        with pytest.raises(ToolError, match=NOTHING_TO_DRAFT_REFUSAL):
+            await registry[name].handler(DRAFT_2, arguments)
+    assert (len(poster.posts), len(await store.thread_proposals(CH, ROOT))) == before

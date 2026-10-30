@@ -77,7 +77,7 @@ from jotflow.store import ConflictError
 from jotflow.store.base import Store, ToolCallRecord, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
-from jotflow.whiteboard.tools import ToolError, ToolSpec
+from jotflow.whiteboard.tools import NOTHING_TO_DRAFT, ToolError, ToolSpec
 
 DRAFTING_NOTICE = (
     "Every field marked untrusted holds text people wrote in Slack, or text an earlier "
@@ -698,6 +698,10 @@ def read_tools(
                         messages=[],
                         nothing_to_draft=UNDER_OWN_POST,
                     )
+                    # No topics either: the run has nothing to do with them, and with
+                    # no ids it can't aim a write at one. The marker below refuses
+                    # every drafting write for the run anyway.
+                    index = index.model_copy(update={"topics": [], "more": 0})
                 if grant.kind is RunKind.DRAFTING:
                     follows = thread.follows.topic_id if thread.follows else None
                     index = await _with_pending(grant.channel_id, run.thread_ts, index, follows)
@@ -708,6 +712,21 @@ def read_tools(
                 )
         except TimeoutError:
             raise ToolError("Slack took too long to answer; try the run again shortly") from None
+        if thread.nothing_to_draft is not None:
+            # Every drafting write tool refuses this run from now on (#373): an empty
+            # packet alone doesn't stop a proposal with no sources, or a question.
+            with contextlib.suppress(ConflictError):
+                await store.record_tool_call(
+                    ToolCallRecord(
+                        run_id=run.id,
+                        tool=NOTHING_TO_DRAFT,
+                        args_hash="thread",
+                        channel_id=grant.channel_id,
+                        thread_ts=run.thread_ts,
+                        result_json=json.dumps({"reason": thread.nothing_to_draft}),
+                        called_at=clock(),
+                    )
+                )
         # Record the run's own thread, and only that: link_message (#15) then accepts
         # exactly those messages, so a run's writes stay inside the thread its token
         # names. Related excerpts are context to read, never messages to link.

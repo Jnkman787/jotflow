@@ -56,6 +56,12 @@ class ToolSpec:
 TOOLS: tuple[ToolSpec, ...] = ()
 
 
+# The ledger row get_work writes for a drafting run it served nothing to draft, such as
+# a thread under JotFlow's own post (#373). Every drafting write tool refuses that run.
+NOTHING_TO_DRAFT = "nothing_to_draft"
+NOTHING_TO_DRAFT_REFUSAL = "this run's thread has nothing to draft, so nothing is written"
+
+
 class ToolError(Exception):
     """A refusal the model should see and act on, such as a cap or a missing topic.
 
