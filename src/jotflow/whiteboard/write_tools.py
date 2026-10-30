@@ -72,9 +72,9 @@ from jotflow.store.base import (
     ALSO_NOT_LINKED,
     ALSO_PERSON,
     ALSO_TOO_MANY,
-    EMPTY_TOPIC,
     MAX_TOPICS_PER_MESSAGE,
     MessageLink,
+    SourceOffTopicError,
     StaleRevisionError,
     check_github_login,
     utc_now,
@@ -203,7 +203,6 @@ ATTACH_NOT_SERVED = "isn't a file this run was given the text of"
 ATTACH_GONE = "is no longer shared in this channel"
 ATTACH_CHANGED = "changed since this run read it; draft from the thread again"
 ATTACH_SLACK_LINK = "holds a Slack link, and this channel sends none to GitHub"
-NOT_ON_TOPIC = "has no messages: link one to it first, then propose"
 ATTACH_NOT_SOURCE = "isn't on a message among this proposal's sources"
 ATTACH_OTHER_TOPIC = "is on a message that isn't on this proposal's topic"
 ATTACH_SPLIT = (
@@ -1062,10 +1061,10 @@ class WriteTools:
             created_at=self._clock(),
         )
         try:
-            stored = await self._store.add_proposal(record, needs_message=True)
-        except ConflictError as refused:
-            if str(refused) == EMPTY_TOPIC:  # a draft on a topic with nothing in it (#395)
-                raise ToolError(f"topic {proposal.topic_id} {NOT_ON_TOPIC}") from None
+            stored = await self._store.add_proposal(record, sources_on_topic=True)
+        except SourceOffTopicError as refused:  # #394, #395: its fixed reason
+            raise ToolError(str(refused)) from None
+        except ConflictError:
             raise ToolError(f"no topic {proposal.topic_id}") from None
         except NotFoundError:
             raise ToolError(f"no topic {proposal.topic_id}") from None

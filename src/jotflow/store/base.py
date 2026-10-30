@@ -64,7 +64,6 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
 AUTO_APPROVER = "auto"
 # The run id of a proposal a person made with an Add me button (#305), which no agent
 # drafted. A new draft doesn't supersede it, and auto mode never approves it.
-EMPTY_TOPIC = "the topic has no messages"
 # The tool-call ledger's record of a file a run's packet gave text for, with its
 # message's ts (#333, #374). The store reads it to find a file's message (#391).
 SERVED_FILE = "packet_file"
@@ -135,6 +134,29 @@ class DraftClearedError(TransitionError):
 
 class ContentChangedError(StoreError):
     """Approval named a content hash that no longer matches the draft."""
+
+
+class SourceOffTopicError(ConflictError):
+    """A drafting proposal cites no message, or one not on its own topic (#394, #395).
+
+    ``str()`` is the fixed reason, naming at most a message's ts and the topic id.
+    """
+
+
+def check_sources_on_topic(
+    topic_id: str, sources: Sequence[MessageRef], links: Mapping[str, MessageLink | None]
+) -> None:
+    """At least one source, and every one on ``topic_id``, first or extra. ``links`` holds
+    each source's stored link by ts, read in the caller's write."""
+    if not sources:
+        raise SourceOffTopicError("cite at least one of the topic's messages as a source")
+    for source in sources:
+        link = links.get(source.ts)
+        if link is None or topic_id not in (link.topic_id, *link.also_topics):
+            raise SourceOffTopicError(
+                f"message {source.ts} isn't on topic {topic_id}: link it there first, or cite "
+                "only that topic's messages"
+            )
 
 
 class DuplicateRefusedError(ConflictError):
@@ -924,11 +946,13 @@ class Store(Protocol):
 
     # Proposals
     async def add_proposal(
-        self, record: ProposalRecord, *, needs_message: bool = False
+        self, record: ProposalRecord, *, sources_on_topic: bool = False
     ) -> ProposalRecord:
-        """Store a new proposal. ``needs_message``: refuse, with :data:`EMPTY_TOPIC`, when
-        its topic has no messages, checked in the same write as the insert, so a decision
-        that empties the topic can't slip in between (#395)."""
+        """Store a new proposal. ``sources_on_topic``, for the agent's: refuse, with
+        :class:`SourceOffTopicError`, one that cites no message or one not on its own
+        topic, checked in the same write as the insert, so a decision that moves a
+        message can't slip in between (#394, #395). JotFlow's own, such as Add me, skip it.
+        """
         ...
 
     async def get_proposal(self, proposal_id: str) -> ProposalRecord | None: ...

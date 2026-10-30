@@ -476,16 +476,26 @@ async def test_an_older_schema_drops_an_emptied_topics_draft_too(tmp_path: Path)
         await old.close()
 
 
-async def test_the_store_refuses_a_draft_for_an_empty_topic_when_asked(store: Store) -> None:
-    # #395 review: checked in the insert's own write, so nothing can empty it in between.
-    from jotflow.store.base import EMPTY_TOPIC
+async def test_the_store_checks_sources_on_the_topic_in_its_insert(store: Store) -> None:
+    # #395 review: checked in the insert's own write, so nothing can move them in between.
+    from jotflow.store.base import SourceOffTopicError
 
-    empty = (await store.create_topic(CH, "Nothing yet")).topic.id
-    with pytest.raises(ConflictError, match=EMPTY_TOPIC):
-        await store.add_proposal(draft("p1", empty), needs_message=True)
-    await store.add_proposal(draft("p2", empty))  # JotFlow's own, unasked: as before
-    await store.link_message(paste(), empty)
-    await store.add_proposal(draft("p3", empty), needs_message=True)
+    empty = await store.create_topic(CH, "Nothing yet")
+    topic_id = empty.topic.id
+    with pytest.raises(SourceOffTopicError, match="isn't on topic"):
+        await store.add_proposal(draft("p1", topic_id), sources_on_topic=True)
+    with pytest.raises(SourceOffTopicError, match="cite at least one"):
+        await store.add_proposal(
+            draft("p1", topic_id).model_copy(
+                update={
+                    "proposal": draft("p1", topic_id).proposal.model_copy(update={"sources": []})
+                }
+            ),
+            sources_on_topic=True,
+        )
+    await store.add_proposal(draft("p2", topic_id))  # JotFlow's own, unasked: as before
+    await store.link_message(paste(), topic_id)
+    await store.add_proposal(draft("p3", topic_id), sources_on_topic=True)
 
 
 # #391: a moved message takes its file off another topic's pending draft
