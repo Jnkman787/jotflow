@@ -25,6 +25,11 @@ def canonical_json(proposal: IssueProposal | UpdateProposal, *, hashed: bool = F
     keeps it.
     """
     data = proposal.model_dump(mode="json")
+    # A reason's matched name came later too (#331): left out while unset.
+    changes_reasons = (data.get("changes") or {}).get("assignee_reasons") or []
+    for reason in [*(data.get("assignee_reasons") or []), *changes_reasons]:
+        if isinstance(reason, dict) and reason.get("matched") is None:
+            reason.pop("matched", None)
     for name in LATER_FIELDS:
         if data.get(name) in (None, []):
             data.pop(name, None)

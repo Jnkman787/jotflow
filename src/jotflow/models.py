@@ -391,10 +391,11 @@ class AttachedFile(BaseModel):
 
 
 # Why an assignee is proposed (#305). A fixed choice, so no agent text reaches the card.
-AssigneeWhy = Literal["volunteered", "named_owner", "owner_hint", "added_on_card"]
+AssigneeWhy = Literal["volunteered", "named_owner", "named_in_text", "owner_hint", "added_on_card"]
 ASSIGNEE_REASON_TEXT: dict[str, str] = {
     "volunteered": "volunteered in the thread",
     "named_owner": "named as the owner in the thread",
+    "named_in_text": "named in the thread",
     "owner_hint": "listed as an owner of this repo",
     "added_on_card": "added on the card",
 }
@@ -409,7 +410,9 @@ class AssigneeReason(BaseModel):
     why: AssigneeWhy = Field(
         description=(
             "volunteered: they said they'll take or help with it, in source_ts. "
-            "named_owner: the thread names them as its owner, in source_ts. "
+            "named_owner: the thread @-mentions them as its owner, in source_ts. "
+            "named_in_text: source_ts names them as the owner in words, such as 'assign to "
+            "Sam', and they're in people or owner_hints. "
             "owner_hint: a repo owner hint from channel.repos. "
             "added_on_card is a person's, never the agent's"
         )
@@ -417,12 +420,21 @@ class AssigneeReason(BaseModel):
     source_ts: str | None = Field(
         default=None,
         pattern=rf"^{_SLACK_TS}$",
-        description="The message that shows it: needed for volunteered and named_owner",
+        description=(
+            "The message that shows it: needed for volunteered, named_owner and named_in_text"
+        ),
+    )
+    matched: str | None = Field(
+        default=None,
+        max_length=80,
+        description="Set by JotFlow for named_in_text: the name it matched. Leave it out",
     )
 
     @model_validator(mode="after")
     def _source(self) -> AssigneeReason:
-        needs = self.why in ("volunteered", "named_owner")
+        if self.matched is not None and self.why != "named_in_text":
+            raise ValueError("only a named_in_text reason has a matched name")
+        needs = self.why in ("volunteered", "named_owner", "named_in_text")
         if needs and self.source_ts is None:
             raise ValueError(f"a {self.why} assignee needs the message that shows it")
         if not needs and self.source_ts is not None:

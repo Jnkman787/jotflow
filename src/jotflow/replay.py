@@ -17,13 +17,14 @@ import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from jotflow.change_requests import change_request_by
 from jotflow.models import IssueProposal, MessageRef, ProposalRecord, RunKind, RunStatus
+from jotflow.name_match import Names
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
 from jotflow.orchestrator.keywords import split_keyword
@@ -100,6 +101,10 @@ class ReplayReport:
         return "\n".join(lines)
 
 
+# Time between scripted runs: at least a debounce window, as a live thread waits.
+RUN_GAP = timedelta(minutes=2)
+
+
 class _Clock:
     def __init__(self) -> None:
         self.now = REPLAY_START
@@ -168,6 +173,16 @@ class FixtureAttribution:
     async def name(self, user_id: str) -> str | None:
         user = self._thread.users.get(user_id)
         return user.name if user else None
+
+    async def text(self, ref: MessageRef) -> str:
+        message = self._thread.messages.get(ref.ts)
+        if message is None:
+            raise LookupError(f"message {ref.ts} was not found")
+        return message.text or ""
+
+    async def names(self, user_id: str) -> Names:
+        user = self._thread.users.get(user_id)
+        return Names(display=user.name, real=user.real_name) if user else Names()
 
     async def workspace_url(self) -> str | None:
         return FIXTURE_WORKSPACE_URL
@@ -427,7 +442,10 @@ def _own_posts(thread: SavedThread) -> list[MessageEvent]:
 async def _seed(replay: _Replay) -> None:
     thread, store = replay.thread, replay.store
     for user_id, user in thread.users.items():
-        if user.github:
+        if user.github and user.admin_linked:
+            # A fixed, fictional account id: admin links store one (#305).
+            await store.admin_link(user_id, user.github, 100000 + len(user.github))
+        elif user.github:
             await store.link_identity(user_id, user.github)
     for topic in thread.existing_topics:
         record = await store.create_topic(topic.channel_id, topic.title)
@@ -487,7 +505,10 @@ async def run_script(
     replay: _Replay, lifecycle: RunLifecycle, registry: TokenRegistry, accepted: list[MessageEvent]
 ) -> None:
     """Play the fixture's scripted runs in-process: question runs, then drafting (#270)."""
-    for _, run in play_order(replay.thread):
+    for n, (_, run) in enumerate(play_order(replay.thread)):
+        if n:
+            # Live, a quiet window passes between a thread's runs, so time moves on (#331).
+            replay.clock.now += RUN_GAP
         started = await start_scripted(replay, lifecycle, run)
         grant = registry.check(started.token)
         if grant is None:  # pragma: no cover - the token was issued a moment ago
@@ -704,6 +725,8 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
     checks.append(await _revision_check(replay))
     if any(p.attached for p in expected.proposals):
         checks.append(await _attached_check(replay, by_store_id))
+    if any(p.boards for p in expected.proposals):
+        checks.append(await _boards_check(replay, by_store_id))
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
     checks.append(_equal("pointers to help", replay.poster.pointers, list(expected.pointers)))
     docs_read = []
@@ -838,6 +861,20 @@ async def _attached_check(replay: _Replay, by_store_id: dict[str, str]) -> Check
     return _equal("attachments", got, want)
 
 
+async def _boards_check(replay: _Replay, by_store_id: dict[str, str]) -> Check:
+    """The boards each new issue's draft proposes (#331)."""
+    channel = _channel(replay.thread)
+    got: dict[str, list[str]] = {}
+    for root in sorted({run.thread_ts for run in replay.thread.agent}):
+        for proposal in await replay.store.thread_proposals(channel, root):
+            draft = proposal.proposal
+            if isinstance(draft, IssueProposal) and draft.boards:
+                topic = by_store_id.get(draft.topic_id or "", draft.topic_id or "")
+                got[topic] = [b.board for b in draft.boards]
+    want = {p.topic: list(p.boards) for p in replay.thread.expected.proposals if p.boards}
+    return _equal("boards", got, want)
+
+
 def _equal(name: str, got: Any, want: Any) -> Check:
     if got == want:
         return Check(name, True, f"{len(want)} as expected")
@@ -907,6 +944,8 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
                 authors=attribution.authors,
                 files=files,
                 mentions=attribution.mentions,
+                texts=attribution.text,
+                names=attribution.names,
             ),
             *doc_tools(active, thread.policy, lambda: fixture_docs, docs, clock=clock),
         )

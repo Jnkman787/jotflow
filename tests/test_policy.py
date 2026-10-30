@@ -604,3 +604,24 @@ def test_a_triage_guide_must_be_plain_and_at_most_8000_characters(value: str, re
 def test_a_triage_guide_of_8000_characters_loads() -> None:
     channel = parse_policy(guided(f'"{"x" * 8000}"')).channels["C0TEST1"]
     assert channel.triage_guide is not None and len(channel.triage_guide) == 8000
+
+
+# Repo aliases (#331)
+
+
+def test_a_repo_can_have_aliases_unique_across_the_channels_names() -> None:
+    from jotflow.policy import PolicyError, parse_policy
+    from jotflow.policy_writer import render_policy
+
+    text = (
+        '[channels.C0EXAMPLE1]\n\n[[channels.C0EXAMPLE1.repos]]\nrepo = "acme-co/api"\n'
+        'nickname = "api"\naliases = ["billing", "invoices"]\ndescription = "API"\n'
+    )
+    policy = parse_policy(text)
+    assert policy.channels["C0EXAMPLE1"].repos[0].aliases == ("billing", "invoices")
+    assert parse_policy(render_policy(policy)) == policy
+    for clash in ('aliases = ["api"]', 'aliases = ["billing", "billing"]'):
+        with pytest.raises(PolicyError, match="more than once"):
+            parse_policy(text.replace('aliases = ["billing", "invoices"]', clash))
+    with pytest.raises(PolicyError):
+        parse_policy(text.replace('"invoices"', '"Not A Nickname"'))

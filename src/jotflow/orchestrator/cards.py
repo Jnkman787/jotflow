@@ -24,6 +24,7 @@ from typing import Any, Literal, Protocol
 from jotflow.board_catalog import BoardEntry
 from jotflow.models import (
     ASSIGNEE_REASON_TEXT,
+    AssigneeReason,
     IssueProposal,
     ProposalRecord,
     ProposalState,
@@ -317,15 +318,20 @@ def _reasons(record: ProposalRecord) -> dict[str, str]:
         if isinstance(draft, IssueProposal)
         else draft.changes.assignee_reasons
     )
-    return {reason.login.casefold(): reason.why for reason in listed}
+    return {reason.login.casefold(): _reason_words(reason) for reason in listed}
+
+
+def _reason_words(reason: AssigneeReason) -> str:
+    """JotFlow's words for a reason, with the name a named_in_text one matched (#331)."""
+    words = ASSIGNEE_REASON_TEXT[reason.why]
+    return f"{words} ('{reason.matched}')" if reason.matched else words
 
 
 def _said(given: Mapping[str, str], login: str, shape: str) -> str:
     """The reason's own words for ``login``, in ``shape``, or nothing if it has none."""
-    why = given.get(login.casefold())
-    if why is None:
+    words = given.get(login.casefold())
+    if words is None:
         return ""
-    words = ASSIGNEE_REASON_TEXT[why]
     return (" " + shape.format(words)) if shape.startswith("(") else shape.format(words)
 
 

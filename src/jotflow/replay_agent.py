@@ -42,6 +42,7 @@ from jotflow.adapters.runner import (
 )
 from jotflow.models import RunKind, RunStatus
 from jotflow.replay import (
+    RUN_GAP,
     Check,
     Prepared,
     ReplayError,
@@ -213,7 +214,9 @@ async def _run_agent(prepared: Prepared, options: AgentOptions, root: Path, url:
         )
     failed: list[str] = []
     # Question runs first, as live, each already queued by the question handler (#270).
-    for index, run in play_order(state.thread):
+    for played, (index, run) in enumerate(play_order(state.thread)):
+        if played:
+            state.clock.now += RUN_GAP  # a quiet window passes between runs, as live
         started = await start_scripted(state, prepared.lifecycle, run)
         kind = started.run.kind
         if state.reader is not None:

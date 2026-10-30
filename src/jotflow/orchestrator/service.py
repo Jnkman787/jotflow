@@ -587,6 +587,8 @@ class Orchestrator:
                 authors=attribution.authors,
                 files=files,
                 mentions=attribution.mentions,
+                texts=attribution.text,
+                names=attribution.names,
             ),
             *doc_tools(self._store, self._policy, self._doc_source, doc_reads),
         )

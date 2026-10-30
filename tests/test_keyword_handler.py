@@ -669,3 +669,29 @@ def test_every_keyword_reaction_is_kept_apart_from_jotflows_own() -> None:
         Policy.model_validate(
             {"approval": {"reaction": "bug"}, "channels": {ONE: {"repos": [WEB]}}}
         )
+
+
+def test_re_takes_a_repos_alias_too() -> None:
+    """An alias names its repo wherever a nickname does (#331)."""
+    from jotflow.orchestrator.keywords import parse_reference
+    from jotflow.policy import Policy
+
+    policy = Policy.model_validate(
+        {
+            "channels": {
+                "C0EXAMPLE1": {
+                    "repos": [
+                        {"repo": "acme-co/web", "nickname": "web", "description": "Web"},
+                        {
+                            "repo": "acme-co/api",
+                            "nickname": "api",
+                            "aliases": ["billing"],
+                            "description": "API",
+                        },
+                    ]
+                }
+            }
+        }
+    )
+    found = parse_reference("billing#42 more", policy.channel("C0EXAMPLE1"))
+    assert (found.repo.repo, found.number) == ("acme-co/api", 42)

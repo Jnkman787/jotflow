@@ -1,0 +1,236 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "vague-repo-answer",
+  "description": "As ambiguous-repo, the agent asks which repo owns the bug. Alice answers \"whichever affects the billing most\", which names no repo. The next run asks once more, listing the nicknames, and proposes nothing (#331).",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792317600.000100",
+      "user": "U0CAROL",
+      "text": "The usage totals are wrong for customers on the annual plan, they show twelve times too much."
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792317720.000100",
+      "user": "U0ALICE",
+      "text": "I saw that too. Not sure if it's the number itself or just how it's shown.",
+      "thread_ts": "1792317600.000100"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792321200.000100",
+      "user": "U0ALICE",
+      "text": "Whichever one affects the billing most, I guess.",
+      "thread_ts": "1792317600.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792317600.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792317600.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.8
+          },
+          "topic_key": "annual-usage",
+          "title": "Usage totals wrong on annual plans"
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792317720.000100",
+              "thread_ts": "1792317600.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:annual-usage"
+          }
+        },
+        {
+          "tool": "ask_channel",
+          "arguments": {
+            "text": "Is this the billing service computing the totals wrong (api), or the web app showing them wrong (web)?"
+          }
+        }
+      ],
+      "sees_until": "1792317720.000100"
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792317600.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792321200.000100",
+              "thread_ts": "1792317600.000100"
+            },
+            "decision": "existing_topic",
+            "confidence": 0.9,
+            "topic_id": "key:annual-usage"
+          }
+        },
+        {
+          "tool": "ask_channel",
+          "arguments": {
+            "text": "Sorry, which repo should it go in: api or web?"
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "One topic, no proposal, and two questions about the repo: the second after a vague answer, listing the nicknames.",
+    "accepted": [
+      "1792317600.000100",
+      "1792317720.000100",
+      "1792321200.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:annual-usage",
+        "messages": [
+          "1792317600.000100",
+          "1792317720.000100",
+          "1792321200.000100"
+        ]
+      }
+    ],
+    "asks": [
+      "1792317600.000100",
+      "1792317600.000100"
+    ]
+  }
+}
