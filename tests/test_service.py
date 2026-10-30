@@ -1447,3 +1447,61 @@ async def test_a_burst_of_mentions_starts_one_question_run_and_one_drafting_wait
     assert [(p.channel_id, p.thread_ts) for p in await rig.store.pending_threads()] == [
         (CH, THREAD)
     ]
+
+
+# A summary's thread is never drafted (#318)
+
+
+async def test_nothing_in_a_summarys_thread_reaches_the_debouncer() -> None:
+    from datetime import UTC, datetime
+
+    from tests.test_summary_replies import Slack as RepliesSlack
+
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        assert rig.orchestrator.summary_replies is not None
+        rig.orchestrator.summary_replies._slack = RepliesSlack()
+        slot = datetime(2026, 10, 26, 9, 30, tzinfo=UTC)
+        await rig.store.start_summary(CH, slot)
+        await rig.store.finish_summary(CH, slot, "posted", THREAD)
+        for n, text in enumerate(("a new idea here", "<@U0BOT> draft this", "re: 1")):
+            ts = f"1760781670.00010{n}"
+            event = {
+                "type": "message",
+                "channel": CH,
+                "ts": ts,
+                "thread_ts": THREAD,
+                "user": "U0ALEX",
+                "text": text,
+            }
+            ref = MessageRef(channel_id=CH, ts=ts, thread_ts=THREAD)
+            await rig.orchestrator.note(Accepted(kind="message", ref=ref), event)
+        assert rig.orchestrator._debouncer is not None
+        assert rig.orchestrator._debouncer.pending() == {}
+        assert rig.slack.replies == []  # the keyword handler never saw the re: 1
+    finally:
+        await rig.orchestrator.stop()
+
+
+async def test_re_n_outside_a_summarys_thread_keeps_its_meaning() -> None:
+    rig = Rig()
+    await rig.orchestrator.start()
+    try:
+        event = {
+            "type": "message",
+            "channel": CH,
+            "ts": REPLY,
+            "thread_ts": THREAD,
+            "user": "U0ALEX",
+            "text": "re: 2 more detail",
+        }
+        ref = MessageRef(channel_id=CH, ts=REPLY, thread_ts=THREAD)
+        await rig.orchestrator.note(Accepted(kind="message", ref=ref), event)
+        # With one repo, re: 2 means web#2, as before #318.
+        link = await rig.store.get_message(CH, REPLY)
+        assert link is not None and link.linked_by == "person" and link.topic_id is not None
+        topic = await rig.store.get_topic(link.topic_id)
+        assert topic is not None and topic.topic.issue_number == 2
+    finally:
+        await rig.orchestrator.stop()

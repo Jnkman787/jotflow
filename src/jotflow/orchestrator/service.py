@@ -86,6 +86,7 @@ from jotflow.orchestrator.runs import RunLifecycle
 from jotflow.orchestrator.slack import SlackThreadPoster
 from jotflow.orchestrator.slack_files import BoltFileSlack
 from jotflow.orchestrator.summary import BoltSummarySlack, WeeklySummaries
+from jotflow.orchestrator.summary_replies import BoltRepliesSlack, SummaryReplies
 from jotflow.orchestrator.thread_notice import BoltThreadSlack, ThreadNotice, ThreadSlack
 from jotflow.orchestrator.verify import Verifier, VerifyCommand
 from jotflow.policy import Policy
@@ -325,6 +326,7 @@ class Orchestrator:
         self._mode_slack = mode_slack
         self._thread_slack = thread_slack
         self.threads: ThreadNotice | None = None
+        self.summary_replies: SummaryReplies | None = None
         self.modes: ModeCommand | None = None
         self.links: LinkCommand | None = None
         self.verify: VerifyCommand | None = None
@@ -594,6 +596,12 @@ class Orchestrator:
         self.summaries: WeeklySummaries | None = None
         self.summary_slack = BoltSummarySlack(self._client, self._identity.user_id)
         self.summary_names = people
+        # Replies in a summary's thread (#318), whether or not runs are on.
+        self.summary_replies = SummaryReplies(
+            self._store,
+            self._policy,
+            BoltRepliesSlack(self._client, slack_people, people),
+        )
         if any(c.summary is not None for c in self._policy.channels.values()):
             self.summaries = WeeklySummaries(
                 self._store, self._policy, self.summary_slack, attribution
@@ -714,6 +722,34 @@ class Orchestrator:
                 log.exception("could not read the channel's mode")
                 paused = True  # fail closed: read nothing rather than act in a paused channel
             if paused:
+                return
+        if (
+            isinstance(decision, Accepted)
+            and decision.kind == "message"
+            and event is not None
+            and self.summary_replies is not None
+        ):
+            # A summary's thread is never drafted, asked or keyword-handled (#318):
+            # only re: N routes a reply there, and nothing reaches the debouncer.
+            try:
+                post = await self.summary_replies.summary_thread(event)
+            except Exception:
+                log.exception("could not tell whether a reply is in a summary's thread")
+                return  # fail closed: never draft what might be a summary's thread
+            if post is not None:
+                # A question there is still answered: a question run only reads, and the
+                # summary is already in the channel. A mention never drafts here.
+                asked = False
+                if self._questions is not None:
+                    try:
+                        taken = await self._questions.on_message(event)
+                        asked = taken.outcome != "not_a_question"
+                    except Exception:
+                        log.exception("could not take a question")
+                try:
+                    await self.summary_replies.on_reply(event, post, asked=asked)
+                except Exception:
+                    log.exception("could not handle a reply in a summary's thread")
                 return
         if (
             isinstance(decision, Accepted)

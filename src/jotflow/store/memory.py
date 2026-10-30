@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 
@@ -106,6 +106,7 @@ class MemoryStore:
         self._summaries: dict[tuple[str, datetime], SummaryPost] = {}
         self._deferrals: dict[tuple[str, datetime], SummaryDeferral] = {}
         self._summary_topics: dict[tuple[str, datetime], frozenset[str]] = {}
+        self._summary_items: dict[tuple[str, datetime], tuple[str, ...]] = {}
         self._unlinks: list[IdentityUnlink] = []
         self._codes: dict[str, IdentityCode] = {}
         self._operators: dict[str, OperatorToken] = {}
@@ -795,6 +796,23 @@ class MemoryStore:
 
     async def summary_topics(self, channel_id: str, slot: datetime) -> frozenset[str]:
         return self._summary_topics.get((channel_id, slot), frozenset())
+
+    async def set_summary_items(
+        self, channel_id: str, slot: datetime, topic_ids: Sequence[str]
+    ) -> None:
+        async with self._lock:
+            for key in [k for k in self._summary_items if k[0] == channel_id and k[1] < slot]:
+                del self._summary_items[key]
+            self._summary_items[(channel_id, slot)] = tuple(topic_ids)
+
+    async def summary_items(self, channel_id: str, slot: datetime) -> list[str]:
+        return list(self._summary_items.get((channel_id, slot), ()))
+
+    async def summary_for_thread(self, channel_id: str, ts: str) -> SummaryPost | None:
+        for (channel, _), post in self._summaries.items():
+            if channel == channel_id and post.status == "posted" and post.ts == ts:
+                return post
+        return None
 
     async def defer_topic(
         self, topic_id: str, channel_id: str, until_slot: datetime, *, by: str
