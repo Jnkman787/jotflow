@@ -462,6 +462,13 @@ class SlackWorkSource:
         except SlackFetchError as error:
             # No packet: get_work records nothing when the thread cannot be read.
             raise ToolError(str(error)) from None
+        # A thread under one of JotFlow's own top-level posts, a summary, the help guide,
+        # a mode announcement or the live check's post, is never drafted (#318). This
+        # holds however the run was armed, such as by undoing a skip reaction on a reply
+        # there, whose thread Slack's reaction event doesn't name (#373). get_work serves
+        # a drafting run an empty packet then; a question run still reads the thread.
+        first = next((m for m in raw if isinstance(m.get("ts"), str)), None)
+        jotflow_root = first is not None and self._from_jotflow(first)
         root = next((m for m in raw if m.get("ts") == thread_ts), None)
         if root is not None and split_keyword(str(root.get("text") or ""))[0] == "skip":
             raise ToolError("this thread's first message says skip:, so there is nothing to draft")
@@ -518,6 +525,7 @@ class SlackWorkSource:
             messages=trimmed,
             omitted=omitted,
             follows=follows,
+            jotflow_root=jotflow_root,
         )
 
     async def _follows(
