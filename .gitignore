@@ -180,3 +180,6 @@ jotflow.toml.bak
 # The agent container's own secrets; only the example is committed
 agent.env
 agent-exec.env
+
+# Hypothesis example database (#381)
+.hypothesis/
