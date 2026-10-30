@@ -166,11 +166,12 @@ async def test_a_reply_under_a_split_message_is_left_for_the_agent() -> None:
 
 async def test_the_second_topic_credits_the_paster() -> None:
     # #307 credits walk topic membership, so the second topic's issue names the paster.
+    import json
     from datetime import UTC, datetime
 
     from jotflow.execution.attribution import execution_footer
     from jotflow.models import IssueProposal, ProposalRecord, ProposalState
-    from tests.test_execution_attribution import Crowd, policy
+    from tests.test_execution_attribution import EVERYONE, Crowd, policy
 
     store = MemoryStore()
     _, sensor = await split(store, "Sensor timing")
@@ -194,6 +195,7 @@ async def test_the_second_topic_credits_the_paster() -> None:
         ),
         participants=["U0SAM", "U0ALEX"],
         created_at=datetime(2026, 10, 30, tzinfo=UTC),
+        card_credits=json.dumps(EVERYONE),
     )
     tail = await execution_footer(record, policy(), crowd, store)
     assert tail.splitlines()[0] == "Raised in Slack by Sam, with contributions from Alex here."
@@ -412,11 +414,13 @@ def test_a_dropped_drafts_card_says_why() -> None:
 
 
 async def credit_line(store: Store, topic_id: str, crowd: Any) -> str:
+    import json
+
     from jotflow.execution.attribution import execution_footer
     from jotflow.models import ProposalState
-    from tests.test_execution_attribution import policy
+    from tests.test_execution_attribution import EVERYONE, policy
 
-    record = draft("p9", topic_id, state=ProposalState.APPROVED)
+    record = draft("p9", topic_id, state=ProposalState.APPROVED, card_credits=json.dumps(EVERYONE))
     return (await execution_footer(record, policy(), crowd, store)).splitlines()[0]
 
 

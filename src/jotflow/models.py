@@ -706,6 +706,11 @@ class ProposalRecord(BaseModel):
     approved_issues: str | None = Field(
         default=None, description="The [issues] settings in force when it was approved"
     )
+    # Who the card said the issue credits (#396), as a JSON list of Slack user ids,
+    # recorded only while it can be approved. The footer credits no one else.
+    card_credits: str | None = Field(
+        default=None, description="The Slack ids the approvable card credited, as JSON"
+    )
     skipped_label: str | None = Field(
         default=None,
         description="The [issues] label left off the write because GitHub said it doesn't exist",

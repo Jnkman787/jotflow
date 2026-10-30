@@ -419,6 +419,20 @@ class SqliteStore:
             )
         return row is not None
 
+    async def _has_messages(self, topic_id: str) -> bool:
+        """Whether any message is on the topic, as its first or an extra one."""
+        if self._split:
+            row = await self._one(
+                "SELECT 1 FROM message_refs WHERE topic_id = ?"
+                " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
+                (topic_id, topic_id),
+            )
+        else:
+            row = await self._one(
+                "SELECT 1 FROM message_refs WHERE topic_id = ? LIMIT 1", (topic_id,)
+            )
+        return row is not None
+
     async def _drop_orphaned(self, topic_id: str, now: str) -> list[str]:
         """Supersede a topic's pending proposals once it has no messages left (#335).
 
@@ -682,6 +696,9 @@ class SqliteStore:
             created_at=from_text(row["created_at"]),
             card_issues=row["card_issues"],
             approved_issues=row["approved_issues"],
+            # Migration 24's column (#403): a store opened at an older migration, as the
+            # upgrade tests do, has none.
+            card_credits=row["card_credits"] if "card_credits" in row.keys() else None,  # noqa: SIM118
             skipped_label=row["skipped_label"],
             unsplit_at=from_text(row["unsplit_at"])
             if self._split and row["unsplit_at"] is not None
@@ -1061,15 +1078,21 @@ class SqliteStore:
             return [await self._proposal(row) for row in rows]
 
     async def mark_card_shown(
-        self, proposal_id: str, revision: int, issues: str | None = None
+        self,
+        proposal_id: str,
+        revision: int,
+        issues: str | None = None,
+        credits: str | None = None,
     ) -> None:
         async with self._write():
             cursor = await self._db.execute(
                 "UPDATE proposals"
                 " SET card_revision = MAX(COALESCE(card_revision, 0), MIN(?, revision)),"
-                " card_issues = COALESCE(?, card_issues)"
+                " card_issues = COALESCE(?, card_issues),"
+                " card_credits = CASE WHEN state IN ('pending', 'failed')"
+                " THEN COALESCE(?, card_credits) ELSE card_credits END"
                 " WHERE id = ?",
-                (revision, issues, proposal_id),
+                (revision, issues, credits, proposal_id),
             )
             if cursor.rowcount == 0:
                 raise NotFoundError(f"no proposal {proposal_id}")
