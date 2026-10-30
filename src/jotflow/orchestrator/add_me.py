@@ -34,6 +34,7 @@ else the person typed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -69,6 +70,7 @@ from jotflow.store.base import (
     ConflictError,
     IdentityLink,
     Store,
+    ToolCallRecord,
     TransitionError,
     utc_now,
 )
@@ -81,6 +83,8 @@ LOGIN_BLOCK = "login"
 LOGIN_INPUT = "login"
 
 MAX_SELF_ADDS = 5
+# The ledger's record of an Add me on a card, so it counts toward the same cap.
+CARD_ADD = "add_me_card"
 SELF_ADD_WINDOW = timedelta(hours=1)
 MAX_CHECKS = 10
 CHECK_WINDOW_SECONDS = 600.0
@@ -462,11 +466,25 @@ class AddMe:
             return _already_on_card(login), "unchanged"
         if len(logins) >= MAX_ASSIGNEES:
             raise Refused(TOO_MANY_ASSIGNEES)
+        await self._check_add_cap(user)
         edited = with_assignees(record.proposal, [*logins, login], added=login)
         try:
             await self._store.edit_proposal(record.id, edited, by=user, field="assign")
         except TransitionError:
             raise Refused(NOT_EDITABLE) from None
+        now = self._clock()
+        with contextlib.suppress(ConflictError):
+            await self._store.record_tool_call(
+                ToolCallRecord(
+                    run_id=_card_adds_run(user),
+                    tool=CARD_ADD,
+                    args_hash=f"{record.id}:{now.isoformat()}",
+                    channel_id=record.channel_id,
+                    thread_ts=record.thread_ts,
+                    result_json=json.dumps({"at": now.isoformat()}),
+                    called_at=now,
+                )
+            )
         log.info("proposal %s: user %s added themselves on the card", record.id, user)
         if self._refresh is not None:
             await self._refresh(record.id)
@@ -529,8 +547,25 @@ class AddMe:
                 and draft.issue_number == number
             ):
                 raise Refused(_already_asked(self._label(record)))
+        await self._check_add_cap(user)
+
+    async def _adds_in_window(self, user: str) -> int:
+        """A person's Add me requests in the past hour: on filed issues and on cards."""
         since = self._clock() - SELF_ADD_WINDOW
-        if await self._store.count_self_adds(user, since) >= MAX_SELF_ADDS:
+        filed = await self._store.count_self_adds(user, since)
+        on_cards = 0
+        for raw in await self._store.tool_call_results(_card_adds_run(user), (CARD_ADD,)):
+            try:
+                at = datetime.fromisoformat(json.loads(raw)["at"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if at >= since:
+                on_cards += 1
+        return filed + on_cards
+
+    async def _check_add_cap(self, user: str) -> None:
+        # One cap for both kinds of Add me (#344 review), so cards aren't a way around it.
+        if await self._adds_in_window(user) >= MAX_SELF_ADDS:
             raise Refused(TOO_MANY_ADDS)
 
     async def _self_add(
@@ -586,7 +621,10 @@ class AddMe:
         approval = self._policy.approval
         may_approve = not approval.approvers_enabled or user in approval.approvers
         trusted = link.trusted and link.github_id == found.id
-        if entered or not trusted or not may_approve:
+        # With a second approver required, nobody files their own request (#344 review):
+        # it always waits on a card, approver or not, and someone else approves it.
+        second = approval.require_second_approver
+        if entered or not trusted or not may_approve or second:
             log.info("proposal %s: user %s's Add me waits on a card", stored.id, user)
             return _asked(label), "carded"
         try:
@@ -662,6 +700,10 @@ class BoltAddMeSlack:
 
     async def update_modal(self, view_id: str, view: Mapping[str, Any]) -> None:
         await self._client.views_update(view_id=view_id, view=dict(view))
+
+
+def _card_adds_run(user: str) -> str:
+    return f"add_me:{user}"
 
 
 def register_add_me(app: Any, add_me: AddMe) -> None:

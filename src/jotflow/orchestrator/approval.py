@@ -45,6 +45,7 @@ from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import content_hash
 from jotflow.store.base import MAX_AUTHOR_LOOKUPS as STORE_AUTHOR_LOOKUPS
 from jotflow.store.base import (
+    SELF_ADD_RUN,
     ContentChangedError,
     DraftClearedError,
     DuplicateRefusedError,
@@ -490,10 +491,15 @@ class ApprovalHandler:
                 raise Refused(NOT_AN_APPROVER)
             # A listed approver may approve their own proposal unless the team
             # asks for a second person (#244). Only this clause is optional.
-            if approval.require_second_approver and click.user_id in await self._source_authors(
-                record
-            ):
+            if approval.require_second_approver and (await self._is_own(click.user_id, record)):
                 raise Refused(OWN_PROPOSAL)
+
+    async def _is_own(self, user: str, record: ProposalRecord) -> bool:
+        """Whether ``user`` wrote the proposal's messages, or asked for it with Add me,
+        which has no messages: its requester is its only participant (#344 review)."""
+        if record.run_id == SELF_ADD_RUN and user in record.participants:
+            return True
+        return user in await self._source_authors(record)
 
     async def _approve(self, click: Click, record: ProposalRecord) -> str:
         match = _APPROVE_VALUE.fullmatch(click.value)

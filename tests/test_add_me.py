@@ -47,11 +47,17 @@ CHRIS_ID = 777001
 
 
 def policy(
-    approvers: list[str] | None = None, *, org: str | None = None, repos: Any = None
+    approvers: list[str] | None = None,
+    *,
+    org: str | None = None,
+    repos: Any = None,
+    second: bool = False,
 ) -> Policy:
     data: dict[str, Any] = {"channels": {CH: {"repos": repos or [WEB]}}, "approval": {}}
     if approvers is not None:
         data["approval"]["approvers"] = approvers
+    if second:
+        data["approval"]["require_second_approver"] = True
     if org is not None:
         data["identity"] = {"github_org": org}
     return Policy.model_validate(data)
@@ -112,11 +118,12 @@ class Rig:
         approvers: list[str] | None = None,
         org: str | None = None,
         runner: bool = True,
+        second: bool = False,
     ) -> None:
         self.store = store or MemoryStore()
         self.slack = AddMeSlack()
         self.checks = Checks()
-        self.policy = policy(approvers, org=org)
+        self.policy = policy(approvers, org=org, second=second)
         self.refreshed: list[str] = []
         self.clock = Clock()
         self.seconds = 0.0
@@ -871,3 +878,62 @@ def _mode(store: Store) -> Any:
         return ChannelMode.PROPOSE if setting is None else setting.mode
 
     return mode_for
+
+
+# --- #344 review: a second approver, and one cap for both kinds of Add me ------------
+
+
+async def test_with_a_second_approver_required_a_filed_add_always_waits_on_a_card() -> None:
+    # Even a trusted approver's own request: someone else must approve it.
+    rig = Rig(approvers=[ALEX, CAROL], second=True)
+    await rig.filed()
+    await rig.store.admin_link(ALEX, "octo-alex", ALEX_ID)
+    assert await rig.add_me.on_filed(filed_click()) == "carded"
+    (added,) = await rig.self_adds()
+    assert added.state is ProposalState.PENDING and await rig.executions() == 0
+
+
+async def test_the_requester_cant_approve_their_own_add_me_card() -> None:
+    from jotflow.orchestrator.approval import OWN_PROPOSAL
+    from jotflow.orchestrator.cards import ACTION_APPROVE
+
+    rig = Rig(approvers=[ALEX, CAROL], second=True)
+    await rig.filed()
+    await rig.store.admin_link(ALEX, "octo-alex", ALEX_ID)
+    await rig.add_me.on_filed(filed_click())
+    (added,) = await rig.self_adds()
+    await rig.store.set_card_ts(added.id, "1760781800.000100")
+    value = f"{added.id}:{content_hash(added.proposal)}"
+    own = click_body(ACTION_APPROVE, value, user=ALEX, ts="1760781800.000100")
+    assert await rig.gate.on_approve(own) == "refused"
+    assert rig.slack.ephemerals[-1][2] == OWN_PROPOSAL
+    other = click_body(ACTION_APPROVE, value, user=CAROL, ts="1760781800.000100")
+    assert await rig.gate.on_approve(other) == "approved"
+
+
+async def test_add_me_on_cards_counts_toward_the_same_hourly_cap() -> None:
+    rig = Rig()
+    await rig.filed()
+    await rig.store.admin_link(ALEX, "octo-alex", ALEX_ID)
+    for _ in range(m.MAX_SELF_ADDS - 1):
+        assert await rig.add_me.on_filed(filed_click()) == "filing"
+    # A pending card elsewhere in the channel: the fifth request, on a card.
+    other = "00000000000000aa"
+    draft = IssueProposal(repo="acme-co/web", title="Other", body="X.", confidence=0.9)
+    await rig.store.add_proposal(
+        ProposalRecord(
+            id=other,
+            channel_id=CH,
+            thread_ts="1760781900.000100",
+            run_id="draft-run-2",
+            proposal=draft,
+            created_at=START,
+        )
+    )
+    await rig.store.set_card_ts(other, "1760781900.000200")
+    card = click_body(ACTION_ADD_ME, f"{other}:me", ts="1760781900.000200")
+    assert await rig.add_me.on_card(card) == "added"
+    assert await rig.add_me.on_filed(filed_click()) == "refused"
+    assert rig.slack.ephemerals[-1][2] == m.TOO_MANY_ADDS
+    rig.clock.now = START + m.SELF_ADD_WINDOW + timedelta(seconds=1)
+    assert await rig.add_me.on_filed(filed_click()) == "filing"
