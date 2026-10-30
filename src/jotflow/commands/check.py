@@ -394,9 +394,10 @@ def issue_notes(policy: Policy) -> list[str]:
     label, prefix = policy.issues.label, policy.issues.title_prefix
     if label:
         notes.append(
-            f"every new issue gets the label {label!r}. Make sure it exists in each repo the "
-            "channels feed: JotFlow never creates labels, so an approved issue in a repo "
-            "without it fails to file, saying the label is missing."
+            f"every new issue gets the label {label!r}. Create it in each repo the channels "
+            "feed: JotFlow never creates labels. In a repo GitHub says lacks it, the issue is "
+            "filed without it and the thread says so. If GitHub can't be asked, the write "
+            "stops and Retry tries again."
         )
     patterned = sorted(
         {
