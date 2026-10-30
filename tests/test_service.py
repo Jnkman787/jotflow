@@ -1044,6 +1044,9 @@ async def test_a_drafting_runs_propose_issue_yields_one_card() -> None:
         grant = Grant(run_id=run.id, kind=RunKind.DRAFTING, channel_id=CH, thread_ts=THREAD)
         packet = [MessageRef(channel_id=CH, ts=THREAD, thread_ts=THREAD)]
         await rig.store.record_packet(run.id, packet)
+        from tests.test_write_tools import drafting_served
+
+        await drafting_served(rig.store, run.id)  # as get_work would (#373)
 
         async def call(tool: str, arguments: dict[str, Any]) -> Any:
             spec = specs[tool]

@@ -249,7 +249,9 @@ async def test_errors_name_fields_and_reasons_never_input() -> None:
             grant, "link_message", {"ts": "9.9", "decision": "chatter", "confidence": 1}
         )
     # The tool's own reason, written in code, is passed through as it is.
-    assert str(refused.value) == "link_message refused the scripted call: run r1 is not running"
+    from jotflow.whiteboard.tools import CALL_GET_WORK_FIRST
+
+    assert str(refused.value) == f"link_message refused the scripted call: {CALL_GET_WORK_FIRST}"
 
 
 # --- keywords, through the real parser and work packet (#129) -----------------

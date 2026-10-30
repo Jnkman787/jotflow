@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -165,6 +166,24 @@ async def tools(store: MemoryStore, poster: Poster, clock: Clock) -> WriteTools:
     await store.record_packet("run-1", packet)
     await store.record_packet("run-2", packet)
     return WriteTools(store, POLICY, poster, clock=clock, new_id=Ids(), mentions=reply_names_bob)
+
+
+async def drafting_served(store: Any, run_id: str = "run-1", *, nothing: bool = False) -> None:
+    """The row get_work writes for a drafting run, which every drafting write needs (#373)."""
+    from jotflow.store.base import ToolCallRecord
+    from jotflow.whiteboard.tools import PACKET_SERVED
+
+    await store.record_tool_call(
+        ToolCallRecord(
+            run_id=run_id,
+            tool=PACKET_SERVED,
+            args_hash="thread",
+            channel_id=CH,
+            thread_ts=ROOT,
+            result_json=json.dumps({"nothing_to_draft": nothing}),
+            called_at=datetime(2026, 10, 18, 12, 0, tzinfo=UTC),
+        )
+    )
 
 
 async def reply_names_bob(ref: MessageRef) -> set[str]:
@@ -801,6 +820,7 @@ async def test_over_the_wire_a_refusal_is_a_tool_result_and_kinds_list_their_too
     from jotflow.whiteboard.tokens import TokenRegistry
     from tests.test_mcp_server import client_for, post
 
+    await drafting_served(store)
     registry = TokenRegistry()
     drafting = registry.issue(DRAFT, 60)
     execution = registry.issue(
@@ -941,6 +961,7 @@ async def test_over_the_wire_a_proposal_outside_the_policy_never_becomes_a_card(
         if "label" in change:
             fields["changes"] = {"comment": "x", "add_labels": [change["label"]]}
         arguments = update(topic_id, **fields).model_dump(mode="json")
+    await drafting_served(store)
     registry = TokenRegistry()
     token = registry.issue(DRAFT, 60)
     async with client_for(tokens=registry, tools=write_tools(store, POLICY, poster)) as http:
@@ -1127,6 +1148,7 @@ async def test_over_the_wire_the_refusal_is_a_tool_result_the_agent_can_act_on(
 
     tools = closed
     topic_id = await new_topic(tools)
+    await drafting_served(store)
     registry = TokenRegistry()
     token = registry.issue(DRAFT, 60)
     arguments = issue(topic_id, body=f"See {SLACK_TEXTS[0]}").model_dump(mode="json")
@@ -1494,23 +1516,25 @@ async def test_propose_issue_refuses_an_excluded_repo_whatever_its_case(
             await tools.propose_issue(DRAFT, issue(topic, repo=repo, title=repo, sources=[]))
 
 
-async def test_every_drafting_write_refuses_a_run_served_nothing_to_draft(
+async def test_every_drafting_write_needs_get_work_to_have_served_something(
     store: LiveStore, poster: Poster, clock: Clock
 ) -> None:
     """#373: a drafting run under JotFlow's own post gets an empty packet, and get_work's
     marker makes every drafting write refuse it, through the one guard where the tools
     are registered. An empty packet alone wouldn't stop a sourceless proposal or a
     question. Nothing is posted or stored."""
-    from jotflow.store.base import ToolCallRecord
-    from jotflow.whiteboard.tools import NOTHING_TO_DRAFT, NOTHING_TO_DRAFT_REFUSAL
+    from jotflow.whiteboard.read_tools import ListTopicsInput, read_tools
+    from jotflow.whiteboard.tools import CALL_GET_WORK_FIRST, NOTHING_TO_DRAFT_REFUSAL
     from jotflow.whiteboard.write_tools import (
         PointToHelpArgs,
         ReviseProposalArgs,
         write_tools,
     )
+    from tests.test_read_tools import FakeSource
 
     packet = [MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT)]
     await store.record_packet("run-1", packet)
+    await drafting_served(store, "run-1")  # get_work served it something to draft
     registry = {
         spec.name: spec for spec in write_tools(store, POLICY, poster, clock=clock, new_id=Ids())
     }
@@ -1521,18 +1545,6 @@ async def test_every_drafting_write_refuses_a_run_served_nothing_to_draft(
     )
     before = (len(poster.posts), len(await store.thread_proposals(CH, ROOT)))
 
-    # run-2 was served nothing to draft.
-    await store.record_tool_call(
-        ToolCallRecord(
-            run_id="run-2",
-            tool=NOTHING_TO_DRAFT,
-            args_hash="thread",
-            channel_id=CH,
-            thread_ts=ROOT,
-            result_json="{}",
-            called_at=clock(),
-        )
-    )
     calls: dict[str, Any] = {
         "link_message": link(),
         "propose_issue": issue(topic.topic_id, sources=[]),
@@ -1551,7 +1563,20 @@ async def test_every_drafting_write_refuses_a_run_served_nothing_to_draft(
     }
     drafting = {name for name, spec in registry.items() if RunKind.DRAFTING in spec.kinds}
     assert drafting == set(calls)  # a new drafting tool must be added here, and is guarded
+
+    # run-2 was served a thread under JotFlow's own post: nothing to draft.
+    await drafting_served(store, "run-2", nothing=True)
     for name, arguments in calls.items():
         with pytest.raises(ToolError, match=NOTHING_TO_DRAFT_REFUSAL):
             await registry[name].handler(DRAFT_2, arguments)
+
+    # run-3 never called get_work: it can still list topics, for real ids, and that's
+    # all. An allow-list, so skipping get_work can't reach a write (#373, security).
+    skipped = Grant(run_id="run-3", kind=RunKind.DRAFTING, channel_id=CH, thread_ts=ROOT)
+    reads = {spec.name: spec for spec in read_tools(store, POLICY, FakeSource(), clock=clock)}
+    listed: Any = await reads["list_topics"].handler(skipped, ListTopicsInput())
+    assert topic.topic_id in {t.id for t in listed.topics}
+    for name, arguments in calls.items():
+        with pytest.raises(ToolError, match=CALL_GET_WORK_FIRST):
+            await registry[name].handler(skipped, arguments)
     assert (len(poster.posts), len(await store.thread_proposals(CH, ROOT))) == before
