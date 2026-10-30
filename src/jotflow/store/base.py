@@ -144,13 +144,20 @@ class SourceOffTopicError(ConflictError):
 
 
 def check_sources_on_topic(
-    topic_id: str, sources: Sequence[MessageRef], links: Mapping[str, MessageLink | None]
+    topic_id: str,
+    sources: Sequence[MessageRef],
+    links: Mapping[str, MessageLink | None],
+    on_topic: Collection[str] = (),
 ) -> None:
     """At least one source, and every one on ``topic_id``, first or extra. ``links`` holds
-    each source's stored link by ts, read in the caller's write."""
+    each source's stored link by ts, read in the caller's write. ``on_topic``: the ts of
+    JotFlow's own change requests already checked to be on this topic's card (#375),
+    which no link places, since the agent never links JotFlow's messages."""
     if not sources:
         raise SourceOffTopicError("cite at least one of the topic's messages as a source")
     for source in sources:
+        if source.ts in on_topic:
+            continue
         link = links.get(source.ts)
         if link is None or topic_id not in (link.topic_id, *link.also_topics):
             raise SourceOffTopicError(
@@ -949,7 +956,11 @@ class Store(Protocol):
 
     # Proposals
     async def add_proposal(
-        self, record: ProposalRecord, *, sources_on_topic: bool = False
+        self,
+        record: ProposalRecord,
+        *,
+        sources_on_topic: bool = False,
+        requests_on_topic: Collection[str] = (),
     ) -> ProposalRecord:
         """Store a new proposal. ``sources_on_topic``, for the agent's: refuse, with
         :class:`SourceOffTopicError`, one that cites no message or one not on its own

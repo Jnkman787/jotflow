@@ -120,8 +120,13 @@ class QuestionHandler:
         self._asked_at: dict[tuple[str, str], float] = {}
         self._told_at: dict[tuple[str, str], float] = {}
 
-    async def on_message(self, event: Mapping[str, Any]) -> Asked:
-        """Queue a question run for this message if it is a question someone may ask."""
+    async def on_message(self, event: Mapping[str, Any], *, drafted: bool = True) -> Asked:
+        """Queue a question run for this message if it is a question someone may ask.
+
+        ``drafted``: whether drafting will also read the message. Under one of
+        JotFlow's own top-level posts it never does (#318), so a "not now" reply
+        there doesn't say the message is still read (#373).
+        """
         text = event.get("text")
         channel = event.get("channel")
         ts = event.get("ts")
@@ -133,7 +138,7 @@ class QuestionHandler:
         thread_ts = event.get("thread_ts") if isinstance(event.get("thread_ts"), str) else None
         thread = thread_ts or ts
         # A mention also goes to drafting, so a "not now" reply says it isn't lost (#329).
-        also = "" if is_ask(text) else STILL_READ
+        also = STILL_READ if drafted and not is_ask(text) else ""
         if not isinstance(user, str) or not _SLACK_USER.fullmatch(user):
             return Asked("refused")
         try:

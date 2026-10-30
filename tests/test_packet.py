@@ -308,7 +308,7 @@ async def test_jotflows_own_messages_are_marked_and_other_bots_kept() -> None:
 async def test_a_change_request_names_who_asked_only_on_jotflows_own_post() -> None:
     from jotflow.change_requests import change_request_metadata
 
-    tagged = change_request_metadata("U0ALICE")
+    tagged = change_request_metadata("U0ALICE", "0123456789abcdef")
     reader = FakeReader(
         {
             ROOT: [
@@ -328,6 +328,8 @@ async def test_a_change_request_names_who_asked_only_on_jotflows_own_post() -> N
         ("1.2", "U0ALICE"),
         ("1.3", None),  # a person's message can't claim to be someone's change request
     ]
+    # Which card it was made on (#375), only on JotFlow's own post too.
+    assert [m.change_request_for for m in messages] == [None, "0123456789abcdef", None]
 
 
 async def test_long_threads_page_through_replies() -> None:
@@ -939,3 +941,18 @@ async def test_a_question_to_jotflow_is_flagged_in_the_packet() -> None:
         ("1.5", False),
     ]
     assert messages[1].hint == "ask"
+
+
+@pytest.mark.parametrize("asked", [ROOT, "1.5"])
+async def test_a_thread_under_jotflows_own_post_is_flagged(asked: str) -> None:
+    # #373: however the run was armed, such as by undoing a skip on a reply there whose
+    # thread Slack's reaction event doesn't name, the summary's or guide's thread is out.
+    thread = [
+        msg(ROOT, "Ideas this week: 1. Export", user="U0BOT", bot_id="B0BOT"),
+        msg("1.5", "a new idea in the summary's thread", thread_ts=ROOT),
+    ]
+    reader = FakeReader({ROOT: thread, "1.5": thread})
+    bot = BotIdentity(user_id="U0BOT", bot_id="B0BOT")
+    assert (await source(reader, bot=bot).thread(CH, asked)).jotflow_root
+    ordinary = FakeReader({ROOT: [msg(ROOT, "a progress bar"), msg("1.2", "+1")]})
+    assert not (await source(ordinary, bot=bot).thread(CH, ROOT)).jotflow_root

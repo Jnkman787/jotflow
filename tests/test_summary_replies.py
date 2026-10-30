@@ -296,3 +296,37 @@ async def test_without_a_weekly_summary_re_under_a_post_names_none(store: Store)
     }
     assert await rig.replies.on_unrecorded(event) == "refused"
     assert rig.slack.told[-1][3] == m.OWN_POST_RE
+
+
+@pytest.mark.parametrize("mention", ["<@U0BOT> ", "<@U0BOT|jotflow>, ", "  <@U0BOT>: "])
+async def test_a_leading_mention_of_jotflow_still_routes_re(store: Store, mention: str) -> None:
+    # #373: "@JotFlow re: 1 ..." is a re: 1, as "re: 1 @JotFlow ..." already was.
+    rig = Rig(store)
+    rig.replies._bot = "U0BOT"
+    topic, _ = await idea(store, 1)
+    await rig.posted(topic)
+    assert await rig.reply(f"{mention}re: 1 add a CSV export") == "routed"
+    linked = await store.get_message(CH, "1793000100.000100")
+    assert linked is not None and linked.topic_id == topic
+
+
+async def test_another_persons_mention_isnt_stripped(store: Store) -> None:
+    rig = Rig(store)
+    rig.replies._bot = "U0BOT"
+    topic, _ = await idea(store, 1)
+    await rig.posted(topic)
+    assert await rig.reply("<@U0ALEX> re: 1 thoughts?") == "pointed"
+
+
+async def test_a_leading_mention_under_an_unrecorded_post_hears_re(store: Store) -> None:
+    rig = Rig(store)
+    rig.replies._bot = "U0BOT"
+    event = {
+        "channel": CH,
+        "ts": "1793000100.000100",
+        "thread_ts": POST,
+        "user": "U0ALEX",
+        "parent_user_id": "U0BOT",
+        "text": "<@U0BOT> re: 2 add CSV",
+    }
+    assert await rig.replies.on_unrecorded(event) == "refused"
