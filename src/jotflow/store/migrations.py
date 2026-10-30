@@ -530,6 +530,15 @@ CREATE TABLE message_topics (
             " /* UTC: when a person's decision left its extra topic no messages (#335) */",
         ),
     ),
+    # Who the approvable card credited (#396), so the footer names no one the approver
+    # didn't see. Slack ids only, as JSON.
+    Migration(
+        24,
+        (
+            "ALTER TABLE proposals ADD COLUMN card_credits TEXT"
+            " /* JSON: the Slack ids the card credited while it could be approved */",
+        ),
+    ),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version
