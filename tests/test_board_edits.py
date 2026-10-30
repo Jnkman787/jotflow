@@ -313,3 +313,21 @@ async def test_the_migration_keeps_every_edit_and_allows_a_board_edit(tmp_path: 
             "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'proposal_edits'"
         ).fetchall()
         assert [row[0] for row in index] == ["proposal_edits_proposal"]
+
+
+async def test_a_board_edit_waits_while_found_boards_are_still_loading() -> None:
+    # #376: right after a start the menu can't offer found boards yet, so saving it
+    # would silently drop one the draft has. It's refused, and nothing changes.
+    from jotflow.orchestrator.card_edits import BOARDS_LOADING
+
+    rig = Rig()
+    found = ProposedBoard(board="example-org/14", reason="Its team's")
+    await rig.proposal(ROADMAP, found)
+    rig.edits._board_catalog.awaiting = lambda channel_id: True  # type: ignore[method-assign]
+    await click(rig.app(), menu("roadmap"))
+    assert await rig.boards() == [
+        ("acme-co/3", "Planned for next quarter"),
+        ("example-org/14", "Its team's"),
+    ]
+    assert rig.slack.ephemerals == [(CH, BOB, BOARDS_LOADING)]
+    assert rig.cards.updates == []

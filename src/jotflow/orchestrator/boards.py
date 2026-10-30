@@ -112,6 +112,9 @@ class BoardAdder:
             if listed is None and await self._was_added(record, proposed.board):
                 results.added.append(name)  # added before it left the list or scope
                 continue
+            if listed is None and self._boards.awaiting(record.channel_id):
+                results.retry = True  # its scope's listing hasn't loaded since the start
+                continue
             if listed is None or issue is None:
                 # No longer listed or in scope, or no issue recorded: never added.
                 results.failed.append(name)
