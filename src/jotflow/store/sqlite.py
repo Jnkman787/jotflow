@@ -419,20 +419,6 @@ class SqliteStore:
             )
         return row is not None
 
-    async def _has_messages(self, topic_id: str) -> bool:
-        """Whether any message is on the topic, as its first or an extra one."""
-        if self._split:
-            row = await self._one(
-                "SELECT 1 FROM message_refs WHERE topic_id = ?"
-                " UNION ALL SELECT 1 FROM message_topics WHERE topic_id = ? LIMIT 1",
-                (topic_id, topic_id),
-            )
-        else:
-            row = await self._one(
-                "SELECT 1 FROM message_refs WHERE topic_id = ? LIMIT 1", (topic_id,)
-            )
-        return row is not None
-
     async def _drop_orphaned(self, topic_id: str, now: str) -> list[str]:
         """Supersede a topic's pending proposals once it has no messages left (#335).
 
