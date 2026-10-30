@@ -71,6 +71,7 @@ class Slack:
         self.modals: list[tuple[str, Mapping[str, Any]]] = []
         self.replies: list[tuple[str, str, str]] = []
         self.requested_by: list[str] = []
+        self.targets: list[dict[str, Any]] = []
         # Who wrote each message, by ts, as Slack would say: None for a bot's post,
         # and a missing ts means the message was not found.
         self.written_by: dict[str, str | None] = {THREAD: ALICE}
@@ -102,7 +103,10 @@ class Slack:
     async def reply(self, channel_id: str, thread_ts: str, text: str) -> None:
         self.replies.append((channel_id, thread_ts, text))
 
-    async def change_request(self, channel_id: str, thread_ts: str, text: str, by: str) -> None:
+    async def change_request(
+        self, channel_id: str, thread_ts: str, text: str, by: str, **target: Any
+    ) -> None:
+        self.targets.append(target)
         self.replies.append((channel_id, thread_ts, text))
         self.requested_by.append(by)
 
@@ -454,6 +458,8 @@ async def test_a_change_request_is_posted_attributed_and_arms_the_thread() -> No
     assert "<!channel>" not in posted and "<https://" not in posted
     assert "&lt;https://evil.example|link&gt;" in posted
     assert rig.slack.requested_by == [BOB]  # tagged as Bob's, for the next draft (#330)
+    # And the card it's for, so two split cards in one thread can't be confused (#375).
+    assert rig.slack.targets == [{"proposal_id": pid, "topic_id": None}]
     assert rig.armed == [(CH, THREAD)]
 
 
@@ -627,11 +633,13 @@ async def test_the_bolt_adapter_posts_without_links_or_mentions_expanding() -> N
     assert posted["link_names"] is False and posted["unfurl_links"] is False
     assert posted["unfurl_media"] is False and posted["thread_ts"] == THREAD
     assert "metadata" not in posted
-    await slack.change_request(CH, THREAD, "Change request from <@U0BOB>:\nmore", BOB)
+    await slack.change_request(
+        CH, THREAD, "Change request from <@U0BOB>:\nmore", BOB, proposal_id="0" * 16, topic_id="t1"
+    )
     posted = [kw for name, kw in client.calls if name == "chat_postMessage"][-1]
     assert posted["metadata"] == {
         "event_type": "jotflow_change_request",
-        "event_payload": {"by": BOB},
+        "event_payload": {"by": BOB, "proposal": "0" * 16, "topic": "t1"},
     }
     assert posted["link_names"] is False and posted["unfurl_links"] is False
 
@@ -654,9 +662,9 @@ async def test_a_valid_dialog_is_acknowledged_before_the_reply_is_posted() -> No
 
     real = rig.slack.change_request
 
-    async def reply(channel_id: str, thread_ts: str, text: str, by: str) -> None:
+    async def reply(channel_id: str, thread_ts: str, text: str, by: str, **target: Any) -> None:
         order.append("reply")
-        await real(channel_id, thread_ts, text, by)
+        await real(channel_id, thread_ts, text, by, **target)
 
     rig.slack.change_request = reply  # type: ignore[method-assign]
     await app.views[CALLBACK_CHANGES](Ordered(), submission(pid, "make it blue"))

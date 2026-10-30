@@ -397,3 +397,21 @@ async def test_an_add_me_request_on_an_orphaned_topic_is_kept(store: Store) -> N
     link = await store.mark_chatter(paste(), by="person")
     assert link.dropped == ()
     assert await states(store) == {"p2": "pending"}
+
+
+async def test_a_surviving_extra_topic_keeps_its_draft_after_an_unsplit(store: Store) -> None:
+    """#375: after a person's re: undoes the split, the next draft for the first topic
+    doesn't supersede the extra topic that still has a message in the thread."""
+    mixer, sensor, labels = await split(store, "Sensor timing", "Labels")
+    for record in (draft("p1", mixer), draft("p2", sensor), draft("p3", labels)):
+        await store.add_proposal(record)
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), labels)
+    await store.link_message(paste(), mixer, by="person")  # p2's sensor topic is emptied
+    await store.add_proposal(draft("p4", mixer))
+    assert await store.supersede_pending(CH, PASTE, keep_id="p4") == ["p1"]
+    assert await states(store) == {
+        "p1": "superseded",
+        "p2": "superseded",
+        "p3": "pending",
+        "p4": "pending",
+    }

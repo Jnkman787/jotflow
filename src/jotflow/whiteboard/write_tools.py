@@ -36,6 +36,7 @@ import anyio
 from pydantic import BaseModel, Field, model_validator
 
 from jotflow.board_catalog import BoardCatalog
+from jotflow.change_requests import PACKET_CHANGE_REQUESTS
 from jotflow.models import (
     MAX_ATTACHED,
     MAX_RELATED,
@@ -867,6 +868,21 @@ class WriteTools:
                 left_off.append(login)
         return left_off
 
+    async def _check_change_requests(
+        self, grant: Grant, proposal_id: str, sources: Sequence[MessageRef]
+    ) -> None:
+        """A change request made on one card never revises another (#375)."""
+        made_on: dict[str, str] = {}
+        for row in await self._store.tool_call_results(grant.run_id, (PACKET_CHANGE_REQUESTS,)):
+            made_on |= {ts: p for ts, p in json.loads(row).items() if isinstance(p, str)}
+        for source in sources:
+            target = made_on.get(source.ts)
+            if target is not None and target != proposal_id:
+                raise ToolError(
+                    f"message {source.ts} is a change request for proposal {target}, not "
+                    f"{proposal_id}: revise that one with it"
+                )
+
     async def _named_in(self, grant: Grant, repo: str, ref: MessageRef) -> tuple[str, str] | None:
         """Who ``ref`` names in words, among the packet's people and the repo's owner hints,
         if exactly one (#331). Names and text come from Slack, never the agent."""
@@ -1160,6 +1176,7 @@ class WriteTools:
                 raise ToolError(f"no proposal {args.proposal_id} in this channel")
             await self._check_feeds(grant, record)
             sources = await self._sources(grant, args.sources)
+            await self._check_change_requests(grant, record.id, sources)
             added_by = sorted(await self._authors(sources))
             participants = sorted({*record.participants, *added_by})
             draft = self._revised(grant, record, args, sources)

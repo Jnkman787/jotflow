@@ -132,8 +132,18 @@ class ApprovalSlack(Protocol):
 
     async def reply(self, channel_id: str, thread_ts: str, text: str) -> None: ...
 
-    async def change_request(self, channel_id: str, thread_ts: str, text: str, by: str) -> None:
-        """Post ``by``'s change request in the thread, with metadata naming them (#330)."""
+    async def change_request(
+        self,
+        channel_id: str,
+        thread_ts: str,
+        text: str,
+        by: str,
+        *,
+        proposal_id: str | None = None,
+        topic_id: str | None = None,
+    ) -> None:
+        """Post ``by``'s change request in the thread, with metadata naming them (#330)
+        and the card it's for (#375)."""
         ...
 
     async def authors(self, refs: Sequence[MessageRef]) -> set[str]:
@@ -158,6 +168,7 @@ class ChangeRequest:
     thread_ts: str
     user_id: str
     text: str = field(repr=False)
+    topic_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -265,7 +276,14 @@ class ApprovalHandler:
         except Refused as refused:
             log.info("change request refused for user %s", user_id or "?")
             return str(refused)
-        return ChangeRequest(record.id, record.channel_id, record.thread_ts, user_id, cleaned)
+        return ChangeRequest(
+            record.id,
+            record.channel_id,
+            record.thread_ts,
+            user_id,
+            cleaned,
+            topic_id=record.proposal.topic_id,
+        )
 
     async def post_changes(self, request: ChangeRequest) -> None:
         """Post a checked change request in its thread, attributed, and arm the thread."""
@@ -274,6 +292,8 @@ class ApprovalHandler:
             request.thread_ts,
             f"Change request from <@{request.user_id}>:\n{request.text}",
             request.user_id,
+            proposal_id=request.proposal_id,
+            topic_id=request.topic_id,
         )
         if self._arm_thread is not None:
             # JotFlow's own message never reaches the debouncer through ingest.
@@ -776,12 +796,21 @@ class BoltApprovalSlack:
             unfurl_media=False,
         )
 
-    async def change_request(self, channel_id: str, thread_ts: str, text: str, by: str) -> None:
+    async def change_request(
+        self,
+        channel_id: str,
+        thread_ts: str,
+        text: str,
+        by: str,
+        *,
+        proposal_id: str | None = None,
+        topic_id: str | None = None,
+    ) -> None:
         await self._client.chat_postMessage(
             channel=channel_id,
             thread_ts=thread_ts,
             text=text,
-            metadata=change_request_metadata(by),
+            metadata=change_request_metadata(by, proposal_id, topic_id),
             link_names=False,
             unfurl_links=False,
             unfurl_media=False,
