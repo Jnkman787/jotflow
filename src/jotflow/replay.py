@@ -41,6 +41,7 @@ from jotflow.testing.threads import (
     LinkMessageCall,
     ListRepoDocsCall,
     MessageEvent,
+    PointToHelpCall,
     ProposeIssueCall,
     ProposeUpdateCall,
     ReactionEvent,
@@ -57,7 +58,7 @@ from jotflow.whiteboard.doc_tools import READ_TOOL, DocReads, doc_tools
 from jotflow.whiteboard.read_tools import LIVE_PROPOSAL_STATES, read_tools
 from jotflow.whiteboard.tokens import Grant, TokenRegistry
 from jotflow.whiteboard.tools import ToolError, ToolSpec
-from jotflow.whiteboard.write_tools import write_tools
+from jotflow.whiteboard.write_tools import POINT_TO_HELP, write_tools
 
 # Replay runs at a fixed time, so every run of a fixture is identical.
 REPLAY_START = FIXTURE_LISTED_AT
@@ -114,10 +115,15 @@ class _Poster:
 
     def __init__(self) -> None:
         self.threads: list[str] = []
+        # Each point_to_help reply's thread (#336), kept apart from questions.
+        self.pointers: list[str] = []
         # Each answer as JotFlow would post it: (thread, posted ts, text) (#57, #270).
         self.answers: list[tuple[str, str, str]] = []
 
     async def post(self, channel_id: str, thread_ts: str, text: str) -> str:
+        if text == POINT_TO_HELP:
+            self.pointers.append(thread_ts)
+            return f"1792312999.{len(self.pointers):06d}"
         self.threads.append(thread_ts)
         return f"1792310999.{len(self.threads):06d}"
 
@@ -564,6 +570,8 @@ def scripted_call(
         return tool, arguments
     if isinstance(call, AskChannelCall):
         return "ask_channel", call.arguments.model_dump()
+    if isinstance(call, PointToHelpCall):
+        return "point_to_help", call.arguments.model_dump()
     if isinstance(call, AnswerCall):
         return "answer", call.arguments.model_dump()
     if isinstance(call, ListRepoDocsCall):
@@ -678,6 +686,7 @@ async def _compare(replay: _Replay, accepted: list[str], ignored: dict[str, str]
     if any(p.attached for p in expected.proposals):
         checks.append(await _attached_check(replay, by_store_id))
     checks.append(_equal("asks", replay.poster.threads, list(expected.asks)))
+    checks.append(_equal("pointers to help", replay.poster.pointers, list(expected.pointers)))
     docs_read = []
     for run_id in replay.run_ids:
         docs_read += _doc_keys(await replay.store.tool_call_results(run_id, (READ_TOOL,)))

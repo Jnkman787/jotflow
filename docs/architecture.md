@@ -39,6 +39,7 @@ An MCP server cannot initiate anything; it answers requests from an agent that i
 | `propose_update` | Structured change to an existing issue: body edit, comment, label or assignee change |
 | `link_message` | Associate a Slack message with a topic, or mark it as chatter |
 | `ask_channel` | Post a clarifying question into the source thread only |
+| `point_to_help` | Have JotFlow reply to a message about JotFlow itself with its fixed pointer to `ask:` and `/jotflow help` (#336) |
 | `list_repo_docs`, `read_repo_doc` | Drafting only, and only when a repo sets `read_paths`: the repo's design docs that pattern allows, by path, and one doc's text, marked untrusted (#209) |
 | `record_result` | Report the issue URL, or the error, after executing an approved proposal |
 
@@ -48,7 +49,7 @@ Every call carries a token, and what a token may do depends on who holds it:
 
 | Token | Issued to | May call |
 |---|---|---|
-| Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel`, and `list_repo_docs` and `read_repo_doc` when a repo sets `read_paths` |
+| Drafting run | One drafting run, one channel | `get_work`, `list_topics`, `get_topic`, `propose_*`, `link_message`, `ask_channel`, `point_to_help`, and `list_repo_docs` and `read_repo_doc` when a repo sets `read_paths` |
 | Execution run | One execution run, one approved proposal | `get_work`, `record_result` |
 | Question run (D12, #57) | One question run, one channel | `get_work`, `list_topics`, `get_topic`, `get_issue` (this channel's repos only, #273), `answer` (once, in the source thread only) |
 | Operator token (M5, D12, #58) | One person, named channels, admin-issued and revocable | `list_topics`, `get_topic` only: no `get_work`, no write, approval or result tool |
@@ -67,6 +68,7 @@ Tokens are short-lived for runs and revocable for operators. The server validate
 | `propose_update` | Only for the issue the topic is already linked to, with the same repo, label, source, assignee, and `@login` rules |
 | `link_message` | Only messages the run's `get_work` packet served. A person's earlier decision always stands. At most 200 per run. |
 | `ask_channel` | Posts only into the run's own thread, with broadcast mentions removed and Slack markup escaped. Never unfurls or turns names into mentions. At most 2 per run, and one per thread every 30 seconds across runs. |
+| `point_to_help` | Posts JotFlow's own fixed text, never the agent's, into the run's own thread, for a message in the run's packet. At most once per thread, ever: a later call posts nothing (#336). |
 | `record_result` | Execution runs only, for the grant's own proposal while it is executing, or reconciling after a restart. An issue URL must match the approved repo and issue. A result is recorded once. |
 
 **Repo docs (#209).** A repo in `jotflow.toml` may set `read_paths`, such as `["README.md", "docs/plans/**/*.md"]`. Only then does JotFlow serve `list_repo_docs` and `read_repo_doc`, to drafting runs only. With no repo setting it, the tool set is exactly as before. JotFlow holds no GitHub token, so the drafting runner fetches, with the read token, over `POST /docs/list` and `POST /docs/read`, behind its secret and gate. The checks are JotFlow's, before the runner is asked:
@@ -184,7 +186,7 @@ Both services run as uid 10002 with a read-only root, `/tmp` in memory, all capa
 
 | Run kind | JotFlow tools | GitHub tools |
 |---|---|---|
-| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `revise_proposal`, `link_message`, `ask_channel`, `list_repo_docs`, `read_repo_doc` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
+| Drafting | `get_work`, `list_topics`, `get_topic`, `propose_issue`, `propose_update`, `revise_proposal`, `link_message`, `ask_channel`, `point_to_help`, `list_repo_docs`, `read_repo_doc` | read-only: `issue_read`, `list_issues`, `search_issues`, `list_label`, `get_label` |
 | Question | `get_work`, `list_topics`, `get_topic`, `ask_channel` | the same read-only tools |
 | Execution | `get_work`, `record_result` | `issue_read` and `list_issues` for the marker check, `get_label` for the label check, then `issue_write` for the one create or edit, or `add_issue_comment` for an update's comment |
 

@@ -54,6 +54,7 @@ JOTFLOW_TOOLS: Mapping[RunKind, tuple[str, ...]] = {
         "revise_proposal",
         "link_message",
         "ask_channel",
+        "point_to_help",
         "list_repo_docs",
         "read_repo_doc",
     ),

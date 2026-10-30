@@ -51,6 +51,10 @@ topic it's about, or mark it chatter, never start a topic from it, and don't
 contradict JotFlow's answer in the thread. If it asks for a change to tracked
 work, it's a follow-up (step 6).
 
+A message about JotFlow itself, such as feedback on it or how to use it, is
+chatter, never a topic, even when it names the bot without `ask:` or a
+mention. Call `point_to_help` on it; JotFlow replies once a thread.
+
 ## 3. Hints
 
 A message's `hint` is the keyword its author typed: `idea` or `bug` suggests

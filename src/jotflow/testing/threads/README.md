@@ -46,6 +46,7 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `quick-correction.json` | As `quick-addition.json`, but the second post corrects the first. The draft is revised to match. |
 | `quick-unrelated.json` | As `quick-addition.json`, but the second post is a different idea. It gets its own topic and proposal. |
 | `follow-up-unclear.json` | Two export topics are filed. A new post about keeping the column order could continue either, so the run asks which. `existing-topic.json` covers the clear case, where a new post is linked and gets a comment. |
+| `about-jotflow.json` | Two messages about JotFlow itself, neither an `ask:` nor a mention. Carol tells Alice JotFlow stopped reading her comments once a card reached Approve, and Bob writes "Bot:" asking what it can do. Both are chatter, nothing is drafted, and JotFlow posts its fixed pointer to `ask:` and `/jotflow help` once in each thread. A second pointer in Bob's thread posts nothing (#336). |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.

@@ -74,7 +74,7 @@ def test_claude_code_drafting_argv_is_locked_down(tmp_path: Path) -> None:
     allowed = (
         "mcp__jotflow__get_work,mcp__jotflow__list_topics,mcp__jotflow__get_topic,"
         "mcp__jotflow__propose_issue,mcp__jotflow__propose_update,mcp__jotflow__revise_proposal,"
-        "mcp__jotflow__link_message,mcp__jotflow__ask_channel,"
+        "mcp__jotflow__link_message,mcp__jotflow__ask_channel,mcp__jotflow__point_to_help,"
         "mcp__jotflow__list_repo_docs,mcp__jotflow__read_repo_doc,"
         "mcp__github__issue_read,mcp__github__list_issues,mcp__github__search_issues,"
         "mcp__github__list_label,mcp__github__get_label"

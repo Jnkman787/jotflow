@@ -1,0 +1,230 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "about-jotflow",
+  "description": "Two messages about JotFlow itself, neither flagged as a question. Carol tells Alice that JotFlow stopped reading her comments once a card reached Approve, which is feedback, not work. Bob writes \"Bot:\" and asks what it can do, without ask: or a mention. Both are chatter, nothing is drafted, and JotFlow replies once in each thread with its fixed pointer to ask: and /jotflow help (#336). A second pointer in Bob's thread posts nothing.",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792318200.000100",
+      "user": "U0CAROL",
+      "text": "<@U0ALICE>, once it reached Approve it stopped reading my comments"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792318500.000100",
+      "user": "U0BOB",
+      "text": "Bot: suggest rules for using this channel, and what you can do"
+    },
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792318560.000100",
+      "user": "U0ALICE",
+      "text": "Good question, I'd like to know too.",
+      "thread_ts": "1792318500.000100"
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792318200.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792318200.000100"
+            },
+            "decision": "chatter",
+            "confidence": 0.9
+          }
+        },
+        {
+          "tool": "point_to_help",
+          "arguments": {
+            "ts": "1792318200.000100"
+          }
+        }
+      ]
+    },
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792318500.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792318500.000100"
+            },
+            "decision": "chatter",
+            "confidence": 0.9
+          }
+        },
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792318560.000100",
+              "thread_ts": "1792318500.000100"
+            },
+            "decision": "chatter",
+            "confidence": 0.9
+          }
+        },
+        {
+          "tool": "point_to_help",
+          "arguments": {
+            "ts": "1792318500.000100"
+          }
+        },
+        {
+          "tool": "point_to_help",
+          "arguments": {
+            "ts": "1792318560.000100"
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "Every message is chatter. No topic, no proposal, no question, and one pointer to ask: and /jotflow help in each thread.",
+    "accepted": [
+      "1792318200.000100",
+      "1792318500.000100",
+      "1792318560.000100"
+    ],
+    "chatter": [
+      "1792318200.000100",
+      "1792318500.000100",
+      "1792318560.000100"
+    ],
+    "pointers": [
+      "1792318200.000100",
+      "1792318500.000100"
+    ]
+  }
+}
