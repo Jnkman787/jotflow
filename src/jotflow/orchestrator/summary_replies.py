@@ -52,9 +52,16 @@ NEW_IDEAS_HERE = (
     "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post. "
     "To add to an idea in the summary, start your reply with re: and its number, such as re: 2."
 )
-# Under JotFlow's own post with no summary on record, such as the help guide.
-POST_IN_CHANNEL = "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post."
 NEEDS_NUMBER = "In a summary's thread, re: takes an item's number, such as re: 2."
+# Under one of JotFlow's own top-level posts with no posted summary on record: the
+# help guide, a mode announcement, the live check's post, or a summary not yet
+# recorded. So these never assume the post is a summary.
+POST_IN_CHANNEL = "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post."
+OWN_POST_RE = "Nothing was linked from this reply. To add to an idea, reply in its own thread."
+# The same, in a channel with a weekly summary, where re: N works in its thread.
+OWN_POST_RE_SUMMARY = (
+    OWN_POST_RE + " Or reply in the latest weekly summary's thread with re: and its number."
+)
 
 
 def no_item(number: int) -> str:
@@ -139,9 +146,17 @@ class SummaryReplies:
     def under_own_post(self, event: Mapping[str, Any]) -> bool:
         """A reply under one of JotFlow's own top-level posts, by Slack's parent_user_id.
 
-        JotFlow posts cards and notes inside threads, so its own top-level post is a
-        summary, or the help guide. This holds before the summary's row is marked
-        posted, or after a crash left it failed, so such a thread is never drafted.
+        JotFlow posts cards, questions and notes inside threads. Its only top-level
+        posts are:
+
+        - the weekly summary;
+        - the help guide;
+        - the announcement of a mode change, such as pause, resume (back to
+          propose) or auto;
+        - ``jotflow check``'s live test post.
+
+        A reply under any of them is never drafted. This also holds before a
+        summary's row is marked posted, or after a crash left it failed.
         """
         thread = _str(event.get("thread_ts"))
         return (
@@ -153,7 +168,8 @@ class SummaryReplies:
 
     async def on_unrecorded(self, event: Mapping[str, Any], *, asked: bool = False) -> str:
         """A reply under JotFlow's own post with no posted summary on record: nothing
-        routes, and it's never drafted. re: N hears the summary has passed."""
+        routes, and it's never drafted. The post may be any of JotFlow's top-level
+        posts, so the private replies don't call it a summary."""
         user = _str(event.get("user"))
         channel = _str(event.get("channel"))
         thread = _str(event.get("thread_ts"))
@@ -164,7 +180,11 @@ class SummaryReplies:
             return "ignored"
         keyword, _ = split_keyword(str(event.get("text") or ""))
         if keyword == "re":
-            await self._tell(channel, user, thread, PASSED)
+            listed = self._policy.channels.get(channel)
+            summaries = listed is not None and listed.summary is not None
+            await self._tell(
+                channel, user, thread, OWN_POST_RE_SUMMARY if summaries else OWN_POST_RE
+            )
             return "refused"
         if asked or (channel, thread, user) in self._pointed_threads:
             return "left"

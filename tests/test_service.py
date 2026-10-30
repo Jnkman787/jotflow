@@ -1538,8 +1538,10 @@ async def test_a_reply_before_the_summary_is_recorded_is_never_drafted() -> None
         assert rig.orchestrator._debouncer.pending() == {}
         assert rig.slack.replies == []
         told = [text for *_, text in replies.told]
-        assert told[0].startswith("That summary has passed")
-        assert told[-1].startswith("To suggest a new idea")
+        from jotflow.orchestrator.summary_replies import OWN_POST_RE, POST_IN_CHANNEL
+
+        assert told[0] == OWN_POST_RE  # this channel has no weekly summary
+        assert told[-1] == POST_IN_CHANNEL
     finally:
         await rig.orchestrator.stop()
 

@@ -13,17 +13,18 @@ issue_links = "permalinks"
 
 # How long a conversation must be quiet, in seconds, before JotFlow drafts an
 # issue from it, so a burst of replies is read together. A channel may set its own.
+# From 1 to 86400.
 debounce_seconds = 120
 
 # How many days a topic stays in the list the agent sees after the last message
 # linked to it. Older topics are kept, just not shown, so a reply months later
-# can still find its issue.
+# can still find its issue. From 1 to 365.
 topic_window_days = 14
 
 # The reaction JotFlow adds to the messages an issue came from, once the issue
 # is written, next to its reply in the thread with the issue's link. A Slack
 # emoji name without colons; "" for none. It cannot be white_check_mark, which
-# confirms a keyword.
+# confirms a keyword, a keyword's own emoji, or the [approval] reaction.
 issue_reaction = "ticket"
 
 [agent]
@@ -90,6 +91,7 @@ per_person_seconds = 60
 # the issue is filed without it and the thread says so.
 # label = "from-slack"
 # Text put before every new title, then a space, such as "[Slack] Export to CSV".
+# Up to 32 characters, with no outer spaces and no <, >, @ or backtick.
 # It's added after a repo's title_pattern checks the title, so a strict pattern
 # won't match the filed title.
 # title_prefix = "[Slack]"
@@ -107,7 +109,9 @@ admins = []
 # issues in the repo.
 # github_org = "acme-co"
 
-# One table per Slack channel, keyed by channel id.
+# One table per Slack channel, keyed by channel id. A channel may have up to 5
+# scopes, 10 boards and 3 board_scopes. Repo and board descriptions are up to
+# 200 characters.
 [channels.C0EXAMPLE1]
 debounce_seconds = 60
 
@@ -133,6 +137,21 @@ debounce_seconds = 60
 # lookarounds, backreferences, conditionals, more than three *, + or {n,m}
 # repeats, POSIX classes, and a { that doesn't start a repeat (write \{).
 # Single quotes keep backslashes.
+# Optional (#332): stated priorities and the label each means. A post that
+# states one, such as "P0: checkout is down", gets that label, shown on the card.
+# Explicit tags work best; an everyday word like "urgent" also matches "not
+# urgent". A repo can set its own map, which replaces this one for that repo.
+# A mapped label must be in a repo's labels list when it has one, as on web below.
+# At most 20 entries, each key up to 30 characters.
+# priority_labels = { "P0" = "priority: critical", "sev1" = "sev-1" }
+[[channels.C0EXAMPLE1.repos]]
+repo = "example-org/web"
+nickname = "web"
+description = "The customer-facing web app: pages, sign-up, onboarding"
+labels = ["bug", "enhancement", "size:s", "size:m", "size:l", "priority: critical", "sev-1"]
+visibility = "private"
+title_pattern = '^(feat|fix|docs)(\([a-z-]+\))?: .+$'
+conventions = "Every issue has an ## Acceptance checklist. Use size:s, size:m or size:l on every enhancement."
 # read_paths is optional: the repo's text files a drafting run may read, such
 # as plans, ADRs or a roadmap (#209). Patterns are relative paths: * and ?
 # within a folder, ** for any depth. Hidden files, .git, .github/workflows and
@@ -145,25 +164,11 @@ debounce_seconds = 60
 # (#305). The agent may propose one as an assignee when an idea plainly falls to
 # this repo, and the card says "listed as an owner of this repo". Only someone
 # with a linked GitHub login is ever assigned, and a person still approves.
-# owner_hints = ["U0123ABCD"]
+# owner_hints = ["U0123ABCD"]   # at most 20
 # aliases is optional: other names people use for this repo, such as "shop"
 # (#331). A post naming one is drafted for this repo without a question, and
 # re: shop#42 works too. Aliases share the channel's nicknames, so each is unique.
-# aliases = ["shop"]
-# Optional (#332): stated priorities and the label each means. A post that
-# states one, such as "P0: checkout is down", gets that label, shown on the card.
-# Explicit tags work best; an everyday word like "urgent" also matches "not
-# urgent". A repo can set its own map, which replaces this one for that repo.
-# A mapped label must be in a repo's labels list when it has one.
-# priority_labels = { "P0" = "priority: critical", "sev1" = "sev-1" }
-[[channels.C0EXAMPLE1.repos]]
-repo = "example-org/web"
-nickname = "web"
-description = "The customer-facing web app: pages, sign-up, onboarding"
-labels = ["bug", "enhancement", "size:s", "size:m", "size:l"]
-visibility = "private"
-title_pattern = '^(feat|fix|docs)(\([a-z-]+\))?: .+$'
-conventions = "Every issue has an ## Acceptance checklist. Use size:s, size:m or size:l on every enhancement."
+# aliases = ["shop"]   # at most 10
 
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/api"
@@ -180,6 +185,16 @@ description = "The public REST API and its background jobs"
 # time = "09:30"          # 24-hour, in the timezone below
 # timezone = "Europe/London"
 
+# A channel may override [questions] and [help] for itself, key by key.
+# [channels.C0EXAMPLE1.questions]
+# enabled = true
+# per_hour = 5             # 1 to 1000
+# per_person_seconds = 120 # 0 to 86400
+# [channels.C0EXAMPLE1.help]
+# guide = true
+# newcomer_tip = false
+# near_miss_nudge = true
+
 [channels.G0EXAMPLE2]
 # Optional: the team's own guide to which repo, and which board, a request belongs
 # on (#317). Plain text, up to 8,000 characters, for the whole channel. The
@@ -189,8 +204,8 @@ description = "The public REST API and its background jobs"
 triage_guide = """
 Process changes and onboarding go to handbook, even when they mention a service.
 A request for planned work goes on the roadmap board."""
-# Slack files on a message (#333): "names" (the default) shows drafting each file's
-# name, type and size. "text" also reads a small text file, up to 32 KiB, so a
+# Slack files on a message (#333): "off" tells drafting nothing about them.
+# "names" (the default) shows drafting each file's name, type and size. "text" also reads a small text file, up to 32 KiB, so a
 # proposal can copy it into the issue as the card shows. That needs the bot's
 # files:read scope, which reaches every file in every channel the bot is in.
 attachments = "names"
@@ -219,6 +234,8 @@ include_forks = false
 include_archived = false
 description = "Backend services and shared libraries"
 aliases = { auth = "service-authentication" }
+# labels narrows the labels for every repo the scope finds, as a repo's does.
+# labels = ["bug", "enhancement"]
 
 # GitHub Projects boards an approved issue may be added to (#309). Organisation
 # boards only, as owner/number from the board's URL. The description is your own,
