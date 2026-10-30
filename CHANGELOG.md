@@ -4,7 +4,7 @@ What changed in each JotFlow release, for the people who run it. The format foll
 
 ## [Unreleased]
 
-A minor release for 0.5.0, from a usage review of a real deployment. Upgrade both images: the drafting runner gains fixed GitHub calls, and the agent image changed. The default Compose files and the Slack manifest are unchanged. Only a channel that sets `attachments = "text"` needs a new Slack scope and a reinstall. It adds store migrations 16 to 23, so rolling back means restoring the backup from before the upgrade, then removing the new keys from `jotflow.toml`, since older versions refuse keys they don't know. [Upgrading to 0.5.0](docs/deployment.md#upgrading-to-050) has the checklist: the optional token permissions, board creator ids to pin, the new settings, and the changes people will notice.
+A minor release for 0.5.0. Upgrade both images: the drafting runner gains fixed GitHub calls, and the agent image changed. The default Compose files and the Slack manifest are unchanged. Only a channel that sets `attachments = "text"` needs a new Slack scope and a reinstall. It adds store migrations 16 to 23, so rolling back means restoring the backup from before the upgrade, then removing the new keys from `jotflow.toml`, since older versions refuse keys they don't know. [Upgrading to 0.5.0](docs/deployment.md#upgrading-to-050) has the checklist: the optional token permissions, board creator ids to pin, the new settings, and the changes people will notice.
 
 ### Added
 
