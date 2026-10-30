@@ -52,6 +52,8 @@ NEW_IDEAS_HERE = (
     "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post. "
     "To add to an idea in the summary, start your reply with re: and its number, such as re: 2."
 )
+# Under JotFlow's own post with no summary on record, such as the help guide.
+POST_IN_CHANNEL = "To suggest a new idea, post it in the channel, not in a reply to JotFlow's post."
 NEEDS_NUMBER = "In a summary's thread, re: takes an item's number, such as re: 2."
 
 
@@ -167,7 +169,7 @@ class SummaryReplies:
         if asked or (channel, thread, user) in self._pointed_threads:
             return "left"
         self._pointed_threads.add((channel, thread, user))
-        await self._tell(channel, user, thread, NEW_IDEAS_HERE)
+        await self._tell(channel, user, thread, POST_IN_CHANNEL)
         return "pointed"
 
     def _prune(self, slot: datetime) -> None:
