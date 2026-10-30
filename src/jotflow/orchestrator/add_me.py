@@ -553,14 +553,8 @@ class AddMe:
         """A person's Add me requests in the past hour: on filed issues and on cards."""
         since = self._clock() - SELF_ADD_WINDOW
         filed = await self._store.count_self_adds(user, since)
-        on_cards = 0
-        for raw in await self._store.tool_call_results(_card_adds_run(user), (CARD_ADD,)):
-            try:
-                at = datetime.fromisoformat(json.loads(raw)["at"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if at >= since:
-                on_cards += 1
+        # Counted by the store, within the window only, never the whole history.
+        on_cards = await self._store.count_run_calls(_card_adds_run(user), CARD_ADD, since=since)
         return filed + on_cards
 
     async def _check_add_cap(self, user: str) -> None:

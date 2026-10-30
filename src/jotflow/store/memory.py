@@ -1129,6 +1129,11 @@ class MemoryStore:
             and c.called_at >= since
         )
 
+    async def count_run_calls(self, run_id: str, tool: str, *, since: datetime) -> int:
+        return sum(
+            1 for c in self._calls if (c.run_id, c.tool) == (run_id, tool) and c.called_at >= since
+        )
+
     async def count_runs(self, channel_id: str, kind: RunKind, *, since: datetime) -> int:
         return sum(
             1
