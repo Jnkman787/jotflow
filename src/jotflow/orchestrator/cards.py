@@ -98,6 +98,8 @@ class CardContext:
     # Who the issue's footer will name, computed as the write computes it, so approval
     # covers every name sent to GitHub (#307 review). None: names aren't sent.
     credit_line: str | None = None
+    # The Slack ids behind credit_line, as JSON, for the store to lock (#396).
+    credits: str | None = None
     # What JotFlow adds to every new issue, shown so the card is what's filed (#306).
     issues: IssuesPolicy = field(default_factory=IssuesPolicy)
     identities: Mapping[str, IdentityLink] = field(default_factory=dict)  # by Slack user id

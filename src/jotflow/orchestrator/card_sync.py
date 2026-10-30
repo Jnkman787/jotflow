@@ -16,6 +16,7 @@ each later state edited in place.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
@@ -24,7 +25,7 @@ from typing import Any, Protocol
 import anyio
 
 from jotflow.board_catalog import BoardCatalog
-from jotflow.execution.attribution import Attribution, credit
+from jotflow.execution.attribution import Attribution, credit, shown_credits
 from jotflow.models import ProposalRecord, ProposalState, RepoVisibility
 from jotflow.orchestrator.cards import CardContext, CardPublisher, Visibility
 from jotflow.policy import IssuesPolicy, Policy, UnknownChannelError
@@ -113,18 +114,23 @@ CREDIT_UNKNOWN = "Credited in the issue: couldn't be checked just now"
 
 async def _credit_line(
     policy: Policy, store: Store, attribution: Attribution | None, record: ProposalRecord
-) -> str | None:
-    """The names the footer will carry, by the footer's own rules (#307 review)."""
+) -> tuple[str | None, str | None]:
+    """The names the footer will carry, by the footer's own rules (#307 review), and
+    their Slack ids as JSON, for the card to lock (#396). Once approved, only the ids
+    the approvable card showed, as the write uses. When the names can't be checked,
+    no one: the footer then credits nobody rather than names the card didn't show."""
     if attribution is None or policy.issue_links == "none":
-        return None
+        return None, None
+    approvable = record.state in (ProposalState.PENDING, ProposalState.FAILED)
+    allowed = None if approvable else shown_credits(record)
     with anyio.move_on_after(CREDIT_SECONDS):
         try:
-            found = await credit(record, attribution, store)
+            found = await credit(record, attribution, store, allowed)
         except Exception as exc:
             log.warning("card %s: credited names unknown (%s)", record.id, type(exc).__name__)
-            return CREDIT_UNKNOWN
-        return found.line(record.proposal.kind == "update_issue")
-    return CREDIT_UNKNOWN
+            return CREDIT_UNKNOWN, "[]"
+        return found.line(record.proposal.kind == "update_issue"), json.dumps(list(found.ids))
+    return CREDIT_UNKNOWN, "[]"
 
 
 async def card_context(
@@ -166,9 +172,11 @@ async def card_context(
         record.id,
     )
     docs_read = await _own_reads(store, record, docs_read)
+    credit_line, credits = await _credit_line(policy, store, attribution, record)
     return CardContext(
         channel=channel,
-        credit_line=await _credit_line(policy, store, attribution, record),
+        credit_line=credit_line,
+        credits=credits,
         # What approving now would lock while it can be approved or retried; after
         # that, what the approval locked (#306 follow-up).
         issues=policy.issues
@@ -207,10 +215,13 @@ class CardSync:
         repos: RepoCatalog | None = None,
         arm_thread: Callable[[str, str], Awaitable[None]] | None = None,
         boards: BoardCatalog | None = None,
+        attribution: Attribution | None = None,
     ) -> None:
         self._store = store
         self._policy = policy
         self._repos = repos
+        # Who the issue will credit, so the card shows it and locks it (#396).
+        self._attribution = attribution
         # Read at each draw: the start-up check and the board scopes change it (#309).
         self._boards = boards
         self._arm = arm_thread
@@ -288,11 +299,14 @@ class CardSync:
                 self._people,
                 record,
                 self._repos,
+                self._attribution,
                 boards=self._boards,
             )
             await self._publisher.show(record, context)
             # What [issues] the card showed, so an approval can check it (#306 follow-up).
-            await self._store.mark_card_shown(record.id, record.revision, context.issues.snapshot())
+            await self._store.mark_card_shown(
+                record.id, record.revision, context.issues.snapshot(), context.credits
+            )
         except UnknownChannelError:
             # jotflow.toml no longer lists the channel: there is nowhere to draw it.
             log.warning("proposal %s: its channel is not configured; no card", record.id)

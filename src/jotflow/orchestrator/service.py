@@ -459,6 +459,9 @@ class Orchestrator:
         people = self._people or BoltPeople(self._client)
         # One auth.test for the whole process: the team check and the workspace URL.
         slack_people = SlackPeople(self._client)
+        # Who the issue will credit, looked up the way the footer does (#307 review). The
+        # card loop and the approval gate's check both draw with it (#396).
+        credits = SlackAttribution(slack_people, people.name)
         self.cards = CardSync(
             self._store,
             self._policy,
@@ -468,6 +471,7 @@ class Orchestrator:
             # A revision that lost a race drafts its thread again once settled (#304).
             arm_thread=self._arm_thread,
             boards=self.boards,
+            attribution=credits,
         )
         # Auto mode approves before each card pass, so its card waits for the write (#28).
         self.auto = AutoApprover(
@@ -507,9 +511,6 @@ class Orchestrator:
             self._mode_slack or BoltModeSlack(self._client, slack_people, people),
         )
         store, policy, repos = self._store, self._policy, self.repos
-
-        # Who the issue will credit, looked up the way the footer does (#307 review).
-        credits = SlackAttribution(slack_people, people.name)
 
         async def drawn_with(record: ProposalRecord) -> CardContext:
             # The context the card loop draws with, so length rules agree (#34).

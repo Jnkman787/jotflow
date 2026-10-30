@@ -15,8 +15,9 @@ one Slack confirms wrote the message, never the agent's participants list.
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -25,7 +26,7 @@ import anyio
 from jotflow.execution.writes import _credited, _joined, clean_name, footer, permalink
 from jotflow.models import MessageRef, ProposalRecord
 from jotflow.policy import Policy
-from jotflow.store.base import Store
+from jotflow.store.base import AUTO_APPROVER, Store
 
 log = logging.getLogger("jotflow.execution")
 
@@ -113,6 +114,8 @@ class Credit:
 
     poster: str | None = None
     others: tuple[str, ...] = ()
+    # The Slack ids behind those names (#396), so the card can lock who it showed.
+    ids: tuple[str, ...] = ()
 
     def line(self, update: bool) -> str | None:
         """The card's line naming them (#307 review), or None if nobody would be named.
@@ -134,14 +137,18 @@ class Credit:
 
 
 async def credit(
-    record: ProposalRecord, attribution: Attribution, store: Store | None = None
+    record: ProposalRecord,
+    attribution: Attribution,
+    store: Store | None = None,
+    allowed: Collection[str] | None = None,
 ) -> Credit:
     """Who the footer names, the same for the card and the write (#307).
 
     Only people Slack confirms wrote a credited message, never the agent-written
     participants list (#156 review). A new issue credits its poster and its topic's
     contributors; an update credits its own sources, who added the new information.
-    Each name is looked up once. A failed lookup leaves that person out.
+    Each name is looked up once. A failed lookup leaves that person out. With
+    ``allowed``, only those Slack ids are credited: the ones the card showed (#396).
     """
     update = record.proposal.kind == "update_issue"
     names: dict[str, str | None] = {}
@@ -159,14 +166,37 @@ async def credit(
             poster_id = next(iter(await attribution.authors([root])), None)
         except LookupError:
             poster_id = None  # a deleted root names no one
+        if poster_id is not None and allowed is not None and poster_id not in allowed:
+            poster_id = None
         if poster_id is not None:
             poster = await name(poster_id)
     refs = list(record.proposal.sources) if update else await _contributed(record, store)
     others: list[str] = []
+    ids = [poster_id] if poster_id is not None and poster is not None else []
     for user in await _authors_of(attribution, refs):
+        if allowed is not None and user not in allowed:
+            continue
         if user != poster_id and (found := await name(user)):
             others.append(found)
-    return Credit(poster=poster, others=tuple(others))
+            ids.append(user)
+    return Credit(poster=poster, others=tuple(others), ids=tuple(dict.fromkeys(ids)))
+
+
+def shown_credits(record: ProposalRecord) -> frozenset[str] | None:
+    """Whom the footer may credit (#396): the Slack ids the approved card showed. None
+    for an auto-approved proposal, which no person approved from a card. A proposal
+    with none recorded credits no one, rather than names nobody saw."""
+    if record.approved_by == AUTO_APPROVER:
+        return None
+    if record.card_credits is None:
+        return frozenset()
+    try:
+        found = json.loads(record.card_credits)
+    except ValueError:
+        return frozenset()
+    if not isinstance(found, list):
+        return frozenset()
+    return frozenset(user for user in found if isinstance(user, str))
 
 
 async def execution_footer(
@@ -190,7 +220,7 @@ async def execution_footer(
                 log.warning("proposal %s: no workspace URL (%s)", record.id, type(exc).__name__)
         with anyio.move_on_after(ATTRIBUTION_SECONDS):
             try:
-                credited = await credit(record, attribution, store)
+                credited = await credit(record, attribution, store, shown_credits(record))
             except Exception as exc:  # a lookup failure leaves that part out
                 log.warning(
                     "proposal %s: attribution incomplete (%s)", record.id, type(exc).__name__
