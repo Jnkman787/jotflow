@@ -37,7 +37,6 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
-    EMPTY_TOPIC,
     MAX_SUMMARY_ATTEMPTS,
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
@@ -79,6 +78,7 @@ from jotflow.store.base import (
     check_notice,
     check_revision,
     check_run_request,
+    check_sources_on_topic,
     cleared_draft,
     edited_draft,
     plan_duplicate,
@@ -311,7 +311,7 @@ class MemoryStore:
     # Proposals
 
     async def add_proposal(
-        self, record: ProposalRecord, *, needs_message: bool = False
+        self, record: ProposalRecord, *, sources_on_topic: bool = False
     ) -> ProposalRecord:
         check_new_proposal(record)
         async with self._lock:
@@ -324,8 +324,10 @@ class MemoryStore:
                     raise NotFoundError(f"no topic {topic_id}")
                 if topic.topic.channel_id != record.channel_id:
                     raise ConflictError("a proposal can only be for a topic in its own channel")
-                if needs_message and not self._with_messages(topic).topic.messages:
-                    raise ConflictError(EMPTY_TOPIC)
+                if sources_on_topic:
+                    sources = record.proposal.sources
+                    links = {r.ts: self._messages.get((record.channel_id, r.ts)) for r in sources}
+                    check_sources_on_topic(topic_id, sources, links)
             stored = record.model_copy(
                 update={"participants": sorted(set(record.participants))}, deep=True
             )

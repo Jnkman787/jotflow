@@ -49,7 +49,6 @@ from jotflow.store.base import (
     DUPLICATE_MOVED_ON,
     DUPLICATE_NOT_NEW,
     DUPLICATE_TOPIC_LINKED,
-    EMPTY_TOPIC,
     MAX_SUMMARY_ATTEMPTS,
     MAX_TOPICS_PER_MESSAGE,
     OPERATOR_REMOVER,
@@ -94,6 +93,7 @@ from jotflow.store.base import (
     check_notice,
     check_revision,
     check_run_request,
+    check_sources_on_topic,
     cleared_draft,
     edited_draft,
     from_text,
@@ -603,7 +603,7 @@ class SqliteStore:
         return None if row is None else await self._proposal(row)
 
     async def add_proposal(
-        self, record: ProposalRecord, *, needs_message: bool = False
+        self, record: ProposalRecord, *, sources_on_topic: bool = False
     ) -> ProposalRecord:
         check_new_proposal(record)
         draft = record.proposal
@@ -618,8 +618,15 @@ class SqliteStore:
                     raise NotFoundError(f"no topic {draft.topic_id}")
                 if topic["channel_id"] != record.channel_id:
                     raise ConflictError("a proposal can only be for a topic in its own channel")
-                if needs_message and not await self._has_messages(draft.topic_id):
-                    raise ConflictError(EMPTY_TOPIC)
+                if sources_on_topic:
+                    links = {}
+                    for source in draft.sources:
+                        row = await self._one(
+                            "SELECT * FROM message_refs WHERE channel_id = ? AND ts = ?",
+                            (record.channel_id, source.ts),
+                        )
+                        links[source.ts] = None if row is None else await self._linked(row)
+                    check_sources_on_topic(draft.topic_id, draft.sources, links)
             now = to_text(self._clock())
             await self._db.execute(
                 """
