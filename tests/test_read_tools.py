@@ -748,3 +748,44 @@ description = "The customer-facing website"
     plain: Work = await call(tools(fresh, clock)["get_work"], await running(fresh))
     assert plain.conversation is not None and plain.conversation.channel is not None
     assert plain.conversation.channel.triage_guide is None
+
+
+async def test_a_quick_post_after_a_split_one_sees_each_topics_draft(
+    store: MemoryStore, clock: Clock
+) -> None:
+    """#374: the run for a quick post after a split post gets every one of that post's
+    topics' pending drafts, so it can revise the second topic's, not only the first's."""
+    from jotflow.models import IssueProposal, MessageRef, ProposalRecord
+    from jotflow.whiteboard.read_tools import FollowsPost
+
+    first = "1760781500.000100"
+    mixer = (await store.create_topic(CH, "Mixer")).topic.id
+    sensor = (await store.create_topic(CH, "Sensor timing")).topic.id
+    await store.link_message(MessageRef(channel_id=CH, ts=first, thread_ts=first), mixer)
+    await store.also_link(MessageRef(channel_id=CH, ts=first), sensor)
+    for proposal_id, topic_id in (("pA", mixer), ("pB", sensor)):
+        await store.add_proposal(
+            ProposalRecord(
+                id=proposal_id,
+                channel_id=CH,
+                thread_ts=first,
+                run_id="r0",
+                proposal=IssueProposal(
+                    topic_id=topic_id, repo="acme-co/web", title="T", body="B", confidence=0.9
+                ),
+                created_at=clock(),
+            )
+        )
+
+    class Following(FakeSource):
+        async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
+            work = await super().thread(channel_id, thread_ts)
+            hint = FollowsPost(ts=first, seconds_before=30, topic_id=mixer, also_topics=[sensor])
+            return work.model_copy(update={"follows": hint})
+
+    grant = await running(store)
+    work: Work = await call(tools(store, clock, Following())["get_work"], grant)
+    assert work.conversation is not None
+    pending = {t.id: t.pending for t in work.conversation.topics.topics}
+    assert pending[mixer] is not None and pending[mixer].proposal_id == "pA"
+    assert pending[sensor] is not None and pending[sensor].proposal_id == "pB"

@@ -158,3 +158,15 @@ async def test_the_per_author_map_drops_posts_past_the_window() -> None:
     late = f"{float(FIRST) + FOLLOWS_WITHIN + 5:.6f}"
     await debouncer.note(top(late), "U0ALEX")
     assert list(debouncer._last_post) == [(CH, "U0ALEX")]
+
+
+async def test_a_split_posts_follow_up_names_all_its_topics() -> None:
+    # #374: the earlier post fed two topics, so the quick post may be about either.
+    store = MemoryStore()
+    mixer = (await store.create_topic(CH, "Mixer")).topic.id
+    sensor = (await store.create_topic(CH, "Sensor timing")).topic.id
+    await store.link_message(MessageRef(channel_id=CH, ts=FIRST), mixer)
+    await store.also_link(MessageRef(channel_id=CH, ts=FIRST), sensor)
+    reader = History([post(FIRST, "Mixer and sensor notes."), post(SECOND, "Sensor: 2s.")])
+    found = await follows(reader, store)
+    assert found is not None and (found.topic_id, found.also_topics) == (mixer, [sensor])
