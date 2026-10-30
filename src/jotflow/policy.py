@@ -82,6 +82,17 @@ def label_problem(label: str) -> str | None:
     return unsafe_text_problem(label)
 
 
+def label_lookup_problem(label: str) -> str | None:
+    """Why ``label`` can't be looked up in a URL path, or None if it can (#347 review).
+
+    Percent-encoding leaves "." and "..", which an HTTP client resolves as dot
+    segments, so asking for one would ask GitHub about another path.
+    """
+    if label in (".", ".."):
+        return "can't be looked up by name"
+    return label_problem(label)
+
+
 def _check_label_name(value: str) -> str:
     if problem := label_problem(value):
         raise ValueError(f"label {shown(value)} {problem}")

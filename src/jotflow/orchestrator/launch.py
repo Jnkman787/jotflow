@@ -61,7 +61,7 @@ from jotflow.models import (
 )
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
 from jotflow.orchestrator.runs import RunLifecycle
-from jotflow.policy import label_problem
+from jotflow.policy import label_lookup_problem
 from jotflow.store.base import Store
 from jotflow.store.titles import clean_title
 from jotflow.whiteboard.write_tools import PostError, ThreadPoster
@@ -522,7 +522,7 @@ class RunnerClient:
         """
         if not is_owner_name(owner) or not is_bare_repo_name(name):
             raise RunnerError("not a GitHub repo")
-        if label_problem(label) is not None:
+        if label_lookup_problem(label) is not None:
             raise RunnerError("not a label")
         body = {"owner": owner, "name": name, "label": label}
         response = await self._call("POST", RunKind.DRAFTING, "/repos/labels/check", json=body)
