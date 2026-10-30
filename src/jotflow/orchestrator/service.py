@@ -752,11 +752,13 @@ class Orchestrator:
             if post is not None or self.summary_replies.under_own_post(event):
                 # A question there is still answered: a question run only reads, and the
                 # summary is already in the channel. A mention never drafts here.
+                # Only a queued question run answers, so off, limited or refused still
+                # gets the pointer (#373).
                 asked = False
                 if self._questions is not None:
                     try:
-                        taken = await self._questions.on_message(event)
-                        asked = taken.outcome != "not_a_question"
+                        taken = await self._questions.on_message(event, drafted=False)
+                        asked = taken.outcome == "queued"
                     except Exception:
                         log.exception("could not take a question")
                 try:

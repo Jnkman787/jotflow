@@ -145,10 +145,9 @@ async def test_the_bots_or_jotflows_own_posts_never_count_as_the_previous_post()
     as_bot = History([post(FIRST, "x", bot_id="B0OTHER"), post(SECOND, "y")])
     assert await follows(as_bot) is None
     jotflow = History([post(FIRST, "x", user="U0JOT"), post(SECOND, "y", user="U0JOT")])
-    work = await SlackWorkSource(jotflow, MemoryStore(), bot=BotIdentity("U0JOT", "B0JOT")).thread(
-        CH, SECOND
-    )
-    assert work.follows is None
+    source = SlackWorkSource(jotflow, MemoryStore(), bot=BotIdentity("U0JOT", "B0JOT"))
+    work = await source.thread(CH, SECOND)
+    assert work.follows is None and work.jotflow_root  # never drafted either (#373)
 
 
 async def test_the_per_author_map_drops_posts_past_the_window() -> None:
