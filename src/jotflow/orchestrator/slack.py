@@ -11,6 +11,7 @@ from slack_bolt.async_app import AsyncApp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import ChannelMode
 from jotflow.orchestrator.help_blocks import help_reply, repos_reply
 from jotflow.orchestrator.identity import LinkCommand
@@ -123,6 +124,7 @@ def register_commands(
     links: LinkCommand | None = None,
     verify: VerifyCommand | None = None,
     repos: RepoCatalog | None = None,
+    boards: BoardCatalog | None = None,
 ) -> None:
     """Answer ``/jotflow`` privately: ``help``, ``mode``, and ``link`` and ``unlink``.
 
@@ -166,7 +168,10 @@ def register_commands(
             return
         if word == "repos" and policy is not None:
             await formatted(
-                ack, repos_reply(policy, str(command.get("channel_id") or ""), rest, repos)
+                ack,
+                repos_reply(
+                    policy, str(command.get("channel_id") or ""), rest, repos, boards=boards
+                ),
             )
             return
         if text in ("", "help"):

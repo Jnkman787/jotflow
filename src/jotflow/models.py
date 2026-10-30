@@ -97,6 +97,20 @@ class DiscoveredRepo(BaseModel):
     private: bool = False
 
 
+class FoundBoard(BaseModel):
+    """One organisation board the drafting runner found in a channel's scope (#309 PR 2).
+
+    The runner has already applied the scope, so only in-scope boards come back.
+    The title and description are GitHub's, and untrusted.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    number: int = Field(ge=1, le=10**9)
+    title: str = Field(min_length=1, max_length=256)
+    description: str | None = Field(default=None, max_length=1000)
+
+
 # Pointers JotFlow parses out of its own issues for `jotflow rebuild --from-github`
 # (#256). The runner reads GitHub and sends only these. JotFlow checks them again.
 MAX_MARKED_ISSUES = 5000

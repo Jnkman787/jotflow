@@ -35,6 +35,7 @@ from urllib.parse import unquote
 import anyio
 from pydantic import BaseModel, Field, model_validator
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import (
     MAX_ATTACHED,
     MAX_RELATED,
@@ -90,6 +91,30 @@ MAX_QUESTION_LENGTH = 500
 MAX_ANSWER_LENGTH = 500
 # Every answer says whose it is, so nobody mistakes it for a person or a JotFlow fact.
 ANSWER_PREFIX = "Answer from the agent:"
+# A question run changes nothing, so its answer may never say it did (#329). First
+# person only: "#42 was created last week" is fine, "I've filed it" is not.
+_CLAIM = re.compile(
+    r"\b(?:i|we|jotflow)(?:['\u2019]ve| have| has)?\s+(?:just\s+|now\s+|already\s+)?"
+    r"(?:created|filed|opened|assigned|added|updated|changed|edited|closed|made|moved)\b",
+    re.IGNORECASE,
+)
+CLAIMS_A_CHANGE = (
+    "an answer can't say a change was made: this run changes nothing, and any change "
+    "comes as a card for a person to approve. Answer only what was asked."
+)
+
+
+def claims_a_change(text: str) -> bool:
+    """Whether ``text`` says, in the first person, that something was changed (#329).
+
+    Read as written and folded: invisible format characters such as a zero-width
+    space removed, then compatibility forms folded, so neither hides a claim.
+    """
+    visible = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    folded = unicodedata.normalize("NFKC", visible)
+    return any(_CLAIM.search(reading) for reading in (text, folded))
+
+
 MAX_PARTICIPANTS = 50
 
 DRAFTING = frozenset({RunKind.DRAFTING})
@@ -166,6 +191,17 @@ ATTACH_SLACK_LINK = "holds a Slack link, and this channel sends none to GitHub"
 ATTACH_TOO_LONG = "the body with its attachments would pass GitHub's length limit; attach fewer"
 # GitHub's issue body limit is 65,536 characters; JotFlow's footer needs the rest.
 MAX_BODY_WITH_FILES = 60_000
+
+
+def _check_body_with_files(body: str, files: Sequence[AttachedFile]) -> None:
+    """The issue body with its Attachments section stays inside GitHub's limit (#346
+    follow-up): checked when files are attached, and again when a revision changes
+    the body they go with."""
+    if not files:
+        return
+    section = attachments_section([(a.name, a.text) for a in files])
+    if len(body) + len(section) > MAX_BODY_WITH_FILES:
+        raise ToolError(ATTACH_TOO_LONG)
 
 
 class ProposeIssueArgs(IssueProposal):
@@ -578,7 +614,7 @@ class WriteTools:
         docs: DocReads | None = None,
         authors: Authors | None = None,
         mentions: Mentions | None = None,
-        boards_off: Collection[str] = frozenset(),
+        boards: BoardCatalog | None = None,
         files: FileSlack | None = None,
     ) -> None:
         self._store = store
@@ -588,8 +624,8 @@ class WriteTools:
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
         self._mentions_of = mentions
-        # Boards the write token can't update, found at JotFlow's start (#309).
-        self._boards_off = boards_off
+        # The channel's boards, listed and found, and which the write token can update (#309).
+        self._board_catalog = boards if boards is not None else BoardCatalog.static(policy)
         # The run's doc reads, for the card's long-passage flag (#209).
         self._docs = docs
         self._poster = poster
@@ -837,9 +873,7 @@ class WriteTools:
                     text=read.text,
                 )
             )
-        section = attachments_section([(a.name, a.text) for a in out])
-        if len(body) + len(section) > MAX_BODY_WITH_FILES:
-            raise ToolError(ATTACH_TOO_LONG)
+        _check_body_with_files(body, out)
         return out
 
     def _related(
@@ -873,13 +907,13 @@ class WriteTools:
         The reason is the agent's, so it is cleaned like a question and shown as
         plain text. Boards are in the draft, so approval locks them.
         """
-        listed = self._policy.channel(grant.channel_id)
         kept: list[ProposedBoard] = []
         for proposed in boards:
-            board = listed.board(proposed.board)
+            # Listed, or found by a board scope in a fresh listing (#309 PR 2).
+            board = self._board_catalog.board(grant.channel_id, proposed.board)
             if board is None:
                 raise ToolError(f"{proposed.board} isn't one of this channel's boards")
-            if board.board in self._boards_off:
+            if not self._board_catalog.usable(board):
                 raise ToolError(f"{proposed.board} is off: JotFlow's write token can't update it")
             if any(k.board == board.board for k in kept):
                 continue
@@ -1177,6 +1211,8 @@ class WriteTools:
         if isinstance(draft, IssueProposal):
             await self._check_title(grant, draft.repo, draft.title)
             self._check_no_slack_links(draft.title, draft.body)
+            # A revision keeps its files, so its new body must still fit with them.
+            _check_body_with_files(draft.body, draft.attached)
             await self._check_mentions(participants, draft.title, draft.body)
             kept = old.assignee_reasons if isinstance(old, IssueProposal) else []
             legacy = _unreasoned(old.assignees, kept) if isinstance(old, IssueProposal) else []
@@ -1299,6 +1335,9 @@ class WriteTools:
         thread = grant.thread_ts
         if thread is None:  # pragma: no cover - question grants always name one
             raise ToolError("this run has no thread to answer in")
+        if claims_a_change(args.text):
+            # Refused before it counts, so the run can answer the question instead (#329).
+            raise ToolError(CLAIMS_A_CHANGE)
 
         async def act() -> AnswerResult:
             await self._cap(grant, ("answer",), 1, "answers")
@@ -1463,7 +1502,7 @@ def write_tools(
     docs: DocReads | None = None,
     authors: Authors | None = None,
     mentions: Mentions | None = None,
-    boards_off: Collection[str] = frozenset(),
+    boards: BoardCatalog | None = None,
     files: FileSlack | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
@@ -1477,7 +1516,7 @@ def write_tools(
         docs=docs,
         authors=authors,
         mentions=mentions,
-        boards_off=boards_off,
+        boards=boards,
         files=files,
     )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (

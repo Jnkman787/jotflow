@@ -36,7 +36,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from jotflow.adapters.github_repos import GithubError, RateLimited, _headers, _rate_limited
 from jotflow.execution.writes import PROPOSAL_ID, marker
-from jotflow.models import is_bare_repo_name, is_owner_name
+from jotflow.models import FoundBoard, is_bare_repo_name, is_owner_name
+from jotflow.policy import has_marker, title_excluded
 
 GRAPHQL = "https://api.github.com/graphql"
 MAX_NUMBER = 10**9
@@ -286,3 +287,124 @@ async def add_issue(
     if item.content.id != issue.repository.issue.id:
         raise GithubError("GitHub added something other than the issue")
     return item.id
+
+
+# Board discovery (#309 PR 2): one constant, paged query with the read token.
+# It reads each board's number, title, short description, whether it is closed
+# or a template, and who created it, never its items, fields or views.
+FIND_BOARDS = (
+    "query($owner: String!, $cursor: String) {"
+    " organization(login: $owner) { projectsV2(first: 100, after: $cursor) {"
+    " nodes { number title shortDescription closed template"
+    " creator { __typename ... on User { databaseId } } }"
+    " pageInfo { hasNextPage endCursor } } } }"
+)
+MAX_FIND_PAGES = 5
+MAX_FIND_BYTES = 256 * 1024
+MAX_CURSOR = 200
+
+
+class _Creator(_Strict):
+    typename: str = Field(alias="__typename", max_length=40)
+    databaseId: int | None = None
+
+
+class _FoundNode(_Strict):
+    number: int = Field(ge=1, le=MAX_NUMBER)
+    title: str = Field(max_length=1000)
+    shortDescription: str | None = Field(default=None, max_length=4000)
+    closed: bool
+    template: bool
+    creator: _Creator | None = None
+
+
+class _PageInfo(_Strict):
+    hasNextPage: bool
+    endCursor: str | None = Field(default=None, max_length=MAX_CURSOR)
+
+
+class _Boards(_Strict):
+    nodes: list[_FoundNode | None] = Field(max_length=100)
+    pageInfo: _PageInfo
+
+
+class _BoardsHolder(_Strict):
+    projectsV2: _Boards
+
+
+class _FindData(_Strict):
+    organization: _BoardsHolder
+
+
+def _in_scope(
+    node: _FoundNode,
+    numbers: frozenset[int],
+    marker: str | None,
+    creator_ids: frozenset[int],
+    exclude: tuple[str, ...],
+) -> bool:
+    """The scope, as policy defines it: by number, or by the marker on a board one
+    of the listed people created. A bot, an app or a null creator never counts."""
+    if node.closed or node.template or not node.title.strip():
+        return False
+    if title_excluded(node.title, exclude):
+        return False
+    if node.number in numbers:
+        return True
+    if marker is None or not has_marker(node.shortDescription, marker):
+        return False
+    creator = node.creator
+    return (
+        creator is not None
+        and creator.typename == "User"
+        and creator.databaseId is not None
+        and creator.databaseId in creator_ids
+    )
+
+
+async def find_boards(
+    owner: str,
+    token: str,
+    *,
+    numbers: frozenset[int],
+    marker: str | None,
+    creator_ids: frozenset[int],
+    exclude: tuple[str, ...],
+    http: httpx2.AsyncClient,
+    url: str = GRAPHQL,
+) -> list[FoundBoard]:
+    """The organisation ``owner``'s boards in the scope given, at most 500 looked at.
+
+    The scope is applied here, in the runner, so an excluded board's title or
+    creator never leaves it. A page past the cap, an answer over its size cap, or
+    any other failure raises :class:`GithubError`: nothing partial is returned.
+    """
+    _check_owner(owner)
+    found: list[FoundBoard] = []
+    cursor: str | None = None
+    for _ in range(MAX_FIND_PAGES):
+        data: _FindData = await _ask(
+            http,
+            token,
+            FIND_BOARDS,
+            {"owner": owner, "cursor": cursor},
+            _FindData,
+            url=url,
+            max_bytes=MAX_FIND_BYTES,
+        )
+        page = data.organization.projectsV2
+        for node in page.nodes:
+            if node is not None and _in_scope(node, numbers, marker, creator_ids, exclude):
+                found.append(
+                    FoundBoard(
+                        number=node.number,
+                        title=node.title[:256],
+                        description=(node.shortDescription or "")[:1000] or None,
+                    )
+                )
+        if not page.pageInfo.hasNextPage:
+            return found
+        cursor = page.pageInfo.endCursor
+        if not cursor:
+            raise GithubError("GitHub said there was another page but gave no cursor")
+    raise GithubError(f"the organisation has more than {MAX_FIND_PAGES * 100} boards")

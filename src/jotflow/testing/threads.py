@@ -198,6 +198,11 @@ class AnswerCall(_Strict):
 
     tool: Literal["answer"]
     arguments: Answer
+    expect_error: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Part of the refusal this answer must get, such as a claimed change (#329)",
+    )
 
 
 class RepoDocArguments(_Strict):
@@ -465,9 +470,9 @@ class ExpectedWhisper(_Strict):
 def _question_replies() -> frozenset[str]:
     from jotflow.orchestrator import questions
 
-    return frozenset(
-        {questions.MEMBERS_ONLY, questions.TOO_MANY, questions.TOO_SOON, questions.OFF}
-    )
+    fixed = {questions.MEMBERS_ONLY, questions.TOO_MANY, questions.TOO_SOON, questions.OFF}
+    # A mention's reply adds that drafting still reads it (#329).
+    return frozenset(fixed | {text + questions.STILL_READ for text in fixed})
 
 
 class Expected(_Strict):
@@ -869,7 +874,9 @@ def scripted_outcome(thread: SavedThread) -> Outcome:
             elif isinstance(call, AskChannelCall):
                 outcome.asks.append(run.thread_ts)
             elif isinstance(call, AnswerCall):
-                outcome.answers.append(run.thread_ts)
+                # A refused answer, such as one claiming a change, posts nothing (#329).
+                if call.expect_error is None:
+                    outcome.answers.append(run.thread_ts)
             elif isinstance(call, ReviseProposalCall):
                 topic = call.arguments.topic_id
                 outcome.revisions[topic] = outcome.revisions.get(topic, 0) + 1
@@ -917,9 +924,15 @@ def _expected_problems(thread: SavedThread) -> list[str]:
         placed[ts] = placed.get(ts, 0) + 1
     for ts in skipped(thread):
         placed[ts] = placed.get(ts, 0) + 1
-    # A question is neither an idea nor the agent's chatter call: JotFlow sets it aside (#57).
+    # An ask: is neither an idea nor the agent's chatter call: JotFlow sets it aside (#57).
+    # A bot mention is a question and a message to the thread: drafting may place it in a
+    # topic or chatter, or leave it, when no drafting run is scripted (#329).
+    from jotflow.orchestrator.questions import is_ask
+
+    mentions = {ts for ts in expected.questions if not is_ask(messages[ts].text or "")}
     for ts in expected.questions:
-        placed[ts] = placed.get(ts, 0) + 1
+        if ts not in mentions or placed.get(ts, 0) == 0:
+            placed[ts] = placed.get(ts, 0) + 1
     for ts in accepted_messages:
         count = placed.get(ts, 0)
         if count != 1:

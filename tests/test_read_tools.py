@@ -308,6 +308,11 @@ async def test_question_runs_get_their_own_instructions_and_the_help_text(
     assert work.conversation.instructions == QUESTION_INSTRUCTIONS
     assert work.conversation.help == help_text()
     assert work.conversation.channel is not None
+    # #329: a fixed fact, so the answer can't claim a change drafting might propose.
+    from jotflow.whiteboard.read_tools import QUESTION_NOTICE
+
+    assert work.conversation.notice == QUESTION_NOTICE
+    assert "can't change anything" in QUESTION_NOTICE
 
 
 async def test_drafting_runs_get_no_help_text(store: MemoryStore, clock: Clock) -> None:

@@ -37,7 +37,9 @@ from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
 from jotflow.orchestrator.questions import mentions_bot
 from jotflow.orchestrator.slack_files import (
+    MAX_THREAD_READS,
     MAX_THREAD_TEXT,
+    READ_LIMIT,
     TEXT_OFF,
     THREAD_FULL,
     FileSlack,
@@ -603,6 +605,7 @@ class SlackWorkSource:
         if setting == "off":
             return messages
         used = 0
+        reads = 0
         out: list[ThreadMessage] = []
         for source, message in zip(raw, messages, strict=True):
             found = [] if self._from_jotflow(source) else message_files(source)
@@ -616,7 +619,10 @@ class SlackWorkSource:
                         reason = TEXT_OFF
                     elif used + file.size > MAX_THREAD_TEXT:
                         reason = THREAD_FULL
+                    elif reads >= MAX_THREAD_READS:
+                        reason = READ_LIMIT
                     else:
+                        reads += 1
                         read = await read_text(file, self._files)
                         text, reason, read_sha = read.text, read.reason, read.sha256
                         if text is not None:
