@@ -1492,3 +1492,18 @@ async def test_propose_issue_refuses_an_excluded_repo_whatever_its_case(
         topic = await new_topic(tools)
         with pytest.raises(ToolError, match="is not one of channel"):
             await tools.propose_issue(DRAFT, issue(topic, repo=repo, title=repo, sources=[]))
+
+
+async def test_a_proposal_needs_its_topic_to_have_a_message(
+    tools: WriteTools, store: MemoryStore
+) -> None:
+    """#395: the run moved a topic's only message elsewhere, then proposed for it. The
+    card would be pending on a topic with nothing in it, so it's refused."""
+    emptied = await new_topic(tools)
+    await tools.link_message(DRAFT, link(title="Somewhere else"))  # ROOT moves off
+    with pytest.raises(ToolError, match="has no messages: link one to it first"):
+        await tools.propose_issue(DRAFT, issue(emptied, sources=[{"channel_id": CH, "ts": ROOT}]))
+    await store.set_topic_issue(emptied, "acme-co/web", 42)
+    with pytest.raises(ToolError, match="has no messages"):
+        await tools.propose_update(DRAFT, update(emptied))
+    assert await store.thread_proposals(CH, ROOT) == []

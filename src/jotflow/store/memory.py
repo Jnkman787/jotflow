@@ -171,8 +171,8 @@ class MemoryStore:
         self._messages[key] = link
         if topic_id is not None:
             self._topics[topic_id] = replace(self._topics[topic_id], last_activity_at=now)
-        # Every topic the split message leaves, its first one too (#374).
-        first = existing.topic_id if existing is not None and undone else None
+        # Every topic the message leaves, a split's or not, whoever decided (#374, #395).
+        first = existing.topic_id if existing is not None else None
         left = dict.fromkeys([*undone, *([first] if first else [])])
         dropped = [p for t in left if t != topic_id for p in self._drop_orphaned(t)]
         return replace(link, dropped=tuple(dropped))

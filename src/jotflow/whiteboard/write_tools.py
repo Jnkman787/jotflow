@@ -202,6 +202,7 @@ ATTACH_NOT_SERVED = "isn't a file this run was given the text of"
 ATTACH_GONE = "is no longer shared in this channel"
 ATTACH_CHANGED = "changed since this run read it; draft from the thread again"
 ATTACH_SLACK_LINK = "holds a Slack link, and this channel sends none to GitHub"
+NOT_ON_TOPIC = "has no messages: link one to it first, then propose"
 ATTACH_NOT_SOURCE = "isn't on a message among this proposal's sources"
 ATTACH_OTHER_TOPIC = "is on a message that isn't on this proposal's topic"
 ATTACH_SPLIT = (
@@ -959,6 +960,16 @@ class WriteTools:
         _check_body_with_files(body, out)
         return out
 
+    async def _check_on_topic(self, topic_id: str) -> None:
+        """The proposal's topic has at least one message (#395).
+
+        Otherwise the draft would sit on a topic with nothing in it, such as one whose
+        only message the run moved elsewhere: link a message to it first.
+        """
+        record = await self._store.get_topic(topic_id)
+        if record is not None and not record.topic.messages:
+            raise ToolError(f"topic {topic_id} {NOT_ON_TOPIC}")
+
     async def _check_attach_place(
         self,
         grant: Grant,
@@ -1118,6 +1129,7 @@ class WriteTools:
             )
             related, dropped = self._related(grant, args.related)
             sources = await self._sources(grant, args.sources)
+            await self._check_on_topic(args.topic_id)
             attached = await self._attach(
                 grant, args.attachments, args.body, topic_id=args.topic_id, sources=sources
             )
@@ -1182,12 +1194,14 @@ class WriteTools:
                     "a verified or admin link. Ask in the thread who should own it instead"
                 )
             related, dropped = self._related(grant, args.related, own=(repo, args.issue_number))
+            sources = await self._sources(grant, args.sources)
+            await self._check_on_topic(args.topic_id)
             draft = UpdateProposal.model_validate(
                 {
                     **args.model_dump(exclude={"participants"}),
                     "repo": repo,
                     "changes": changes.model_dump(),
-                    "sources": await self._sources(grant, args.sources),
+                    "sources": sources,
                     "related": [r.model_dump() for r in related],
                 }
             )

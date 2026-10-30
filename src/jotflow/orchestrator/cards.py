@@ -78,9 +78,7 @@ _PERMALINK = re.compile(
 )
 
 FAILED_LINE = "The write failed. The agent's reason is stored with the proposal."
-UNSPLIT_LINE = (
-    "Dropped. Someone put the message it came from in one topic, so this one has none left."
-)
+UNSPLIT_LINE = "Dropped. The messages it came from were moved off this topic, so it has none left."
 _STATE_LINES = {
     ProposalState.EXECUTING: "Creating it on GitHub now.",
     ProposalState.RECONCILING: "The write was interrupted; checking whether it already happened.",
