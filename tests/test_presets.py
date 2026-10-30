@@ -525,7 +525,8 @@ def test_preset_env_cannot_replace_base_allowlisted_or_runner_names(tmp_path: Pa
     }
     env = child_env(config, RunKind.DRAFTING, "run-1", tmp_path, environ, extra=extra)
     assert env["PATH"] == "/usr/bin"
-    assert "NODE_OPTIONS" not in env
+    # The preset's --require never arrives: only the runner's own system-CA option (#360).
+    assert env["NODE_OPTIONS"] == "--use-openssl-ca"
     assert env["ANTHROPIC_API_KEY"] == "model-key"
     assert env["HOME"] == "/home/agent"
     assert env["TMPDIR"] == str(tmp_path)
