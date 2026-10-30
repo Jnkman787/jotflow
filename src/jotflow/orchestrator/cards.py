@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC
 from typing import Any, Literal, Protocol
 
+from jotflow.board_catalog import BoardEntry
 from jotflow.models import (
     ASSIGNEE_REASON_TEXT,
     IssueProposal,
@@ -29,7 +30,7 @@ from jotflow.models import (
     RelatedIssue,
     UpdateProposal,
 )
-from jotflow.policy import BoardPolicy, ChannelPolicy, IssuesPolicy, RepoPolicy
+from jotflow.policy import ChannelPolicy, IssuesPolicy, RepoPolicy
 from jotflow.store.base import (
     ADDED_ON_CARD,
     AUTO_APPROVER,
@@ -95,8 +96,27 @@ class CardContext:
     visibility: Mapping[str, Visibility] = field(default_factory=dict)  # by owner/name, any case
     # The draft's revisions from new messages, oldest first (#304).
     revisions: Sequence[ProposalRevision] = ()
-    # Boards the write token can't update, found at JotFlow's start (#309): never offered.
-    boards_off: frozenset[str] = frozenset()
+    # The channel's boards, listed and found, and those the menu may offer (#309).
+    # None means the channel's listed boards, all offered.
+    boards: tuple[BoardEntry, ...] | None = None
+    offered_boards: tuple[BoardEntry, ...] | None = None
+
+    @property
+    def channel_boards(self) -> tuple[BoardEntry, ...]:
+        if self.boards is not None:
+            return self.boards
+        return tuple(BoardEntry(b.board, b.nickname, b.description) for b in self.channel.boards)
+
+    @property
+    def menu_boards(self) -> tuple[BoardEntry, ...]:
+        return self.offered_boards if self.offered_boards is not None else self.channel_boards
+
+    def board_entry(self, ref: str) -> BoardEntry | None:
+        wanted = ref.casefold()
+        for entry in self.channel_boards:
+            if wanted in (entry.board.casefold(), entry.nickname):
+                return entry
+        return None
 
     @property
     def changed(self) -> frozenset[str]:
@@ -236,8 +256,11 @@ def _repo_blocks(record: ProposalRecord, context: CardContext, pending: bool) ->
         blocks.append(_section(f"Repo: {repo}"))
     visibility = context.repo_visibility(repo)
     if visibility == "public":
+        # An attached file goes public too, so the warning says so (#333).
+        files = isinstance(record.proposal, IssueProposal) and bool(record.proposal.attached)
+        also = " So will the attached files' text." if files else ""
         blocks.append(
-            _context(f"Warning: {repo} is public, so this issue will be visible to anyone.")
+            _context(f"Warning: {repo} is public, so this issue will be visible to anyone.{also}")
         )
     # An unknown visibility is folded into the card's one "Not checked" note (#337).
     return blocks
@@ -348,17 +371,43 @@ TOO_LONG = (
 )
 
 
+def _size(size: int) -> str:
+    return f"{size} bytes" if size < 1024 else f"{size / 1024:.1f} KB"
+
+
+def _attached_blocks(draft: IssueProposal, show: bool) -> list[Block]:
+    """Each Slack file the issue will include, and its full text, as filed (#333).
+
+    The text is shown in full, so the card's length rule covers it like the body:
+    a draft too long to show can't be approved.
+    """
+    blocks: list[Block] = []
+    for attached in draft.attached:
+        blocks.append(
+            _approved_context(
+                f"Includes {attached.name}, {_size(attached.size)}, from Slack, as a code "
+                "block in the issue:"
+            )
+        )
+        blocks += _body(attached.text, show)
+    return blocks
+
+
 def _body(text: str, show: bool) -> list[Block]:
     return [_section(chunk) for chunk in _chunks(text)] if show else [_context(TOO_LONG)]
 
 
-def _board_option(board: BoardPolicy) -> dict[str, Any]:
+def _board_name(board: BoardEntry) -> str:
+    # A found board is marked, so an approver knows the team didn't list it (#309 PR 2).
+    name = f"{board.nickname} ({board.board})"
+    return f"{name}, found by scope" if board.found else name
+
+
+def _board_option(board: BoardEntry) -> dict[str, Any]:
     # The value is the nickname alone, unique in the channel; the handler maps it
-    # back through the policy, so nothing else is accepted.
-    return {
-        "text": plain(f"{board.nickname}: {board.board}", MAX_OPTION_TEXT),
-        "value": board.nickname,
-    }
+    # back through the catalog, so nothing else is accepted.
+    label = f"{board.nickname}: {board.board}" + (", found by scope" if board.found else "")
+    return {"text": plain(label, MAX_OPTION_TEXT), "value": board.nickname}
 
 
 def _boards_menu(
@@ -366,7 +415,7 @@ def _boards_menu(
 ) -> Block | None:
     """A pending card's board menu (#309): the channel's boards the write token can
     update, with the draft's own selected. None when there are none to offer."""
-    offered = [b for b in context.channel.boards if b.board not in context.boards_off]
+    offered = list(context.menu_boards)
     if not offered:
         return None
     chosen = {proposed.board for proposed in draft.boards}
@@ -404,8 +453,8 @@ def _boards_blocks(
         return blocks
     names = []
     for proposed in draft.boards:
-        listed = context.channel.board(proposed.board)
-        names.append(f"{listed.nickname} ({listed.board})" if listed else proposed.board)
+        listed = context.board_entry(proposed.board)
+        names.append(_board_name(listed) if listed else proposed.board)
     blocks.append(_approved_context("Add to boards: " + ", ".join(names)))
     for proposed, name in zip(draft.boards, names, strict=True):
         if proposed.reason == ADDED_ON_CARD:
@@ -446,6 +495,7 @@ def _draft_blocks(
             if "body" in changed:
                 blocks.append(_context(CHANGED.format(what="Description")))
             blocks += _body(draft.body, show_body)
+            blocks += _attached_blocks(draft, show_body)
         labels = _labels_line(draft.labels, entry, added=context.issues.label)
         blocks.append(_approved_context(f"{labels} (changed)" if "labels" in changed else labels))
         details = [f"Confidence: {round(draft.confidence * 100)}%"]

@@ -97,6 +97,20 @@ class DiscoveredRepo(BaseModel):
     private: bool = False
 
 
+class FoundBoard(BaseModel):
+    """One organisation board the drafting runner found in a channel's scope (#309 PR 2).
+
+    The runner has already applied the scope, so only in-scope boards come back.
+    The title and description are GitHub's, and untrusted.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    number: int = Field(ge=1, le=10**9)
+    title: str = Field(min_length=1, max_length=256)
+    description: str | None = Field(default=None, max_length=1000)
+
+
 # Pointers JotFlow parses out of its own issues for `jotflow rebuild --from-github`
 # (#256). The runner reads GitHub and sends only these. JotFlow checks them again.
 MAX_MARKED_ISSUES = 5000
@@ -355,6 +369,27 @@ class ProposedBoard(BaseModel):
     reason: str = Field(min_length=1, max_length=200, description="One line: why it belongs there")
 
 
+MAX_ATTACHED = 3
+MAX_ATTACHMENT_BYTES = 32 * 1024
+SLACK_FILE_ID = r"^F[A-Z0-9]{2,30}$"
+
+
+class AttachedFile(BaseModel):
+    """A Slack file's text as JotFlow read it when the proposal was made (#333).
+
+    JotFlow fills this, never the agent. Approval's hash covers it, so the issue
+    gets exactly the text the card showed, whatever happens to the file later.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: str = Field(pattern=SLACK_FILE_ID)
+    name: str = Field(min_length=1, max_length=100, description="Cleaned; shown as plain text")
+    size: int = Field(ge=0, le=MAX_ATTACHMENT_BYTES)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$", description="Of the file's bytes as read")
+    text: str = Field(max_length=MAX_ATTACHMENT_BYTES)
+
+
 # Why an assignee is proposed (#305). A fixed choice, so no agent text reaches the card.
 AssigneeWhy = Literal["volunteered", "named_owner", "owner_hint", "added_on_card"]
 ASSIGNEE_REASON_TEXT: dict[str, str] = {
@@ -450,6 +485,11 @@ class IssueProposal(BaseModel):
         default_factory=list,
         max_length=MAX_PROPOSED_BOARDS,
         description="Optional. Up to 3 of channel.boards to add the issue to after approval",
+    )
+    attached: list[AttachedFile] = Field(
+        default_factory=list,
+        max_length=MAX_ATTACHED,
+        description="Set by JotFlow from `attachments`, never by the agent (#333)",
     )
 
     @model_validator(mode="after")

@@ -30,7 +30,7 @@ from pydantic import (
 )
 
 from jotflow.doc_paths import PathRefused, check_patterns
-from jotflow.models import RepoName, RepoVisibility, shown, under_owner
+from jotflow.models import RepoName, RepoVisibility, is_github_login, shown, under_owner
 from jotflow.reactions import DEFAULT_APPROVAL, DEFAULT_ISSUE_REACTION, KEYWORD_REACTIONS, reserved
 from jotflow.text import unsafe_text_problem
 from jotflow.title_pattern import check_title_pattern
@@ -38,6 +38,8 @@ from jotflow.title_pattern import check_title_pattern
 _CHANNEL_ID = re.compile(r"[CG][A-Z0-9]{2,}")
 _USER_ID = re.compile(r"[UW][A-Z0-9]{2,}")
 _NICKNAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+# Public, for other modules that check a nickname the same way (#327 review).
+NICKNAME_PATTERN = _NICKNAME
 _PRESET = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 
@@ -500,6 +502,164 @@ class ChannelSummary(_Strict):
         return int(hour), int(minute)
 
 
+def title_excluded(title: str, globs: Iterable[str]) -> bool:
+    """Whether a title glob leaves a board out, ignoring case (#309 PR 2)."""
+    wanted = title.casefold()
+    return any(fnmatch.fnmatchcase(wanted, glob.casefold()) for glob in globs)
+
+
+def has_marker(description: str | None, marker: str) -> bool:
+    """Whether ``description`` has ``marker`` as a whole word, ignoring case: so
+    ``jotflow:triage-old`` is not ``jotflow:triage``."""
+    return bool(description) and marker in str(description).casefold().split()
+
+
+def is_board_marker(value: str) -> bool:
+    return _BOARD_MARKER.fullmatch(value) is not None
+
+
+MAX_BOARD_SCOPES = 3
+MAX_SCOPE_NUMBERS = 10
+MAX_CREATORS = 50
+# A board's own marker, as a team writes it in the board's short description.
+_BOARD_MARKER = re.compile(r"[a-z0-9][a-z0-9_-]{0,18}:[a-z0-9][a-z0-9_-]{0,19}")
+
+
+def _title_glob(value: str) -> str:
+    if not 1 <= len(value) <= 100 or unsafe_text_problem(value):
+        raise ValueError("a title glob is 1 to 100 plain characters, such as '* (archive)'")
+    return value
+
+
+TitleGlob = Annotated[str, AfterValidator(_title_glob)]
+
+
+class BoardCreator(_Strict):
+    """A person whose boards a marker counts for (#348 review): pinned by GitHub
+    account id, which survives a rename and can't be claimed by someone else. The
+    login is a label to review it by, never what's matched."""
+
+    login: str = Field(description="Their GitHub login, as a label")
+    id: int = Field(
+        ge=1,
+        le=2**53,
+        description="Their GitHub account id: the one matched. jotflow check prints it",
+    )
+
+    @field_validator("login")
+    @classmethod
+    def _login(cls, value: str) -> str:
+        if not is_github_login(value) or value.endswith("[bot]"):
+            raise ValueError(f"{shown(value)} is not a person's GitHub login")
+        return value
+
+
+class BoardScopePolicy(_Strict):
+    """An organisation's boards a channel finds live, beside its listed ones (#309 PR 2).
+
+    A board is in scope by its number, or by a marker in its short description
+    that only the listed creators' boards count for. Titles never put a board in
+    scope: anyone in the organisation can usually create and name a board.
+    """
+
+    owner: Owner = Field(description="The GitHub organisation, written out")
+    numbers: tuple[int, ...] = Field(
+        default=(),
+        max_length=MAX_SCOPE_NUMBERS,
+        description="Boards by number: the simplest and safest scope",
+    )
+    marker: str | None = Field(
+        default=None,
+        description="A word such as jotflow:triage in a board's short description",
+    )
+    creators: tuple[BoardCreator, ...] = Field(
+        default=(),
+        max_length=MAX_CREATORS,
+        description=(
+            "People whose boards the marker counts for, each as { login, id }: the id is "
+            "matched, never the login. Required with marker"
+        ),
+    )
+    exclude: tuple[TitleGlob, ...] = Field(
+        default=(), max_length=MAX_GLOBS, description="Globs on board titles to leave out"
+    )
+    description: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Optional. The team's own words for the scope's boards, shown first",
+    )
+    aliases: dict[Nickname, int] = Field(
+        default_factory=dict, description="Optional nicknames, mapped to board numbers"
+    )
+
+    @field_validator("numbers")
+    @classmethod
+    def _numbers(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if any(not 1 <= n <= MAX_BOARD_NUMBER for n in value):
+            raise ValueError("a board's number is from 1 to 1,000,000,000")
+        if len(set(value)) != len(value):
+            raise ValueError("a board number is listed more than once")
+        return value
+
+    @field_validator("marker")
+    @classmethod
+    def _marker(cls, value: str | None) -> str | None:
+        if value is not None and not _BOARD_MARKER.fullmatch(value):
+            raise ValueError("a marker is lowercase name:word, such as jotflow:triage")
+        return value
+
+    @field_validator("creators", mode="before")
+    @classmethod
+    def _pinned(cls, value: object) -> object:
+        # A bare login is the old form, and has no id to match: refuse it, saying how.
+        if isinstance(value, list | tuple):
+            for item in value:
+                if isinstance(item, str):
+                    raise ValueError(
+                        f"creator {shown(item)} needs its GitHub account id: write "
+                        f'{{ login = "{item}", id = ... }}; jotflow check prints the id'
+                    )
+        return value
+
+    @field_validator("creators")
+    @classmethod
+    def _unique(cls, value: tuple[BoardCreator, ...]) -> tuple[BoardCreator, ...]:
+        if len({c.id for c in value}) != len(value):
+            raise ValueError("a creator id is listed more than once")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def _plain_description(cls, value: str | None) -> str | None:
+        if value is not None and (problem := unsafe_text_problem(value)):
+            raise ValueError(f"description {problem}")
+        return value
+
+    @field_validator("aliases")
+    @classmethod
+    def _aliases(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(not 1 <= n <= MAX_BOARD_NUMBER for n in value.values()):
+            raise ValueError("an alias names a board number from 1 to 1,000,000,000")
+        return value
+
+    @model_validator(mode="after")
+    def _numbers_or_marker(self) -> BoardScopePolicy:
+        if not self.numbers and self.marker is None:
+            raise ValueError("a board scope needs numbers or a marker; titles alone never count")
+        if self.marker is not None and not self.creators:
+            raise ValueError(
+                "a marker needs creators: anyone in the organisation can write it into a board"
+            )
+        return self
+
+    def excludes(self, title: str) -> bool:
+        return title_excluded(title, self.exclude)
+
+    def marked(self, description: str | None) -> bool:
+        return self.marker is not None and has_marker(description, self.marker)
+
+
 class ChannelPolicy(_Strict):
     """A Slack channel JotFlow watches and the repos it may feed."""
 
@@ -514,6 +674,11 @@ class ChannelPolicy(_Strict):
         max_length=MAX_BOARDS,
         description="GitHub Projects boards an issue may be added to, after approval (#309)",
     )
+    board_scopes: tuple[BoardScopePolicy, ...] = Field(
+        default=(),
+        max_length=MAX_BOARD_SCOPES,
+        description="Organisations whose boards are found live, by number or marker (#309)",
+    )
     debounce_seconds: int | None = Field(
         default=None, ge=1, le=86_400, description="Overrides the top-level debounce window"
     )
@@ -524,6 +689,14 @@ class ChannelPolicy(_Strict):
             "Optional. The team's guide to which repo, and which board, a request belongs on, "
             "in plain text. The drafting agent chooses by it, within the listed repos and "
             "boards (#317)"
+        ),
+    )
+    attachments: Literal["off", "names", "text"] = Field(
+        default="names",
+        description=(
+            "What drafting learns of a message's Slack files (#333): nothing, each file's "
+            "name, type and size, or also a small text file's text, which a proposal may "
+            "then copy into the issue. text needs the bot's files:read scope"
         ),
     )
     help: ChannelHelp = Field(
@@ -550,11 +723,14 @@ class ChannelPolicy(_Strict):
         if dupes := _duplicates(s.owner for s in self.scopes):
             raise ValueError(f"scopes given more than once for: {', '.join(dupes)}")
         aliases = [alias for scope in self.scopes for alias in scope.aliases]
+        aliases += [alias for scope in self.board_scopes for alias in scope.aliases]
         boards = [b.nickname for b in self.boards]
         if dupes := _duplicates([*(r.nickname for r in self.repos), *aliases, *boards]):
             raise ValueError(f"nicknames used more than once: {', '.join(dupes)}")
         if dupes := _duplicates(b.board for b in self.boards):
             raise ValueError(f"boards listed more than once: {', '.join(dupes)}")
+        if dupes := _duplicates(s.owner.casefold() for s in self.board_scopes):
+            raise ValueError(f"board scopes given more than once for: {', '.join(dupes)}")
         return self
 
     def board(self, ref: str) -> BoardPolicy | None:
@@ -814,6 +990,11 @@ class Policy(_Strict):
         """The channel's help settings, each one its own or the top-level default."""
         own = self.channel(channel_id).help.model_dump(exclude_none=True)
         return self.help.model_copy(update=own)
+
+    def attachments_for(self, channel_id: str) -> str:
+        """A channel's ``attachments`` setting (#333), or "off" for an unlisted one."""
+        found = self.channels.get(channel_id)
+        return found.attachments if found is not None else "off"
 
     def questions_for(self, channel_id: str) -> QuestionsPolicy:
         """The channel's question settings, each one its own or the top-level default."""

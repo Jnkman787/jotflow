@@ -420,3 +420,63 @@ def test_no_kept_file_extension_is_a_delegated_tld() -> None:
     tlds = {line.strip().lower() for line in lines if line and not line.startswith("#")}
     assert len(tlds) > 1000
     assert not FILE_EXTENSIONS & tlds
+
+
+async def test_a_mention_with_questions_off_says_it_is_still_read() -> None:
+    # #329: a mention isn't only a question, so a "not now" mustn't sound like a drop.
+    from jotflow.orchestrator.questions import STILL_READ
+
+    questions, store, slack, _ = handler(enabled=False)
+    assert (await questions.on_message(event(f"<@{BOT}> add the recipe file"))).outcome == "off"
+    assert slack.whispers[-1][3] == OFF + STILL_READ
+    assert await store.get_message(CH, "1.1") is None  # never marked chatter
+
+
+async def test_only_an_ask_is_set_aside_from_drafting() -> None:
+    questions, store, _, _ = handler()
+    await questions.on_message(event("ask: is it tracked?"))
+    await questions.on_message(event(f"<@{BOT}> add the recipe file", ts="1.2"))
+    asked = await store.get_message(CH, "1.1")
+    assert asked is not None and asked.chatter
+    mention = await store.get_message(CH, "1.2")
+    assert mention is None or not mention.chatter
+
+
+async def test_an_answer_that_claims_a_change_is_refused_and_doesnt_count(
+    tools: tuple[WriteTools, LiveStore, Poster],
+) -> None:
+    # #329: a question run changes nothing, so a prompt-injected "done" never posts.
+    from jotflow.whiteboard.write_tools import CLAIMS_A_CHANGE
+
+    write, _, poster = tools
+    for claim in ("Done, I've added the date range to acme-co/web#42.", "We filed it."):
+        with pytest.raises(ToolError, match="can't say a change was made"):
+            await write.answer(QUESTION, AnswerArgs(text=claim))
+    assert poster.plain == []
+    # Refused before it counts: the run can still answer the question.
+    await write.answer(QUESTION, AnswerArgs(text="acme-co/web#42 was created last week."))
+    assert len(poster.plain) == 1
+    assert "card" in CLAIMS_A_CHANGE
+
+
+async def test_three_quick_mentions_in_one_thread_start_one_question_run() -> None:
+    # #329, security: a mention now also reaches drafting, so #57's limits must hold.
+    from jotflow.orchestrator.questions import TOO_SOON
+
+    questions, store, slack, _ = handler()
+    for ts in ("1.1", "1.2", "1.3"):
+        await questions.on_message(event(f"<@{BOT}> and this?", ts=ts, thread_ts="1.0"))
+    runs = await store.thread_runs(CH, "1.0")
+    assert [r.kind for r in runs] == [RunKind.QUESTION]
+    assert slack.whispers[0][3].startswith(TOO_SOON)
+
+
+def test_a_claim_split_by_an_invisible_character_is_still_refused() -> None:
+    # #341 review: zero-width or full-width characters can't hide "I've filed it".
+    from jotflow.whiteboard.write_tools import claims_a_change
+
+    assert claims_a_change("I\u200b've filed it")
+    assert claims_a_change("I've f\u200biled it")
+    assert claims_a_change("I\u2060 have assigned Alice")
+    assert claims_a_change("\uff29've updated #42")  # a full-width I
+    assert not claims_a_change("acme-co/web#42 was\u200b created last week")

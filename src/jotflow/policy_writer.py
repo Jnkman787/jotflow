@@ -100,6 +100,9 @@ def render_policy(policy: Policy) -> str:
         lines += ["", f"[channels.{channel_id}]"]
         if channel.debounce_seconds is not None:
             lines.append(f"debounce_seconds = {channel.debounce_seconds}")
+        if channel.attachments != "names":
+            # Slack files (#333): off, or text, which copies file text toward GitHub.
+            lines.append(f"attachments = {toml_string(channel.attachments)}")
         if channel.triage_guide is not None:
             # The team's guide to choosing a repo and boards (#317), as written.
             lines.append(f"triage_guide = {toml_string(channel.triage_guide)}")
@@ -154,6 +157,26 @@ def render_policy(policy: Policy) -> str:
                 f"nickname = {toml_string(board.nickname)}",
                 f"description = {toml_string(board.description)}",
             ]
+        for found in channel.board_scopes:
+            # Boards found live (#309 PR 2): by number, or a marker and its creators.
+            lines += ["", f"[[channels.{channel_id}.board_scopes]]"]
+            lines.append(f"owner = {toml_string(found.owner)}")
+            if found.numbers:
+                lines.append(f"numbers = [{', '.join(str(n) for n in found.numbers)}]")
+            if found.marker is not None:
+                lines.append(f"marker = {toml_string(found.marker)}")
+            if found.creators:
+                pairs = ", ".join(
+                    f"{{ login = {toml_string(c.login)}, id = {c.id} }}" for c in found.creators
+                )
+                lines.append(f"creators = [{pairs}]")
+            if found.exclude:
+                lines.append(f"exclude = [{', '.join(toml_string(g) for g in found.exclude)}]")
+            if found.description is not None:
+                lines.append(f"description = {toml_string(found.description)}")
+            if found.aliases:
+                pairs = ", ".join(f"{k} = {v}" for k, v in found.aliases.items())
+                lines.append(f"aliases = {{ {pairs} }}")
         own_help = channel.help.model_dump(exclude_none=True)
         if own_help:
             lines += ["", f"[channels.{channel_id}.help]"]

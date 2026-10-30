@@ -29,15 +29,19 @@ import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Annotated, Any, Literal, Protocol, TypeVar
 from urllib.parse import unquote
 
 import anyio
 from pydantic import BaseModel, Field, model_validator
 
+from jotflow.board_catalog import BoardCatalog
 from jotflow.models import (
+    MAX_ATTACHED,
     MAX_RELATED,
+    SLACK_FILE_ID,
     AssigneeReason,
+    AttachedFile,
     ChannelMode,
     ExecutionResult,
     IssueChanges,
@@ -53,6 +57,13 @@ from jotflow.models import (
     UpdateProposal,
     check_reasons,
 )
+from jotflow.orchestrator.slack_files import (
+    SERVED_FILE,
+    FileSlack,
+    attachments_section,
+    read_text,
+)
+from jotflow.orchestrator.slack_files import current as current_file
 from jotflow.policy import Policy, PolicyViolation, label_problem
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError, NotFoundError, Store, ToolCallRecord, TransitionError
@@ -80,6 +91,30 @@ MAX_QUESTION_LENGTH = 500
 MAX_ANSWER_LENGTH = 500
 # Every answer says whose it is, so nobody mistakes it for a person or a JotFlow fact.
 ANSWER_PREFIX = "Answer from the agent:"
+# A question run changes nothing, so its answer may never say it did (#329). First
+# person only: "#42 was created last week" is fine, "I've filed it" is not.
+_CLAIM = re.compile(
+    r"\b(?:i|we|jotflow)(?:['\u2019]ve| have| has)?\s+(?:just\s+|now\s+|already\s+)?"
+    r"(?:created|filed|opened|assigned|added|updated|changed|edited|closed|made|moved)\b",
+    re.IGNORECASE,
+)
+CLAIMS_A_CHANGE = (
+    "an answer can't say a change was made: this run changes nothing, and any change "
+    "comes as a card for a person to approve. Answer only what was asked."
+)
+
+
+def claims_a_change(text: str) -> bool:
+    """Whether ``text`` says, in the first person, that something was changed (#329).
+
+    Read as written and folded: invisible format characters such as a zero-width
+    space removed, then compatibility forms folded, so neither hides a claim.
+    """
+    visible = "".join(c for c in text if unicodedata.category(c) != "Cf")
+    folded = unicodedata.normalize("NFKC", visible)
+    return any(_CLAIM.search(reading) for reading in (text, folded))
+
+
 MAX_PARTICIPANTS = 50
 
 DRAFTING = frozenset({RunKind.DRAFTING})
@@ -138,16 +173,49 @@ def _check_participants(value: list[str]) -> list[str]:
     return sorted(set(value))
 
 
+# Attachments (#333): fixed reasons, never quoting the file.
+ATTACH_OFF = "this channel's attachments setting doesn't allow copying file text into issues"
+ATTACH_NOT_SERVED = "isn't a file this run was given the text of"
+ATTACH_GONE = "is no longer shared in this channel"
+ATTACH_CHANGED = "changed since this run read it; draft from the thread again"
+ATTACH_SLACK_LINK = "holds a Slack link, and this channel sends none to GitHub"
+ATTACH_TOO_LONG = "the body with its attachments would pass GitHub's length limit; attach fewer"
+# GitHub's issue body limit is 65,536 characters; JotFlow's footer needs the rest.
+MAX_BODY_WITH_FILES = 60_000
+
+
+def _check_body_with_files(body: str, files: Sequence[AttachedFile]) -> None:
+    """The issue body with its Attachments section stays inside GitHub's limit (#346
+    follow-up): checked when files are attached, and again when a revision changes
+    the body they go with."""
+    if not files:
+        return
+    section = attachments_section([(a.name, a.text) for a in files])
+    if len(body) + len(section) > MAX_BODY_WITH_FILES:
+        raise ToolError(ATTACH_TOO_LONG)
+
+
 class ProposeIssueArgs(IssueProposal):
     participants: list[str] = Field(
         default_factory=list,
         description="Slack user ids of the poster and anyone mentioned. Informational: "
         "they are never made assignees.",
     )
+    attachments: list[Annotated[str, Field(pattern=SLACK_FILE_ID)]] = Field(
+        default_factory=list,
+        max_length=MAX_ATTACHED,
+        description=(
+            "Optional. Up to 3 `file_id`s of files in this thread whose `text` the packet "
+            "gave. JotFlow copies each file's text into the issue, as a code block (#333)"
+        ),
+    )
 
     @model_validator(mode="after")
     def _participants(self) -> ProposeIssueArgs:
         self.participants = _check_participants(self.participants)
+        if self.attached:
+            # JotFlow reads and snapshots the files itself: never the agent's text.
+            raise ValueError("attached is JotFlow's; name files in attachments instead")
         return self
 
 
@@ -525,15 +593,18 @@ class WriteTools:
         docs: DocReads | None = None,
         authors: Authors | None = None,
         mentions: Mentions | None = None,
-        boards_off: Collection[str] = frozenset(),
+        boards: BoardCatalog | None = None,
+        files: FileSlack | None = None,
     ) -> None:
         self._store = store
+        # JotFlow's own Slack file reader, for attachments (#333).
+        self._files = files
         self._policy = policy
         # Who wrote a revision's new messages, from Slack (#304).
         self._authors_of = authors
         self._mentions_of = mentions
-        # Boards the write token can't update, found at JotFlow's start (#309).
-        self._boards_off = boards_off
+        # The channel's boards, listed and found, and which the write token can update (#309).
+        self._board_catalog = boards if boards is not None else BoardCatalog.static(policy)
         # The run's doc reads, for the card's long-passage flag (#209).
         self._docs = docs
         self._poster = poster
@@ -744,6 +815,46 @@ class WriteTools:
             if text and _SLACK_LINK.search(_for_link_check(text)):
                 raise ToolError(NO_SLACK_LINKS)
 
+    async def _attach(self, grant: Grant, file_ids: list[str], body: str) -> list[AttachedFile]:
+        """Each named file's text, read again by JotFlow and snapshotted (#333).
+
+        Only a file this run's packet gave text for, still shared in this channel,
+        unchanged since, with no credential's shape, and, under issue_links none, no
+        Slack link. The issue stays inside GitHub's body limit, or it's refused.
+        """
+        if not file_ids:
+            return []
+        if self._policy.attachments_for(grant.channel_id) != "text" or self._files is None:
+            raise ToolError(ATTACH_OFF)
+        out: list[AttachedFile] = []
+        for file_id in dict.fromkeys(file_ids):
+            served = await self._store.find_tool_call(grant.run_id, SERVED_FILE, file_id)
+            if served is None:
+                raise ToolError(f"{file_id} {ATTACH_NOT_SERVED}")
+            file = await current_file(file_id, self._files)
+            if file is None or grant.channel_id not in file.channels:
+                raise ToolError(f"{file_id} {ATTACH_GONE}")
+            read = await read_text(file, self._files)
+            if read.text is None or read.sha256 is None:
+                raise ToolError(f"{file_id}: {read.reason or ATTACH_GONE}")
+            if read.sha256 != json.loads(served).get("sha256"):
+                raise ToolError(f"{file_id} {ATTACH_CHANGED}")
+            try:
+                self._check_no_slack_links(read.text)
+            except ToolError:
+                raise ToolError(f"{file_id} {ATTACH_SLACK_LINK}") from None
+            out.append(
+                AttachedFile(
+                    file_id=file_id,
+                    name=file.name,
+                    size=len(read.text.encode()),
+                    sha256=read.sha256,
+                    text=read.text,
+                )
+            )
+        _check_body_with_files(body, out)
+        return out
+
     def _related(
         self, grant: Grant, related: list[RelatedIssue], *, own: tuple[str, int] | None = None
     ) -> tuple[list[RelatedIssue], int]:
@@ -775,13 +886,13 @@ class WriteTools:
         The reason is the agent's, so it is cleaned like a question and shown as
         plain text. Boards are in the draft, so approval locks them.
         """
-        listed = self._policy.channel(grant.channel_id)
         kept: list[ProposedBoard] = []
         for proposed in boards:
-            board = listed.board(proposed.board)
+            # Listed, or found by a board scope in a fresh listing (#309 PR 2).
+            board = self._board_catalog.board(grant.channel_id, proposed.board)
             if board is None:
                 raise ToolError(f"{proposed.board} isn't one of this channel's boards")
-            if board.board in self._boards_off:
+            if not self._board_catalog.usable(board):
                 raise ToolError(f"{proposed.board} is off: JotFlow's write token can't update it")
             if any(k.board == board.board for k in kept):
                 continue
@@ -874,10 +985,11 @@ class WriteTools:
                 grant, repo, args.assignees, args.assignee_reasons, args.participants
             )
             related, dropped = self._related(grant, args.related)
+            attached = await self._attach(grant, args.attachments, args.body)
             assignees, reasons = _without(args.assignees, args.assignee_reasons, left)
             draft = IssueProposal.model_validate(
                 {
-                    **args.model_dump(exclude={"participants"}),
+                    **args.model_dump(exclude={"participants", "attachments"}),
                     "assignees": assignees,
                     "assignee_reasons": [r.model_dump() for r in reasons],
                     "repo": repo,
@@ -885,6 +997,7 @@ class WriteTools:
                     "sources": await self._sources(grant, args.sources),
                     "related": [r.model_dump() for r in related],
                     "boards": [b.model_dump() for b in self._boards(grant, args.boards)],
+                    "attached": [a.model_dump() for a in attached],
                 }
             )
             result = await self._add(grant, draft, args.participants)
@@ -1077,6 +1190,8 @@ class WriteTools:
         if isinstance(draft, IssueProposal):
             await self._check_title(grant, draft.repo, draft.title)
             self._check_no_slack_links(draft.title, draft.body)
+            # A revision keeps its files, so its new body must still fit with them.
+            _check_body_with_files(draft.body, draft.attached)
             await self._check_mentions(participants, draft.title, draft.body)
             kept = old.assignee_reasons if isinstance(old, IssueProposal) else []
             legacy = _unreasoned(old.assignees, kept) if isinstance(old, IssueProposal) else []
@@ -1172,6 +1287,9 @@ class WriteTools:
         thread = grant.thread_ts
         if thread is None:  # pragma: no cover - question grants always name one
             raise ToolError("this run has no thread to answer in")
+        if claims_a_change(args.text):
+            # Refused before it counts, so the run can answer the question instead (#329).
+            raise ToolError(CLAIMS_A_CHANGE)
 
         async def act() -> AnswerResult:
             await self._cap(grant, ("answer",), 1, "answers")
@@ -1330,7 +1448,8 @@ def write_tools(
     docs: DocReads | None = None,
     authors: Authors | None = None,
     mentions: Mentions | None = None,
-    boards_off: Collection[str] = frozenset(),
+    boards: BoardCatalog | None = None,
+    files: FileSlack | None = None,
 ) -> tuple[ToolSpec, ...]:
     """The write tools, bound to their dependencies. Built once at startup."""
     tools = WriteTools(
@@ -1343,7 +1462,8 @@ def write_tools(
         docs=docs,
         authors=authors,
         mentions=mentions,
-        boards_off=boards_off,
+        boards=boards,
+        files=files,
     )
     plan: tuple[tuple[str, type[BaseModel], frozenset[RunKind]], ...] = (
         ("propose_issue", ProposeIssueArgs, DRAFTING),

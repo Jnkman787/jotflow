@@ -36,6 +36,7 @@ from jotflow.commands.run import (
 )
 from jotflow.config import Settings
 from jotflow.envfile import read_env
+from jotflow.github_cli import gh_user_id
 from jotflow.live_check import DEFAULT_TIMEOUT, BoltLiveSlack, LiveSlack, run_live_check
 from jotflow.logs import configure_logging
 from jotflow.models import expected_runner_preset
@@ -303,12 +304,73 @@ def board_notes(policy: Policy) -> list[str]:
     start that the write token may update each board, and turns off any it can't.
     """
     boards = sorted({b.board for c in policy.channels.values() for b in c.boards})
-    if not boards:
+    owners = sorted({s.owner for c in policy.channels.values() for s in c.board_scopes})
+    notes = []
+    if boards:
+        notes.append(
+            f"{', '.join(boards)}: the write token needs Projects: Read and write on the "
+            "organisation, which reaches every board it owns. Only organisation boards work. "
+            "JotFlow checks it can update each board when it starts, and turns off any it can't."
+        )
+    if owners:
+        # Board scopes (#309 PR 2): finding needs the read token too.
+        notes.append(
+            f"board scopes for {', '.join(owners)}: the read token needs Projects: Read-only "
+            "on each organisation (read:project on a classic token) to find boards, and the "
+            "write token Projects: Read and write to add to them. Without the read "
+            "permission no board is found, and listed boards still work."
+        )
+    return notes
+
+
+def creator_notes(policy: Policy, lookup: Callable[[str], int | None]) -> list[tuple[str, str]]:
+    """Each pinned board creator against the id its login has now (#348).
+
+    Only ever printed: check never writes jotflow.toml, so nothing re-pins a creator
+    to another account. Returns (level, text) pairs.
+    """
+    out: list[tuple[str, str]] = []
+    seen: set[int] = set()
+    for channel in policy.channels.values():
+        for scope in channel.board_scopes:
+            for creator in scope.creators:
+                if creator.id in seen:
+                    continue
+                seen.add(creator.id)
+                now = lookup(creator.login)
+                if now is None:
+                    out.append(
+                        (
+                            "note",
+                            f"creator {creator.login} is pinned to id {creator.id}; "
+                            "the GitHub CLI couldn't confirm it",
+                        )
+                    )
+                elif now == creator.id:
+                    out.append(("ok", f"creator {creator.login} is id {creator.id}"))
+                else:
+                    out.append(
+                        (
+                            "warn",
+                            f"creator {creator.login} is pinned to id {creator.id}, but that "
+                            f"login is now id {now}. Its boards aren't counted. If the "
+                            "account changed hands, fix the line by hand after checking who "
+                            "holds it",
+                        )
+                    )
+    return out
+
+
+def attachment_notes(policy: Policy) -> list[str]:
+    """What ``attachments = "text"`` needs, and what it means (#333), as one line."""
+    channels = sorted(c for c, ch in policy.channels.items() if ch.attachments == "text")
+    if not channels:
         return []
     return [
-        f"{', '.join(boards)}: the write token needs Projects: Read and write on the "
-        "organisation, which reaches every board it owns. Only organisation boards work. "
-        "JotFlow checks it can update each board when it starts, and turns off any it can't."
+        f'{", ".join(channels)} set attachments = "text": the bot token needs the '
+        "files:read scope, which lets it read every file in every channel the bot is in. "
+        "Add it under OAuth & Permissions and reinstall the app. Without it, files show by "
+        "name only. A small text file's text may then be copied into an issue, as the card shows."
     ]
 
 
@@ -387,6 +449,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"note  docs: {note}")
     for note in board_notes(policy):
         print(f"note  boards: {note}")
+    if any(s.creators for c in policy.channels.values() for s in c.board_scopes):
+        for level, text in creator_notes(policy, gh_user_id):
+            print(f"{level:<5} boards: {text}")
+    for note in attachment_notes(policy):
+        print(f"note  attachments: {note}")
     for note in triage_notes(policy):
         print(f"note  triage: {note}")
     for note in issue_notes(policy):
