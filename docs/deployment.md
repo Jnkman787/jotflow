@@ -165,6 +165,8 @@ Database migrations run when JotFlow starts, each in one transaction, so a faile
 
 Do the steps above first: read this, take a backup, re-pin, and start. Then work through what applies to you.
 
+**Before you start: `NODE_OPTIONS`.** If `agent.env` or `agent-exec.env` sets `NODE_OPTIONS`, check it first. Both agent runners now refuse to start when it holds any option outside this list, since Node options can load code or write secrets (#294): `--max-old-space-size=N`, `--max-semi-space-size=N`, `--dns-result-order`, `--unhandled-rejections`, `--no-warnings`, `--no-deprecation`, `--enable-source-maps`, `--use-openssl-ca` and `--use-bundled-ca`. Anything else, such as `--require` for a monitoring agent, stops the runner, and its log names the option it refused. Remove such options before upgrading.
+
 **The store.** Migrations 16 to 23 run on the first start. They add tables and columns of pointers, Slack ids, times and settings, never message text:
 
 | Migration | What it adds |
@@ -176,7 +178,7 @@ Do the steps above first: read this, take a backup, re-pin, and start. Then work
 | 20 | The ideas each summary offered Not this week for (#340) |
 | 21 | The `[issues]` settings a card showed and an approval locked, and labels left off a write (#306, #347) |
 | 22 | Each summary's numbered items, for `re: 2` in its thread (#318) |
-| 23 | Extra topics a message feeds, for a pasted email with several actions (#335) |
+| 23 | Extra topics a message feeds, for a pasted email with several actions, and when a person's decision undid a split (#335) |
 
 Rolling back means restoring the backup from before the upgrade. A 0.4 JotFlow refuses a 0.5 database.
 
@@ -230,6 +232,8 @@ Boards (`boards`, `board_scopes`) have their own section in the example `jotflow
 - **Add me** buttons sit on waiting cards and on the reply once an issue is filed.
 - **The repo, board or priority a post names is used** without a question, and a vague answer to the repo question gets one more question.
 - **A pasted email with several actions** becomes a card for each, up to 3, or one checklist issue.
+- **Approved issues can go on Projects boards.** A card has a board line and a menu to change its boards. A channel lists its boards, or finds them by scope (#309).
+- **A small text file can go into an issue** when a channel sets `attachments = "text"`. The card shows the exact text first (#333).
 - **The issue footer credits everyone who contributed,** such as "Raised in Slack by Sam, with contributions from Alex and Kim".
 - **Cards are quieter.** Same as appears only for a likely duplicate, and one "Not checked" line replaces two notes.
 - **A missing `[issues]` or priority label no longer stops a write.** The issue is filed without it, and the thread says so. Any other missing label still stops it.
