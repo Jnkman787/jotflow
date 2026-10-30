@@ -21,6 +21,10 @@ Copy this file to `docs/plans/NNNN-short-topic.md` when you start work on an iss
 
 <The approach. Relevant architecture or roadmap sections and decisions. Files and modules touched. Interfaces added or changed. Alternatives considered and why they lost.>
 
+## Features it meets
+
+<The earlier and in-flight features that share a thread, a card, a store table or a guard with this one, and how each combination is tested. Write "none" if none do. See "Batches of features" in [CONTRIBUTING.md](../../CONTRIBUTING.md).>
+
 ## Risks and open questions
 
 <Anything that could go wrong, anything not yet decided, and dependencies on other issues.>
