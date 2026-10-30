@@ -176,6 +176,14 @@ class RepoPolicy(_Strict):
 
     repo: RepoName = Field(description="owner/name")
     nickname: Nickname = Field(description="Short name people use, as in `re: web#42`")
+    aliases: tuple[Nickname, ...] = Field(
+        default=(),
+        max_length=10,
+        description=(
+            "Optional. Other names people use for this repo, such as ovens. A post that names "
+            "one is drafted for this repo without asking (#331)"
+        ),
+    )
     description: str = Field(
         min_length=1, max_length=200, description="What the repo covers; the agent picks by this"
     )
@@ -736,6 +744,7 @@ class ChannelPolicy(_Strict):
         aliases = [alias for scope in self.scopes for alias in scope.aliases]
         aliases += [alias for scope in self.board_scopes for alias in scope.aliases]
         boards = [b.nickname for b in self.boards]
+        aliases += [alias for repo in self.repos for alias in repo.aliases]
         if dupes := _duplicates([*(r.nickname for r in self.repos), *aliases, *boards]):
             raise ValueError(f"nicknames used more than once: {', '.join(dupes)}")
         if dupes := _duplicates(b.board for b in self.boards):

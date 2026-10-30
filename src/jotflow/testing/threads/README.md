@@ -49,6 +49,12 @@ Everything in them is fictional: the Acme Co workspace, the `C0EXAMPLE1` channel
 | `quick-unrelated.json` | As `quick-addition.json`, but the second post is a different idea. It gets its own topic and proposal. |
 | `follow-up-unclear.json` | Two export topics are filed. A new post about keeping the column order could continue either, so the run asks which. `existing-topic.json` covers the clear case, where a new post is linked and gets a comment. |
 | `about-jotflow.json` | Two messages about JotFlow itself, neither an `ask:` nor a mention. Carol tells Alice JotFlow stopped reading her comments once a card reached Approve, and Bob writes "Bot:" asking what it can do. Both are chatter, nothing is drafted, and JotFlow posts its fixed pointer to `ask:` and `/jotflow help` once in each thread. A second pointer in Bob's thread posts nothing (#336). |
+| `repo-named.json` | Carol starts with "For the api:". Either repo could fit a wrong usage total, but she named one, so the agent proposes to `acme-co/api` without asking (#331). |
+| `repo-alias.json` | As above, but she says "Billing bug", and `billing` is an alias of `acme-co/api` in the policy (#331). |
+| `board-named.json` | Carol names the repo and "the customer support board". The proposal is for `acme-co/api`, on the support board, whose description fits (#331). |
+| `vague-repo-answer.json` | As `ambiguous-repo.json`, the agent asks which repo. Alice answers "whichever affects the billing most", so the next run asks once more, listing the nicknames, and proposes nothing (#331). |
+| `assign-by-name.json` | "Assign to Bob" without an @-mention. Bob replied in the thread and has an admin link, so the proposal assigns `acme-bob` as `named_in_text`, and the card shows the matched name (#331). |
+| `common-word-name.json` | "we will fix it" with a Will in the thread. The agent tries to assign Will by name, and JotFlow refuses, since matching is case-sensitive and Will is on the stoplist. The proposal has no assignee (#331). |
 | `ambiguous-repo.json` | A bug either repo could own: the billing service may compute the totals wrong, or the web app may show them wrong. One topic, no proposal, and one `ask_channel` question about which repo. |
 
 Each file repeats its outcome in `description` and `expected.summary`.

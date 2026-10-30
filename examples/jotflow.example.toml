@@ -146,6 +146,10 @@ debounce_seconds = 60
 # this repo, and the card says "listed as an owner of this repo". Only someone
 # with a linked GitHub login is ever assigned, and a person still approves.
 # owner_hints = ["U0123ABCD"]
+# aliases is optional: other names people use for this repo, such as "shop"
+# (#331). A post naming one is drafted for this repo without a question, and
+# re: shop#42 works too. Aliases share the channel's nicknames, so each is unique.
+# aliases = ["shop"]
 [[channels.C0EXAMPLE1.repos]]
 repo = "example-org/web"
 nickname = "web"

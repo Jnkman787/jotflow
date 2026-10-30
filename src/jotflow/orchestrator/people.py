@@ -20,6 +20,7 @@ from typing import Any
 
 from jotflow.change_requests import change_request_by
 from jotflow.models import MessageRef
+from jotflow.name_match import Names
 
 _WORKSPACE_URL = re.compile(r"https://[a-z0-9-]+\.slack\.com/")
 # A user mention in a Slack message's text: <@U0123ABCD> or <@U0123ABCD|name>.
@@ -127,6 +128,34 @@ class SlackPeople:
         text = match.get("text")
         return set(_MENTION.findall(text)) if isinstance(text, str) else set()
 
+    async def text(self, ref: MessageRef) -> str:
+        """A message's text, from Slack, for matching a name in it (#331). Raises
+        :class:`LookupError` if it can't be found, so a name is never assumed."""
+        parent = ref.thread_ts or ref.ts
+        response = await self._client.conversations_replies(
+            channel=ref.channel_id, ts=parent, oldest=ref.ts, latest=ref.ts, inclusive=True, limit=1
+        )
+        messages = response.get("messages") or []
+        match = next(
+            (m for m in messages if isinstance(m, Mapping) and m.get("ts") == ref.ts), None
+        )
+        if match is None:
+            raise LookupError(f"message {ref.ts} was not found")
+        text = match.get("text")
+        return text if isinstance(text, str) else ""
+
+    async def names(self, user_id: str) -> Names:
+        """A person's display and real names, as Slack has them (#331)."""
+        response = await self._client.users_info(user=user_id)
+        user = response.get("user") or {}
+        profile = user.get("profile") or {}
+        display = profile.get("display_name")
+        real = profile.get("real_name") or user.get("real_name")
+        return Names(
+            display=display if isinstance(display, str) and display else None,
+            real=real if isinstance(real, str) and real else None,
+        )
+
     async def person(self, user_id: str) -> Person:
         response = await self._client.users_info(user=user_id)
         return classify(user_id, response.get("user") or {}, await self.own_team())
@@ -156,6 +185,12 @@ class SlackAttribution:
 
     async def mentions(self, ref: MessageRef) -> set[str]:
         return await self._people.mentions(ref)
+
+    async def text(self, ref: MessageRef) -> str:
+        return await self._people.text(ref)
+
+    async def names(self, user_id: str) -> Names:
+        return await self._people.names(user_id)
 
     async def name(self, user_id: str) -> str | None:
         return await self._name(user_id)

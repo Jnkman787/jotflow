@@ -1,0 +1,215 @@
+{
+  "format": "jotflow-thread/1",
+  "name": "board-named",
+  "description": "Carol names the repo and the board: \"api bug, put it on the customer support board\". The agent proposes acme-co/api, with the support board, whose description fits what she said (#331).",
+  "workspace": {
+    "team": "Acme Co",
+    "team_id": "T0ACME",
+    "bot": {
+      "user_id": "U0JOTBOT",
+      "bot_id": "B0JOTBOT",
+      "name": "jotbot"
+    }
+  },
+  "users": {
+    "U0ALICE": {
+      "name": "Alice",
+      "github": "acme-alice"
+    },
+    "U0BOB": {
+      "name": "Bob",
+      "github": "acme-bob"
+    },
+    "U0CAROL": {
+      "name": "Carol"
+    },
+    "U0DAVE": {
+      "name": "Dave",
+      "guest": true
+    }
+  },
+  "policy": {
+    "channels": {
+      "C0EXAMPLE1": {
+        "repos": [
+          {
+            "repo": "acme-co/web",
+            "nickname": "web",
+            "description": "The customer web app: dashboard, login, reports",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          },
+          {
+            "repo": "acme-co/api",
+            "nickname": "api",
+            "description": "The public REST API and the billing service behind it",
+            "labels": [
+              "bug",
+              "enhancement"
+            ]
+          }
+        ],
+        "boards": [
+          {
+            "board": "acme-co/3",
+            "nickname": "roadmap",
+            "description": "Planned work for the next two quarters"
+          },
+          {
+            "board": "acme-co/7",
+            "nickname": "support",
+            "description": "Problems customers reported"
+          }
+        ]
+      }
+    }
+  },
+  "existing_topics": [],
+  "events": [
+    {
+      "type": "message",
+      "channel": "C0EXAMPLE1",
+      "ts": "1792317600.000100",
+      "user": "U0CAROL",
+      "text": "api bug, put it on the customer support board: the usage totals are wrong for customers on the annual plan, they show twelve times too much."
+    }
+  ],
+  "agent": [
+    {
+      "channel": "C0EXAMPLE1",
+      "thread_ts": "1792317600.000100",
+      "calls": [
+        {
+          "tool": "link_message",
+          "arguments": {
+            "message": {
+              "channel_id": "C0EXAMPLE1",
+              "ts": "1792317600.000100"
+            },
+            "decision": "new_topic",
+            "confidence": 0.9
+          },
+          "topic_key": "usage",
+          "title": "Usage totals wrong on annual plans"
+        },
+        {
+          "tool": "propose_issue",
+          "arguments": {
+            "topic_id": "key:usage",
+            "repo": "acme-co/api",
+            "title": "Annual-plan usage totals are twelve times too high",
+            "body": "## Problem\nUsage totals for customers on the annual plan show twelve times the real amount.\n\n## Suggested approach\nDrafted by the agent from the discussion; adjust before starting.\n\n1. Find where annual usage is summed.\n2. Divide by the plan's months, not the year.\n\n## Acceptance\n- [ ] Annual-plan usage totals match the monthly totals\n",
+            "labels": [
+              "bug"
+            ],
+            "assignees": [],
+            "sources": [
+              {
+                "channel_id": "C0EXAMPLE1",
+                "ts": "1792317600.000100"
+              }
+            ],
+            "confidence": 0.85,
+            "boards": [
+              {
+                "board": "support",
+                "reason": "Carol asked for the customer support board"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "github": {
+    "acme-co/web": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 17,
+          "title": "Password reset email arrives late",
+          "state": "closed",
+          "body": "Reset emails take up to an hour to arrive.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 23,
+          "title": "Dashboard loads slowly with many widgets",
+          "state": "open",
+          "body": "With more than twenty widgets the dashboard takes ten seconds to load.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 31,
+          "title": "Keyboard shortcuts for the reports page",
+          "state": "open",
+          "body": "Let people move between reports with the arrow keys.",
+          "labels": [
+            "enhancement"
+          ]
+        }
+      ]
+    },
+    "acme-co/api": {
+      "labels": [
+        "bug",
+        "documentation",
+        "enhancement"
+      ],
+      "issues": [
+        {
+          "number": 8,
+          "title": "Rate limit headers missing on 429 responses",
+          "state": "open",
+          "body": "Clients cannot tell when to retry.",
+          "labels": [
+            "bug"
+          ]
+        },
+        {
+          "number": 12,
+          "title": "Webhook retries ignore the backoff setting",
+          "state": "closed",
+          "body": "Retries fire every second regardless of the configured backoff.",
+          "labels": [
+            "bug"
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "summary": "One topic and one create_issue proposal for acme-co/api, on the support board Carol named, with no question.",
+    "accepted": [
+      "1792317600.000100"
+    ],
+    "topics": [
+      {
+        "topic": "key:usage",
+        "messages": [
+          "1792317600.000100"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "kind": "create_issue",
+        "repo": "acme-co/api",
+        "topic": "key:usage",
+        "boards": [
+          "acme-co/7"
+        ]
+      }
+    ]
+  }
+}

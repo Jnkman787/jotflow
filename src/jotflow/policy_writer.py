@@ -116,6 +116,8 @@ def render_policy(policy: Policy) -> str:
                 f"nickname = {toml_string(repo.nickname)}",
                 f"description = {toml_string(repo.description)}",
             ]
+            if repo.aliases:
+                lines.append(f"aliases = {_array(repo.aliases)}")
             # No labels line means any label that exists on the repo.
             if repo.labels is not None:
                 lines.append(f"labels = {_array(repo.labels)}")
