@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from jotflow.change_requests import change_request_by
 from jotflow.models import IssueProposal, MessageRef, ProposalRecord, RunKind, RunStatus
 from jotflow.orchestrator.ingest import Accepted, BotIdentity, EventFilter
 from jotflow.orchestrator.keyword_handler import KeywordHandler, Person
@@ -150,7 +151,11 @@ class FixtureAttribution:
             message = self._thread.messages.get(ref.ts)
             if message is None:
                 raise LookupError(f"message {ref.ts} was not found")
-            if message.user and message.user != self._thread.workspace.bot.user_id:
+            bot = self._thread.workspace.bot.user_id
+            requester = change_request_by(message.model_dump(exclude_none=True), bot)
+            if requester is not None:
+                found.add(requester)  # JotFlow's post of their change request (#330)
+            elif message.user and message.user != bot:
                 found.add(message.user)
         return found
 
@@ -253,7 +258,7 @@ class _FixtureSlack:
 
 def _slack_message(message: MessageEvent) -> dict[str, Any]:
     data: dict[str, Any] = {"type": "message", "ts": message.ts, "text": message.text}
-    for key in ("thread_ts", "user", "bot_id", "subtype"):
+    for key in ("thread_ts", "user", "bot_id", "subtype", "metadata"):
         value = getattr(message, key)
         if value is not None:
             data[key] = value
@@ -405,6 +410,18 @@ def _ingest(thread: SavedThread) -> tuple[list[str], dict[str, str], list[Messag
         else:
             ignored[key] = decision.reason
     return accepted, ignored, messages
+
+
+def _own_posts(thread: SavedThread) -> list[MessageEvent]:
+    """JotFlow's own messages in the fixture's thread. Ingest drops them, but Slack's
+    replies include them, so the packet does too, such as a posted change request (#330)."""
+    bot = thread.workspace.bot
+    return [
+        event
+        for event in thread.events
+        if isinstance(event, MessageEvent)
+        and (event.user == bot.user_id or (event.bot_id is not None and event.bot_id == bot.bot_id))
+    ]
 
 
 async def _seed(replay: _Replay) -> None:
@@ -855,7 +872,7 @@ async def prepare(thread: SavedThread, *, store: Store | None = None) -> Prepare
     accepted, ignored, messages = _ingest(thread)
     attribution = FixtureAttribution(thread)
     bot = thread.workspace.bot
-    reader = _FixtureReader(thread, messages)
+    reader = _FixtureReader(thread, messages + _own_posts(thread))
     files = FixtureFiles(thread)
     source = SlackWorkSource(
         reader,
@@ -1017,7 +1034,14 @@ async def invariants(replay: _Replay) -> list[Check]:
     """Rules every run must keep, whatever the fixture expects (#23)."""
     channel = _channel(replay.thread)
     logins = {u.github.casefold() for u in replay.thread.users.values() if u.github}
-    thread_text = "\n".join(m.text or "" for m in replay.accepted)
+    # A person's words: what ingest accepted, and their change requests JotFlow posted (#330).
+    bot = replay.thread.workspace.bot.user_id
+    requests = [
+        m
+        for m in _own_posts(replay.thread)
+        if change_request_by(m.model_dump(exclude_none=True), bot) is not None
+    ]
+    thread_text = "\n".join(m.text or "" for m in [*replay.accepted, *requests])
     from_chatter: list[str] = []
     unlinked: list[str] = []
     invented: list[str] = []

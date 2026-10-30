@@ -92,6 +92,8 @@ class MessageEvent(_Strict):
     bot_id: str | None = None
     subtype: str | None = None
     text: str = ""
+    # Slack message metadata, as on JotFlow's post of a change request (#330).
+    metadata: dict[str, Any] | None = None
     files: tuple[FixtureFile, ...] = ()
 
     @property

@@ -224,6 +224,13 @@ class ThreadMessage(BaseModel):
         default=False,
         description="True for a person's question to JotFlow: ask:, or a mention of JotFlow",
     )
+    change_request_by: str | None = Field(
+        default=None,
+        description=(
+            "On JotFlow's post of a person's Request Changes note: that person's Slack user "
+            "id. The note is their request to change the pending draft (#330)"
+        ),
+    )
     files: list[FileBrief] = Field(
         default_factory=list, description="Files attached to the message, at most 5 (#333)"
     )
