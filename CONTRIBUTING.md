@@ -45,6 +45,7 @@ Only the maintainer cuts releases. [docs/releasing.md](docs/releasing.md) is the
 - PR titles follow [Conventional Commits](https://www.conventionalcommits.org/). CI checks this.
 - One concern per PR. Design changes go in the docs in the same PR as the code that depends on them.
 - `make check` must pass. It runs lint, format check, type check, and tests, exactly as CI does.
+- A pull request that adds or changes a feature in drafting, cards or the store adds a step to at least one scenario in [tests/scenarios/](tests/scenarios/), and asserts what a person sees after it. Each scenario plays one thread through JotFlow's real pieces, on both stores. The reviewer checks this.
 - Do not commit secrets, tokens, workspace identifiers, local databases, or agent CLI local settings.
 - Never add a workflow that uses `pull_request_target` to check out fork code.
 
