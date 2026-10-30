@@ -395,6 +395,33 @@ class SqliteStore:
         siblings.discard(topic_id)
         return siblings
 
+    async def _topics_in_thread(self, channel_id: str, thread_ts: str, keep_id: str) -> set[str]:
+        """Other topics still linked in this thread, when the new draft's own topic is too
+        (#375). Two topics that each keep the thread's messages, such as a split's extra
+        topic after a person's re: moved the paste, are separate work, so a draft for one
+        never replaces the other's. A topic the agent moved every message away from, or
+        a new draft's topic with none here yet, is replaced as before."""
+        row = await self._one("SELECT topic_id FROM proposals WHERE id = ?", (keep_id,))
+        own = None if row is None else row["topic_id"]
+        rows = await self._all(
+            "SELECT topic_id FROM message_refs WHERE channel_id = ? AND (ts = ? OR thread_ts = ?)"
+            " AND topic_id IS NOT NULL",
+            (channel_id, thread_ts, thread_ts),
+        )
+        found = {r["topic_id"] for r in rows}
+        if self._split:
+            extra = await self._all(
+                "SELECT m.topic_id FROM message_topics m JOIN message_refs r"
+                " ON r.channel_id = m.channel_id AND r.ts = m.ts"
+                " WHERE m.channel_id = ? AND (r.ts = ? OR r.thread_ts = ?)",
+                (channel_id, thread_ts, thread_ts),
+            )
+            found |= {r["topic_id"] for r in extra}
+        if own is None or own not in found:
+            return set()
+        found.discard(own)
+        return found
+
     async def link_message(
         self, ref: MessageRef, topic_id: str, *, by: LinkSource = "agent"
     ) -> MessageLink:
@@ -717,6 +744,7 @@ class SqliteStore:
     ) -> list[str]:
         async with self._write():
             spared = await self._split_siblings(keep_id)
+            spared |= await self._topics_in_thread(channel_id, thread_ts, keep_id)
             rows = [
                 row
                 for row in await self._all(

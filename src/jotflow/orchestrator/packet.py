@@ -32,7 +32,7 @@ import aiohttp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
-from jotflow.change_requests import change_request_by
+from jotflow.change_requests import change_request_by, change_request_for
 from jotflow.models import TopicIndex, UntrustedText
 from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
@@ -618,6 +618,9 @@ class SlackWorkSource:
             from_jotflow=self._from_jotflow(raw),
             asks_jotflow=self._asks_jotflow(raw, keyword),
             change_request_by=change_request_by(
+                raw, self._bot.user_id if self._bot is not None else None
+            ),
+            change_request_for=change_request_for(
                 raw, self._bot.user_id if self._bot is not None else None
             ),
         )

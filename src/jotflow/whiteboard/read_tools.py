@@ -42,6 +42,7 @@ import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
 from jotflow.board_catalog import BoardCatalog
+from jotflow.change_requests import PACKET_CHANGE_REQUESTS
 from jotflow.execution.attribution import Attribution, execution_footer
 from jotflow.execution.writes import PlannedChecks, PlannedWrite
 from jotflow.execution.writes import plan as plan_writes
@@ -234,6 +235,13 @@ class ThreadMessage(BaseModel):
         description=(
             "On JotFlow's post of a person's Request Changes note: that person's Slack user "
             "id. The note is their request to change the pending draft (#330)"
+        ),
+    )
+    change_request_for: str | None = Field(
+        default=None,
+        description=(
+            "On a change request: the proposal_id of the card it was made on. Revise that "
+            "proposal with it, never another (#375)"
         ),
     )
     files: list[FileBrief] = Field(
@@ -769,6 +777,25 @@ def read_tools(
                             called_at=clock(),
                         )
                     )
+        # Which card each change request is for (#375), so a revision can't use another's.
+        requests = {
+            m.ts: m.change_request_for for m in thread.messages if m.change_request_for is not None
+        }
+        for ts, card in requests.items():
+            # One row per change request, keyed by its ts, so one a later get_work serves
+            # is recorded too, not lost to the first row (security, #390 review).
+            with contextlib.suppress(ConflictError):
+                await store.record_tool_call(
+                    ToolCallRecord(
+                        run_id=run.id,
+                        tool=PACKET_CHANGE_REQUESTS,
+                        args_hash=ts,
+                        channel_id=grant.channel_id,
+                        thread_ts=run.thread_ts,
+                        result_json=json.dumps({ts: card}),
+                        called_at=clock(),
+                    )
+                )
         people = await _people(thread)
         # Who a plain-text name may match (#331): this packet's people, by Slack id only.
         with contextlib.suppress(ConflictError):

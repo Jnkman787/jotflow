@@ -308,7 +308,7 @@ async def test_jotflows_own_messages_are_marked_and_other_bots_kept() -> None:
 async def test_a_change_request_names_who_asked_only_on_jotflows_own_post() -> None:
     from jotflow.change_requests import change_request_metadata
 
-    tagged = change_request_metadata("U0ALICE")
+    tagged = change_request_metadata("U0ALICE", "0123456789abcdef")
     reader = FakeReader(
         {
             ROOT: [
@@ -328,6 +328,8 @@ async def test_a_change_request_names_who_asked_only_on_jotflows_own_post() -> N
         ("1.2", "U0ALICE"),
         ("1.3", None),  # a person's message can't claim to be someone's change request
     ]
+    # Which card it was made on (#375), only on JotFlow's own post too.
+    assert [m.change_request_for for m in messages] == [None, "0123456789abcdef", None]
 
 
 async def test_long_threads_page_through_replies() -> None:
