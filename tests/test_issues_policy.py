@@ -148,7 +148,7 @@ def test_rebuild_restores_titles_without_the_prefix() -> None:
 def test_check_says_what_the_settings_need() -> None:
     assert issue_notes(policy()) == []
     [label] = issue_notes(policy('[issues]\nlabel = "from-slack"\n'))
-    assert "'from-slack'" in label and "exists in each repo" in label
+    assert "'from-slack'" in label and "Create it in each repo" in label
     [_, prefix] = issue_notes(policy(ON))
     assert "'[Slack] '" in prefix and "title_pattern" not in prefix
     notes = issue_notes(policy(ON, pattern='title_pattern = "^[A-Z].*"'))
