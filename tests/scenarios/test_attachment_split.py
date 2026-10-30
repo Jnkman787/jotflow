@@ -117,7 +117,8 @@ async def test_a_shared_file_split_revised_and_unsplit(store: Store, clock: Cloc
     await s.react(CAROL, "no_entry_sign", notes)
     assert await s.states(root) == {mixer_card: SUPERSEDED, labels_card: PENDING}
     dropped = await s.card(mixer_card)
-    assert "Dropped." in dropped and "The drafted text has been cleared." in dropped
+    assert "marked the message it came from as not an idea" in dropped
+    assert "The drafted text has been cleared." in dropped
     assert "twice as big" in await s.card(labels_card)
 
     # 4. Bob says the mixer still matters. Its new card doesn't replace the labels
