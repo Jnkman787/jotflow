@@ -257,10 +257,42 @@ async def test_a_reply_under_jotflows_own_post_without_a_row(store: Store) -> No
     assert not rig.replies.under_own_post({**under, "parent_user_id": "U0ALEX"})
     assert not rig.replies.under_own_post({**under, "ts": POST})  # the post itself
     assert await rig.replies.on_unrecorded(under) == "refused"
-    assert rig.slack.told[-1][3] == m.PASSED
+    assert rig.slack.told[-1][3] == m.OWN_POST_RE_SUMMARY
     idea_text = {**under, "text": "an idea", "ts": "1793000101.000100"}
     assert await rig.replies.on_unrecorded(idea_text) == "pointed"
+    assert rig.slack.told[-1][3] == m.POST_IN_CHANNEL
     assert await rig.replies.on_unrecorded(idea_text) == "left"
     assert await rig.replies.on_unrecorded(idea_text, asked=True) == "left"
     rig.slack.people["U0EVE"] = Person("U0EVE", guest=True)
     assert await rig.replies.on_unrecorded({**under, "user": "U0EVE"}) == "ignored"
+
+
+def test_replies_under_any_own_post_never_call_it_a_summary() -> None:
+    # The help guide, a mode announcement or the live check's post may be the parent,
+    # so the private replies there name no summary item or summary thread as the post.
+    for text in (m.OWN_POST_RE, m.OWN_POST_RE_SUMMARY, m.POST_IN_CHANNEL):
+        assert "summary's thread, re: takes" not in text
+        assert "That summary" not in text
+        assert "in the summary" not in text
+    assert "summary" not in m.OWN_POST_RE  # for a channel with no weekly summary
+    assert "latest weekly summary's thread" in m.OWN_POST_RE_SUMMARY  # where re: N works
+
+
+async def test_without_a_weekly_summary_re_under_a_post_names_none(store: Store) -> None:
+    # Under the help guide in a channel with no weekly summary, re: N points only to
+    # the idea's own thread.
+    rig = Rig(store)
+    base = policy()
+    channel = base.channels[CH].model_copy(update={"summary": None})
+    rig.replies._policy = base.model_copy(update={"channels": {**base.channels, CH: channel}})
+    rig.replies._bot = "U0BOT"
+    event = {
+        "channel": CH,
+        "ts": "1793000100.000100",
+        "thread_ts": POST,
+        "user": "U0ALEX",
+        "parent_user_id": "U0BOT",
+        "text": "re: 1",
+    }
+    assert await rig.replies.on_unrecorded(event) == "refused"
+    assert rig.slack.told[-1][3] == m.OWN_POST_RE
