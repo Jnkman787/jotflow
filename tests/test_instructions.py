@@ -283,6 +283,9 @@ DRAFTING_RULES = {
     ),
     "revise a pending draft (#304)": "call `revise_proposal` with its `proposal_id` and `revision`",
     "never propose again for a pending topic": "Never propose again for it",
+    "a revision keeps each kept assignee's reason (#378)": (
+        "each kept assignee's reason as `pending` gives it"
+    ),
     "a change request revises the draft (#330)": "Do what a change request asks",
     "a filed issue gets an update (#304)": "`propose_update` on it, by default a `comment`",
     "body changes only with the request": "Change the body only when the request itself changes",
