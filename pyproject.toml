@@ -48,6 +48,8 @@ dev = [
   "pytest-cov>=6.0",
   "httpx2>=2.0",
   "types-regex==2026.9.29.20261017",
+  # Stateful store tests (#381). Pinned: its one dependency is sortedcontainers.
+  "hypothesis==6.169.4",
 ]
 
 [build-system]

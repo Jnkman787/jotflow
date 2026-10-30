@@ -31,12 +31,13 @@ import httpx2
 
 from jotflow.execution.writes import clean_name as clean_issue_name
 from jotflow.models import MAX_ATTACHMENT_BYTES, SLACK_FILE_ID
+from jotflow.store.base import SERVED_FILE as _SERVED_FILE
 from jotflow.text import without_unsafe_chars
 
 log = logging.getLogger("jotflow.files")
 
-# The tool-call ledger's record of a file a run's packet gave text for.
-SERVED_FILE = "packet_file"
+# The tool-call ledger's record of a file a run's packet gave text for: the store's.
+SERVED_FILE = _SERVED_FILE
 # The ledger's record of an approved file execution left out: deleted or changed.
 LEFT_OUT = "attachment_left_out"
 FILE_HOST = "files.slack.com"

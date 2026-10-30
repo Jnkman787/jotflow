@@ -64,6 +64,12 @@ ALLOWED_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
 AUTO_APPROVER = "auto"
 # The run id of a proposal a person made with an Add me button (#305), which no agent
 # drafted. A new draft doesn't supersede it, and auto mode never approves it.
+# The tool-call ledger's record of a file a run's packet gave text for, with its
+# message's ts (#333, #374). The store reads it to find a file's message (#391).
+SERVED_FILE = "packet_file"
+# The run id a revision gets when JotFlow takes an attached file off a pending draft,
+# because the file's message was moved to another topic, by anyone (#391).
+DETACHED_RUN = "jotflow:detached"
 SELF_ADD_RUN = "add-me"
 
 # Once final, a proposal's drafted text is cleared (#102). Failed is not final:
@@ -297,6 +303,9 @@ class MessageLink:
     # Pending proposals this decision dropped: a person's re: or skip: undid the split
     # and left their extra topic with no messages (#335). Set only on the write's result.
     dropped: tuple[str, ...] = ()
+    # Pending drafts this decision took a moved message's attached file off (#391).
+    # Set only on the write's result.
+    detached: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -569,7 +578,7 @@ def edited_draft(
 
 # A drafting run's revision of a pending draft, from new messages (#304). The store
 # keeps which fields changed and whose messages, never the values.
-RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related"]
+RevisedField = Literal["title", "body", "comment", "labels", "assignees", "related", "attached"]
 REVISED_FIELDS: tuple[RevisedField, ...] = (
     "title",
     "body",
