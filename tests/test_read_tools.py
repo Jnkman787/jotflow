@@ -748,3 +748,118 @@ description = "The customer-facing website"
     plain: Work = await call(tools(fresh, clock)["get_work"], await running(fresh))
     assert plain.conversation is not None and plain.conversation.channel is not None
     assert plain.conversation.channel.triage_guide is None
+
+
+async def test_an_undone_skip_under_a_summary_is_served_nothing_to_draft(
+    store: MemoryStore, clock: Clock
+) -> None:
+    """#373, from the reaction to the packet: undoing a skip on a reply under JotFlow's
+    weekly summary arms the reply's own ts, since Slack's reaction event names no
+    thread. Its drafting run gets a clean, empty packet, not an error, so the run ends
+    without a "did not finish" notice in the summary's thread. A question run there
+    still reads the thread."""
+    from jotflow.orchestrator.ingest import BotIdentity
+    from jotflow.orchestrator.keyword_handler import KeywordHandler
+    from jotflow.whiteboard.read_tools import UNDER_OWN_POST
+    from tests.test_keyword_handler import FakeSlack
+    from tests.test_packet import FakeReader, msg, source
+
+    summary, reply = POST, "1760781700.000100"
+    item = {"type": "message", "channel": CH, "ts": reply}
+    added = {"type": "reaction_added", "user": "U0ALEX", "item_user": "U0ALEX"}
+    added |= {"reaction": "no_entry_sign", "item": item}
+    keywords = KeywordHandler(store, POLICY, FakeSlack())
+    assert (await keywords.on_reaction(added)).action == "skipped"
+    undone = await keywords.on_reaction_removed({**added, "type": "reaction_removed"})
+    assert (undone.action, undone.detail) == ("unskipped", reply)  # armed on its own ts
+
+    # conversations.replies on a reply's ts gives its whole thread: the summary's.
+    thread = [
+        msg(summary, "Ideas this week: 1. Export", user="U0BOT", bot_id="B0BOT"),
+        msg(reply, "a new idea in the summary's thread", thread_ts=summary),
+    ]
+    reader = FakeReader({summary: thread, reply: thread})
+    slack = source(reader, store, bot=BotIdentity(user_id="U0BOT", bot_id="B0BOT"))
+    registry = tools(store, clock, slack)
+
+    grant = await running(store, thread=reply)
+    work: Work = await call(registry["get_work"], grant)  # no ToolError
+    assert work.conversation is not None
+    packet = work.conversation.thread
+    assert packet.messages == [] and packet.nothing_to_draft == UNDER_OWN_POST
+    assert work.conversation.related == []
+    assert work.conversation.topics.topics == []  # no ids to aim a write at
+    from jotflow.whiteboard.tools import PACKET_SERVED
+
+    # The row every drafting write checks: here, that there's nothing to draft.
+    served = await store.find_tool_call(grant.run_id, PACKET_SERVED, "thread")
+    assert served is not None and json.loads(served) == {"nothing_to_draft": True}
+    assert "jotflow_root" not in packet.model_dump()  # JotFlow's own flag, never sent
+    assert await store.packet_ref(grant.run_id, CH, reply) is None  # nothing linkable
+    # The run is still running, so the agent ends it cleanly: only a failed or timed-out
+    # run gets a thread notice, and nothing here fails it.
+    from jotflow.models import RunStatus
+    from jotflow.orchestrator.launch import notice_for
+
+    live = await store.get_run(grant.run_id)
+    assert live is not None and live.status is RunStatus.RUNNING
+    assert notice_for(live.model_copy(update={"status": RunStatus.SUCCEEDED})) is None
+
+    asked = await running(store, RunKind.QUESTION, thread=summary)
+    question: Work = await call(registry["get_work"], asked)
+    assert question.conversation is not None
+    assert [m.ts for m in question.conversation.thread.messages] == [summary, reply]
+    assert await store.find_tool_call(asked.run_id, PACKET_SERVED, "thread") is None
+
+
+async def test_a_quick_post_after_a_split_one_sees_each_topics_draft(
+    store: MemoryStore, clock: Clock
+) -> None:
+    """#374: the run for a quick post after a split post gets every one of that post's
+    topics' pending drafts, so it can revise the second topic's, not only the first's."""
+    from jotflow.models import IssueProposal, MessageRef, ProposalRecord
+    from jotflow.whiteboard.read_tools import FollowsPost
+
+    first = "1760781500.000100"
+    mixer = (await store.create_topic(CH, "Mixer")).topic.id
+    sensor = (await store.create_topic(CH, "Sensor timing")).topic.id
+    await store.link_message(MessageRef(channel_id=CH, ts=first, thread_ts=first), mixer)
+    await store.also_link(MessageRef(channel_id=CH, ts=first), sensor)
+    for proposal_id, topic_id in (("pA", mixer), ("pB", sensor)):
+        await store.add_proposal(
+            ProposalRecord(
+                id=proposal_id,
+                channel_id=CH,
+                thread_ts=first,
+                run_id="r0",
+                proposal=IssueProposal(
+                    topic_id=topic_id, repo="acme-co/web", title="T", body="B", confidence=0.9
+                ),
+                created_at=clock(),
+            )
+        )
+
+    class Following(FakeSource):
+        async def thread(self, channel_id: str, thread_ts: str) -> WorkThread:
+            work = await super().thread(channel_id, thread_ts)
+            hint = FollowsPost(ts=first, seconds_before=30, topic_id=mixer, also_topics=[sensor])
+            return work.model_copy(update={"follows": hint})
+
+    grant = await running(store)
+    work: Work = await call(tools(store, clock, Following())["get_work"], grant)
+    assert work.conversation is not None
+    pending = {t.id: t.pending for t in work.conversation.topics.topics}
+    assert pending[mixer] is not None and pending[mixer].proposal_id == "pA"
+    assert pending[sensor] is not None and pending[sensor].proposal_id == "pB"
+
+
+async def test_get_work_records_that_an_ordinary_drafting_run_may_write(
+    store: MemoryStore, clock: Clock
+) -> None:
+    # #373: the allow-list row, written for every drafting run get_work serves.
+    from jotflow.whiteboard.tools import PACKET_SERVED
+
+    grant = await running(store)
+    await call(tools(store, clock)["get_work"], grant)
+    served = await store.find_tool_call(grant.run_id, PACKET_SERVED, "thread")
+    assert served is not None and json.loads(served) == {"nothing_to_draft": False}

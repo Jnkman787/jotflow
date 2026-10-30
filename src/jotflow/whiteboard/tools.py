@@ -56,6 +56,15 @@ class ToolSpec:
 TOOLS: tuple[ToolSpec, ...] = ()
 
 
+# The ledger row get_work writes for every drafting run it serves, saying whether there's
+# anything to draft (#373). Every drafting write needs it to say there is: an allow-list,
+# so a run that never called get_work, or was served a thread under JotFlow's own post,
+# writes nothing.
+PACKET_SERVED = "packet_served"
+NOTHING_TO_DRAFT_REFUSAL = "this run's thread has nothing to draft, so nothing is written"
+CALL_GET_WORK_FIRST = "call get_work first: a drafting run writes only after its packet"
+
+
 class ToolError(Exception):
     """A refusal the model should see and act on, such as a cap or a missing topic.
 

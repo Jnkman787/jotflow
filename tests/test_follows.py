@@ -145,10 +145,9 @@ async def test_the_bots_or_jotflows_own_posts_never_count_as_the_previous_post()
     as_bot = History([post(FIRST, "x", bot_id="B0OTHER"), post(SECOND, "y")])
     assert await follows(as_bot) is None
     jotflow = History([post(FIRST, "x", user="U0JOT"), post(SECOND, "y", user="U0JOT")])
-    work = await SlackWorkSource(jotflow, MemoryStore(), bot=BotIdentity("U0JOT", "B0JOT")).thread(
-        CH, SECOND
-    )
-    assert work.follows is None
+    source = SlackWorkSource(jotflow, MemoryStore(), bot=BotIdentity("U0JOT", "B0JOT"))
+    work = await source.thread(CH, SECOND)
+    assert work.follows is None and work.jotflow_root  # never drafted either (#373)
 
 
 async def test_the_per_author_map_drops_posts_past_the_window() -> None:
@@ -158,3 +157,15 @@ async def test_the_per_author_map_drops_posts_past_the_window() -> None:
     late = f"{float(FIRST) + FOLLOWS_WITHIN + 5:.6f}"
     await debouncer.note(top(late), "U0ALEX")
     assert list(debouncer._last_post) == [(CH, "U0ALEX")]
+
+
+async def test_a_split_posts_follow_up_names_all_its_topics() -> None:
+    # #374: the earlier post fed two topics, so the quick post may be about either.
+    store = MemoryStore()
+    mixer = (await store.create_topic(CH, "Mixer")).topic.id
+    sensor = (await store.create_topic(CH, "Sensor timing")).topic.id
+    await store.link_message(MessageRef(channel_id=CH, ts=FIRST), mixer)
+    await store.also_link(MessageRef(channel_id=CH, ts=FIRST), sensor)
+    reader = History([post(FIRST, "Mixer and sensor notes."), post(SECOND, "Sensor: 2s.")])
+    found = await follows(reader, store)
+    assert found is not None and (found.topic_id, found.also_topics) == (mixer, [sensor])

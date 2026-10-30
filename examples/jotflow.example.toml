@@ -256,7 +256,8 @@ description = "Planned work for the next two quarters"
 # label. A login that later belongs to someone else stops counting. A title
 # never puts a board in scope; `exclude` globs on titles only leave boards out.
 # Found boards are named by `aliases`, or b<number>, and show "found by scope" on
-# the card. The read token then needs Projects: Read-only on the organisation.
+# the card. A post names a found board by that name, never its GitHub title. An
+# alias shaped like b<number> must name that number. The read token then needs Projects: Read-only on the organisation.
 [[channels.G0EXAMPLE2.board_scopes]]
 owner = "example-org"
 numbers = [12, 14]

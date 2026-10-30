@@ -32,7 +32,7 @@ import aiohttp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
-from jotflow.change_requests import change_request_by
+from jotflow.change_requests import change_request_by, change_request_for
 from jotflow.models import TopicIndex, UntrustedText
 from jotflow.orchestrator.ingest import NEW_MESSAGE_SUBTYPES, BotIdentity
 from jotflow.orchestrator.keywords import split_keyword
@@ -462,6 +462,13 @@ class SlackWorkSource:
         except SlackFetchError as error:
             # No packet: get_work records nothing when the thread cannot be read.
             raise ToolError(str(error)) from None
+        # A thread under one of JotFlow's own top-level posts, a summary, the help guide,
+        # a mode announcement or the live check's post, is never drafted (#318). This
+        # holds however the run was armed, such as by undoing a skip reaction on a reply
+        # there, whose thread Slack's reaction event doesn't name (#373). get_work serves
+        # a drafting run an empty packet then; a question run still reads the thread.
+        first = next((m for m in raw if isinstance(m.get("ts"), str)), None)
+        jotflow_root = first is not None and self._from_jotflow(first)
         root = next((m for m in raw if m.get("ts") == thread_ts), None)
         if root is not None and split_keyword(str(root.get("text") or ""))[0] == "skip":
             raise ToolError("this thread's first message says skip:, so there is nothing to draft")
@@ -518,6 +525,7 @@ class SlackWorkSource:
             messages=trimmed,
             omitted=omitted,
             follows=follows,
+            jotflow_root=jotflow_root,
         )
 
     async def _follows(
@@ -574,7 +582,9 @@ class SlackWorkSource:
         skipped, topic_id = await self._kept_by_person_as_chatter(channel, other)
         if skipped:
             return None  # a person said skip: for it
-        return FollowsPost(ts=other, seconds_before=int(gap), topic_id=topic_id)
+        link = await self._store.get_message(channel, other)
+        also = list(link.also_topics) if link is not None else []  # a split post (#374)
+        return FollowsPost(ts=other, seconds_before=int(gap), topic_id=topic_id, also_topics=also)
 
     def _message(
         self,
@@ -608,6 +618,9 @@ class SlackWorkSource:
             from_jotflow=self._from_jotflow(raw),
             asks_jotflow=self._asks_jotflow(raw, keyword),
             change_request_by=change_request_by(
+                raw, self._bot.user_id if self._bot is not None else None
+            ),
+            change_request_for=change_request_for(
                 raw, self._bot.user_id if self._bot is not None else None
             ),
         )

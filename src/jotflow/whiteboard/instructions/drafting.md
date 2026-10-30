@@ -33,7 +33,8 @@ Classify every message in `thread.messages` that has no `topic_id` and is not
   about work the team could track.
 
 A `from_jotflow` message with `change_request_by` is that person's Request
-Changes note on the pending draft: don't classify it. Revise with it (step 6).
+Changes note on the pending draft: don't classify it. Revise with it (step 6),
+the proposal its `change_request_for` names, never another.
 
 Replies usually belong to their thread's topic. A message that already has a
 `topic_id` was placed by a person or by `re:`; leave it. Chatter never yields
@@ -115,12 +116,14 @@ In `related`, list up to 3 close issues, most similar first. Set
 add to work already proposed or filed; if unsure which topic, ask (step 8).
 A +1, thanks or discussion that adds nothing is no follow-up. With
 `thread.follows`, the author posted this just after `follows.ts`: likely
-adding to or correcting its `topic_id`.
+adding to or correcting one of its topics, its `topic_id` or one of its
+`also_topics`.
 
 - The topic has `pending`: call `revise_proposal` with its `proposal_id`
   and `revision`, the whole revised draft, and the new messages as
   `sources`, a change request among them. Do what a change request asks,
-  even when it changes the kind of work. Keep what they don't change. If you get `current` back, revise
+  even when it changes the kind of work. Keep what they don't change, and each
+  kept assignee's reason as `pending` gives it. If you get `current` back, revise
   once more on top of it. Never propose again for it.
 - The topic has `issue_proposed` but no `pending`: link the message and don't
   propose again.
@@ -231,4 +234,5 @@ or discussion, and never ask whether an idea is serious or for more detail.
 ## 9. Stop
 
 When every message is classified and each topic has its proposal or its
-question, stop. Do not summarise.
+question, stop. Do not summarise. If `thread.nothing_to_draft` is set, stop at
+once without calling another tool.

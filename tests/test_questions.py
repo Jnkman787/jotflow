@@ -480,3 +480,11 @@ def test_a_claim_split_by_an_invisible_character_is_still_refused() -> None:
     assert claims_a_change("I\u2060 have assigned Alice")
     assert claims_a_change("\uff29've updated #42")  # a full-width I
     assert not claims_a_change("acme-co/web#42 was\u200b created last week")
+
+
+async def test_under_jotflows_own_post_a_mention_isnt_said_to_be_read() -> None:
+    # #373: the guard never drafts a summary's or the guide's thread, so no promise.
+    questions, _, slack, _ = handler(enabled=False)
+    taken = await questions.on_message(event(f"<@{BOT}> add CSV to idea 2"), drafted=False)
+    assert taken.outcome == "off"
+    assert slack.whispers[-1][3] == OFF

@@ -37,14 +37,14 @@ flowchart LR
 
         subgraph drafting["Drafting agent container"]
             direction TB
-            r1["Runner"] --> cli1["Agent CLI<br/>claude-code · codex · your own command"]
+            r1["Runner"] --> cli1["Agent CLI<br/>claude-code · codex · copilot (experimental) · your own command"]
             ro["GitHub MCP server, read-only<br/>read token: Issues read only"]
             cli1 --> ro
         end
 
         subgraph execution["Execution agent container"]
             direction TB
-            r2["Runner"] --> cli2["Agent CLI<br/>claude-code · your own command"]
+            r2["Runner"] --> cli2["Agent CLI<br/>claude-code · copilot (experimental) · your own command"]
             rw["GitHub MCP server<br/>write token: approved cards only"]
             cli2 --> rw
         end
@@ -102,13 +102,13 @@ sequenceDiagram
     U->>S: reply with the issue link, react on the source messages
 ```
 
-In `auto` mode the Approve step is skipped and the card is posted after the issue exists. Follow-up replies in the thread run the same loop and produce update proposals instead of new issues.
+In `auto` mode the Approve step is skipped and the card is posted after the issue exists. Follow-up replies in the thread run the same loop. While a card waits, they revise it, and the card says who changed what. Once the issue is filed, they become update proposals.
 
 The pieces:
 
 1. **Slack app.** Each team creates their own from the included manifest, named and iconed however they like. It is how JotFlow hears messages and posts back. Slack only talks to installed apps, so this part is unavoidable.
 2. **Orchestrator**, the part of JotFlow that coordinates the rest. It waits for a thread to settle before acting, keeps a per-channel index of active topics so related messages land on the same issue, and holds proposals until they are approved.
-3. **Whiteboard MCP server.** The agent's only way to act. Tools to fetch the work, propose an issue or an update, link a message to a topic, ask the channel a question, and report the result of a write. Any MCP-capable agent can drive it.
+3. **Whiteboard MCP server.** The agent's only way to act. Tools to fetch the work, propose an issue or an update, revise a waiting proposal, link a message to a topic, ask the channel a question, point a message about JotFlow itself to help, and report the result of a write. Any MCP-capable agent can drive it.
 4. **Your agent.** JotFlow starts it in the background, with no window, connected to JotFlow's tools, using a preset for the agent program you use. It runs in two containers: drafting runs read, draft, and search your repos for duplicates with a read-only token, and execution runs perform the approved GitHub writes with the token that can write. Drafts follow each repo's own style, or your team's `conventions` and `title_pattern` from `jotflow.toml`.
 5. **Approval gate.** Each channel is in `propose`, `auto`, or `paused` mode. It covers the whole lifecycle: creation, description edits, comments, assignment, and labels.
 
@@ -116,8 +116,8 @@ The pieces:
 
 | Component | Needs | Does not need |
 |---|---|---|
-| JotFlow | A Slack app in your workspace, created from the included manifest. Over Socket Mode, it reads messages, reactions and channel details in the channels you invite it to, and looks up user names. It posts proposal cards and replies, adds reactions, pins a short help message, and answers the `/jotflow` slash command. [manifests/README.md](https://github.com/Jnkman787/jotflow/blob/main/manifests/README.md) explains each permission. | Any GitHub access |
-| Your agent | A model login, such as an Anthropic API key for the `claude-code` preset, and two fine-grained GitHub tokens: one that reads issues, and one that can write them. [The agent containers](https://github.com/Jnkman787/jotflow/blob/main/docs/install.md#the-agent-containers) says how to make them | Any Slack access |
+| JotFlow | A Slack app in your workspace, created from the included manifest. Over Socket Mode, it reads messages, reactions and channel details in the channels you invite it to, and looks up user names. It posts proposal cards and replies, adds reactions, pins a short help message, and answers the `/jotflow` slash command. Only a channel set to `attachments = "text"` also needs `files:read`, to read small text files. [manifests/README.md](https://github.com/Jnkman787/jotflow/blob/main/manifests/README.md) explains each permission. | Any GitHub access |
+| Your agent | A model login, such as an Anthropic API key for the `claude-code` preset, and two fine-grained GitHub tokens: one that reads issues, and one that can write them. Some optional settings need more: Projects permissions for boards, and Members: Read-only for `[identity] github_org`. [The agent containers](https://github.com/Jnkman787/jotflow/blob/main/docs/install.md#the-agent-containers) says how to make them | Any Slack access |
 | Your machine | Docker to run JotFlow, and uv or Python 3.12 or newer to run the setup once | A public URL or open ports: Socket Mode connects out to Slack |
 
 ## Quickstart

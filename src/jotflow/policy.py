@@ -578,6 +578,7 @@ MAX_BOARD_SCOPES = 3
 MAX_SCOPE_NUMBERS = 10
 MAX_CREATORS = 50
 # A board's own marker, as a team writes it in the board's short description.
+_AUTO_BOARD_NAME = re.compile(r"b([0-9]+)")
 _BOARD_MARKER = re.compile(r"[a-z0-9][a-z0-9_-]{0,18}:[a-z0-9][a-z0-9_-]{0,19}")
 
 
@@ -697,6 +698,13 @@ class BoardScopePolicy(_Strict):
     def _aliases(cls, value: dict[str, int]) -> dict[str, int]:
         if any(not 1 <= n <= MAX_BOARD_NUMBER for n in value.values()):
             raise ValueError("an alias names a board number from 1 to 1,000,000,000")
+        for alias, number in value.items():
+            # b<number> is a found board's own name, so it can't name another board (#376).
+            if (shaped := _AUTO_BOARD_NAME.fullmatch(alias)) and int(shaped[1]) != number:
+                raise ValueError(
+                    f"alias {alias} names board {number}, but b<number> is what JotFlow calls "
+                    f"board {shaped[1]}: choose another alias, or b{number}"
+                )
         return value
 
     @model_validator(mode="after")

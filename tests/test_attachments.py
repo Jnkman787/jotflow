@@ -333,7 +333,7 @@ async def served(store: LiveStore, files: Files, file_id: str = "F0DOC1") -> Non
             args_hash=file_id,
             channel_id=CH,
             thread_ts=ROOT,
-            result_json=json.dumps({"sha256": sha}),
+            result_json=json.dumps({"sha256": sha, "ts": ROOT}),
             called_at=Clock()(),
         )
     )
@@ -689,3 +689,88 @@ async def test_a_revision_must_keep_the_body_and_its_files_under_githubs_limit()
         _check_body_with_files("x" * 60_000, attached)
     assert str(raised.value.reason) == ATTACH_TOO_LONG
     _check_body_with_files("x" * 70_000, [])  # no files: GitHub's own limit applies
+
+
+# A file belongs to its own message, topic and split part (#374)
+
+REPLY_TS = "1792310460.000200"
+
+
+async def placed(files: Files) -> tuple[Any, LiveStore]:
+    """Tools whose run was served the root's file, with the root and a reply."""
+    clock = Clock()
+    store = LiveStore(clock)
+    await served(store, files)
+    await store.record_packet(
+        "run-1",
+        [
+            MessageRef(channel_id=CH, ts=ROOT, thread_ts=ROOT),
+            MessageRef(channel_id=CH, ts=REPLY_TS, thread_ts=ROOT),
+        ],
+    )
+    from jotflow.whiteboard.write_tools import WriteTools
+
+    tools = WriteTools(store, TEXT_POLICY, Poster(), clock=clock, new_id=Ids(), files=files)
+    return tools, store
+
+
+def attaching(topic_id: str, *sources: str, title: str = "Rename the ovens") -> Any:
+    return issue(
+        topic_id,
+        repo="acme-co/web",
+        title=title,
+        sources=[{"channel_id": CH, "ts": ts} for ts in sources],
+        attachments=["F0DOC1"],
+    )
+
+
+async def test_a_file_needs_its_message_among_the_sources() -> None:
+    tools, _ = await placed(Files())
+    topic: Any = await tools.link_message(DRAFT, link())
+    await tools.link_message(
+        DRAFT, link(REPLY_TS, decision="existing_topic", title=None, topic_id=topic.topic_id)
+    )
+    with pytest.raises(ToolError, match="isn't on a message among this proposal's sources"):
+        await tools.propose_issue(DRAFT, attaching(topic.topic_id, REPLY_TS))
+
+
+async def test_a_file_needs_its_message_on_the_proposals_topic() -> None:
+    tools, _ = await placed(Files())
+    await tools.link_message(DRAFT, link())  # the file's message: its own topic
+    other: Any = await tools.link_message(DRAFT, link(REPLY_TS, title="Something else"))
+    with pytest.raises(ToolError, match="isn't on this proposal's topic"):
+        await tools.propose_issue(DRAFT, attaching(other.topic_id, ROOT, REPLY_TS))
+
+
+async def test_a_split_messages_file_attaches_to_one_of_its_topics_only() -> None:
+    tools, store = await placed(Files())
+    first: Any = await tools.link_message(DRAFT, link())
+    second: Any = await tools.link_message(
+        DRAFT, link(decision="also_topic", title="Sensor timing")
+    )
+    taken: Any = await tools.propose_issue(DRAFT, attaching(first.topic_id, ROOT))
+    with pytest.raises(ToolError, match="quote this topic's own part"):
+        await tools.propose_issue(
+            DRAFT, attaching(second.also_topics[0], ROOT, title="Send readings every second")
+        )
+    # Without the file, the second topic's draft is fine, and the first keeps its own.
+    plain = issue(
+        second.also_topics[0], repo="acme-co/web", sources=[{"channel_id": CH, "ts": ROOT}]
+    )
+    await tools.propose_issue(DRAFT, plain)
+    record = await store.get_proposal(taken.proposal_id)
+    assert record is not None and record.state is ProposalState.PENDING
+
+
+async def test_a_rejected_split_draft_frees_its_file() -> None:
+    tools, store = await placed(Files())
+    first: Any = await tools.link_message(DRAFT, link())
+    second: Any = await tools.link_message(
+        DRAFT, link(decision="also_topic", title="Sensor timing")
+    )
+    taken: Any = await tools.propose_issue(DRAFT, attaching(first.topic_id, ROOT))
+    await store.transition(taken.proposal_id, ProposalState.REJECTED)
+    result: Any = await tools.propose_issue(
+        DRAFT, attaching(second.also_topics[0], ROOT, title="Send readings every second")
+    )
+    assert result.proposal_id

@@ -299,23 +299,46 @@ async def test_a_persons_decision_drops_the_extra_topics_pending_drafts(
         link = await store.link_message(paste(), elsewhere, by="person")
     else:
         link = await store.mark_chatter(paste(), by="person")
-    assert link.dropped == ("p2",)
-    dropped = await store.get_proposal("p2")
-    assert dropped is not None and dropped.state is ProposalState.SUPERSEDED
-    assert dropped.unsplit_at is not None and dropped.draft_cleared_at is not None
-    assert dropped.revision > 1  # so its card is redrawn
-    assert await states(store) == {"p1": "pending", "p2": "superseded", "p3": "pending"}
+    # The first topic is dropped too when the message leaves it, and it's empty (#374).
+    leaves_first = decision != "re: the first"
+    assert link.dropped == (("p2", "p1") if leaves_first else ("p2",))
+    for proposal_id in link.dropped:
+        dropped = await store.get_proposal(proposal_id)
+        assert dropped is not None and dropped.state is ProposalState.SUPERSEDED
+        assert dropped.unsplit_at is not None and dropped.draft_cleared_at is not None
+        assert dropped.revision > 1  # so its card is redrawn
+    first = "superseded" if leaves_first else "pending"
+    assert await states(store) == {"p1": first, "p2": "superseded", "p3": "pending"}
     again = await store.get_message(CH, PASTE)
     assert again is not None and again.dropped == ()  # only on the write's own result
 
 
 async def test_a_person_moving_it_to_an_extra_topic_keeps_that_draft(store: Store) -> None:
+    # The draft of the topic it moved to stays; the emptied first topic's is dropped (#374).
     mixer, sensor = await split(store, "Sensor timing")
     for record in (draft("p1", mixer), draft("p2", sensor)):
         await store.add_proposal(record)
     link = await store.link_message(paste(), sensor, by="person")
-    assert link.dropped == ()
-    assert await states(store) == {"p1": "pending", "p2": "pending"}
+    assert link.dropped == ("p1",)
+    assert await states(store) == {"p1": "superseded", "p2": "pending"}
+
+
+async def test_the_first_topic_keeps_its_draft_while_it_has_messages(store: Store) -> None:
+    mixer, _ = await split(store, "Sensor timing")
+    await store.add_proposal(draft("p1", mixer))
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), mixer)
+    link = await store.mark_chatter(paste(), by="person")
+    assert "p1" not in link.dropped
+    assert (await states(store))["p1"] == "pending"
+
+
+async def test_an_unsplit_messages_skip_drops_nothing(store: Store) -> None:
+    # Only a split's undoing drops a draft; a lone message's skip is as before.
+    only = (await store.create_topic(CH, "Mixer")).topic.id
+    await store.link_message(paste(), only)
+    await store.add_proposal(draft("p1", only))
+    assert (await store.mark_chatter(paste(), by="person")).dropped == ()
+    assert await states(store) == {"p1": "pending"}
 
 
 async def test_an_approved_draft_on_an_orphaned_topic_is_left_alone(store: Store) -> None:
@@ -397,3 +420,72 @@ async def test_an_add_me_request_on_an_orphaned_topic_is_kept(store: Store) -> N
     link = await store.mark_chatter(paste(), by="person")
     assert link.dropped == ()
     assert await states(store) == {"p2": "pending"}
+
+
+async def test_a_surviving_extra_topic_keeps_its_draft_after_an_unsplit(store: Store) -> None:
+    """#375: after a person's re: undoes the split, the next draft for the first topic
+    doesn't supersede the extra topic that still has a message in the thread."""
+    mixer, sensor, labels = await split(store, "Sensor timing", "Labels")
+    for record in (draft("p1", mixer), draft("p2", sensor), draft("p3", labels)):
+        await store.add_proposal(record)
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), labels)
+    await store.link_message(paste(), mixer, by="person")  # p2's sensor topic is emptied
+    await store.add_proposal(draft("p4", mixer))
+    assert await store.supersede_pending(CH, PASTE, keep_id="p4") == ["p1"]
+    assert await states(store) == {
+        "p1": "superseded",
+        "p2": "superseded",
+        "p3": "pending",
+        "p4": "pending",
+    }
+
+
+async def test_two_separate_ideas_in_one_thread_each_keep_their_card(store: Store) -> None:
+    """Box 2's rule (#375): in an ordinary, unsplit thread with two ideas, each with a
+    message in the thread, the second idea's card doesn't clear the first's."""
+    first = (await store.create_topic(CH, "Mixer")).topic.id
+    second = (await store.create_topic(CH, "Labels")).topic.id
+    await store.link_message(paste(), first)
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), second)
+    await store.add_proposal(draft("p1", first))
+    await store.add_proposal(draft("p2", second))
+    assert await store.supersede_pending(CH, PASTE, keep_id="p2") == []
+    assert await states(store) == {"p1": "pending", "p2": "pending"}
+
+
+async def test_a_new_draft_for_the_same_topic_still_supersedes_its_own(store: Store) -> None:
+    first = (await store.create_topic(CH, "Mixer")).topic.id
+    second = (await store.create_topic(CH, "Labels")).topic.id
+    await store.link_message(paste(), first)
+    await store.link_message(MessageRef(channel_id=CH, ts=REPLY, thread_ts=PASTE), second)
+    for record in (draft("p1", first), draft("p2", second), draft("p3", first)):
+        await store.add_proposal(record)
+    assert await store.supersede_pending(CH, PASTE, keep_id="p3") == ["p1"]
+    assert await states(store) == {"p1": "superseded", "p2": "pending", "p3": "pending"}
+
+
+@pytest.mark.parametrize("skip", [True, False])
+async def test_a_dropped_card_says_how_the_split_was_undone(store: Store, skip: bool) -> None:
+    """A skip marks the message not an idea, rather than putting it in one topic."""
+    from jotflow.orchestrator.card_sync import card_context
+    from jotflow.orchestrator.cards import UNSPLIT_LINE, UNSPLIT_SKIPPED_LINE, render_card
+    from jotflow.policy import parse_policy
+    from tests.test_card_sync import FakePeople
+
+    policy = parse_policy(
+        f'[channels.{CH}]\n\n[[channels.{CH}.repos]]\nrepo = "acme-co/web"\n'
+        'nickname = "web"\ndescription = "Web"\n'
+    )
+    mixer, sensor = await split(store, "Sensor timing")
+    for record in (draft("p1", mixer), draft("p2", sensor)):
+        await store.add_proposal(record)
+    if skip:
+        await store.mark_chatter(paste(), by="person")
+    else:
+        await store.link_message(paste(), mixer, by="person")
+    dropped = await store.get_proposal("p2")
+    assert dropped is not None and dropped.unsplit_at is not None
+    context = await card_context(policy, store, FakePeople(), dropped)
+    text = str(render_card(dropped, context).blocks)
+    assert (UNSPLIT_SKIPPED_LINE if skip else UNSPLIT_LINE) in text
+    assert (UNSPLIT_LINE if skip else UNSPLIT_SKIPPED_LINE) not in text

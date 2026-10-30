@@ -57,6 +57,25 @@ FINAL_SLACK_ERRORS = frozenset(
 )
 
 
+async def _own_reads(
+    store: Store, record: ProposalRecord, read: list[tuple[str, str]]
+) -> list[tuple[str, str]]:
+    """The run's doc reads this card lists (#374).
+
+    A run that drafts for several repos, such as a split message's topics, reads
+    docs before any draft exists, so a read can't be pinned to one draft. A card
+    leaves out only reads from a repo another of the run's drafts is for, so
+    each split card shows its own repo's reads, and no read is left off every card.
+    """
+    own = record.proposal.repo.casefold()
+    others = {
+        p.proposal.repo.casefold()
+        for p in await store.run_proposals(record.run_id)
+        if p.id != record.id
+    } - {own}
+    return [(repo, path) for repo, path in read if repo.casefold() not in others]
+
+
 def _slack_error(exc: Exception) -> str | None:
     """The error code of a Slack API error, such as ``message_not_found``."""
     response = getattr(exc, "response", None)
@@ -146,6 +165,7 @@ async def card_context(
         await store.tool_call_results(record.run_id, (PASSAGES,)),
         record.id,
     )
+    docs_read = await _own_reads(store, record, docs_read)
     return CardContext(
         channel=channel,
         credit_line=await _credit_line(policy, store, attribution, record),
@@ -163,7 +183,20 @@ async def card_context(
         revisions=tuple(await store.proposal_revisions(record.id)),
         boards=tuple(board_catalog.boards(record.channel_id)),
         offered_boards=tuple(board_catalog.offered(record.channel_id)),
+        source_skipped=await _source_skipped(store, record),
     )
+
+
+async def _source_skipped(store: Store, record: ProposalRecord) -> bool:
+    """Whether an unsplit dropped this card because a person marked its message not
+    an idea, so the card says that rather than that it was moved."""
+    if record.unsplit_at is None:
+        return False
+    for ref in record.proposal.sources:
+        link = await store.get_message(ref.channel_id, ref.ts)
+        if link is not None and link.chatter and link.linked_by == "person":
+            return True
+    return False
 
 
 # Settled states after which a lost follow-up is drafted again (#304): written, or

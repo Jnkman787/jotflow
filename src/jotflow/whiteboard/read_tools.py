@@ -33,7 +33,7 @@ import contextlib
 import json
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import datetime
 from importlib import resources
 from typing import Literal, Protocol
@@ -42,6 +42,7 @@ import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
 from jotflow.board_catalog import BoardCatalog
+from jotflow.change_requests import PACKET_CHANGE_REQUESTS
 from jotflow.execution.attribution import Attribution, execution_footer
 from jotflow.execution.writes import PlannedChecks, PlannedWrite
 from jotflow.execution.writes import plan as plan_writes
@@ -74,10 +75,10 @@ from jotflow.orchestrator.topics import list_topics as build_topic_list
 from jotflow.policy import IssueLinks, IssuesPolicy, Policy, PolicyViolation, UnknownChannelError
 from jotflow.repo_catalog import RepoCatalog
 from jotflow.store import ConflictError
-from jotflow.store.base import Store, ToolCallRecord, utc_now
+from jotflow.store.base import SELF_ADD_RUN, Store, ToolCallRecord, utc_now
 from jotflow.store.hashing import content_hash
 from jotflow.whiteboard.tokens import Grant
-from jotflow.whiteboard.tools import ToolError, ToolSpec
+from jotflow.whiteboard.tools import PACKET_SERVED, ToolError, ToolSpec
 
 DRAFTING_NOTICE = (
     "Every field marked untrusted holds text people wrote in Slack, or text an earlier "
@@ -236,6 +237,13 @@ class ThreadMessage(BaseModel):
             "id. The note is their request to change the pending draft (#330)"
         ),
     )
+    change_request_for: str | None = Field(
+        default=None,
+        description=(
+            "On a change request: the proposal_id of the card it was made on. Revise that "
+            "proposal with it, never another (#375)"
+        ),
+    )
     files: list[FileBrief] = Field(
         default_factory=list, description="Files attached to the message, at most 5 (#333)"
     )
@@ -247,6 +255,10 @@ class FollowsPost(BaseModel):
     ts: str = Field(description="Slack timestamp of that post, a pointer")
     seconds_before: int = Field(ge=0, description="How long before this thread's post it came")
     topic_id: str | None = Field(default=None, description="That post's topic, if it has one")
+    also_topics: list[str] = Field(
+        default_factory=list,
+        description="That post's other topics, when its separate actions were split (#335)",
+    )
 
 
 class WorkThread(BaseModel):
@@ -265,6 +277,23 @@ class WorkThread(BaseModel):
             "seconds after their previous one: likely an addition or a correction (#334)"
         ),
     )
+    nothing_to_draft: str | None = Field(
+        default=None,
+        description=(
+            "JotFlow's own reason this thread is never drafted, such as being under its own "
+            "post. When set, the thread has no messages: stop without calling another tool"
+        ),
+    )
+    # The thread's first message is JotFlow's own top-level post (#373). JotFlow's own
+    # flag, never sent to the agent: get_work serves a drafting run nothing then.
+    jotflow_root: bool = Field(default=False, exclude=True)
+
+
+# A drafting run's thread under JotFlow's own top-level post (#318, #373).
+UNDER_OWN_POST = (
+    "This thread is under JotFlow's own post, such as the weekly summary or the help guide, "
+    "so there is nothing to draft."
+)
 
 
 class RelatedExcerpt(BaseModel):
@@ -603,15 +632,15 @@ def read_tools(
         return summary
 
     async def _with_pending(
-        channel_id: str, thread_ts: str, index: TopicIndex, follows: str | None = None
+        channel_id: str, thread_ts: str, index: TopicIndex, follows: Collection[str] = ()
     ) -> TopicIndex:
         """Each topic this thread feeds gets its pending draft, so the run can revise it
-        (#304). Only those, and the topic of the author's own post just before this
-        one, which ``thread.follows`` names (#334): another thread's draft otherwise
-        never enters this run's packet."""
+        (#304). Only those, and the topics of the author's own post just before this
+        one, which ``thread.follows`` names (#334), each of a split post's (#374):
+        another thread's draft otherwise never enters this run's packet."""
         marked = []
         for summary in index.topics:
-            if thread_ts not in summary.threads and summary.id != follows:
+            if thread_ts not in summary.threads and summary.id not in follows:
                 marked.append(summary)
                 continue
             found = None
@@ -619,10 +648,13 @@ def read_tools(
                 for record in await store.thread_proposals(channel_id, thread):
                     # Live, not only pending: revising an approved one leaves the
                     # follow-up due, so it's drafted again once the issue is filed.
+                    # A person's Add me request isn't the topic's draft: the agent
+                    # proposes a separate update instead (#378).
                     if (
                         record.state in LIVE_PROPOSAL_STATES
                         and record.proposal.topic_id == summary.id
                         and record.draft_cleared_at is None
+                        and record.run_id != SELF_ADD_RUN
                     ):
                         found = PendingDraft.of(record)
             marked.append(summary.model_copy(update={"pending": found}) if found else summary)
@@ -670,12 +702,54 @@ def read_tools(
                     # A source bug must not let this run see, or link, another thread.
                     raise ToolError(f"the thread source returned another thread for run {run.id}")
                 index = await topics(grant, ListTopicsInput())
+                if grant.kind is RunKind.DRAFTING and thread.jotflow_root:
+                    # A clean, empty packet rather than an error, so the run ends
+                    # without a "did not finish" notice in JotFlow's own thread (#373).
+                    # With no messages served, nothing can be linked or proposed. A
+                    # question run there still reads the thread, as it is answered.
+                    thread = WorkThread(
+                        channel_id=thread.channel_id,
+                        thread_ts=thread.thread_ts,
+                        messages=[],
+                        nothing_to_draft=UNDER_OWN_POST,
+                    )
+                    # No topics either: the run has nothing to do with them, and with
+                    # no ids it can't aim a write at one. The marker below refuses
+                    # every drafting write for the run anyway.
+                    index = index.model_copy(update={"topics": [], "more": 0})
                 if grant.kind is RunKind.DRAFTING:
-                    follows = thread.follows.topic_id if thread.follows else None
+                    followed = thread.follows
+                    follows = (
+                        [t for t in (followed.topic_id, *followed.also_topics) if t]
+                        if followed is not None
+                        else []
+                    )
                     index = await _with_pending(grant.channel_id, run.thread_ts, index, follows)
-                related = await work_source.related(thread, index)
+                related = (
+                    []
+                    if thread.nothing_to_draft is not None
+                    else await work_source.related(thread, index)
+                )
         except TimeoutError:
             raise ToolError("Slack took too long to answer; try the run again shortly") from None
+        if grant.kind is RunKind.DRAFTING:
+            # Every drafting write needs this row to say there's something to draft (#373).
+            # Written for every drafting run, in both cases, so a run that skipped
+            # get_work has no row and writes nothing either. The first one stands.
+            with contextlib.suppress(ConflictError):
+                await store.record_tool_call(
+                    ToolCallRecord(
+                        run_id=run.id,
+                        tool=PACKET_SERVED,
+                        args_hash="thread",
+                        channel_id=grant.channel_id,
+                        thread_ts=run.thread_ts,
+                        result_json=json.dumps(
+                            {"nothing_to_draft": thread.nothing_to_draft is not None}
+                        ),
+                        called_at=clock(),
+                    )
+                )
         # Record the run's own thread, and only that: link_message (#15) then accepts
         # exactly those messages, so a run's writes stay inside the thread its token
         # names. Related excerpts are context to read, never messages to link.
@@ -697,10 +771,31 @@ def read_tools(
                             args_hash=file.file_id,
                             channel_id=grant.channel_id,
                             thread_ts=run.thread_ts,
-                            result_json=json.dumps({"sha256": file.sha256}),
+                            # The message it came on, so only a proposal sourced from
+                            # that message, on its topic, may attach it (#374).
+                            result_json=json.dumps({"sha256": file.sha256, "ts": message.ts}),
                             called_at=clock(),
                         )
                     )
+        # Which card each change request is for (#375), so a revision can't use another's.
+        requests = {
+            m.ts: m.change_request_for for m in thread.messages if m.change_request_for is not None
+        }
+        for ts, card in requests.items():
+            # One row per change request, keyed by its ts, so one a later get_work serves
+            # is recorded too, not lost to the first row (security, #390 review).
+            with contextlib.suppress(ConflictError):
+                await store.record_tool_call(
+                    ToolCallRecord(
+                        run_id=run.id,
+                        tool=PACKET_CHANGE_REQUESTS,
+                        args_hash=ts,
+                        channel_id=grant.channel_id,
+                        thread_ts=run.thread_ts,
+                        result_json=json.dumps({ts: card}),
+                        called_at=clock(),
+                    )
+                )
         people = await _people(thread)
         # Who a plain-text name may match (#331): this packet's people, by Slack id only.
         with contextlib.suppress(ConflictError):
