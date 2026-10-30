@@ -414,7 +414,23 @@ def child_env(
             "JOTFLOW_MCP_CONFIG": str(run_dir / "mcp.json"),
         }
     )
+    env["NODE_OPTIONS"] = with_system_ca(env.get("NODE_OPTIONS"))
     return env
+
+
+# Every agent run's Node trusts only the image's system CA store, which the image
+# has cleaned of the compromised eMudhra/emSign roots (#360). Claude Code's binary
+# otherwise trusts its own compiled-in roots as well, and those still include them.
+SYSTEM_CA_OPTION = "--use-openssl-ca"
+
+
+def with_system_ca(node_options: str | None) -> str:
+    """``node_options``, already checked by :func:`node_options_problem`, with
+    :data:`SYSTEM_CA_OPTION` added unless it's there."""
+    current = (node_options or "").strip()
+    if SYSTEM_CA_OPTION in shlex.split(current):
+        return current
+    return f"{current} {SYSTEM_CA_OPTION}".strip()
 
 
 def write_private(run_dir: Path, relative: str, text: str) -> Path:
