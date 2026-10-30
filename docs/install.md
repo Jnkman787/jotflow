@@ -38,7 +38,7 @@ Setup usually takes ten to fifteen minutes, most of it in Slack's settings pages
 
 ## 2. Make a folder for JotFlow
 
-JotFlow needs no copy of its source. Setup writes everything it needs into one folder: your tokens, your channels, and the two Docker Compose files that run JotFlow's published images. Make that folder and go into it.
+JotFlow needs no copy of its source. Setup writes everything it needs into one folder: your tokens, your channels, and the Docker Compose files that run JotFlow's published images. Make that folder and go into it.
 
 On Windows with WSL, open a WSL terminal and type `cd ~` first, so the folder is in your Linux home directory, not under `/mnt/c`. Files on a Windows drive cannot be kept private from other Windows users, and `.env` holds your tokens.
 
@@ -61,7 +61,7 @@ uvx jotflow init
 
 This works from JotFlow's first published release (#41). Before that, use [Run from a checkout](../CONTRIBUTING.md#run-from-a-checkout).
 
-The first `uvx` downloads Python and JotFlow, so it can sit quietly for a minute before setup starts. Setup also writes `docker-compose.yml` and `docker-compose.policy.yml` into this folder, pinned to the JotFlow release you ran. It never replaces one you already have without asking, and keeps the old one as a `.bak` file if you say yes.
+The first `uvx` downloads Python and JotFlow, so it can sit quietly for a minute before setup starts. Setup also writes `docker-compose.yml` and `docker-compose.policy.yml` into this folder, pinned to the JotFlow release you ran. It writes `docker-compose.isolation.yml` too, which is off unless you turn on per-run uids, as [deployment.md](deployment.md) explains. It never replaces one you already have without asking, and keeps the old one as a `.bak` file if you say yes.
 
 Without uv, create a private Python environment for JotFlow, a `.venv` folder, and install it there. On Ubuntu and Debian, use uv instead, because their `python3 -m venv` fails until the `python3-venv` package is installed. On macOS, Linux, or WSL:
 
@@ -103,7 +103,7 @@ First, setup asks whether you already created a Slack app for JotFlow. Answer `n
 
 **Other agents and models.** Most teams can skip this.
 
-- **Your own agent.** Setup also accepts `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent. When your agent files already set a command, the default is `command`. Any other name is refused for now.
+- **Your own agent.** Setup also accepts `command`, if your agent files set `JOTFLOW_AGENT_COMMAND` to run your own agent. When your agent files already set a command, the default is `command`. Setup doesn't offer the experimental `copilot` preset, which is set up by hand, as [presets.md](presets.md#copilot) explains. Once it's in `jotflow.toml`, rerunning setup keeps it. Any other name is refused for now.
 - **The model.** A model name you type at the model question applies to both drafting and execution. For a different model per run kind, set `JOTFLOW_AGENT_MODEL_DRAFTING`, `JOTFLOW_AGENT_MODEL_QUESTION`, or `JOTFLOW_AGENT_MODEL_EXECUTION` in the agent env files by hand, and setup keeps them.
 - **Codex's two limits.** `codex` serves drafting and question runs only, so approved issues are still written by Claude Code, from `agent-exec.env` with its Anthropic login. Setup keeps that file on `claude-code`. Codex runs `gpt-5.5` by default, and setup asks no model question for it. Newer models can add a code-execution tool, so the runner checks every configured model's tools at startup and won't start if one adds a tool it shouldn't (#220). To try another model, set `JOTFLOW_AGENT_MODEL` in `agent.env` by hand. [docs/presets.md](presets.md) explains both limits.
 
@@ -166,6 +166,7 @@ Saved both tokens to .env. Only your user can read that file.
 Wrote jotflow.toml: 1 channel, 1 repo, claude-code.
 Wrote docker-compose.yml.
 Wrote docker-compose.policy.yml.
+Wrote docker-compose.isolation.yml.
 Connected to Slack as @idea_bot in Acme Co.
 
 Next:
@@ -250,6 +251,8 @@ fail  agent: agent.env sets ANTHROPIC_API_KEY but doesn't pass it to the agent, 
 
 Running `uvx jotflow init` again adds that line for you and says so. If check says `configuration problem` instead, fix what it names, or run `uvx jotflow init` again, before starting JotFlow. With no preset, check prints only the configuration line. Without uv, use `.venv/bin/jotflow check`, or `.venv\Scripts\jotflow check` on Windows.
 
+A `note` line is information only, such as what a setting needs from a token or that a board creator's id still matches. It never changes the exit status.
+
 Optionally, the [live check](troubleshooting.md), `check --live`, does a real round trip to Slack: it posts one test message in a channel the bot is in and deletes it. It runs while JotFlow is stopped, so do it before the next step or stop JotFlow first.
 
 ## 6. Start JotFlow
@@ -286,7 +289,7 @@ There are two agent containers, so the GitHub token that can write never sits wh
 
    **Only if `[identity] github_org` is set** in `jotflow.toml` (#305), also give the **read** token **Members: Read-only**, under **Organization permissions**. Add me uses it to check that someone adding themselves belongs to that organization. Without it, every check fails closed, and Add me says the permission is missing. It lets the read token see every private membership in the organization.
 
-   **Only if a channel has `board_scopes`**, so JotFlow finds boards live (#309), also give the **read** token **Projects: Read-only** on the organisation, or `read:project` on a classic token. It reads each board's number, title, short description and creator, never its items. Without it, no board is found, and listed boards still work.
+   **Only if a channel has `board_scopes`**, so JotFlow finds boards live (#309), also give the **read** token **Projects: Read-only** on the organisation, or `read:project` on a classic token. To add issues to the boards it finds, the **write** token needs **Projects: Read and write** too, as for `boards`. It reads each board's number, title, short description and creator, never its items. Without it, no board is found, and listed boards still work.
 
    **Only if a repo sets `read_paths`** in `jotflow.toml`, so drafting can read its design docs (#209), also set **Contents** to **Read-only** on the read token. GitHub grants that for every repo the token selects, and for every file in them. `read_paths` limits only what JotFlow's own doc tools read: a custom agent command with a shell could read any file the token reaches. So select only repos where that's fine. The `codex` preset works with `read_paths` too. Its resource tools can't be turned off, but the GitHub server it starts serves no repository content behind them, and the runner checks that at every start (#274). `jotflow check` prints this as a note whenever `read_paths` is set, and JotFlow warns at startup if the token can't list a repo's files.
 5. Click **Generate token**, and copy it. It starts with `github_pat_`, and GitHub shows it only once.
@@ -294,6 +297,8 @@ There are two agent containers, so the GitHub token that can write never sits wh
 When a channel later feeds a new repo, add it to both tokens on GitHub too. [docs/presets.md](presets.md) explains what each token can reach.
 
 **For a channel with a scope,** the read token decides what JotFlow finds, and the write token decides what it may write. Give both the same repos. A found repo the write token can't see is refused at approval with a message saying so, and approved once you add it to the token. That check can't tell whether the token may write, and any token sees a public repo. If the token can't file the issue, the write fails at GitHub, and the card says so. With **All repositories** instead, the scope's patterns are the only limit on where JotFlow writes, so keep them narrow. The tokens need no extra permission: listing an owner's repos only needs **Metadata**, which GitHub adds by itself.
+
+**`NODE_OPTIONS`.** The agent runners pass `NODE_OPTIONS` to every run, so they refuse to start if it holds anything but these: `--max-old-space-size=N`, `--max-semi-space-size=N`, `--dns-result-order`, `--unhandled-rejections`, `--no-warnings`, `--no-deprecation`, `--enable-source-maps`, `--use-openssl-ca` and `--use-bundled-ca` (#294). For a proxy that rewrites certificates, use `--use-openssl-ca`, or point `SSL_CERT_FILE` at your CA bundle, which the runner passes through too.
 
 **The model login**, for `claude-code`, is either of these:
 
@@ -327,7 +332,7 @@ Setup gives each file its own runner secret and puts both in `.env`, as `JOTFLOW
 
 To replace a secret, for example after it leaked, run setup with `--rotate-runner-secret` for drafting, `--rotate-exec-secret` for execution, or both. Then run `docker compose up -d` so every container picks up the new value. Setup writes `.env` and both agent files as one step: if one cannot be written, none of them changes. If `.env` and an agent file ever hold different secrets, for example after you replaced one by hand, setup makes a new secret for both rather than guessing which is right, and asks you to restart. With the `command` preset, setup writes each file's secret but no preset or model, since the runner refuses those next to a command.
 
-Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, `codex`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. The one exception is `codex`, which doesn't write issues: with it, the drafting runner (`agent.env`) uses `codex` and the execution runner (`agent-exec.env`) stays on `claude-code`, which JotFlow expects. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
+Agent runs start only once `[agent] preset` is set in `jotflow.toml`, and it must name the same agent the runners use: `claude-code`, `codex`, the experimental `copilot`, or `command` for your own `JOTFLOW_AGENT_COMMAND`. The one exception is `codex`, which doesn't write issues: with it, the drafting runner (`agent.env`) uses `codex` and the execution runner (`agent-exec.env`) stays on `claude-code`, which JotFlow expects. At startup JotFlow asks each runner what it starts. If a runner names another preset or other kinds, or doesn't answer within about 30 seconds, JotFlow logs why and keeps that kind of run off until it restarts. Each kind of run also needs its runner's secret in `.env`. Without `JOTFLOW_RUNNER_EXEC_SECRET`, for example, JotFlow logs `execution runs are off` at startup and leaves approved proposals queued until it is set.
 
 The first start downloads JotFlow's images, which takes a minute or two. Setup pinned them to the release you ran, `ghcr.io/jnkman787/jotflow:X.Y.Z` and `ghcr.io/jnkman787/jotflow-agent:X.Y.Z`, so nothing is built and an upgrade happens only when you change the version. [docs/deployment.md](deployment.md) covers upgrades and rollback. Each published image carries a signed build provenance attestation, which GitHub's CLI checks:
 
