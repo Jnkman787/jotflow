@@ -992,10 +992,30 @@ class IssuesPolicy(_Strict):
         """These settings as canonical JSON, as a card or an approval records them."""
         return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
+    def approved_snapshot(self, priority_labels: Iterable[str]) -> str:
+        """What an approval locks (#306 follow-up, #332): these settings, and which of the
+        repo's labels stood for a stated priority then, so execution skips by the same."""
+        data = self.model_dump(mode="json")
+        data["priority_labels"] = sorted({label.casefold() for label in priority_labels})
+        return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
     @classmethod
     def from_snapshot(cls, snapshot: str | None, current: IssuesPolicy) -> IssuesPolicy:
         """The settings a snapshot recorded, or ``current`` for one made before snapshots."""
-        return current if snapshot is None else cls.model_validate_json(snapshot)
+        if snapshot is None:
+            return current
+        data = json.loads(snapshot)
+        data.pop("priority_labels", None)
+        return cls.model_validate(data)
+
+    @staticmethod
+    def priority_from_snapshot(snapshot: str | None) -> frozenset[str] | None:
+        """The priority labels an approval locked, without case, or None if it locked none:
+        approved before #332, when today's map is used."""
+        if snapshot is None:
+            return None
+        found = json.loads(snapshot).get("priority_labels")
+        return frozenset(found) if isinstance(found, list) else None
 
     def bare_title(self, title: str) -> str:
         """A filed title without the prefix, as ``jotflow rebuild`` restores a topic's."""
