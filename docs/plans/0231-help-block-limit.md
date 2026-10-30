@@ -10,7 +10,7 @@
 
 ## Objective and done-when
 
-A channel has no repo limit, and a channel may configure 25 repos. Both replies must stay within what Slack accepts, however many repos a channel has.
+A channel has no repo limit, so it may configure 25 repos or more. Both replies must stay within what Slack accepts, however many repos a channel has.
 
 Done when:
 
