@@ -30,6 +30,7 @@ never hands a drafting run an empty thread.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 from collections import OrderedDict
@@ -725,15 +726,18 @@ def read_tools(
             m.ts: m.change_request_for for m in thread.messages if m.change_request_for is not None
         }
         if requests:
+            # Keyed by what it holds, so a later get_work that sees a new change request
+            # adds its own row rather than losing it to the first (CodeRabbit).
+            served = json.dumps(requests, sort_keys=True)
             with contextlib.suppress(ConflictError):
                 await store.record_tool_call(
                     ToolCallRecord(
                         run_id=run.id,
                         tool=PACKET_CHANGE_REQUESTS,
-                        args_hash="change_requests",
+                        args_hash=hashlib.sha256(served.encode()).hexdigest(),
                         channel_id=grant.channel_id,
                         thread_ts=run.thread_ts,
-                        result_json=json.dumps(requests),
+                        result_json=served,
                         called_at=clock(),
                     )
                 )

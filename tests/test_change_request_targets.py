@@ -15,6 +15,7 @@ from jotflow.change_requests import (
 )
 from jotflow.models import MessageRef
 from jotflow.store.base import ToolCallRecord
+from jotflow.whiteboard.read_tools import NoArguments
 from jotflow.whiteboard.tools import ToolError
 from jotflow.whiteboard.write_tools import RevisedIssue, ReviseProposalArgs, WriteTools
 from tests.test_write_tools import (
@@ -121,3 +122,38 @@ async def test_a_change_request_naming_no_card_revises_as_before(tools: Any, sto
     current = await store.get_proposal(card)
     result: Any = await tools.revise_proposal(DRAFT, revise(card, current.revision))
     assert result.revised
+
+
+async def test_a_change_request_seen_by_a_later_get_work_is_checked_too(clock: Any) -> None:
+    """A second get_work in the run that serves a new change request records it too,
+    so the revise check knows its card (CodeRabbit on #390)."""
+    from jotflow.change_requests import PACKET_CHANGE_REQUESTS
+    from jotflow.store import MemoryStore
+    from tests.test_read_tools import FakeSource, running
+    from tests.test_read_tools import tools as read_tools_for
+
+    store = MemoryStore(clock=clock)
+    served: dict[str, str] = {"1760781700.000100": "aaaaaaaaaaaaaaaa"}
+
+    class Requests(FakeSource):
+        async def thread(self, channel_id: str, thread_ts: str) -> Any:
+            work = await super().thread(channel_id, thread_ts)
+            asked = [
+                work.messages[0].model_copy(update={"ts": ts, "change_request_for": card})
+                for ts, card in served.items()
+            ]
+            return work.model_copy(update={"messages": [*work.messages, *asked]})
+
+    grant = await running(store)
+    get_work = read_tools_for(store, clock, Requests())["get_work"]
+    await get_work.handler(grant, NoArguments())
+    served["1760781800.000100"] = "bbbbbbbbbbbbbbbb"
+    await get_work.handler(grant, NoArguments())
+    rows = await store.tool_call_results(grant.run_id, (PACKET_CHANGE_REQUESTS,))
+    made_on: dict[str, str] = {}
+    for row in rows:
+        made_on |= json.loads(row)
+    assert made_on == {
+        "1760781700.000100": "aaaaaaaaaaaaaaaa",
+        "1760781800.000100": "bbbbbbbbbbbbbbbb",
+    }
