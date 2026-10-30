@@ -60,6 +60,7 @@ from jotflow.models import (
     TopicSummary,
     UntrustedText,
 )
+from jotflow.name_match import PACKET_PEOPLE
 from jotflow.orchestrator.help import help_text
 from jotflow.orchestrator.slack_files import (
     LEFT_OUT,
@@ -224,6 +225,13 @@ class ThreadMessage(BaseModel):
         default=False,
         description="True for a person's question to JotFlow: ask:, or a mention of JotFlow",
     )
+    change_request_by: str | None = Field(
+        default=None,
+        description=(
+            "On JotFlow's post of a person's Request Changes note: that person's Slack user "
+            "id. The note is their request to change the pending draft (#330)"
+        ),
+    )
     files: list[FileBrief] = Field(
         default_factory=list, description="Files attached to the message, at most 5 (#333)"
     )
@@ -273,6 +281,10 @@ class RepoBrief(BaseModel):
 
     repo: str = Field(description="owner/name")
     nickname: str
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="Other names for this repo (#331): a post naming one means this repo",
+    )
     description: str = Field(description="What the repo covers; choose the repo by this")
     labels: list[str] | None = Field(
         default=None,
@@ -678,6 +690,20 @@ def read_tools(
                             called_at=clock(),
                         )
                     )
+        people = await _people(thread)
+        # Who a plain-text name may match (#331): this packet's people, by Slack id only.
+        with contextlib.suppress(ConflictError):
+            await store.record_tool_call(
+                ToolCallRecord(
+                    run_id=run.id,
+                    tool=PACKET_PEOPLE,
+                    args_hash="people",
+                    channel_id=grant.channel_id,
+                    thread_ts=run.thread_ts,
+                    result_json=json.dumps([person.user_id for person in people]),
+                    called_at=clock(),
+                )
+            )
         conversation = ConversationWork(
             notice=QUESTION_NOTICE if grant.kind is RunKind.QUESTION else DRAFTING_NOTICE,
             instructions=(
@@ -687,7 +713,7 @@ def read_tools(
             channel_id=grant.channel_id,
             channel=await _brief(grant.channel_id, thread),
             thread=thread,
-            people=await _people(thread),
+            people=people,
             topics=index,
             related=related,
             help=help_text() if grant.kind is RunKind.QUESTION else None,
@@ -745,6 +771,7 @@ def read_tools(
                 RepoBrief(
                     repo=r.repo,
                     nickname=r.nickname,
+                    aliases=list(r.aliases),
                     description=r.description,
                     labels=None if r.labels is None else list(r.labels),
                     conventions=r.conventions,

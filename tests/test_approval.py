@@ -70,6 +70,7 @@ class Slack:
         self.ephemerals: list[tuple[str, str, str]] = []
         self.modals: list[tuple[str, Mapping[str, Any]]] = []
         self.replies: list[tuple[str, str, str]] = []
+        self.requested_by: list[str] = []
         # Who wrote each message, by ts, as Slack would say: None for a bot's post,
         # and a missing ts means the message was not found.
         self.written_by: dict[str, str | None] = {THREAD: ALICE}
@@ -100,6 +101,10 @@ class Slack:
 
     async def reply(self, channel_id: str, thread_ts: str, text: str) -> None:
         self.replies.append((channel_id, thread_ts, text))
+
+    async def change_request(self, channel_id: str, thread_ts: str, text: str, by: str) -> None:
+        self.replies.append((channel_id, thread_ts, text))
+        self.requested_by.append(by)
 
 
 class Cards:
@@ -448,6 +453,7 @@ async def test_a_change_request_is_posted_attributed_and_arms_the_thread() -> No
     assert posted.startswith(f"Change request from <@{BOB}>:\n")
     assert "<!channel>" not in posted and "<https://" not in posted
     assert "&lt;https://evil.example|link&gt;" in posted
+    assert rig.slack.requested_by == [BOB]  # tagged as Bob's, for the next draft (#330)
     assert rig.armed == [(CH, THREAD)]
 
 
@@ -620,6 +626,14 @@ async def test_the_bolt_adapter_posts_without_links_or_mentions_expanding() -> N
     posted = dict(client.calls)["chat_postMessage"]
     assert posted["link_names"] is False and posted["unfurl_links"] is False
     assert posted["unfurl_media"] is False and posted["thread_ts"] == THREAD
+    assert "metadata" not in posted
+    await slack.change_request(CH, THREAD, "Change request from <@U0BOB>:\nmore", BOB)
+    posted = [kw for name, kw in client.calls if name == "chat_postMessage"][-1]
+    assert posted["metadata"] == {
+        "event_type": "jotflow_change_request",
+        "event_payload": {"by": BOB},
+    }
+    assert posted["link_names"] is False and posted["unfurl_links"] is False
 
 
 def test_the_module_says_how_socket_mode_replaces_the_signature() -> None:
@@ -638,13 +652,13 @@ async def test_a_valid_dialog_is_acknowledged_before_the_reply_is_posted() -> No
             order.append("ack")
             await super().__call__(**kwargs)
 
-    real = rig.slack.reply
+    real = rig.slack.change_request
 
-    async def reply(channel_id: str, thread_ts: str, text: str) -> None:
+    async def reply(channel_id: str, thread_ts: str, text: str, by: str) -> None:
         order.append("reply")
-        await real(channel_id, thread_ts, text)
+        await real(channel_id, thread_ts, text, by)
 
-    rig.slack.reply = reply  # type: ignore[method-assign]
+    rig.slack.change_request = reply  # type: ignore[method-assign]
     await app.views[CALLBACK_CHANGES](Ordered(), submission(pid, "make it blue"))
     assert order == ["ack", "reply"]
     assert rig.armed == [(CH, THREAD)]

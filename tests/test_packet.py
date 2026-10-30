@@ -305,6 +305,31 @@ async def test_jotflows_own_messages_are_marked_and_other_bots_kept() -> None:
     ]
 
 
+async def test_a_change_request_names_who_asked_only_on_jotflows_own_post() -> None:
+    from jotflow.change_requests import change_request_metadata
+
+    tagged = change_request_metadata("U0ALICE")
+    reader = FakeReader(
+        {
+            ROOT: [
+                msg(ROOT, "a progress bar"),
+                {
+                    **msg("1.2", "Change request from Alice: green", user="U0BOT"),
+                    "metadata": tagged,
+                },
+                {**msg("1.3", "Change request: red", user="U0SAM"), "metadata": tagged},
+            ]
+        }
+    )
+    bot = BotIdentity(user_id="U0BOT", bot_id="B0BOT")
+    messages = (await source(reader, bot=bot).thread(CH, ROOT)).messages
+    assert [(m.ts, m.change_request_by) for m in messages] == [
+        (ROOT, None),
+        ("1.2", "U0ALICE"),
+        ("1.3", None),  # a person's message can't claim to be someone's change request
+    ]
+
+
 async def test_long_threads_page_through_replies() -> None:
     reader = FakeReader({ROOT: [msg(ROOT, "root"), *(msg(f"1.{i:03}", f"r{i}") for i in range(5))]})
     reader.page_size = 2
@@ -627,7 +652,14 @@ async def test_the_bolt_reader_asks_for_one_thread_and_one_user(
     assert client.calls == [
         (
             "conversations_replies",
-            {"channel": CH, "ts": ROOT, "cursor": "c1", "limit": 50, "inclusive": True},
+            {
+                "channel": CH,
+                "ts": ROOT,
+                "cursor": "c1",
+                "limit": 50,
+                "inclusive": True,
+                "include_all_metadata": True,
+            },
         ),
         ("users_info", {"user": "U0SAM"}),
     ]

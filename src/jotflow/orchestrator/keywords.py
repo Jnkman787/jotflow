@@ -156,7 +156,7 @@ def parse_reference(
         return IssueReference(usable[0], number)
     wanted = name.casefold()
     for repo in usable:
-        if wanted in (repo.nickname, repo.repo.casefold()):
+        if wanted in (repo.nickname, repo.repo.casefold(), *repo.aliases):
             return IssueReference(repo, number)
     nicknames = _some([r.nickname for r in usable])
     raise ReferenceError(f"{name} is not one of this channel's repos ({nicknames})")

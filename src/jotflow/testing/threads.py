@@ -66,7 +66,11 @@ class Workspace(_Strict):
 
 class User(_Strict):
     name: str = Field(description="Display name")
+    real_name: str | None = Field(default=None, description="Slack's real name, if set (#331)")
     github: str | None = Field(default=None, description="Linked GitHub login, if any")
+    admin_linked: bool = Field(
+        default=False, description="The link was made by an admin, so it's trusted (#305)"
+    )
     guest: bool = False
     external: bool = False
 
@@ -92,6 +96,8 @@ class MessageEvent(_Strict):
     bot_id: str | None = None
     subtype: str | None = None
     text: str = ""
+    # Slack message metadata, as on JotFlow's post of a change request (#330).
+    metadata: dict[str, Any] | None = None
     files: tuple[FixtureFile, ...] = ()
 
     @property
@@ -323,6 +329,9 @@ class ExpectedProposal(_Strict):
     revisions: int = Field(default=0, ge=0, description="How many times it was revised")
     attached: tuple[str, ...] = Field(
         default=(), description="The names of the Slack files the draft includes (#333)"
+    )
+    boards: tuple[str, ...] = Field(
+        default=(), description="The boards the draft proposes, as owner/number (#331)"
     )
     revised_by: tuple[str, ...] = Field(
         default=(), description="Slack user ids the last revision added messages from"

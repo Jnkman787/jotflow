@@ -73,7 +73,7 @@ from jotflow.adapters.presets import (
 )
 from jotflow.models import RunKind, is_bare_repo_name, is_owner_name
 from jotflow.netcheck import AddressRefused, Resolver, SystemResolver, checked_address
-from jotflow.policy import is_board_marker, label_problem
+from jotflow.policy import is_board_marker, label_lookup_problem
 from jotflow.store.base import DEFAULT_RUN_TIMEOUTS
 from jotflow.text import unsafe_text_problem
 from jotflow.whiteboard.tokens import MAX_TOKEN_LENGTH, MAX_TOKEN_TTL_SECONDS, TOKEN_PREFIX
@@ -898,7 +898,7 @@ def build_runner_app(
             return JSONResponse({"error": "expected exactly owner, name and label"}, 400)
         if not is_owner_name(asked.owner) or not is_bare_repo_name(asked.name):
             return JSONResponse({"error": "not a GitHub repo"}, status_code=400)
-        if label_problem(asked.label) is not None:
+        if label_lookup_problem(asked.label) is not None:
             return JSONResponse({"error": "not a label"}, status_code=400)
         try:
             exists = await github_repos.label_exists(
