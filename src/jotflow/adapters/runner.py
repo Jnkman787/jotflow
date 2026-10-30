@@ -107,8 +107,9 @@ NODE_OPTIONS_ALLOWED = (
     re.compile(r"--no-warnings"),
     re.compile(r"--no-deprecation"),
     re.compile(r"--enable-source-maps"),
+    # The system store, which the image has cleaned (#360). Never --use-bundled-ca:
+    # Node's own bundle still trusts the compromised eMudhra/emSign roots.
     re.compile(r"--use-openssl-ca"),
-    re.compile(r"--use-bundled-ca"),
 )
 
 
@@ -130,8 +131,7 @@ def node_options_problem(value: str | None) -> str | None:
                 f"NODE_OPTIONS has {shown}, which agent runs don't allow: Node options can "
                 "load code or write secrets. Allowed: --max-old-space-size=N, "
                 "--max-semi-space-size=N, --dns-result-order, --unhandled-rejections, "
-                "--no-warnings, --no-deprecation, --enable-source-maps, --use-openssl-ca "
-                "and --use-bundled-ca"
+                "--no-warnings, --no-deprecation, --enable-source-maps and --use-openssl-ca"
             )
     return None
 

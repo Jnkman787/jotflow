@@ -6,6 +6,8 @@
 !README.md
 !LICENSE
 !src/
+# The CA distrust step's script, bind-mounted for one RUN (#360).
+!docker/distrust-ca.sh
 
 # Never send these, even if they appear under an allowed path.
 **/.env

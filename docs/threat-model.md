@@ -118,6 +118,7 @@ Issue bodies, comments, and public repo files, through Codex's resource tools, a
 
 | Threat | Defence | Enforced in |
 |---|---|---|
+| A certificate authority the base image trusts is compromised, such as eMudhra/emSign's (GHSA-hq85-5cpj-mr62), letting someone impersonate Slack, GitHub or a model API to steal a token (#360) | Both images distrust the affected roots in `/etc/ca-certificates.conf` and fail to build if one is still trusted. JotFlow's own HTTPS, Debian's Node in its default mode, and github-mcp-server read that store. `NODE_OPTIONS` can't switch Node to its own bundle with `--use-bundled-ca` | [distrust-ca.sh](../docker/distrust-ca.sh), [runner.py](../src/jotflow/adapters/runner.py) `NODE_OPTIONS_ALLOWED` |
 | A changed base image or tool | Base images are pinned by digest, the GitHub MCP server by version and sha256 per architecture, and Python packages by `uv.lock` | [Dockerfile](../docker/Dockerfile), [Dockerfile.agent](../docker/Dockerfile.agent), `uv.lock` |
 | A moved Action tag | Every Action is pinned to a commit SHA, Dependabot proposes updates, and zizmor checks each SHA against its repo | [ci.yml](../.github/workflows/ci.yml) "Workflow lint", `.github/dependabot.yml` |
 | A tampered release | Release images carry signed build provenance. `gh attestation verify` checks it | [release.yml](../.github/workflows/release.yml), [install.md](install.md) |

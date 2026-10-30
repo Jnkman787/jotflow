@@ -763,6 +763,8 @@ def test_harmless_node_options_are_allowed(value: str | None) -> None:
         ("--env-file=/run/secrets", "--env-file"),
         ("--tls-keylog=/tmp/keys", "--tls-keylog"),
         ("--report-on-signal", "--report-on-signal"),
+        # Node's own bundle still trusts the compromised eMudhra/emSign roots (#360).
+        ("--use-bundled-ca", "--use-bundled-ca"),
         ("--max-old-space-size=4096 --require=x", "--require"),
         ("--max-old-space-size 4096", "--max-old-space-size"),
         ("4096", "a bare value"),
