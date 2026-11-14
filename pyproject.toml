@@ -28,7 +28,7 @@ dependencies = [
   "uvicorn>=0.40",
   "slack-sdk>=3.33",
   "httpx2>=2.0",
-  "regex==2026.9.29",
+  "regex==2026.11.9",
 ]
 
 [project.urls]
@@ -47,9 +47,9 @@ dev = [
   "mypy>=1.13",
   "pytest-cov>=6.0",
   "httpx2>=2.0",
-  "types-regex==2026.9.29.20261017",
+  "types-regex==2026.11.9.20261110",
   # Stateful store tests (#381). Pinned: its one dependency is sortedcontainers.
-  "hypothesis==6.169.4",
+  "hypothesis==6.170.15",
 ]
 
 [build-system]
