@@ -4,7 +4,7 @@
 
 - Issue: #420
 - Draft PR: #421
-- Status: planning. Design only, revised after security's and the plan reviewer's reviews, with the lead's decisions. Waiting on the spike to test assumptions A1 to A11
+- Status: planning. Design only, revised after security's and the plan reviewer's reviews, with the lead's decisions. Waiting on the spike to test assumptions A1 to A12
 - Last verified: 2026-11-19, against main at 59b7159
 - Next safe action: the operator spike tests assumptions A2, A5, A6 and A9 first, in a test Workspace
 
@@ -23,7 +23,7 @@ Done when, for this design:
 
 - [x] The operator spike answers which input exists, access, scopes, timing, events and retention
 - [x] Security and the plan reviewer review the design, and the lead decides their findings
-- [ ] The spike tests assumptions A1 to A11, recorded here with fictional names
+- [ ] The spike tests assumptions A1 to A12, recorded here with fictional names
 - [ ] Build issues are opened from this design, each naming the features it meets
 
 **Out of scope:**
@@ -78,6 +78,7 @@ Each assumption is numbered, and cross-referenced where the design leans on it. 
 - **A9. Native transcripts need attendance.** A co-host that never joined can list the conference record and its transcript entries. *If not:* `source = "transcript"` works only when the bot joins, and joining is out of scope. Native transcripts then wait for a later issue. Notes are unaffected.
 - **A10. Native entries don't change** once their transcript is generated, apart from the late completion the spike saw.
 - **A11. What Meet announces.** Meet tells everyone present when notes or transcription are on.
+- **A12. The organizer.** Meet reports a meeting's organizer: the space's owner on the conference record, or an equivalent. *If not:* the tie in routing step 1 rests on the meeting code alone, and the docs say that anyone who starts a conference in a configured space can then bring in a call.
 
 ### Shape
 
@@ -287,7 +288,7 @@ A scenario fixture shows that a follow-up reply and Request Changes in a call's 
   - A drafting runner that doesn't list `call` turns the feature off, and `check_runners` says so.
   - Each preset's per-kind tool list, and Codex's kinds, gain `call`.
   - `JOTFLOW_AGENT_MODEL_CALL` picks the model for call runs.
-- **Concurrency.** At most one call run at a time, and a call run never takes the last free slot under `[agent] max_concurrent_runs`. With `max_concurrent_runs = 1`, a call run starts only when no drafting or question run is queued. So calls never starve Slack threads. They wait instead, and `wait_hours` bounds the wait.
+- **Concurrency.** At most one call run at a time. When `[agent] max_concurrent_runs` is 2 or more, a call run never takes the last free slot. When it is 1, that rule would block call runs for good, so a different rule replaces it: a call run starts only when no drafting or question run is queued. So calls never starve Slack threads. They wait instead, and `wait_hours` bounds the wait.
 - **Instructions.** The call run's rules go in their own file, `src/jotflow/whiteboard/instructions/calls.md`, with its own size cap and pin test.
   - `drafting.md` still needs a few rules for follow-up runs in a call's thread: a call topic has passages, not messages; revise its draft rather than proposing again; and `suggested_owner` is a name from a call, never an assignee.
   - That's budgeted at about 400 of the 1,002 bytes left under the 14,000-byte cap, with each phrase pinned (review S8).
@@ -407,6 +408,14 @@ title_prefix = "Weekly sync"           # optional, only for the owner fallback; 
 - **The card** says "From a call: needs a person's approval" in `auto` mode, so nobody waits for an automatic approval that won't come.
 - **Who may approve** is the channel's rule, unchanged.
 
+### Build conditions
+
+Security's second pass (review 5970019890) set three conditions on the build. Each build issue carries the ones that apply to it.
+
+1. **Fetch only what smartNotes names, if Drive can't filter by owner.** If A4 fails, JotFlow doesn't fall back to a broad Drive listing. When A2 holds, it fetches only the docs that `smartNotes` names for configured meetings, so it never fetches the title or metadata of a doc it will ignore. A broad listing with filtering on JotFlow's side is a last resort, used only when both A2 and A4 fail, and with the page cap.
+2. **Re-check the sharing list straight after the read.** JotFlow checks the doc's sharing list (A5) before settling, and again immediately after the export. If the second check finds outside access under `skip`, or a writer link grant, the call ends as nothing, and the text is dropped from memory without being served.
+3. **The parser is linear, off the event loop, and timed.** The notes parser runs in linear time, with no backtracking pattern over a whole line, in a worker thread rather than on the event loop. A test times it at the 1 MiB cap on crafted input, such as many heading-like lines and many near-miss `HH:MM:SS` lines, and holds it to a fixed bound.
+
 ### Store changes
 
 All of these are pointers, ids and states:
@@ -501,7 +510,7 @@ Without that, a follow-up's link in a call thread would orphan-drop a call topic
 
 **Rebuild (#38, #256).** A call topic has no person message, so rebuild restores nothing for it from Slack. `--from-github` restores a filed call topic from its issue marker, as for any issue. Passage pointers are not rebuilt. That costs nothing, since no run reads the input again.
 
-**Run records and lifecycle (#53, #107, #181).** A call run is recorded like any other, with kind `call`. Restart recovery gives an interrupted call run one fresh run, only if the doc's marker is unchanged (see "Reading once").
+**Run records and lifecycle (#53, #107, #181).** A call run is recorded like any other, with kind `call`. Restart recovery gives an interrupted call run one fresh run, only if the doc's marker is unchanged (see "Reading once"). Recovery moves the `calls` row to the new run's id in the same transaction that queues it, since the call guard requires the row to name the run.
 
 ## Risks and open questions
 
@@ -519,7 +528,7 @@ Answered by the spike or the reviews, and dropped from this list:
 - **Notes with outside people:** default `skip`.
 - **The directory scope:** not needed.
 
-Still open, for the spike: assumptions **A1 to A11** above. Those that decide the shape are:
+Still open, for the spike: assumptions **A1 to A12** above. Those that decide the shape are:
 
 - **A2:** does `smartNotes` list the doc for a co-host? If so, it's the clean tie and the honest opt-in.
 - **A5:** can the bot read the sharing list?
@@ -542,7 +551,10 @@ Risks:
 - [x] Commit this plan and open the draft PR
 - [x] Fold in the spike's findings: notes as the primary input, access by co-host, scopes, timing, the export's format, and how a doc is tied to its meeting
 - [x] Security's review (5969623680) and the plan review (5969633569), with the lead's decisions
-- [ ] The spike tests assumptions A1 to A11
+- [ ] The spike tests assumptions A1 to A12
+- [ ] Build: fetch only the docs smartNotes names when Drive can't filter by owner (build condition 1)
+- [ ] Build: re-check the sharing list straight after the read (build condition 2)
+- [ ] Build: a linear parser, off the event loop, timed at the 1 MiB cap on crafted input (build condition 3)
 - [ ] Revise this plan with the answers
 - [ ] Open the build issues
 
