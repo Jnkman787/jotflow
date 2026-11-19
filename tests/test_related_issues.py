@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -48,12 +49,17 @@ POLICY = Policy.model_validate(
 )
 
 
+def _pinned() -> datetime:
+    """The stores' clock: an hour after START, whatever today's date (#422)."""
+    return START + timedelta(hours=1)
+
+
 @pytest.fixture(params=["memory", "sqlite"])
 async def store(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[Store]:
     if request.param == "memory":
-        yield MemoryStore()
+        yield MemoryStore(clock=_pinned)
         return
-    opened = await SqliteStore.open(tmp_path / "jotflow.db")
+    opened = await SqliteStore.open(tmp_path / "jotflow.db", clock=_pinned)
     try:
         yield opened
     finally:
@@ -384,7 +390,7 @@ async def test_undo_refuses_while_a_later_proposal_relies_on_the_binding(store: 
             thread_ts=THREAD,
             run_id="r2",
             proposal=update,
-            created_at=START.replace(year=2030),
+            created_at=START + timedelta(days=1),  # after the click, by the pinned clock
         )
     )
     await store.transition(

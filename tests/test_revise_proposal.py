@@ -379,12 +379,13 @@ async def test_a_discarded_failure_drafts_the_follow_up_but_a_plain_failure_wait
 
 
 async def test_a_turned_down_topic_is_marked_for_the_re_draft(
-    tools: WriteTools, store: LiveStore
+    tools: WriteTools, store: LiveStore, clock: Clock
 ) -> None:
     from jotflow.whiteboard.read_tools import NoArguments, read_tools
 
     record = await pending(tools, store)
-    specs = {s.name: s for s in read_tools(store, POLICY)}
+    # The store's clock, not today's: the topic window is measured from it (#422).
+    specs = {s.name: s for s in read_tools(store, POLICY, clock=clock)}
     listed: Any = await specs["list_topics"].handler(SECOND, NoArguments())
     [before] = [t for t in listed.topics if t.id == record.proposal.topic_id]
     assert before.rejected is None and before.issue_proposed
