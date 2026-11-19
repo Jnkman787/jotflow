@@ -3,7 +3,7 @@
 ## Links and status
 
 - Issue: #420
-- Draft PR: to come
+- Draft PR: #421
 - Status: planning. Design only, waiting on the operator spike and the lead's and security's review
 - Last verified: 2026-11-18, against main at 59b7159
 - Next safe action: the operator spike answers open questions 1 to 5 in a test Workspace
